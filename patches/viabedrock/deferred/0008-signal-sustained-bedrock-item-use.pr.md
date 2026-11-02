@@ -46,7 +46,7 @@ Native controls establish the combined behavior for these fixtures; they do not 
 
 Seventeen focused tests cover installed component retention, constructor-specific admission, Java component wire properties, difficulty changes, food-use flags, offhand resynchronization, and completion boundaries.
 Admission tests retain the held quantity and verify refused-use payloads with `StartUsingItem` clear.
-The full four-project build passes 3,291 tests, with 325 skipped and no failures or errors.
+The full four-project build passes 3,299 tests, with 325 skipped and no failures or errors.
 
 Installed direct and ViaProxy controls cover eleven cases each.
 Both routes match the selected native admission, hunger, timed consumption, and zero-duration outcomes.
@@ -79,4 +79,4 @@ It does not belong in an independent upstream PR branch.
 The current timed-to-instant custom-food switch cancels the old definition instead of retaining its Java paper use cycle.
 Early switches consume none of the old food; late switches retain one completion.
 The long-hold control retains three completions and reaches full hunger.
-The client input sidecar records the separate ordinary-block placement mismatch.
+The client input sidecar records the remaining placement timing and dispatch gaps.

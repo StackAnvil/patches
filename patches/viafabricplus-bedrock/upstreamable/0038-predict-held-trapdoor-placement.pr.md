@@ -1,84 +1,72 @@
 # Native held item use
 
-Java's four-tick repeat path does not reproduce Bedrock's input timing.
-Coordinate food retries and held block placement through one client input owner.
+Coordinate food retries and block placement through one client input owner.
 Inventory consumption and completion remain server-owned.
 
-Food uses a strict 200 ms monotonic deadline, checked after camera input on each frame.
-Gate fresh calls before local use or packet publication.
-Set the deadline before main-hand food air use, including a request that hunger later refuses.
+Food uses a strict 200 ms monotonic deadline, shared by fresh calls and frame repeats after camera input.
 Select food from its transported component, including custom items carried as paper.
-Physical release and item changes retain this connection deadline.
-Connection replacement clears it.
-Missing optional block-use channels do not clear the air-use hold or its deadline.
+A refused first food request retains block continuation while still recording the air deadline.
+Already admitted air use retains its route after hunger fills or the selected item changes.
+Block continuation bypasses the air deadline and cannot fall through to eating.
+Offhand fallback cannot take over an owned hold.
+Release and screens retire the mode; the connection retains its air deadline until replacement.
+Missing optional block-use channels do not clear the air-use hold or deadline.
 
-Keep the interaction mode until physical release or cancellation.
-A hold started by admitted food air use continues main-hand air use after selecting a block item.
-Initially refused food retains block mode, even without an initial block target.
-The same air deadline applies to fresh calls, while held block continuation bypasses it.
-Skip block and entity dispatch inside the use method without changing the visible raycast.
-A placement hold keeps its block route after selecting food and cannot fall through to eating.
-Retire offhand fallback while either route owns the hold.
-Release permits a fresh press to choose another interaction mode.
-
-Held placement waits 300 ms after a successful local block use.
+Placement has a separate strict delay: 300 ms before a line is established and 200 ms afterward.
+Successful local use restarts it; failed repeats do not.
 Trapdoor holds also retain the established first-attempt delay.
-Initially refused food retains untimed block continuation until a block use succeeds.
-Failed repeats do not restart that delay.
-Release, screens, and connection replacement clear the placement timer and retained trapdoor state.
-Suppress Java's parallel repeat path while the frame route owns the attempt.
+The frame owner suppresses Java's parallel four-tick path.
 
-## Placement constraints
+## Placement selection
 
-Retain the first predicted trapdoor facing, half, and world hit through material changes, temporary item-family changes, server correction, and stack exhaustion.
-Apply that snap only while holding a trapdoor.
-Other block items use fresh hits and suppress repeated activation; empty hands restore ordinary interaction.
-Returning to a trapdoor restores the snap.
+Adjacent build attempts establish a retained direction and next cell.
+For a block hit, test the visible ray segment against that cell before dispatching use.
+If it intersects, use the retained support and face while keeping the original world hit location.
+A failed placement keeps the pending cell; successful placement advances it.
+Release, screens, and connection replacement clear this state.
+The owning patch records the matching native implementation and float arithmetic.
 
-Send the physical lifetime and sequence-owned prediction before the concluding Java packet.
-Prediction format 2 carries the result and native cursor; both consumers require the matching contract.
-Express the retained hit relative to each later target, including coordinates outside its unit cube.
-Keep the ordinary Java raycast packet unchanged.
-Preserve each new block's water, power, open state, and material properties.
+Trapdoors also retain the first predicted facing, half, and world hit across material changes, temporary item-family changes, correction, and exhaustion.
+Apply that orientation only to trapdoors and preserve independent water, power, open state, and material properties.
+Returning to a trapdoor restores its snap.
 Separate trapdoors and the original support remain valid targets.
 
-Select native outlines and occlusion from the active Bedrock connection, including ViaProxy sessions with a local Java protocol target.
-Native bottom-face hits use approximately 0.8175; the earlier 0.8125 attribution came from the Java fixture.
+Send physical use lifetime and sequence-owned prediction before the concluding Java packet.
+Prediction format 2 carries the result and native cursor, including coordinates outside the selected support cube.
+Use the active Bedrock connection for native outlines and occlusion, including ViaProxy sessions with a local Java protocol target.
+The visible raycast remains unchanged.
 
 ## Evidence and validation
 
-Official Bedrock 1.26.60.5 against BDS 1.26.60.6 establishes these controls on protocol 2225.
-Native runtime tracing observes the 200 ms deadline before air use and the strict check in the shared fresh-press and held-input function.
-A 2.1-second instant-food hold consumes nine items with or without the debugger.
-Frame cadence determines retry quantization, so equal counts alone do not establish timing parity.
+Official Bedrock 1.26.60.5 and BDS 1.26.60.6 establish the selected behavior on protocol 2225.
+Runtime tracing distinguishes fresh input, admitted air holds, and initially refused food.
+It also observes the retained next-cell ray test, advancement, rejection, and clock transition.
 
-Installed direct and ViaProxy food controls check the deadline, rapid clicks after release, pause cancellation, admission, hunger, and settled server counts.
-The [food-use validation](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records the current build and remaining use-cycle limits.
-Native tracing observes fresh flags 176 followed by held air-only flag 16 across a food-to-trapdoor change.
-Only the initial call visits block use; later frames retry air use after the deadline.
-Unattached stone and late trapdoor controls agree.
-The reverse trapdoor-to-food control retains simulation block uses and consumes no food.
-Installed direct and proxy controls check both directions and fresh placement after release or Pause.
-The previous installed client placed blocks after food use and ate food during the placement hold.
-Seven input-state tests cover retained modes, hand and target routing, variable frames, release, connection reset, independent delays, strict boundaries, and rollover.
-Five block-state tests cover retained orientation, materials, independent properties, targets, frozen hits, release, and ordinary blocks.
+Fresh and refused-food Stone controls place two blocks, then reject a new top hit outside the pending cell.
+Re-aiming onto the floor crosses that cell and places a third block through the retained north face.
+The cursor keeps its original world location, yielding a negative relative Z coordinate.
+Player-collision failures retain the next cell.
+Returning to the old aim stops those attempts; a fresh press after release can use the top face.
 
-Earlier installed placement fixtures match native camera changes, material changes, and fresh activation after release.
-Both routes consume two items, leaving 62 from 64.
-Native and direct Java retry a rejected first placement within the same hold.
-Both Java routes cancel the session on Pause before physical release.
+Seven input-state regressions cover ownership, hand/target routing, clocks, release, connection reset, and rollover.
+Eight path regressions cover captured native float points, rejection, advancement, all six axes, release, the shorter line delay, and large-coordinate float collapse, and failed-attempt history.
+Five trapdoor regressions cover orientation, materials, independent properties, targets, frozen hits, and ordinary blocks.
+Unit cases for all axes do not establish live native parity in every direction.
+
+Installed direct and ViaProxy controls cover the formerly failing Stone cases, re-aiming, rejected placement, and fresh use after release.
+Both routes also retain the six timed/refused-food controls, three earlier hold-mode controls, release/Pause, and eleven food-admission cases.
+The [food-use validation](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records admission and use-cycle limits.
+The full four-project build passes 3,299 tests, with 325 skipped and no failures or errors.
+Installed JAR checksums match the build.
+
+Earlier trapdoor fixtures cover camera and material changes, cancellation, reconciliation, and specific rejection histories.
 Fresh native and proxy sessions match repeated rejection followed by rotation without consumption.
-After a preceding successful hold, both instead place a neighbor and consume one item.
+After a preceding successful hold, both can instead place a neighbor and consume one item.
 
 ## Remaining limits
 
-Other initial air-use families, live entity transitions, competing use handlers, exact input-flag phase counts, and full use-cycle timing need more native comparisons.
+Live build-height limits, moving placement, air/entity target dispatch, other initial use families, mixed-use state, and complete input phases need more native comparisons.
+A first rejected ordinary-block use still follows Java tick retries instead of native frame continuation.
+An unchanged stack does not prove repeat-timing parity.
+Frame cadence changes retry and instant-food counts, so these controls do not establish equal coordinates or complete scheduling parity.
 The original intermittent animation-without-feeding report remains open.
-
-Timed-food controls distinguish an early switch, a switch after completion, and a held three-completion cycle.
-Initial refusal sends one air payload without `StartUsingItem`, then keeps block continuation.
-An admitted air hold keeps its route after hunger fills.
-
-Ordinary Stone placement still differs after the ray reaches another face: both installed routes place four blocks where native places two.
-The first two successes follow the 300 ms delay. The later placement selection remains unresolved.
-Do not treat these mode and timing fixes as complete held-placement parity.
