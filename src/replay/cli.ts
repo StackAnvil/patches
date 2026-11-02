@@ -663,6 +663,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     for (const test of [
       "ReplaySelfTest",
       "NativeCaptureSelfTest",
+      "NativeShutdownSelfTest",
       "PrivateFilesSelfTest",
       "RecordingConnectionsSelfTest",
       "RecordingReadinessSelfTest",
