@@ -1,0 +1,1002 @@
+From 6ae81e929d0207f136784e938f439e354b47d751 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 15:51:01 +0100
+Subject: [PATCH] fix(players): interpolate negotiated remote movement as
+ native floats
+
+Official Bedrock 1.26.60.5, protocol 2225, retains three float position
+steps across admitted normal movement beyond Java's 64-block cutoff.
+Its small-move X samples are 2.166666746, 1.833333373 and 1.5. Java
+instead advances through 2.166666657, 1.75 and 1.5. Retain the native
+eye origin and float arithmetic inside the entity interpolation phase.
+
+Decorate the real host handler only for remote players. Pair negotiated
+receipts with exact Java packets, UUIDs and native lifetimes. Keep the
+position, main-rotation and head counters independent. Preserve forced
+target completion and queued handoff. Retain eye coordinates between
+steps instead of rounding them through Java's feet origin every tick.
+
+A head-only packet applies raw pitch immediately and preserves live yaw,
+pending position and body targets, and forced queues. Its head target
+uses the maximum remaining position/body counter. Pair the rotation-only
+Java packet explicitly so the host path cannot cancel pending movement.
+Cancel the superseded Java head lerp through its existing public API.
+
+Return reset modes, known riding, local authority, unticking entities
+and unpaired packets to the host path. Preserve ordinary Java movement
+history. Retire native state on connection, world, entity, lifetime or
+mount changes. Keep body formulas and collision-history ownership intact.
+
+Current native helper 0x1402d92c0, callback 0x143630d70, angle helper
+0x143631440, target producer 0x1422c8d20 and queue kernel 0x143634ae0
+establish these component rules. Instruction controls exclude component
+allocation and native scheduler admission. Live comparisons establish
+selected steps and poses; complete timing and trajectory parity remain
+open alongside reset, mounted and unknown-factory behavior.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |   2 +
+ .../MixinRemotePlayerInterpolation.java       |  22 ++
+ ...xinRemotePlayerMovementPacketListener.java |  54 +++++
+ .../input/BedrockRemotePlayerMovement.java    |  81 ++++++++
+ .../input/RemotePlayerMovementPayload.java    |  22 ++
+ .../movement/RemotePlayerInterpolation.java   | 133 ++++++++++++
+ .../RemotePlayerInterpolationHandler.java     | 165 +++++++++++++++
+ .../viafabricplus-bedrock.mixins.json         |   2 +
+ ...ativeRemoteInterpolationReferenceTest.java |  74 +++++++
+ .../RemotePlayerInterpolationHandlerTest.java | 190 ++++++++++++++++++
+ .../RemotePlayerInterpolationTest.java        | 114 +++++++++++
+ 11 files changed, 859 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerInterpolation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerMovementPacketListener.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockRemotePlayerMovement.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/RemotePlayerMovementPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/NativeRemoteInterpolationReferenceTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 8ed6c7a..131e784 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -90,6 +90,7 @@ import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockItemUse;
+ import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockPlayerCorrections;
++import com.viaversion.viafabricplus.bedrock.input.BedrockRemotePlayerMovement;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockVehiclePredictions;
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
+@@ -217,6 +218,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         BedrockCommandBlockScreen.register();
+         PayloadTypeRegistry.serverboundPlay().register(PlayerPredictionPayload.TYPE, PlayerPredictionPayload.CODEC);
+         BedrockPlayerCorrections.register();
++        BedrockRemotePlayerMovement.register();
+         BedrockMovementEffects.register();
+         BedrockVehiclePredictions.register();
+         PayloadTypeRegistry.clientboundPlay().register(InputPermissionsPayload.TYPE, InputPermissionsPayload.CODEC);
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerInterpolation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerInterpolation.java
+new file mode 100644
+index 0000000..5836e51
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerInterpolation.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.viaversion.viafabricplus.bedrock.movement.RemotePlayerInterpolationHandler;
++import net.minecraft.client.player.RemotePlayer;
++import net.minecraft.world.entity.InterpolationHandler;
++import net.minecraft.world.entity.LivingEntity;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(LivingEntity.class)
++public abstract class MixinRemotePlayerInterpolation {
++    @ModifyReturnValue(method = "createInterpolationHandler", at = @At("RETURN"))
++    private InterpolationHandler decorateRemotePlayerInterpolation(final InterpolationHandler host) {
++        return (Object) this instanceof RemotePlayer player ? new RemotePlayerInterpolationHandler(player, host) : host;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerMovementPacketListener.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerMovementPacketListener.java
+new file mode 100644
+index 0000000..c9330c6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerMovementPacketListener.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
++
++import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.viaversion.viafabricplus.bedrock.input.BedrockRemotePlayerMovement;
++import com.viaversion.viafabricplus.bedrock.movement.RemotePlayerInterpolationHandler;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.player.RemotePlayer;
++import net.minecraft.network.protocol.PacketUtils;
++import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
++import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
++import org.spongepowered.asm.mixin.Mixin;
++
++@Mixin(ClientPacketListener.class)
++public abstract class MixinRemotePlayerMovementPacketListener {
++    @WrapMethod(method = "handleEntityPositionSync")
++    private void applyNativeRemoteMovement(final ClientboundEntityPositionSyncPacket packet, final Operation<Void> original) {
++        final Minecraft client = Minecraft.getInstance();
++        PacketUtils.ensureRunningOnSameThread(packet, (ClientPacketListener) (Object) this, client.packetProcessor());
++        if (client.getConnection() == (Object) this && client.level != null) {
++            final var actor = client.level.getEntity(packet.id());
++            final var movement = BedrockRemotePlayerMovement.consume(packet, actor);
++            if (actor instanceof RemotePlayer && actor.getInterpolation() instanceof RemotePlayerInterpolationHandler interpolation
++                    && interpolation.receive(movement)) {
++                actor.getPositionCodec().setBase(packet.position().endPosition());
++                actor.setOnGround(packet.onGround());
++                return;
++            }
++        }
++        original.call(packet);
++    }
++
++    @WrapMethod(method = "handleMoveEntity")
++    private void applyNativeRemoteHead(final ClientboundMoveEntityPacket packet, final Operation<Void> original) {
++        final Minecraft client = Minecraft.getInstance();
++        PacketUtils.ensureRunningOnSameThread(packet, (ClientPacketListener) (Object) this, client.packetProcessor());
++        if (client.getConnection() == (Object) this && client.level != null && !packet.hasPosition() && packet.hasRotation()) {
++            final var actor = packet.getEntity(client.level);
++            final var movement = BedrockRemotePlayerMovement.consume(packet, actor);
++            if (actor instanceof RemotePlayer && actor.getInterpolation() instanceof RemotePlayerInterpolationHandler interpolation
++                    && interpolation.receive(movement)) {
++                actor.setOnGround(packet.isOnGround());
++                return;
++            }
++        }
++        original.call(packet);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockRemotePlayerMovement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockRemotePlayerMovement.java
+new file mode 100644
+index 0000000..5169027
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockRemotePlayerMovement.java
+@@ -0,0 +1,81 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
++import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
++import net.minecraft.world.entity.Entity;
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
++import net.raphimc.viabedrock.api.model.RemotePlayerMovementTracker;
++
++public final class BedrockRemotePlayerMovement {
++    private static final RemotePlayerMovementTracker TRACKER = new RemotePlayerMovementTracker();
++    private static ClientPacketListener connection;
++    private static ClientLevel level;
++
++    private BedrockRemotePlayerMovement() {}
++
++    public static void register() {
++        PayloadTypeRegistry.clientboundPlay().register(RemotePlayerMovementPayload.TYPE, RemotePlayerMovementPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) -> {
++            TRACKER.clear();
++            connection = listener;
++            level = null;
++            ClientPlayNetworking.registerReceiver(RemotePlayerMovementPayload.TYPE, (payload, context) -> {
++                if (connection == listener && context.client().getConnection() == listener && BedrockInputPermissions.isBedrockConnection()) {
++                    bindWorld(context.client());
++                    if (level != null) TRACKER.accept(payload.movement());
++                }
++            });
++        });
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> {
++            if (connection == listener) {
++                TRACKER.clear();
++                connection = null;
++                level = null;
++            }
++        });
++    }
++
++    private static void bindWorld(final Minecraft client) {
++        if (level != client.level) {
++            TRACKER.clear();
++            level = client.level;
++        }
++    }
++
++    public static RemotePlayerMovement consume(final ClientboundEntityPositionSyncPacket packet, final Entity actor) {
++        final Minecraft client = Minecraft.getInstance();
++        if (!BedrockInputPermissions.isBedrockConnection() || client.getConnection() != connection) {
++            TRACKER.clear();
++            return null;
++        }
++        bindWorld(client);
++        final var end = packet.position().endPosition();
++        return TRACKER.consume(packet.id(), new RemotePlayerMovement.JavaTarget(true, end.x, end.y, end.z,
++                        packet.yRot(), packet.xRot(), packet.onGround()),
++                actor == null ? null : actor.getUUID(), actor == null ? null : BedrockActorState.liveLifetime(actor.getUUID()));
++    }
++
++    public static RemotePlayerMovement consume(final ClientboundMoveEntityPacket packet, final Entity actor) {
++        final Minecraft client = Minecraft.getInstance();
++        if (!BedrockInputPermissions.isBedrockConnection() || client.getConnection() != connection) {
++            TRACKER.clear();
++            return null;
++        }
++        bindWorld(client);
++        return TRACKER.consume(actor == null ? -1 : actor.getId(), new RemotePlayerMovement.JavaTarget(false, 0, 0, 0,
++                        packet.getYRot(), packet.getXRot(), packet.isOnGround()),
++                actor == null ? null : actor.getUUID(), actor == null ? null : BedrockActorState.liveLifetime(actor.getUUID()));
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/RemotePlayerMovementPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/RemotePlayerMovementPayload.java
+new file mode 100644
+index 0000000..e07848c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/RemotePlayerMovementPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
++
++public record RemotePlayerMovementPayload(RemotePlayerMovement movement) implements CustomPacketPayload {
++    public static final Type<RemotePlayerMovementPayload> TYPE = new Type<>(Identifier.parse(RemotePlayerMovement.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, RemotePlayerMovementPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> RemotePlayerMovement.TYPE.write(buffer, payload.movement),
++            buffer -> new RemotePlayerMovementPayload(RemotePlayerMovement.TYPE.read(buffer)));
++
++    @Override
++    public Type<RemotePlayerMovementPayload> type() { return TYPE; }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolation.java
+new file mode 100644
+index 0000000..07ca2fe
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolation.java
+@@ -0,0 +1,133 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++/** Native float position, main-rotation, and head components with independent counters. */
++public final class RemotePlayerInterpolation {
++    private Position3f target;
++    private Position3f rotation;
++    private int positionSteps;
++    private int rotationSteps;
++    private int headSteps;
++    private float headTarget;
++    private boolean mustComplete;
++    private Queued queued;
++
++    public void receive(final RemotePlayerMovement movement) {
++        if (movement.mode() == 3) {
++            this.headTarget = movement.rotation().z();
++            this.headSteps = Math.max(this.positionSteps, this.rotationSteps);
++            return;
++        }
++        if (movement.mode() == 0) {
++            this.target = movement.position();
++            this.rotation = movement.rotation();
++            this.positionSteps = 3;
++            this.rotationSteps = 3;
++            this.headTarget = movement.rotation().z();
++            this.headSteps = 3;
++            return;
++        }
++        if (movement.mode() != RemotePlayerMovement.ACTOR) {
++            this.clear();
++            return;
++        }
++        final int steps = Long.compareUnsigned(movement.duration(), 3) < 0 ? 3 : (int) movement.duration();
++        final boolean forced = (movement.flags() & 8) != 0;
++        if (this.mustComplete && this.positionSteps != 0 && !forced) {
++            this.queued = new Queued(movement.position(), movement.rotation(), steps);
++        } else {
++            this.target = movement.position();
++            this.positionSteps = steps;
++            this.mustComplete = forced;
++            this.queued = null;
++        }
++        // The remote-player category retains its independent three-step main rotation.
++        this.rotation = movement.rotation();
++        this.rotationSteps = 3;
++        this.headTarget = movement.rotation().z();
++        this.headSteps = 3;
++    }
++
++    public Step tick(final Position3f position, final float pitch, final float yaw, final float previousPitch, final float previousYaw, final float headYaw) {
++        final boolean clearMotion = this.positionSteps > 0;
++        final Position3f next;
++        if (this.positionSteps > 0) {
++            final float inverse = 1F / this.positionSteps;
++            next = this.positionSteps == 1 ? this.target : new Position3f(
++                    position.x() + (this.target.x() - position.x()) * inverse,
++                    position.y() + (this.target.y() - position.y()) * inverse,
++                    position.z() + (this.target.z() - position.z()) * inverse);
++            this.positionSteps--;
++        } else {
++            next = position;
++        }
++        float nextPitch = pitch;
++        float nextYaw = yaw;
++        float oldPitch = previousPitch;
++        float oldYaw = previousYaw;
++        if (this.rotationSteps > 0) {
++            final float inverse = 1F / this.rotationSteps;
++            final float rawPitch = this.rotationSteps == 1 ? this.rotation.x() : pitch + wrap(this.rotation.x() - pitch) * inverse;
++            final float rawYaw = this.rotationSteps == 1 ? this.rotation.y() : yaw + wrap(this.rotation.y() - yaw) * inverse;
++            nextPitch = wrap(rawPitch);
++            nextYaw = wrap(rawYaw);
++            oldPitch = wrap(previousPitch + (nextPitch - rawPitch));
++            oldYaw = wrap(previousYaw + (nextYaw - rawYaw));
++            this.rotationSteps--;
++        }
++        float nextHeadYaw = headYaw;
++        if (this.headSteps > 0) {
++            nextHeadYaw = this.headSteps == 1 ? this.headTarget : headYaw + wrap(this.headTarget - headYaw) * (1F / this.headSteps);
++            this.headSteps--;
++        }
++        if (this.queued != null) {
++            if (this.mustComplete && this.positionSteps != 0) {
++                this.queued = new Queued(this.queued.position, this.queued.rotation, Math.max(2, this.queued.steps) - 1);
++            } else {
++                this.target = this.queued.position;
++                this.rotation = this.queued.rotation;
++                this.positionSteps = this.queued.steps;
++                this.rotationSteps = this.queued.steps;
++                this.headTarget = 0F;
++                this.headSteps = 0;
++                this.mustComplete = false;
++                this.queued = null;
++            }
++        }
++        return new Step(next, nextPitch, nextYaw, oldPitch, oldYaw, nextHeadYaw, clearMotion);
++    }
++
++    public boolean active() {
++        return this.positionSteps != 0 || this.rotationSteps != 0 || this.headSteps != 0;
++    }
++
++    public Position3f target() { return this.target; }
++    public Position3f rotation() { return this.rotation; }
++
++    public void clear() {
++        this.target = null;
++        this.rotation = null;
++        this.positionSteps = 0;
++        this.rotationSteps = 0;
++        this.headSteps = 0;
++        this.headTarget = 0F;
++        this.mustComplete = false;
++        this.queued = null;
++    }
++
++    static float wrap(final float value) {
++        float result = (value + 180F) % 360F;
++        if (result < 0F) result += 360F;
++        return result - 180F;
++    }
++
++    public record Step(Position3f position, float pitch, float yaw, float previousPitch, float previousYaw, float headYaw, boolean clearMotion) {}
++    private record Queued(Position3f position, Position3f rotation, int steps) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
+new file mode 100644
+index 0000000..9961a14
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
+@@ -0,0 +1,165 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalReplayContext;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.player.RemotePlayer;
++import net.minecraft.core.PositionAndRotation;
++import net.minecraft.world.entity.InterpolationHandler;
++import net.minecraft.world.entity.InterpolationTracker;
++import net.minecraft.world.entity.PositionPath;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import java.util.UUID;
++
++/** Decorates the real host handler so ordinary Java and unsupported modes retain their existing path. */
++public final class RemotePlayerInterpolationHandler implements InterpolationHandler {
++    private final RemotePlayer player;
++    private final InterpolationHandler host;
++    private final RemotePlayerInterpolation nativeInterpolation = new RemotePlayerInterpolation();
++    private ClientPacketListener connection;
++    private ClientLevel level;
++    private UUID lifetime;
++    private float originOffset;
++    private Position3f eye;
++    private Vec3 appliedPosition;
++
++    public RemotePlayerInterpolationHandler(final RemotePlayer player, final InterpolationHandler host) {
++        this.player = player;
++        this.host = host;
++    }
++
++    public boolean receive(final RemotePlayerMovement movement) {
++        if (movement == null || movement.mode() == 1 || movement.mode() == 2 || movement.riding() || this.player.isPassenger()
++                || this.player.isLocalInstanceAuthoritative() || !BedrockInputPermissions.isBedrockConnection()
++                || !movement.uuid().equals(this.player.getUUID()) || movement.entityId() != this.player.getId()
++                || !movement.lifetime().equals(BedrockActorState.liveLifetime(this.player.getUUID()))) {
++            this.releaseNative();
++            return false;
++        }
++        final Minecraft client = Minecraft.getInstance();
++        if (client.level == null || client.getConnection() == null || !client.getConnection().getConnection().isConnected() || this.player.level() != client.level
++                || client.level.getEntity(this.player.getId()) != this.player || !client.level.isTickingEntity(this.player)
++                || client.player == null || this.player.hasIndirectPassenger(client.player) || this.player.isRemoved()) {
++            this.releaseNative();
++            return false;
++        }
++        final boolean continuing = this.validContext() && movement.lifetime().equals(this.lifetime);
++        if (!continuing) this.nativeInterpolation.clear();
++        this.host.cancel();
++        this.connection = client.getConnection();
++        this.level = client.level;
++        this.lifetime = movement.lifetime();
++        this.originOffset = movement.originOffset();
++        if (!continuing || !this.player.position().equals(this.appliedPosition)) this.captureEye();
++        this.nativeInterpolation.receive(movement);
++        // Every legacy head packet for these sources precedes its paired position packet.
++        this.player.lerpHeadTo(this.player.getYHeadRot(), 0);
++        if (movement.mode() == 3) {
++            final float rawPitch = movement.rotation().x();
++            final float rawYaw = this.player.getYRot();
++            final float pitch = RemotePlayerInterpolation.wrap(rawPitch);
++            final float yaw = RemotePlayerInterpolation.wrap(rawYaw);
++            this.player.setXRot(pitch);
++            this.player.setYRot(yaw);
++            this.player.xRotO = RemotePlayerInterpolation.wrap((pitch - rawPitch) + this.player.xRotO);
++            this.player.yRotO = RemotePlayerInterpolation.wrap((yaw - rawYaw) + this.player.yRotO);
++        }
++        this.player.onInterpolationStart(this);
++        return true;
++    }
++
++    private boolean validContext() {
++        final Minecraft client = Minecraft.getInstance();
++        return this.lifetime != null && BedrockInputPermissions.isBedrockConnection()
++                && client.getConnection() == this.connection && client.level == this.level
++                && this.connection.getConnection().isConnected()
++                && this.player.level() == this.level && !this.player.isRemoved() && !this.player.isPassenger()
++                && !this.player.isLocalInstanceAuthoritative() && this.level.getEntity(this.player.getId()) == this.player
++                && this.lifetime.equals(BedrockActorState.liveLifetime(this.player.getUUID()));
++    }
++
++    private void captureEye() {
++        this.eye = new Position3f((float) this.player.getX(), (float) this.player.getY() + this.originOffset, (float) this.player.getZ());
++        this.appliedPosition = this.player.position();
++    }
++
++    @Override
++    public void interpolate() {
++        if (PhysicalReplayContext.replaying()) return;
++        if (this.lifetime == null) {
++            this.host.interpolate();
++            return;
++        }
++        if (!this.validContext()) {
++            this.cancel();
++            return;
++        }
++        if (!this.nativeInterpolation.active()) return;
++        if (!this.player.position().equals(this.appliedPosition)) this.captureEye();
++        final var next = this.nativeInterpolation.tick(this.eye, this.player.getXRot(), this.player.getYRot(), this.player.xRotO, this.player.yRotO, this.player.getYHeadRot());
++        if (next.clearMotion()) this.player.setDeltaMovement(Vec3.ZERO);
++        if (!next.position().equals(this.eye)) {
++            this.eye = next.position();
++            this.player.setPos(this.eye.x(), (double) this.eye.y() - this.originOffset, this.eye.z());
++        }
++        this.appliedPosition = this.player.position();
++        this.player.setXRot(next.pitch());
++        this.player.setYRot(next.yaw());
++        this.player.xRotO = next.previousPitch();
++        this.player.yRotO = next.previousYaw();
++        this.player.setYHeadRot(next.headYaw());
++    }
++
++    @Override
++    public PositionAndRotation target() {
++        if (this.lifetime == null || this.nativeInterpolation.target() == null) return this.host.target();
++        final var position = this.nativeInterpolation.target();
++        final var rotation = this.nativeInterpolation.rotation();
++        return PositionAndRotation.of(new Vec3(position.x(), (double) position.y() - this.originOffset, position.z()), rotation.y(), rotation.x());
++    }
++
++    @Override
++    public boolean interpolateTo(final PositionPath path, final float yaw, final float pitch, final boolean hasRotation) {
++        this.releaseNative();
++        return this.host.interpolateTo(path, yaw, pitch, hasRotation);
++    }
++
++    @Override
++    public InterpolationTracker interpolationTracker() { return this.host.interpolationTracker(); }
++
++    @Override
++    public void applyPredictedMovement(final Vec3 movement) {
++        if (this.lifetime == null) this.host.applyPredictedMovement(movement);
++    }
++
++    @Override
++    public boolean hasActiveInterpolation() {
++        return this.lifetime == null ? this.host.hasActiveInterpolation() : this.nativeInterpolation.active();
++    }
++
++    @Override
++    public void cancel() {
++        this.releaseNative();
++        this.host.cancel();
++    }
++
++    private void releaseNative() {
++        this.nativeInterpolation.clear();
++        this.lifetime = null;
++        this.connection = null;
++        this.level = null;
++        this.eye = null;
++        this.appliedPosition = null;
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 590dad9..21b4eae 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -209,6 +209,8 @@
+     "features.movement.MixinFireworkRocketEntity",
+     "features.movement.MixinLocalPlayer",
+     "features.movement.MixinPlayerCorrectionPacketListener",
++    "features.movement.MixinRemotePlayerInterpolation",
++    "features.movement.MixinRemotePlayerMovementPacketListener",
+     "features.movement.MixinPlayer",
+     "features.sound.MixinBedrockMiningAudio",
+     "features.block.MixinBedrockCommandBlockSettings",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/NativeRemoteInterpolationReferenceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/NativeRemoteInterpolationReferenceTest.java
+new file mode 100644
+index 0000000..1a00bf6
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/NativeRemoteInterpolationReferenceTest.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonParser;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeRemoteInterpolationReferenceTest {
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_REMOTE_INTERPOLATION_REFERENCE", matches = ".+")
++    void matchesCurrentNativePositionMainRotationAndHeadCounterInstructions() throws Exception {
++        final var reference = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_REMOTE_INTERPOLATION_REFERENCE"),
++                "native-current-interpolation-tick-controls.json"))).getAsJsonObject();
++        assertEquals("Bedrock1.26.60.5/protocol2225", reference.get("target").getAsString());
++        assertEquals("988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a", reference.get("sha256").getAsString());
++        int cases = 0;
++        for (final var element : reference.getAsJsonArray("rows")) {
++            final var row = element.getAsJsonObject();
++            // Remote players retain a head component. Missing-component factories have a separate admission boundary.
++            if (!row.get("headPresent").getAsBoolean()) continue;
++            final var interpolation = new RemotePlayerInterpolation();
++            set(interpolation, "target", position(row.getAsJsonArray("target")));
++            set(interpolation, "rotation", new Position3f(190.25F, -190.5F, 175.25F));
++            set(interpolation, "headTarget", 175.25F);
++            set(interpolation, "positionSteps", row.get("positionSteps").getAsInt());
++            set(interpolation, "rotationSteps", row.get("rotationSteps").getAsInt());
++            set(interpolation, "headSteps", row.get("headSteps").getAsInt());
++            final var input = position(row.getAsJsonArray("inputPosition"));
++            final var step = interpolation.tick(input, -179.75F, 179.5F, 90.25F, -90.5F, 179.75F);
++            final var expectedPosition = row.get("positionRequest");
++            assertEquals(expectedPosition.isJsonNull() ? input : position(expectedPosition.getAsJsonArray()), step.position());
++            final var rotation = row.getAsJsonArray("rotation");
++            assertEquals(rotation.get(0).getAsFloat(), step.pitch());
++            assertEquals(rotation.get(1).getAsFloat(), step.yaw());
++            assertEquals(rotation.get(2).getAsFloat(), step.previousPitch());
++            assertEquals(rotation.get(3).getAsFloat(), step.previousYaw());
++            assertEquals(row.getAsJsonArray("head").get(0).getAsFloat(), step.headYaw());
++            assertEquals(row.getAsJsonArray("motion").get(0).getAsFloat() == 0F, step.clearMotion());
++            final var counters = row.getAsJsonArray("postCounters");
++            assertEquals(counters.get(0).getAsInt(), get(interpolation, "positionSteps"));
++            assertEquals(counters.get(1).getAsInt(), get(interpolation, "rotationSteps"));
++            assertEquals(counters.get(2).getAsInt(), get(interpolation, "headSteps"));
++            cases++;
++        }
++        assertEquals(256, cases);
++    }
++
++    private static Position3f position(final JsonArray value) {
++        return new Position3f(value.get(0).getAsFloat(), value.get(1).getAsFloat(), value.get(2).getAsFloat());
++    }
++
++    private static void set(final RemotePlayerInterpolation interpolation, final String name, final Object value) throws Exception {
++        final var field = RemotePlayerInterpolation.class.getDeclaredField(name);
++        field.setAccessible(true);
++        field.set(interpolation, value);
++    }
++
++    private static int get(final RemotePlayerInterpolation interpolation, final String name) throws Exception {
++        final var field = RemotePlayerInterpolation.class.getDeclaredField(name);
++        field.setAccessible(true);
++        return field.getInt(interpolation);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
+new file mode 100644
+index 0000000..c88158b
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
+@@ -0,0 +1,190 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.client.player.RemotePlayer;
++import net.minecraft.network.Connection;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.InterpolationHandler;
++import net.minecraft.world.entity.PositionPath;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++import org.mockito.MockedStatic;
++
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicReference;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class RemotePlayerInterpolationHandlerTest {
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void appliesNativeFloatStepsWithoutTheHostDistanceCutoffOrPreviousPositionReset() {
++        try (final var f = new Fixture()) {
++            assertTrue(f.handler.receive(f.movement(0, false)));
++            f.handler.interpolate();
++            assertEquals(.5D, f.position.get().x);
++            assertEquals((double) 24.413341522216797F - 1.62001F, f.position.get().y);
++            f.handler.interpolate();
++            assertEquals(1D, f.position.get().x);
++            f.handler.interpolate();
++            assertEquals(1.5D, f.position.get().x);
++            assertEquals((double) 73.24002F - 1.62001F, f.position.get().y);
++            assertFalse(f.handler.hasActiveInterpolation());
++            verify(f.player, times(3)).setDeltaMovement(Vec3.ZERO);
++            verify(f.player, never()).snapTo(any(Vec3.class), anyFloat(), anyFloat());
++            verify(f.host, never()).interpolate();
++        }
++    }
++
++    @Test
++    void leavesOrdinaryJavaInterpolationHistoryIntactAcrossUnpairedPackets() {
++        try (final var f = new Fixture()) {
++            final var first = PositionPath.of(new Vec3(1, 2, 3));
++            final var second = PositionPath.of(new Vec3(4, 5, 6));
++            when(f.host.interpolateTo(any(), anyFloat(), anyFloat(), anyBoolean())).thenReturn(true);
++            assertFalse(f.handler.receive(null));
++            assertTrue(f.handler.interpolateTo(first, 1, 2, true));
++            assertFalse(f.handler.receive(null));
++            assertTrue(f.handler.interpolateTo(second, 3, 4, true));
++            f.handler.interpolate();
++            verify(f.host, never()).cancel();
++            verify(f.host).interpolateTo(first, 1, 2, true);
++            verify(f.host).interpolateTo(second, 3, 4, true);
++            verify(f.host).interpolate();
++        }
++    }
++
++    @Test
++    void headOnlyReceiptAppliesRawPitchAndKeepsTheActiveMovement() {
++        try (final var f = new Fixture()) {
++            assertTrue(f.handler.receive(f.movement(0, false)));
++            f.handler.interpolate();
++            assertEquals(.5D, f.position.get().x);
++            clearInvocations(f.host, f.player);
++            final var head = new RemotePlayerMovement(17, f.uuid, f.lifetime, 3, false,
++                    new Position3f(37, 123, 19), new Position3f(-22.75F, 135, -135.25F), 1.62001F, (short) 0, 0, false,
++                    new RemotePlayerMovement.JavaTarget(false, 0, 0, 0, 0, -22.5F, false));
++            assertTrue(f.handler.receive(head));
++            verify(f.player).setXRot(-22.75F);
++            verify(f.player).setYRot(0F);
++            assertEquals(.5D, f.position.get().x);
++            assertTrue(f.handler.hasActiveInterpolation());
++            f.handler.interpolate();
++            assertEquals(1D, f.position.get().x);
++            f.handler.interpolate();
++            assertEquals(1.5D, f.position.get().x);
++            assertFalse(f.handler.hasActiveInterpolation());
++            verify(f.host, never()).interpolateTo(any(), anyFloat(), anyFloat(), anyBoolean());
++            verify(f.player).lerpHeadTo(0F, 0);
++        }
++    }
++
++    @Test
++    void resetModesAndMountedPlayersReturnToTheHostPath() {
++        for (int mode = 0; mode <= 2; mode++) {
++            try (final var f = new Fixture()) {
++                assertTrue(f.handler.receive(f.movement(0, false)));
++                assertFalse(f.handler.receive(f.movement(mode, mode == 0)));
++                assertFalse(f.handler.hasActiveInterpolation());
++                f.handler.interpolate();
++                verify(f.host).interpolate();
++                verify(f.player, never()).setPos(anyDouble(), anyDouble(), anyDouble());
++            }
++        }
++    }
++
++    @Test
++    void retiresPendingMovementWhenItsWorldConnectionActorOrNativeLifetimeChanges() {
++        for (int change = 0; change < 7; change++) {
++            try (final var f = new Fixture()) {
++                assertTrue(f.handler.receive(f.movement(0, false)));
++                switch (change) {
++                    case 0 -> f.client.level = mock(ClientLevel.class);
++                    case 1 -> when(f.client.getConnection()).thenReturn(mock(ClientPacketListener.class));
++                    case 2 -> when(f.level.getEntity(17)).thenReturn(mock(RemotePlayer.class));
++                    case 3 -> f.actors.when(() -> BedrockActorState.liveLifetime(f.uuid)).thenReturn(new UUID(5, 6));
++                    case 4 -> when(f.player.isPassenger()).thenReturn(true);
++                    case 5 -> f.permissions.when(BedrockInputPermissions::isBedrockConnection).thenReturn(false);
++                    case 6 -> when(f.connection.isConnected()).thenReturn(false);
++                    default -> fail();
++                }
++                f.handler.interpolate();
++                assertFalse(f.handler.hasActiveInterpolation());
++                verify(f.player, never()).setPos(anyDouble(), anyDouble(), anyDouble());
++            }
++        }
++    }
++
++    private static final class Fixture implements AutoCloseable {
++        private final UUID uuid = new UUID(1, 2);
++        private final UUID lifetime = new UUID(3, 4);
++        private final Minecraft client = mock(Minecraft.class);
++        private final ClientLevel level = mock(ClientLevel.class);
++        private final ClientPacketListener listener = mock(ClientPacketListener.class);
++        private final Connection connection = mock(Connection.class);
++        private final RemotePlayer player = mock(RemotePlayer.class);
++        private final InterpolationHandler host = mock(InterpolationHandler.class);
++        private final AtomicReference<Vec3> position = new AtomicReference<>(new Vec3(0, -(double) 1.62001F, 5.5));
++        private final RemotePlayerInterpolationHandler handler = new RemotePlayerInterpolationHandler(this.player, this.host);
++        private final MockedStatic<Minecraft> game = mockStatic(Minecraft.class);
++        private final MockedStatic<BedrockActorState> actors = mockStatic(BedrockActorState.class);
++        private final MockedStatic<BedrockInputPermissions> permissions = mockStatic(BedrockInputPermissions.class);
++
++        private Fixture() {
++            this.client.level = this.level;
++            this.client.player = mock(LocalPlayer.class);
++            this.game.when(Minecraft::getInstance).thenReturn(this.client);
++            this.permissions.when(BedrockInputPermissions::isBedrockConnection).thenReturn(true);
++            this.actors.when(() -> BedrockActorState.liveLifetime(this.uuid)).thenReturn(this.lifetime);
++            when(this.client.getConnection()).thenReturn(this.listener);
++            when(this.listener.getConnection()).thenReturn(this.connection);
++            when(this.connection.isConnected()).thenReturn(true);
++            when(this.player.getId()).thenReturn(17);
++            when(this.player.getUUID()).thenReturn(this.uuid);
++            when(this.player.level()).thenReturn(this.level);
++            when(this.level.getEntity(17)).thenReturn(this.player);
++            when(this.level.isTickingEntity(this.player)).thenReturn(true);
++            when(this.player.position()).thenAnswer(_ -> this.position.get());
++            when(this.player.getX()).thenAnswer(_ -> this.position.get().x);
++            when(this.player.getY()).thenAnswer(_ -> this.position.get().y);
++            when(this.player.getZ()).thenAnswer(_ -> this.position.get().z);
++            doAnswer(call -> {
++                this.position.set(new Vec3(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
++                return null;
++            }).when(this.player).setPos(anyDouble(), anyDouble(), anyDouble());
++        }
++
++        private RemotePlayerMovement movement(final int mode, final boolean riding) {
++            return new RemotePlayerMovement(17, this.uuid, this.lifetime, mode, riding,
++                    new Position3f(1.5F, 73.24002F, 5.5F), Position3f.ZERO, 1.62001F, (short) 0, 3, false,
++                    new RemotePlayerMovement.JavaTarget(mode != 3, 0, 0, 0, 0, 0, false));
++        }
++
++        @Override
++        public void close() {
++            this.permissions.close();
++            this.actors.close();
++            this.game.close();
++        }
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationTest.java
+new file mode 100644
+index 0000000..d3c0422
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationTest.java
+@@ -0,0 +1,114 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class RemotePlayerInterpolationTest {
++    @Test
++    void followsTheThreeCurrentNativeStateVectorStepsAcrossALargeMove() {
++        final var interpolation = new RemotePlayerInterpolation();
++        interpolation.receive(movement(0, new Position3f(1.5F, 73.24002F, 5.5F), 0, 3));
++        Position3f position = new Position3f(0, 0, 5.5F);
++        final Position3f[] expected = {
++                new Position3f(.5F, 24.413341522216797F, 5.5F),
++                new Position3f(1F, 48.826683044433594F, 5.5F),
++                new Position3f(1.5F, 73.24002075195312F, 5.5F)
++        };
++        for (final var nativePosition : expected) {
++            final var step = interpolation.tick(position, 0, 0, 0, 0, 0);
++            assertEquals(nativePosition, step.position());
++            assertTrue(step.clearMotion());
++            position = step.position();
++        }
++        assertFalse(interpolation.active());
++        assertFalse(interpolation.tick(position, 0, 0, 0, 0, 0).clearMotion());
++    }
++
++    @Test
++    void preservesFloatRoundingThroughTheObservedSmallMove() {
++        final var interpolation = new RemotePlayerInterpolation();
++        interpolation.receive(movement(0, new Position3f(1.5F, 73.24002F, 4.5F), 0, 3));
++        Position3f position = new Position3f(2.5F, 73.24002F, 4.5F);
++        for (final float x : new float[]{2.1666667461395264F, 1.8333333730697632F, 1.5F}) {
++            position = interpolation.tick(position, 0, 0, 0, 0, 0).position();
++            assertEquals(x, position.x());
++        }
++    }
++
++    @Test
++    void finishesAForcedActorTargetBeforeApplyingTheAgedQueuedTarget() {
++        final var interpolation = new RemotePlayerInterpolation();
++        interpolation.receive(movement(RemotePlayerMovement.ACTOR, new Position3f(9, 0, 0), 8, 3));
++        Position3f position = interpolation.tick(Position3f.ZERO, 0, 0, 0, 0, 0).position();
++        assertEquals(3F, position.x());
++        interpolation.receive(movement(RemotePlayerMovement.ACTOR, new Position3f(12, 0, 0), 0, 5));
++        for (final float x : new float[]{6F, 9F, 9.75F, 10.5F, 11.25F, 12F}) {
++            position = interpolation.tick(position, 0, 0, 0, 0, 0).position();
++            assertEquals(x, position.x());
++        }
++        assertFalse(interpolation.active());
++    }
++
++    @Test
++    void takesTheShortRotationArcAndDoesNotMoveForANegativeNativeCounter() {
++        final var interpolation = new RemotePlayerInterpolation();
++        final var source = movement(RemotePlayerMovement.ACTOR, new Position3f(9, 0, 0), 0, -1L);
++        interpolation.receive(new RemotePlayerMovement(source.entityId(), source.uuid(), source.lifetime(), source.mode(), false,
++                source.position(), new Position3f(10, 10, 10), source.originOffset(), source.flags(), source.duration(), false, source.javaTarget()));
++        float yaw = 350F;
++        float pitch = 350F;
++        for (int i = 0; i < 3; i++) {
++            final var step = interpolation.tick(Position3f.ZERO, pitch, yaw, pitch, yaw, 0);
++            assertEquals(Position3f.ZERO, step.position());
++            assertFalse(step.clearMotion());
++            assertTrue(Math.abs(step.yaw()) <= 10F);
++            pitch = step.pitch();
++            yaw = step.yaw();
++        }
++        assertEquals(10F, yaw);
++        assertTrue(interpolation.active());
++        interpolation.clear();
++        assertFalse(interpolation.active());
++    }
++
++    @Test
++    void headOnlyUpdatesRetainPendingPositionAndBodyTargets() {
++        final var interpolation = new RemotePlayerInterpolation();
++        final var normal = movement(0, new Position3f(9, 0, 0), 0, 3);
++        interpolation.receive(new RemotePlayerMovement(17, normal.uuid(), normal.lifetime(), 0, false,
++                normal.position(), new Position3f(22.5F, 90, 90), normal.originOffset(), normal.flags(), normal.duration(), false, normal.javaTarget()));
++        final var first = interpolation.tick(Position3f.ZERO, 0, 0, 0, 0, 0);
++        assertEquals(new Position3f(3, 0, 0), first.position());
++        assertEquals(30F, first.yaw());
++        assertEquals(30F, first.headYaw());
++        interpolation.receive(new RemotePlayerMovement(17, normal.uuid(), normal.lifetime(), 3, false,
++                new Position3f(37, 123, 19), new Position3f(-22.75F, 135, -135.25F), normal.originOffset(), (short) 0, 0, false,
++                new RemotePlayerMovement.JavaTarget(false, 0, 0, 0, 90, -22.5F, false)));
++        final var second = interpolation.tick(first.position(), -22.75F, first.yaw(), 0, 0, first.headYaw());
++        assertEquals(new Position3f(6, 0, 0), second.position());
++        assertEquals(-.125F, second.pitch());
++        assertEquals(60F, second.yaw());
++        assertEquals(-52.625F, second.headYaw());
++        final var last = interpolation.tick(second.position(), second.pitch(), second.yaw(), 0, 0, second.headYaw());
++        assertEquals(new Position3f(9, 0, 0), last.position());
++        assertEquals(22.5F, last.pitch());
++        assertEquals(90F, last.yaw());
++        assertEquals(-135.25F, last.headYaw());
++        assertFalse(interpolation.active());
++    }
++
++    private static RemotePlayerMovement movement(final int mode, final Position3f target, final int flags, final long duration) {
++        return new RemotePlayerMovement(17, new UUID(1, 2), new UUID(3, 4), mode, false, target, Position3f.ZERO, 1.62001F,
++                (short) flags, duration, false, new RemotePlayerMovement.JavaTarget(mode != 3, 0, 0, 0, 0, 0, false));
++    }
++}
+-- 
+2.56.0

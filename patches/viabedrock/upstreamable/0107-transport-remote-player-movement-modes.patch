@@ -1,0 +1,648 @@
+From 104f1c47db9bb16d6f77ef331cc3ca6ef3b075f1 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 15:43:18 +0100
+Subject: [PATCH] feat(players): transport remote movement modes and targets
+
+Official Bedrock 1.26.60.5, protocol 2225, smooths admitted normal moves
+through three float-rounded positions, including large excursions.
+Java position packets lose the source mode and apply a different curve.
+Java rotation-only packets also quantize pitch and omit the head target.
+
+Publish a negotiated receipt before each remote player's translated
+position or rotation packet. Retain native inputs, source mode, known
+riding, UUID, lifetime, raw actor flags and unsigned duration. Carry the
+exact Java target separately, including its packet family. Preserve the
+existing float/double Y arithmetic and byte-angle translation so pairing
+does not depend on reconstructing either packet family's rounding.
+
+Keep raw head-only pitch and head yaw. Its supplied position and
+conflicting main yaw remain inert. Current native mode helper
+0x1402d92c0 leaves pending position and main-rotation targets intact,
+applies pitch immediately, and refreshes the independent head counter.
+The client can reproduce this branch without changing legacy packets.
+
+Consume receipts once in connection order. Retire unmatched batches and
+bound pending state so modes cannot cross packet, actor or connection
+lifetimes. Exclude local players, generic actors and unavailable native
+state. Keep absolute/delta receive caches and collision history separate
+from normal player movement and client interpolation.
+---
+ .../api/model/RemotePlayerMovement.java       |  88 +++++++
+ .../model/RemotePlayerMovementTracker.java    |  47 ++++
+ .../viabedrock/api/model/entity/Entity.java   |  29 ++
+ .../protocol/packet/EntityPackets.java        |   3 +
+ .../protocol/packet/OtherPlayerPackets.java   |   4 +
+ .../api/model/RemotePlayerMovementTest.java   | 100 +++++++
+ .../RemotePlayerMovementPacketTest.java       | 248 ++++++++++++++++++
+ 7 files changed, 519 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovement.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTracker.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/RemotePlayerMovementPacketTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovement.java
+new file mode 100644
+index 00000000..c0f695d8
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovement.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import java.util.Objects;
++import java.util.UUID;
++
++/** Native inputs paired with their next translated Java position or rotation packet. */
++public record RemotePlayerMovement(int entityId, UUID uuid, UUID lifetime, int mode, boolean riding,
++                                   Position3f position, Position3f rotation, float originOffset,
++                                   short flags, long duration, boolean onGround, JavaTarget javaTarget) {
++
++    public static final int ACTOR = -1;
++    public static final String CHANNEL = "viabedrock:remote_player_movement";
++    public static final int MAX_PAYLOAD_BYTES = 128;
++    public static final Type<RemotePlayerMovement> TYPE = new Type<>(RemotePlayerMovement.class) {
++        @Override
++        public RemotePlayerMovement read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported remote player movement");
++            }
++            final var value = new RemotePlayerMovement(Types.VAR_INT.readPrimitive(buffer), Types.UUID.read(buffer),
++                    Types.UUID.read(buffer), buffer.readByte(), buffer.readBoolean(),
++                    new Position3f(buffer.readFloat(), buffer.readFloat(), buffer.readFloat()),
++                    new Position3f(buffer.readFloat(), buffer.readFloat(), buffer.readFloat()), buffer.readFloat(),
++                    buffer.readUnsignedByte(), buffer.readLong(), buffer.readBoolean(),
++                    new JavaTarget(buffer.readBoolean(), buffer.readDouble(), buffer.readDouble(), buffer.readDouble(),
++                            buffer.readFloat(), buffer.readFloat(), buffer.readBoolean()));
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing remote player movement data");
++            }
++            return value;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final RemotePlayerMovement value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, value.entityId);
++            Types.UUID.write(buffer, value.uuid);
++            Types.UUID.write(buffer, value.lifetime);
++            buffer.writeByte(value.mode).writeBoolean(value.riding);
++            buffer.writeFloat(value.position.x()).writeFloat(value.position.y()).writeFloat(value.position.z());
++            buffer.writeFloat(value.rotation.x()).writeFloat(value.rotation.y()).writeFloat(value.rotation.z());
++            buffer.writeFloat(value.originOffset).writeByte(value.flags).writeLong(value.duration).writeBoolean(value.onGround);
++            final var target = value.javaTarget;
++            buffer.writeBoolean(target.position).writeDouble(target.x).writeDouble(target.y).writeDouble(target.z);
++            buffer.writeFloat(target.yaw).writeFloat(target.pitch).writeBoolean(target.onGround);
++        }
++    };
++
++    public RemotePlayerMovement {
++        Objects.requireNonNull(uuid);
++        Objects.requireNonNull(lifetime);
++        Objects.requireNonNull(javaTarget);
++        if (entityId < 0 || mode < ACTOR || mode > 3 || flags < 0 || flags > 255
++                || !finite(position) || !finite(rotation) || !Float.isFinite(originOffset)
++                || javaTarget.position != (mode != 3)) {
++            throw new IllegalArgumentException("Invalid remote player movement");
++        }
++    }
++
++    public static boolean finite(final Position3f value) {
++        return value != null && Float.isFinite(value.x()) && Float.isFinite(value.y()) && Float.isFinite(value.z());
++    }
++
++    public record JavaTarget(boolean position, double x, double y, double z, float yaw, float pitch, boolean onGround) {
++
++        public JavaTarget {
++            if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z) || !Float.isFinite(yaw) || !Float.isFinite(pitch)
++                    || !position && (x != 0 || y != 0 || z != 0)) {
++                throw new IllegalArgumentException("Invalid translated remote player target");
++            }
++        }
++
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTracker.java b/src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTracker.java
+new file mode 100644
+index 00000000..1e88b1de
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTracker.java
+@@ -0,0 +1,47 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.ArrayDeque;
++import java.util.UUID;
++
++/** Connection-scoped FIFO pairing; an unmatched packet cannot reuse an old mode. */
++public final class RemotePlayerMovementTracker {
++
++    private static final int MAX_PENDING = 256;
++    private final ArrayDeque<RemotePlayerMovement> pending = new ArrayDeque<>();
++    private boolean disabled;
++
++    public void accept(final RemotePlayerMovement movement) {
++        if (this.disabled) {
++            return;
++        }
++        if (this.pending.size() == MAX_PENDING) {
++            this.pending.clear();
++            this.disabled = true;
++            return;
++        }
++        this.pending.addLast(movement);
++    }
++
++    public RemotePlayerMovement consume(final int entityId, final RemotePlayerMovement.JavaTarget target, final UUID uuid, final UUID lifetime) {
++        final var next = this.pending.pollFirst();
++        if (next == null) {
++            return null;
++        }
++        if (next.entityId() != entityId || !next.javaTarget().equals(target) || !next.uuid().equals(uuid) || !next.lifetime().equals(lifetime)) {
++            this.pending.clear();
++            return null;
++        }
++        return next;
++    }
++
++    public void clear() {
++        this.pending.clear();
++        this.disabled = false;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
+index b47f5471..2dd368c8 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
+@@ -29,6 +29,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.MovementEffect;
+ import net.raphimc.viabedrock.api.model.ActorSpatialCommand;
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
+ import net.raphimc.viabedrock.api.model.NativeActorMessage;
+ import net.raphimc.viabedrock.api.model.NativeActorHitboxes;
+ import net.raphimc.viabedrock.api.util.EnumUtil;
+@@ -591,6 +592,34 @@ public class Entity {
+         }
+     }
+ 
++    /** Preserve the source mode without changing the legacy Java translation or actor receive cache. */
++    public final void sendRemotePlayerMovement(final int mode, final boolean riding, final short flags, final long duration) {
++        this.sendRemotePlayerMovement(mode, riding, flags, duration, this.rotation);
++    }
++
++    public final void sendRemotePlayerMovement(final int mode, final boolean riding, final short flags, final long duration, final Position3f sourceRotation) {
++        final var channels = this.user == null ? null : this.user.get(ChannelStorage.class);
++        if (!(this instanceof PlayerEntity) || this instanceof ClientPlayerEntity || channels == null
++                || !channels.hasChannel(RemotePlayerMovement.CHANNEL)
++                || !this.nativeStateAvailable() || !RemotePlayerMovement.finite(this.position)
++                || !RemotePlayerMovement.finite(sourceRotation)
++                || this.user.get(EntityTracker.class).getEntityByUid(this.uniqueId()) != this) {
++            return;
++        }
++        this.sendNativeActorSnapshot();
++        final boolean position = mode != 3;
++        final double y = mode == RemotePlayerMovement.ACTOR ? this.javaPosition().y() : (double) this.position.y() - this.eyeOffset();
++        final var target = new RemotePlayerMovement.JavaTarget(position, position ? this.position.x() : 0, position ? y : 0, position ? this.position.z() : 0,
++                position ? this.javaRotation().y() : MathUtil.byte2Float(MathUtil.float2Byte(this.rotation.y())),
++                position ? this.javaRotation().x() : MathUtil.byte2Float(MathUtil.float2Byte(this.rotation.x())), this.isOnGround());
++        final var movement = new RemotePlayerMovement(this.javaId(), this.javaUuid(),
++                this.nativeLifetime, mode, riding, this.position, sourceRotation, this.eyeOffset(), flags, duration, this.isOnGround(), target);
++        final var payload = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user);
++        payload.write(Types.STRING, RemotePlayerMovement.CHANNEL);
++        payload.write(RemotePlayerMovement.TYPE, movement);
++        payload.send(BedrockProtocol.class);
++    }
++
+     public final ActorSpatialCommand nativeSpatialCommand() {
+         final var tracker = this.user == null ? null : this.user.get(EntityTracker.class);
+         // The horse writer sets VehicleInputIntent.mIsClientPredicted only for a saddled, tamed local controller.
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+index 4578a73f..6f65acbc 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+@@ -38,6 +38,7 @@ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.NativeUiHurtEvent;
+ import net.raphimc.viabedrock.api.model.NativeActorMessage;
+ import net.raphimc.viabedrock.api.model.ActorMotionCommand;
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
+ import net.raphimc.viabedrock.api.model.MovementCorrectionTiming;
+ import net.raphimc.viabedrock.api.model.NativeAnimationMessage;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+@@ -294,6 +295,7 @@ public final class EntityPackets {
+             entity.setPosition(position);
+             entity.setRotation(new Position3f(pitch, yaw, headYaw));
+             entity.setOnGround(onGround);
++            entity.sendRemotePlayerMovement(RemotePlayerMovement.ACTOR, false, flags, 0);
+ 
+             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
+             wrapper.write(Types.VAR_INT, 1); // Stepped
+@@ -380,6 +382,7 @@ public final class EntityPackets {
+                 PacketFactory.sendJavaRotateHead(wrapper.user(), entity);
+             }
+             entity.setOnGround(onGround);
++            entity.sendRemotePlayerMovement(RemotePlayerMovement.ACTOR, false, flags, interpolationTicks);
+ 
+             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
+             wrapper.write(Types.VAR_INT, 1); // Stepped
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+index 8b37d578..1bd8cc1b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+@@ -186,6 +186,8 @@ public final class OtherPlayerPackets {
+             }
+             if (mode == PositionMode.OnlyHeadRot) {
+                 entity.setRotation(new Position3f(rotation.x(), entity.rotation().y(), entity.rotation().z()));
++                entity.sendRemotePlayerMovement(mode.getValue(), ridingEntityRuntimeId != 0
++                        && entityTracker.getEntityByRid(ridingEntityRuntimeId) != null, (short) (onGround ? 1 : 0), 0, rotation);
+                 wrapper.setPacketType(ClientboundPackets26_3.MOVE_ENTITY_ROT);
+                 wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
+                 wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
+@@ -208,6 +210,8 @@ public final class OtherPlayerPackets {
+                 return;
+             }
+ 
++            entity.sendRemotePlayerMovement(mode.getValue(), ridingEntityRuntimeId != 0
++                    && entityTracker.getEntityByRid(ridingEntityRuntimeId) != null, (short) (onGround ? 1 : 0), 3);
+             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
+             wrapper.write(Types.VAR_INT, 1); // Stepped
+             wrapper.write(Types.VAR_INT, 1); // 1 step
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTest.java
+new file mode 100644
+index 00000000..0b199629
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTest.java
+@@ -0,0 +1,100 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class RemotePlayerMovementTest {
++
++    private static final UUID PLAYER = new UUID(1, 2);
++    private static final UUID LIFETIME = new UUID(3, 4);
++
++    @Test
++    void wireRoundTripPreservesResetModesAndUnsignedActorDuration() {
++        final var bytes = Unpooled.buffer();
++        try {
++            for (int mode = RemotePlayerMovement.ACTOR; mode <= 3; mode++) {
++                final var source = movement(mode, PLAYER, LIFETIME);
++                RemotePlayerMovement.TYPE.write(bytes, source);
++                assertTrue(bytes.readableBytes() <= RemotePlayerMovement.MAX_PAYLOAD_BYTES);
++                assertEquals(source, RemotePlayerMovement.TYPE.read(bytes));
++                assertFalse(bytes.isReadable());
++                bytes.clear();
++            }
++            RemotePlayerMovement.TYPE.write(bytes, movement(0, PLAYER, LIFETIME));
++            bytes.setByte(0, 2);
++            assertThrows(IllegalArgumentException.class, () -> RemotePlayerMovement.TYPE.read(bytes));
++            bytes.clear();
++            RemotePlayerMovement.TYPE.write(bytes, movement(0, PLAYER, LIFETIME));
++            bytes.writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> RemotePlayerMovement.TYPE.read(bytes));
++        } finally {
++            bytes.release();
++        }
++    }
++
++    @Test
++    void pairingPreservesOrderAndConsumesEachModeOnce() {
++        final var tracker = new RemotePlayerMovementTracker();
++        for (int mode = 0; mode <= 3; mode++) {
++            tracker.accept(movement(mode, PLAYER, LIFETIME));
++        }
++        for (int mode = 0; mode <= 3; mode++) {
++            final var expected = movement(mode, PLAYER, LIFETIME);
++            assertEquals(expected, tracker.consume(17, expected.javaTarget(), PLAYER, LIFETIME));
++        }
++        assertNull(tracker.consume(17, movement(0, PLAYER, LIFETIME).javaTarget(), PLAYER, LIFETIME));
++    }
++
++    @Test
++    void unmatchedPacketOrReusedIdentityCannotApplyAnOlderMode() {
++        for (int mismatch = 0; mismatch < 3; mismatch++) {
++            final var tracker = new RemotePlayerMovementTracker();
++            final var source = movement(0, PLAYER, LIFETIME);
++            tracker.accept(source);
++            tracker.accept(movement(2, PLAYER, LIFETIME));
++            final var target = source.javaTarget();
++            assertNull(tracker.consume(mismatch == 0 ? 99 : 17, target,
++                    mismatch == 1 ? new UUID(5, 6) : PLAYER, mismatch == 2 ? new UUID(7, 8) : LIFETIME));
++            assertNull(tracker.consume(17, target, PLAYER, LIFETIME));
++            tracker.accept(source);
++            assertEquals(source, tracker.consume(17, target, PLAYER, LIFETIME));
++        }
++    }
++
++    @Test
++    void overflowUsesLegacyMovementUntilTheConnectionIsCleared() {
++        final var tracker = new RemotePlayerMovementTracker();
++        final var source = movement(0, PLAYER, LIFETIME);
++        for (int i = 0; i < 257; i++) {
++            tracker.accept(source);
++        }
++        assertNull(tracker.consume(17, source.javaTarget(), PLAYER, LIFETIME));
++        tracker.accept(source);
++        assertNull(tracker.consume(17, source.javaTarget(), PLAYER, LIFETIME));
++        tracker.clear();
++        tracker.accept(source);
++        assertEquals(source, tracker.consume(17, source.javaTarget(), PLAYER, LIFETIME));
++        tracker.accept(source);
++        tracker.clear();
++        assertNull(tracker.consume(17, source.javaTarget(), PLAYER, LIFETIME));
++    }
++
++    private static RemotePlayerMovement movement(final int mode, final UUID uuid, final UUID lifetime) {
++        return new RemotePlayerMovement(17, uuid, lifetime, mode, true,
++                new Position3f(1.5F, 73.24002F, 4.5F), new Position3f(22.5F, 90, 45),
++                1.62001F, (short) 255, -1L, true,
++                new RemotePlayerMovement.JavaTarget(mode != 3, mode == 3 ? 0 : 1.5D, mode == 3 ? 0 : 71.62001073360443D,
++                        mode == 3 ? 0 : 4.5D, 90, 22.5F, true));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/RemotePlayerMovementPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/RemotePlayerMovementPacketTest.java
+new file mode 100644
+index 00000000..8cbe8670
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/RemotePlayerMovementPacketTest.java
+@@ -0,0 +1,248 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.RemotePlayerMovement;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.api.util.MathUtil;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.mockito.MockedStatic;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Set;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class RemotePlayerMovementPacketTest {
++
++    @Test
++    void registeredMovementHandlersDeliverModesAndExactJavaTargets() throws Exception {
++        final var fixture = new Fixture();
++        try (var packets = mockStatic(PacketWrapper.class);
++             var helpers = mockStatic(PacketFactory.class)) {
++            fixture.capture(packets);
++            for (int mode = 0; mode <= 3; mode++) {
++                fixture.receipts.clear();
++                final var input = Unpooled.buffer();
++                try {
++                    fixture.playerMove(input, mode, mode == 1 ? 102 : 0);
++                    final var packet = fixture.translate(ClientboundBedrockPackets.MOVE_PLAYER, input);
++                    assertFalse(input.isReadable());
++                    final var receipt = fixture.receipts.getFirst();
++                    assertEquals(1, fixture.receipts.size());
++                    assertEquals(mode, receipt.mode());
++                    assertEquals(mode == 1, receipt.riding());
++                    assertEquals(fixture.player.nativeActorSnapshot().lifetime(), receipt.lifetime());
++                    assertEquals(fixture.player.javaUuid(), receipt.uuid());
++                    assertEquals(receipt.javaTarget(), target(packet));
++                    assertEquals(Position3f.ZERO, fixture.player.lastReceivedPosition());
++                    if (mode == 3) {
++                        assertEquals(new Position3f(22.75F, 135, -135), receipt.rotation());
++                        assertEquals(90F, receipt.javaTarget().yaw());
++                        assertEquals(22.5F, receipt.javaTarget().pitch());
++                        assertEquals(new Position3f(1.5F, 73.24002F, 4.5F), receipt.position());
++                    }
++                } finally {
++                    input.release();
++                }
++            }
++            for (boolean delta : new boolean[]{false, true}) {
++                fixture.receipts.clear();
++                final var input = Unpooled.buffer();
++                try {
++                    BedrockTypes.UNSIGNED_VAR_LONG.write(input, fixture.player.runtimeId());
++                    if (delta) {
++                        input.writeBoolean(true);
++                        BedrockTypes.FLOAT_LE.write(input, 2.5F);
++                        input.writeBoolean(false).writeBoolean(false);
++                        input.writeBoolean(false).writeBoolean(false).writeBoolean(false);
++                        input.writeBoolean(true).writeBoolean(false).writeBoolean(false).writeBoolean(true);
++                        BedrockTypes.UNSIGNED_VAR_LONG.write(input, -1L);
++                    } else {
++                        input.writeByte(1);
++                        BedrockTypes.POSITION_3F.write(input, new Position3f(1.5F, 73.24002F, 4.5F));
++                        input.writeByte(16).writeByte(64).writeByte(32);
++                    }
++                    final var packet = fixture.translate(delta ? ClientboundBedrockPackets.MOVE_ENTITY_DELTA : ClientboundBedrockPackets.MOVE_ENTITY_ABSOLUTE, input);
++                    final var receipt = fixture.receipts.getFirst();
++                    assertEquals(1, fixture.receipts.size());
++                    assertEquals(RemotePlayerMovement.ACTOR, receipt.mode());
++                    assertEquals(delta ? -1L : 0L, receipt.duration());
++                    assertEquals(delta ? 249 : 1, receipt.flags());
++                    assertEquals(receipt.javaTarget(), target(packet));
++                    assertFalse(input.isReadable());
++                } finally {
++                    input.release();
++                }
++            }
++        }
++    }
++
++    @Test
++    void unnegotiatedOrUnpublishedActorsKeepLegacyPackets() throws Exception {
++        for (int state = 0; state < 4; state++) {
++            final var fixture = new Fixture();
++            if (state == 0) {
++                fixture.channels.removeChannels(Set.of(RemotePlayerMovement.CHANNEL));
++            }
++            if (state == 1) {
++                when(fixture.tracker.nativeActorsJoined()).thenReturn(false);
++            }
++            if (state == 2) {
++                when(fixture.tracker.getEntityByUid(fixture.player.uniqueId())).thenReturn(null);
++            }
++            if (state == 3) {
++                final var local = new ClientPlayerEntity(fixture.user, 101, new UUID(5, 6), new PlayerAbilities(23, (byte) 0, (byte) 0));
++                when(fixture.tracker.getEntityByRid(101)).thenReturn(local);
++            }
++            try (var packets = mockStatic(PacketWrapper.class);
++                 var helpers = mockStatic(PacketFactory.class)) {
++                fixture.capture(packets);
++                final var input = Unpooled.buffer();
++                try {
++                    fixture.playerMove(input, 0, 0);
++                    assertEquals(ClientboundPackets26_3.ENTITY_POSITION_SYNC, fixture.translate(ClientboundBedrockPackets.MOVE_PLAYER, input).getPacketType());
++                    assertTrue(fixture.receipts.isEmpty());
++                } finally {
++                    input.release();
++                }
++                fixture.boat.sendRemotePlayerMovement(0, false, (short) 0, 3);
++                assertTrue(fixture.receipts.isEmpty());
++            }
++        }
++    }
++
++    private static RemotePlayerMovement.JavaTarget target(final PacketWrapper packet) throws Exception {
++        final var bytes = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(bytes);
++            final int type = Types.VAR_INT.readPrimitive(bytes);
++            assertEquals(7, Types.VAR_INT.readPrimitive(bytes));
++            if (type == ClientboundPackets26_3.MOVE_ENTITY_ROT.getId()) {
++                final boolean ground = bytes.readBoolean();
++                final var target = new RemotePlayerMovement.JavaTarget(false, 0, 0, 0,
++                        MathUtil.byte2Float(bytes.readByte()), MathUtil.byte2Float(bytes.readByte()), ground);
++                assertFalse(bytes.isReadable());
++                return target;
++            }
++            assertEquals(ClientboundPackets26_3.ENTITY_POSITION_SYNC.getId(), type);
++            assertEquals(1, Types.VAR_INT.readPrimitive(bytes));
++            assertEquals(1, Types.VAR_INT.readPrimitive(bytes));
++            final double x = bytes.readDouble();
++            final double y = bytes.readDouble();
++            final double z = bytes.readDouble();
++            assertEquals(3, Types.VAR_INT.readPrimitive(bytes));
++            final var target = new RemotePlayerMovement.JavaTarget(true, x, y, z, bytes.readFloat(), bytes.readFloat(), bytes.readBoolean());
++            assertFalse(bytes.isReadable());
++            return target;
++        } finally {
++            bytes.release();
++        }
++    }
++
++    private static final class Fixture {
++        private final UserConnection user = mock(UserConnection.class);
++        private final EntityTracker tracker = spy(new EntityTracker(this.user));
++        private final ChannelStorage channels = new ChannelStorage();
++        private final PlayerEntity player;
++        private final Entity boat;
++        private final List<RemotePlayerMovement> receipts = new ArrayList<>();
++
++        private Fixture() {
++            final var info = mock(ProtocolInfo.class);
++            when(this.user.get(any())).thenAnswer(call -> mock((Class<?>) call.getArgument(0)));
++            when(this.user.getProtocolInfo()).thenReturn(info);
++            when(info.getServerState()).thenReturn(State.PLAY);
++            when(this.user.get(EntityTracker.class)).thenReturn(this.tracker);
++            when(this.user.get(ChannelStorage.class)).thenReturn(this.channels);
++            when(this.tracker.nativeActorsJoined()).thenReturn(false);
++            this.channels.addChannels(Set.of(NativeActorMessage.CURRENT_CHANNEL, RemotePlayerMovement.CHANNEL));
++            this.player = new PlayerEntity(this.user, 101, 7, new UUID(1, 2), new PlayerAbilities(21, (byte) 0, (byte) 0));
++            this.tracker.addEntity(this.player, false);
++            when(this.tracker.getEntityByUid(this.player.uniqueId())).thenReturn(this.player);
++            this.boat = new Entity(this.user, 22, 102, "minecraft:boat", 8, new UUID(3, 4), EntityTypes26_3.OAK_BOAT);
++            this.tracker.addEntity(this.boat, false);
++            this.player.setPosition(Position3f.ZERO);
++            this.player.setRotation(Position3f.ZERO);
++            when(this.tracker.nativeActorsJoined()).thenReturn(true);
++        }
++
++        private void capture(final MockedStatic<PacketWrapper> packets) {
++            packets.when(() -> PacketWrapper.create(any(PacketType.class), eq(this.user))).thenAnswer(call -> {
++                final var packet = spy(new PacketWrapperImpl(call.getArgument(0), null, this.user));
++                doAnswer(_ -> {
++                    final var bytes = Unpooled.buffer();
++                    try {
++                        packet.writeToBuffer(bytes);
++                        assertEquals(ClientboundPackets26_3.CUSTOM_PAYLOAD.getId(), Types.VAR_INT.readPrimitive(bytes));
++                        if (Types.STRING.read(bytes).equals(RemotePlayerMovement.CHANNEL)) {
++                            this.receipts.add(RemotePlayerMovement.TYPE.read(bytes));
++                        }
++                    } finally {
++                        bytes.release();
++                    }
++                    return null;
++                }).when(packet).send(eq(BedrockProtocol.class), eq(true));
++                return packet;
++            });
++        }
++
++        private void playerMove(final ByteBuf input, final int mode, final long riding) {
++            BedrockTypes.UNSIGNED_VAR_LONG.write(input, this.player.runtimeId());
++            BedrockTypes.POSITION_3F.write(input, mode == 3 ? new Position3f(37, 123, 19) : new Position3f(1.5F, 73.24002F, 4.5F));
++            BedrockTypes.POSITION_3F.write(input, mode == 3 ? new Position3f(22.75F, 135, -135) : new Position3f(22.5F, 90, 45));
++            input.writeByte(mode).writeBoolean(true);
++            BedrockTypes.UNSIGNED_VAR_LONG.write(input, riding);
++            input.writeBoolean(false);
++            BedrockTypes.UNSIGNED_VAR_LONG.write(input, 200L);
++        }
++
++        private PacketWrapper translate(final ClientboundBedrockPackets type, final ByteBuf input) throws Exception {
++            final var packet = new PacketWrapperImpl(type, input, this.user);
++            new TestProtocol().translate(packet);
++            return packet;
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            OtherPlayerPackets.register(this);
++            EntityPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++    }
++
++}
+-- 
+2.56.0
