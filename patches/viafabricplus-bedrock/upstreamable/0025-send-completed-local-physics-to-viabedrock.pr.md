@@ -22,6 +22,13 @@ Regression coverage includes `BedrockPhysicalMotionLifecycleTest`, `BedrockPlaye
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
+Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover pearl-only, wind-only, and two pearl/wind angles.
+Both current Java routes produce the expected projectiles and settle after landing.
+Two ViaProxy combinations also settle with 300 ms of inbound Java-channel delay.
+Native packets contain movement corrections after wind impulses, so correction counts alone do not identify the reported rollback loop.
+These controls use physical 150 ms presses. The proxy combinations place five or six server ticks between uses.
+They do not establish identical trajectories, faster combinations, movement during throws, or resolution of the original persistent rollback report.
+
 Bedrock 1.26.60.5 and BDS 1.26.60.6 establish four stationary ten-block drops. Native, direct, and ViaProxy lose seven health on dry ground and at both partial overlaps with a solid/water boundary. A fully wet landing loses none. These controls cover fall damage with full blocks and source water. Other fluid movement and correction behavior remain separate.
 
 The [owning patch](0025-send-completed-local-physics-to-viabedrock.patch) retains implementation rationale and versioned evidence.
