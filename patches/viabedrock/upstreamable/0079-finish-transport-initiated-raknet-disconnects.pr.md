@@ -17,6 +17,8 @@ The resolved Cloudburst session codec follows the same order.
 Runtime inspection establishes that the pinned VFP client loads NetworkCompatible 1.7.0.
 The implementation uses their shared public event type.
 
+Declare the Cloudburst repository and RakNet compile/test dependencies explicitly. Current upstream removes its unused transport dependencies. The setup compatibility patch retains unchanged legacy codecs for the pinned hosts and capture tooling; it remains outside upstream PRs.
+
 ## Evidence and verification
 
 The comparison uses Java 26.3 and Bedrock 1.26.51.1, build 51061372, protocol 2193.
