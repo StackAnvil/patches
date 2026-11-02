@@ -26,4 +26,10 @@ Component defaults, tooltip selection, source timing, and complete installed pix
 
 Packet, menu-lifetime, and action tests cover supported adapters. Complete installed player/cooking controllers and live native parity remain unfinished.
 
+Action-form dialog labels use the accepted pack translator, as the title and body already do.
+`ModalFormTransitionTest` covers translated and literal buttons without authored JSON UI.
+Native Bedrock 1.26.60.5 and BDS 1.26.60.6 establish the expected text with the same English language pack.
+Rebuilt direct and ViaProxy clients show the translated button in Java dialogs and return original response indices 0 and 1.
+This verifies the generic fallback defect; the original Lifeboat dialog report still needs a matching form capture.
+
 The [owning patch](0095-integrate-authored-native-ui-presentation.patch) retains implementation rationale and versioned evidence.

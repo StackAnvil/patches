@@ -1,4 +1,4 @@
-From cc0940d826c6524c35f956e00f26d521e6da0004 Mon Sep 17 00:00:00 2001
+From 95b41a4a5c2de68bb8cbdb08157f8ec649bbbd18 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -669,6 +669,10 @@ fixtures. Storage now resolves the complete authored host rather than
 extracting its selected panel. Preserve the action and title assertions
 through that actual screen/content boundary instead of depending on the
 former content-only shortcut.
+
+Bind the accepted pack translator to every ActionForm element before retaining the form. MCStructs Bedrock 2.0.1 propagates translators through CustomForm, but ActionForm leaves its element labels on the default translator. Java dialog fallback otherwise translates the title and body while exposing raw language keys on its buttons. Preserve original response ordinals and raw form values.
+
+Bedrock 1.26.60.5 with BDS 1.26.60.6, protocol 2225, resolves a language-only pack key on the action button and preserves the literal second button. Native selections return indices 0 and 1. A packet-to-dialog regression verifies the same title, body and button labels without requiring authored JSON UI.
 ---
  Data Asset Sources.md                         |    33 +
  build.gradle                                  |     1 +
@@ -711,7 +715,7 @@ former content-only shortcut.
  .../protocol/model/NativeItemName.java        |    78 +
  .../protocol/packet/HudPackets.java           |    51 +-
  .../protocol/packet/InteractionPackets.java   |     2 +-
- .../protocol/packet/InventoryPackets.java     |   653 +-
+ .../protocol/packet/InventoryPackets.java     |   659 +-
  .../protocol/packet/JoinPackets.java          |    14 +-
  .../protocol/packet/MultiStatePackets.java    |    38 +
  .../protocol/packet/NpcDialoguePackets.java   |   417 +-
@@ -745,14 +749,14 @@ former content-only shortcut.
  .../protocol/model/ItemRegistryTest.java      |   272 +
  .../model/NativeItemDefinitionsTest.java      |   207 +
  .../protocol/model/NativeItemNameTest.java    |    61 +
- .../packet/ModalFormTransitionTest.java       |   123 +
+ .../packet/ModalFormTransitionTest.java       |   165 +
  .../NativeContainerOpeningPacketTest.java     |   486 +
  .../protocol/packet/NativeHudPacketTest.java  |   160 +
  .../packet/NpcDialoguePacketTest.java         |   301 +-
  .../packet/WrittenBookUsePacketTest.java      |     1 +
  .../storage/NativeContainerUiStateTest.java   |    85 +
  .../inventory/native-item-storage.json        |   568 +
- 82 files changed, 36368 insertions(+), 362 deletions(-)
+ 82 files changed, 36416 insertions(+), 362 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BuiltinBlockNames.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStacking.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStorageData.java
@@ -4083,7 +4087,7 @@ index 999f2404..0acee785 100644
                      && "minecraft:written_book".equals(itemIdentifier)) {
                  wrapper.cancel();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 39b8a7e4..d22d7616 100644
+index 39b8a7e4..7b3138e1 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -17,6 +17,14 @@
@@ -4128,7 +4132,7 @@ index 39b8a7e4..d22d7616 100644
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.util.ArrayList;
-@@ -90,6 +104,103 @@ public final class InventoryPackets {
+@@ -90,6 +104,109 @@ public final class InventoryPackets {
      private static final int DIALOG_FAKE_BUTTON_WIDTH = 300;
      private static final String DIALOG_FAKE_BUTTON_TEXT = "This is not actually a button, but has to be one because dialogs don't support adding text only elements. Clicking it has the same effect as closing the dialog.";
  
@@ -4200,6 +4204,12 @@ index 39b8a7e4..d22d7616 100644
 +        final ResourcePackStorage resourcePackStorage =
 +                wrapper.user().get(ResourcePackStorage.class);
 +        form.setTranslator(resourcePackStorage.getTexts()::translate);
++        if (form instanceof ActionForm actionForm) {
++            // ActionForm does not propagate its translator to element labels.
++            for (final FormElement element : actionForm.getElements()) {
++                element.setTranslator(form.getTranslator());
++            }
++        }
 +        inventoryTracker.closeContainerForForm();
 +        inventoryTracker.setCurrentForm(IntObjectPair.of(id, form));
 +        final boolean nativeCustom = form instanceof CustomForm && wrapper.user().get(ChannelStorage.class).hasChannel(NativeFormMessage.CUSTOM_CHANNEL);
@@ -4232,7 +4242,7 @@ index 39b8a7e4..d22d7616 100644
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_START_ITEM_COOLDOWN,
                  ClientboundPackets26_3.COOLDOWN, wrapper -> {
-@@ -109,7 +220,8 @@ public final class InventoryPackets {
+@@ -109,7 +226,8 @@ public final class InventoryPackets {
                  return;
              }
              final BlockPosition position = wrapper.read(BedrockTypes.BLOCK_POSITION); // position
@@ -4242,7 +4252,7 @@ index 39b8a7e4..d22d7616 100644
  
              if (inventoryTracker.isAnyScreenOpen()) {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server tried to open container while another container is open");
-@@ -117,11 +229,15 @@ public final class InventoryPackets {
+@@ -117,11 +235,15 @@ public final class InventoryPackets {
                  wrapper.cancel();
                  return;
              }
@@ -4263,7 +4273,7 @@ index 39b8a7e4..d22d7616 100644
  
              final Container container;
              switch (type) {
-@@ -131,6 +247,9 @@ public final class InventoryPackets {
+@@ -131,6 +253,9 @@ public final class InventoryPackets {
                      return;
                  }
                  case CONTAINER -> container = new ChestContainer(wrapper.user(), containerId, title, position, 27);
@@ -4273,7 +4283,7 @@ index 39b8a7e4..d22d7616 100644
                  case COMMAND_BLOCK -> {
                      wrapper.cancel();
                      if (!WorldPackets.openNativeCommandBlock(wrapper.user(), containerId, blockEntity)) {
-@@ -153,40 +272,16 @@ public final class InventoryPackets {
+@@ -153,40 +278,16 @@ public final class InventoryPackets {
              inventoryTracker.setCurrentContainer(container);
  
              wrapper.write(Types.VAR_INT, (int) containerId); // container id
@@ -4318,7 +4328,7 @@ index 39b8a7e4..d22d7616 100644
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_CONTENT, ClientboundPackets26_3.CONTAINER_SET_CONTENT, wrapper -> {
-@@ -227,134 +322,10 @@ public final class InventoryPackets {
+@@ -227,134 +328,10 @@ public final class InventoryPackets {
                  wrapper.cancel();
              }
          });
@@ -4457,7 +4467,7 @@ index 39b8a7e4..d22d7616 100644
          protocol.registerClientbound(ClientboundBedrockPackets.CLOSE_FORM, ClientboundPackets26_3.CLEAR_DIALOG, wrapper -> {
              final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
              if (inventoryTracker.getCurrentForm() != null) {
-@@ -452,6 +423,11 @@ public final class InventoryPackets {
+@@ -452,6 +429,11 @@ public final class InventoryPackets {
                  wrapper.cancel();
                  return;
              }
@@ -4469,7 +4479,7 @@ index 39b8a7e4..d22d7616 100644
              if (!container.handleClick(revision, slot, button, action)) {
                  if (container.type() != ContainerType.INVENTORY) {
                      PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryTracker.getInventoryContainer());
-@@ -490,6 +466,15 @@ public final class InventoryPackets {
+@@ -490,6 +472,15 @@ public final class InventoryPackets {
                  return;
              }
  
@@ -4485,7 +4495,7 @@ index 39b8a7e4..d22d7616 100644
              inventoryTracker.setCurrentForm(null);
              if (payload.contains("exit") && payload.getBoolean("exit")) {
                  wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, formId); // id
-@@ -633,6 +618,342 @@ public final class InventoryPackets {
+@@ -633,6 +624,342 @@ public final class InventoryPackets {
          });
      }
  
@@ -4828,7 +4838,7 @@ index 39b8a7e4..d22d7616 100644
      private static void sendBookEdits(final UserConnection user, final int slot,
              final List<String> previousPages, final List<String> pages, final String title) {
          for (int index = 0; index < pages.size(); index++) {
-@@ -687,4 +1008,12 @@ public final class InventoryPackets {
+@@ -687,4 +1014,12 @@ public final class InventoryPackets {
      private InventoryPackets() {
      }
  
@@ -36937,10 +36947,10 @@ index 00000000..44536259
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ModalFormTransitionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ModalFormTransitionTest.java
 new file mode 100644
-index 00000000..51cdb2bf
+index 00000000..343bf7aa
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ModalFormTransitionTest.java
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,165 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -36953,11 +36963,17 @@ index 00000000..51cdb2bf
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
++import com.viaversion.viaversion.libs.mcstructs.converter.impl.v1_21_5.NbtConverter_v1_21_5;
++import com.viaversion.viaversion.libs.mcstructs.dialog.body.PlainMessageBody;
++import com.viaversion.viaversion.libs.mcstructs.dialog.impl.MultiActionDialog;
++import com.viaversion.viaversion.libs.mcstructs.dialog.serializer.DialogSerializer;
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 +import io.netty.buffer.Unpooled;
 +import net.lenni0451.mcstructs_bedrock.forms.serializer.FormSerializer;
 +import net.raphimc.viabedrock.api.model.NativeFormMessage;
 +import net.raphimc.viabedrock.api.model.container.ChestContainer;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
@@ -36980,6 +36996,42 @@ index 00000000..51cdb2bf
 +import static org.mockito.Mockito.*;
 +
 +class ModalFormTransitionTest {
++
++    @Test
++    void actionDialogTranslatesButtonsWithTheSamePackAsItsTitleAndBody() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var inventory = new InventoryTracker(user);
++        when(user.get(InventoryTracker.class)).thenReturn(inventory);
++        when(user.get(ChannelStorage.class)).thenReturn(new ChannelStorage());
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", """
++                {"format_version":2,"header":{"uuid":"11111111-1111-1111-1111-111111111111",
++                "version":[1,0,0],"name":"Dialog language probe"}}
++                """);
++        content.putString("texts/en_US.lang", "probe.title=Panel title\nprobe.body=Panel body\nprobe.choice=Translated choice\n");
++        final var packs = new ResourcePackStorage(List.of(new ResourcePack(content)));
++        when(user.get(ResourcePackStorage.class)).thenReturn(packs);
++
++        final var input = Unpooled.buffer();
++        try (var packets = mockStatic(PacketFactory.class)) {
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(input, 17);
++            BedrockTypes.STRING.write(input, """
++                    {"type":"form","title":"%probe.title","content":"%probe.body",
++                    "buttons":[{"text":"%probe.choice"},{"text":"Literal choice"}]}
++                    """);
++            final var request = new PacketWrapperImpl(100, input, user);
++            InventoryPackets.handleModalFormRequest(request);
++            final var dialog = DialogSerializer.V1_21_6.getDirectCodec().deserialize(
++                    NbtConverter_v1_21_5.INSTANCE, request.get(Types.TRUSTED_COMPOUND_TAG_HOLDER, 0).value()).get();
++            assertEquals("Panel title", dialog.getTitle().asUnformattedString());
++            assertEquals(List.of("Panel body"), dialog.getBody().stream()
++                    .map(body -> ((PlainMessageBody) body).getContents().asUnformattedString()).toList());
++            assertEquals(List.of("Translated choice", "Literal choice"), ((MultiActionDialog) dialog).getActions().stream()
++                    .map(button -> button.getLabel().asUnformattedString()).toList());
++        } finally {
++            input.release();
++        }
++    }
 +
 +    @Test
 +    void serverFormReplacesContainerAndRetainsFormThroughCloseAcknowledgement() throws Exception {
