@@ -1,4 +1,4 @@
-From 7e5778f2d845977fa2f93a6d1a88ee88ddb22cb1 Mon Sep 17 00:00:00 2001
+From 302e0708e38e062c8b6fbe0843854a72759c606e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 03:36:18 +0100
 Subject: [PATCH] feat(interaction): preserve native held item use
@@ -21,7 +21,6 @@ Native bottom-face hits are about 0.8175, including translated proxy joins.
 Keep two clock lifetimes: air use has a strict 200 ms connection deadline;
 held placement waits strictly more than 300 ms before an established
 line exists, then strictly more than 200 ms after each line success.
-Trapdoor holds also retain the established first-attempt delay.
 Failed placement repeats do not restart their delay. Retry from input
 frames after camera movement, before the next tick publishes rotation,
 and suppress Java's parallel four-tick path. Native frame quantization
@@ -43,8 +42,9 @@ before main-hand food use even when hunger refuses it. Initial refusal
 retains untimed block mode, rather than acquiring the air route. An owned air hold
 skips block/entity dispatch and offhand fallback; newly selected items
 share its air deadline. A placement hold cannot fall through to eating.
-Canonical consumption/completion remain server-owned. Other initial air-use
-families retain their existing route pending matching controls.
+Canonical consumption/completion remain server-owned. Initial block-item
+air use retains untimed block mode. Other initial air-use families retain
+their existing route pending matching controls.
 
 The installed baseline places four Stone blocks after a food hold and
 consumes six foods after a trapdoor hold, unlike native. Input-state tests
@@ -104,23 +104,45 @@ Keep that exception separate from the first-success flag and pending-cell
 advancement. Regressions cover a failed distant attempt before returning
 to the original line, and the upper-height history branch. Live height
 limits and broader mixed-use cases remain separate validation work.
+
+Native first-rejected Stone and trapdoor controls invoke ordinary air use
+once, write the strict 200 ms deadline, then keep flags 17 and untimed
+block continuation. Java returns before that air phase on FAIL. Permit
+its initial main-hand block fallback, acquire block mode from the air
+phase, and prevent subsequent air/offhand fallback. The same native
+unattached-Stone control selects this block mode without a block target.
+Remove the old trapdoor-only first-rejection delay.
+
+Record the client air deadline for the first successful placement only
+when an item remains. Core patch 0091 already emits that air transaction. Do not
+send another from the add-on. Held placement success must not refresh
+this deadline. Native last-block placement and trapdoor activation write
+no air deadline; leave those phases separate. Current Bedrock 1.26.60.5 tracing
+observes setter 1465c0050 from 14658623d before air use 14376e0c0,
+plus repeat 14376b8d0 and the resulting protocol 2225 transactions.
+
+Input regressions cover initial rejection, immediate frame continuation,
+one air phase, later success, first-placement deadline ownership, held
+success, last-stack exclusion and release into food. Native capture frame
+cadence differs from Java, so retry counts are not equality assertions.
+Rapid input edge sampling and broader item dispatch remain open.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../features/block/MixinTrapDoorBlock.java    |  18 +-
- .../features/input/MixinItemUseControl.java   |  96 ++++++++
+ .../features/input/MixinItemUseControl.java   |  97 ++++++++
  .../inventory/MixinHeldBlockPlacement.java    |  32 +++
  .../features/inventory/MixinHeldBlockUse.java |  61 +++++
- .../bedrock/input/BedrockItemUse.java         | 209 ++++++++++++++++++
+ .../bedrock/input/BedrockItemUse.java         | 216 ++++++++++++++++++
  .../bedrock/input/BlockPlacementPath.java     |  83 +++++++
  .../bedrock/input/BlockUsePayload.java        |  24 ++
  .../input/BlockUsePredictionPayload.java      |  24 ++
- .../bedrock/input/ItemUseState.java           |  94 ++++++++
+ .../bedrock/input/ItemUseState.java           | 104 +++++++++
  .../bedrock/inventory/TrapdoorPlacement.java  |  55 +++++
  .../viafabricplus-bedrock.mixins.json         |   3 +
  .../bedrock/input/BlockPlacementPathTest.java | 128 +++++++++++
- .../bedrock/input/ItemUseStateTest.java       | 125 +++++++++++
- .../inventory/TrapdoorPlacementTest.java      | 100 +++++++++
- 15 files changed, 1050 insertions(+), 4 deletions(-)
+ .../bedrock/input/ItemUseStateTest.java       | 167 ++++++++++++++
+ .../inventory/TrapdoorPlacementTest.java      | 100 ++++++++
+ 15 files changed, 1110 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
@@ -206,10 +228,10 @@ index 82db187..eda72b3 100644
              return super.getOcclusionShape(state);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
 new file mode 100644
-index 0000000..21a773c
+index 0000000..d94e0c5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,97 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -263,7 +285,8 @@ index 0000000..21a773c
 +                                               final InteractionHand hand, final BlockHitResult hit,
 +                                               final Operation<InteractionResult> original) {
 +        final BlockHitResult selected = BedrockItemUse.blockHit(hit, this.viaFabricPlusBedrock$frameRepeat);
-+        return selected == null ? InteractionResult.FAIL : original.call(gameMode, player, hand, selected);
++        return selected == null ? InteractionResult.FAIL
++            : BedrockItemUse.blockResult(original.call(gameMode, player, hand, selected), hand);
 +    }
 +
 +    @WrapOperation(method = "startUseItem", at = @At(value = "INVOKE",
@@ -413,10 +436,10 @@ index 0000000..69387b7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
 new file mode 100644
-index 0000000..6633a2b
+index 0000000..854a58b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,216 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -433,6 +456,7 @@ index 0000000..6633a2b
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.core.component.DataComponents;
 +import net.minecraft.world.InteractionHand;
++import net.minecraft.world.InteractionResult;
 +import net.minecraft.world.item.ItemStack;
 +import net.minecraft.world.item.BlockItem;
 +import net.minecraft.world.level.block.TrapDoorBlock;
@@ -479,7 +503,7 @@ index 0000000..6633a2b
 +        }
 +        final var consumable = item.get(DataComponents.CONSUMABLE);
 +        final boolean canConsume = consumable != null && consumable.canConsume(Minecraft.getInstance().player, item);
-+        return INPUT.admitAirUse(System.nanoTime(), hand, item.has(DataComponents.FOOD), canConsume);
++        return INPUT.admitAirUse(System.nanoTime(), hand, item.has(DataComponents.FOOD), held && item.getItem() instanceof BlockItem, canConsume);
 +    }
 +
 +    public static HitResult.Type hitType(final HitResult.Type target, final InteractionHand hand) {
@@ -529,12 +553,16 @@ index 0000000..6633a2b
 +            && block.getBlock() instanceof TrapDoorBlock;
 +    }
 +
-+    private static boolean usesNativeRepeatDelay() {
-+        return held && (PLACEMENT.active() || holdingTrapdoor());
++    public static InteractionResult blockResult(final InteractionResult result, final InteractionHand hand) {
++        final var player = Minecraft.getInstance().player;
++        // Java stops at FAIL; native still invokes the block item's first ordinary air use.
++        return held && hand == InteractionHand.MAIN_HAND && !INPUT.blockActive() && player != null
++            && player.getMainHandItem().getItem() instanceof BlockItem && result instanceof InteractionResult.Fail
++            ? InteractionResult.PASS : result;
 +    }
 +
 +    public static void attempted() {
-+        if (held && (successfulAttempt || INPUT.blockActive() || usesNativeRepeatDelay())) {
++        if (held && (successfulAttempt || INPUT.blockActive())) {
 +            INPUT.attemptedBlock(System.nanoTime(), successfulAttempt);
 +        }
 +    }
@@ -578,6 +606,8 @@ index 0000000..6633a2b
 +    public static void placed(final BlockState state, final BlockPos support, final Vec3 hit) {
 +        placedBlock = true;
 +        if (held) {
++            // Core sends this first air phase after successful placement; retain its client deadline.
++            INPUT.placedBlock(System.nanoTime(), !Minecraft.getInstance().player.getMainHandItem().isEmpty());
 +            PLACEMENT.remember(state, support, hit);
 +        }
 +    }
@@ -777,10 +807,10 @@ index 0000000..a98d448
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
 new file mode 100644
-index 0000000..6e20ef0
+index 0000000..334d0bf
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,104 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -811,27 +841,37 @@ index 0000000..6e20ef0
 +        return frameRepeat && this.blockActive || this.canAttempt(now);
 +    }
 +
-+    public boolean admitAirUse(final long now, final InteractionHand hand, final boolean food, final boolean canConsume) {
++    public boolean admitAirUse(final long now, final InteractionHand hand, final boolean food, final boolean blockItem, final boolean canConsume) {
 +        if (hand != InteractionHand.MAIN_HAND) {
 +            return !this.airActive && !this.blockActive;
 +        }
 +        if (this.blockActive) {
 +            return false;
 +        }
-+        if (!this.airActive && !food) {
++        if (!this.airActive && !food && !blockItem) {
 +            return true;
 +        }
 +        if (!this.canAttempt(now)) {
 +            return false;
 +        }
-+        if (this.airActive || canConsume) {
++        if (this.airActive || food && canConsume) {
 +            this.airActive = true;
 +        } else {
 +            this.blockActive = true;
 +        }
++        this.recordAirUse(now);
++        return true;
++    }
++
++    public void placedBlock(final long now, final boolean hasRemainder) {
++        if (!this.airActive && !this.blockActive && hasRemainder) {
++            this.recordAirUse(now);
++        }
++    }
++
++    private void recordAirUse(final long now) {
 +        this.airAttempted = true;
 +        this.airStartedAt = now;
-+        return true;
 +    }
 +
 +    public HitResult.Type hitType(final HitResult.Type target, final InteractionHand hand) {
@@ -1086,10 +1126,10 @@ index 0000000..cc7d3e8
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
 new file mode 100644
-index 0000000..4f27af1
+index 0000000..a97e4b1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,167 @@
 +package com.viaversion.viafabricplus.bedrock.input;
 +
 +import org.junit.jupiter.api.Test;
@@ -1105,14 +1145,14 @@ index 0000000..4f27af1
 +    @Test
 +    void releasedFoodKeepsItsDeadlineForFreshClicksUntilConnectionReplacement() {
 +        final var timing = new ItemUseState();
-+        assertTrue(timing.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertTrue(timing.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        timing.release();
-+        assertFalse(timing.admitAirUse(1_131_000_000L, InteractionHand.MAIN_HAND, true, true));
-+        assertFalse(timing.admitAirUse(1_200_000_000L, InteractionHand.MAIN_HAND, true, true));
-+        assertTrue(timing.admitAirUse(1_616_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertFalse(timing.admitAirUse(1_131_000_000L, InteractionHand.MAIN_HAND, true, false, true));
++        assertFalse(timing.admitAirUse(1_200_000_000L, InteractionHand.MAIN_HAND, true, false, true));
++        assertTrue(timing.admitAirUse(1_616_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        assertFalse(timing.canAttempt(1_700_000_000L));
 +        timing.clear();
-+        assertTrue(timing.admitAirUse(1_700_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertTrue(timing.admitAirUse(1_700_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +    }
 +
 +    @Test
@@ -1121,7 +1161,7 @@ index 0000000..4f27af1
 +        final List<Integer> usedAt = new ArrayList<>();
 +        for (final int milliseconds : new int[] {0, 47, 94, 141, 188, 236, 284, 332, 380, 428, 475, 542, 609, 676}) {
 +            final long now = 1_000_000_000L + milliseconds * 1_000_000L;
-+            if (timing.frameReady(now, true, false) && timing.admitAirUse(now, InteractionHand.MAIN_HAND, true, true)) {
++            if (timing.frameReady(now, true, false) && timing.admitAirUse(now, InteractionHand.MAIN_HAND, true, false, true)) {
 +                usedAt.add(milliseconds);
 +            }
 +        }
@@ -1131,14 +1171,14 @@ index 0000000..4f27af1
 +    @Test
 +    void foodHoldKeepsAirUseAcrossBlockAndEntityTargetsUntilRelease() {
 +        final var input = new ItemUseState();
-+        assertTrue(input.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertTrue(input.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        assertEquals(HitResult.Type.MISS, input.hitType(HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
 +        assertEquals(HitResult.Type.MISS, input.hitType(HitResult.Type.ENTITY, InteractionHand.MAIN_HAND));
 +        input.attemptedBlock(1_100_000_000L, true);
 +        assertFalse(input.frameReady(1_200_000_000L, false, false));
 +        assertTrue(input.frameReady(1_200_000_001L, false, false));
-+        assertTrue(input.admitAirUse(1_200_000_001L, InteractionHand.MAIN_HAND, false, true));
-+        assertFalse(input.admitAirUse(1_300_000_000L, InteractionHand.OFF_HAND, false, true));
++        assertTrue(input.admitAirUse(1_200_000_001L, InteractionHand.MAIN_HAND, false, false, true));
++        assertFalse(input.admitAirUse(1_300_000_000L, InteractionHand.OFF_HAND, false, false, true));
 +        input.cancelPlacement();
 +        assertEquals(HitResult.Type.MISS, input.hitType(HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
 +        input.release();
@@ -1156,7 +1196,7 @@ index 0000000..4f27af1
 +        assertTrue(input.frameReady(1_300_000_001L, true, false));
 +        assertEquals(HitResult.Type.BLOCK, input.hitType(HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
 +        assertEquals(HitResult.Type.MISS, input.hitType(HitResult.Type.BLOCK, InteractionHand.OFF_HAND));
-+        assertFalse(input.admitAirUse(1_300_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertFalse(input.admitAirUse(1_300_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        input.attemptedBlock(1_310_000_000L, false);
 +        assertTrue(input.frameReady(1_311_000_000L, true, false));
 +        input.attemptedBlock(1_320_000_000L, true);
@@ -1164,39 +1204,81 @@ index 0000000..4f27af1
 +        assertFalse(input.frameReady(1_620_000_000L, false, false));
 +        assertTrue(input.frameReady(1_620_000_001L, false, false));
 +        input.release();
-+        assertTrue(input.admitAirUse(1_630_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertTrue(input.admitAirUse(1_630_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        assertFalse(input.canAttempt(1_800_000_000L));
 +        input.clear();
 +        assertEquals(HitResult.Type.ENTITY, input.hitType(HitResult.Type.ENTITY, InteractionHand.MAIN_HAND));
-+        assertTrue(input.admitAirUse(1_800_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertTrue(input.admitAirUse(1_800_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +    }
 +
 +    @Test
 +    void initiallyRefusedFoodKeepsUntimedBlockRepeatsWhileFreshCallsKeepTheAirDeadline() {
 +        final var input = new ItemUseState();
-+        assertTrue(input.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false));
++        assertTrue(input.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false, false));
 +        input.attemptedBlock(1_010_000_000L, false);
 +        assertEquals(HitResult.Type.BLOCK, input.hitType(HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
 +        assertTrue(input.frameReady(1_052_000_000L, true, false));
 +        assertTrue(input.canBegin(1_052_000_000L, true));
 +        assertFalse(input.canBegin(1_052_000_000L, false));
-+        assertFalse(input.admitAirUse(1_052_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertFalse(input.admitAirUse(1_052_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        input.attemptedBlock(1_105_000_000L, true);
 +        assertFalse(input.frameReady(1_404_999_999L, false, false));
 +        assertFalse(input.frameReady(1_405_000_000L, false, false));
 +        assertTrue(input.frameReady(1_405_000_001L, false, false));
 +        input.release();
-+        assertTrue(input.admitAirUse(1_500_000_000L, InteractionHand.MAIN_HAND, true, true));
++        assertTrue(input.admitAirUse(1_500_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +    }
 +
 +    @Test
 +    void foodThatBecomesRefusedDuringAnAirHoldRetainsItsAirRouteAndDeadline() {
 +        final var input = new ItemUseState();
-+        assertTrue(input.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, true));
-+        assertTrue(input.admitAirUse(1_201_000_000L, InteractionHand.MAIN_HAND, true, false));
++        assertTrue(input.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false, true));
++        assertTrue(input.admitAirUse(1_201_000_000L, InteractionHand.MAIN_HAND, true, false, false));
 +        assertEquals(HitResult.Type.MISS, input.hitType(HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
 +        assertFalse(input.frameReady(1_401_000_000L, false, false));
 +        assertTrue(input.frameReady(1_401_000_001L, false, false));
++    }
++
++    @Test
++    void rejectedBlockStartsUntimedFrameContinuationAndOnlyOneAirUse() {
++        final var input = new ItemUseState();
++        assertTrue(input.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, false, true, false));
++        input.attemptedBlock(1_001_000_000L, false);
++        assertTrue(input.blockActive());
++        assertTrue(input.frameReady(1_016_000_000L, false, false));
++        assertTrue(input.canBegin(1_016_000_000L, true));
++        assertFalse(input.canBegin(1_016_000_000L, false));
++        assertFalse(input.admitAirUse(1_016_000_000L, InteractionHand.MAIN_HAND, false, true, false));
++        assertFalse(input.admitAirUse(1_016_000_000L, InteractionHand.OFF_HAND, true, false, true));
++        input.attemptedBlock(1_080_000_000L, false);
++        assertTrue(input.frameReady(1_096_000_000L, false, false));
++        input.attemptedBlock(1_100_000_000L, true);
++        assertFalse(input.frameReady(1_400_000_000L, false, false));
++        assertTrue(input.frameReady(1_400_000_001L, false, false));
++    }
++
++    @Test
++    void successfulFirstPlacementSharesItsAirDeadlineButHeldPlacementDoesNotRestartIt() {
++        final var input = new ItemUseState();
++        input.placedBlock(1_000_000_000L, true);
++        input.attemptedBlock(1_001_000_000L, true);
++        assertFalse(input.canBegin(1_200_000_000L, false));
++        assertTrue(input.canBegin(1_200_000_001L, false));
++        input.placedBlock(1_350_000_000L, true);
++        input.attemptedBlock(1_351_000_000L, true);
++        input.release();
++        assertTrue(input.canBegin(1_400_000_000L, false));
++        assertTrue(input.admitAirUse(1_400_000_000L, InteractionHand.MAIN_HAND, true, false, true));
++        assertFalse(input.canBegin(1_600_000_000L, false));
++    }
++
++    @Test
++    void placingTheLastBlockDoesNotCreateAnAirDeadline() {
++        final var input = new ItemUseState();
++        input.placedBlock(1_000_000_000L, false);
++        input.attemptedBlock(1_001_000_000L, true);
++        input.release();
++        assertTrue(input.admitAirUse(1_050_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +    }
 +
 +    @Test
@@ -1205,7 +1287,7 @@ index 0000000..4f27af1
 +        final long start = Long.MAX_VALUE - 150_000_000L;
 +        timing.attemptedBlock(start, true);
 +        timing.release();
-+        assertTrue(timing.admitAirUse(start, InteractionHand.MAIN_HAND, true, true));
++        assertTrue(timing.admitAirUse(start, InteractionHand.MAIN_HAND, true, false, true));
 +        assertFalse(timing.frameReady(start + 200_000_000L, true, false));
 +        assertTrue(timing.frameReady(start + 200_000_001L, true, false));
 +        timing.release();
