@@ -1,0 +1,182 @@
+From f99bfa7fab8df18ee6e265cd95f73a2b945326c9 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 06:35:10 +0100
+Subject: [PATCH] fix(blocks): preserve native occlusion with MoreCulling
+
+MoreCulling 1.9.0-beta.1 derives full cached bottom faces from the converted
+bed model even though the live block state has empty occlusion. With the
+pinned 26.3 graphics modpack and BDS 1.26.60.6/protocol 2225, those faces
+hide the stone floor beneath the bed. Disabling its block-state culling
+and rebuilding both affected sections restores the floor. Re-enabling
+the setting reproduces the hole without changing the final block states.
+
+Adapt MoreCulling's face query to the live block-state occlusion while
+accepted, protocol-bound Bedrock rendering metadata owns the world.
+This uses the same native face hooks as ordinary terrain and custom
+carrier blocks on direct and ViaProxy connections. Keep the host cache
+intact so Java sessions and resource removal retain their own behavior.
+
+Gate the optional mixin on MoreCulling presence and require no mod API
+dependency. Preserve the native solid-neighbor faces rather than disabling
+the mod or its culling globally. Regression coverage exercises bed halves,
+solid neighbors, and entry/exit through accepted metadata. Other culling
+shapes, shield poses, and full third-party graphics parity remain open.
+---
+ .../bedrock/block/BedrockBlockOcclusion.java  | 20 +++++++
+ .../bedrock/injection/BedrockMixinPlugin.java |  3 +
+ .../MixinMoreCullingOcclusion.java            | 24 ++++++++
+ .../viafabricplus-bedrock.mixins.json         |  1 +
+ .../block/BedrockBlockOcclusionTest.java      | 57 +++++++++++++++++++
+ 5 files changed, 105 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOcclusion.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/moreculling/MixinMoreCullingOcclusion.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOcclusionTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOcclusion.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOcclusion.java
+new file mode 100644
+index 0000000..067b974
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOcclusion.java
+@@ -0,0 +1,20 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import net.minecraft.core.Direction;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.phys.shapes.VoxelShape;
++
++/** Accepted native terrain retains its face occlusion independently of model-derived caches. */
++public final class BedrockBlockOcclusion {
++    private BedrockBlockOcclusion() {}
++
++    public static VoxelShape select(final BlockState state, final Direction direction, final VoxelShape cached) {
++        return BedrockRenderingMetadata.active() ? state.getFaceOcclusionShape(direction) : cached;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
+index 3155d70..efcda2c 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
+@@ -16,6 +16,9 @@ import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
+ public final class BedrockMixinPlugin implements IMixinConfigPlugin {
+     @Override
+     public boolean shouldApplyMixin(final String targetClassName, final String mixinClassName) {
++        if (mixinClassName.startsWith("com.viaversion.viafabricplus.bedrock.injection.mixin.compat.moreculling.")) {
++            return FabricLoader.getInstance().isModLoaded("moreculling");
++        }
+         if (mixinClassName.startsWith("com.viaversion.viafabricplus.bedrock.injection.mixin.compat.emf.")) {
+             return FabricLoader.getInstance().isModLoaded("entity_model_features");
+         }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/moreculling/MixinMoreCullingOcclusion.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/moreculling/MixinMoreCullingOcclusion.java
+new file mode 100644
+index 0000000..d65280d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/moreculling/MixinMoreCullingOcclusion.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.compat.moreculling;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockBlockOcclusion;
++import net.minecraft.core.Direction;
++import net.minecraft.world.level.block.state.BlockBehaviour;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(BlockBehaviour.BlockStateBase.class)
++public abstract class MixinMoreCullingOcclusion {
++    @Inject(method = "moreculling$getFaceCullingShape", at = @At("RETURN"), cancellable = true, remap = false, require = 0)
++    private void nativeOcclusion(final Direction direction, final CallbackInfoReturnable<VoxelShape> cir) {
++        cir.setReturnValue(BedrockBlockOcclusion.select((BlockState) (Object) this, direction, cir.getReturnValue()));
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index ac083ae..590dad9 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -6,6 +6,7 @@
+   "compatibilityLevel": "JAVA_25",
+   "priority": 1001,
+   "client": [
++    "compat.moreculling.MixinMoreCullingOcclusion",
+     "compat.emf.MixinEmfModelRoots",
+     "features.render.MixinNativeFluidMesh",
+     "features.render.MixinNativeFluidNeighbors",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOcclusionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOcclusionTest.java
+new file mode 100644
+index 0000000..3ad95de
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockOcclusionTest.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import net.minecraft.SharedConstants;
++import net.minecraft.core.Direction;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.state.properties.BedPart;
++import net.minecraft.world.level.block.BedBlock;
++import net.minecraft.world.phys.shapes.BooleanOp;
++import net.minecraft.world.phys.shapes.Shapes;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class BedrockBlockOcclusionTest {
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void modelDerivedBedFacesNeverHideTheFloorInAnAcceptedBedrockWorld() {
++        try (var metadata = mockStatic(BedrockRenderingMetadata.class)) {
++            metadata.when(BedrockRenderingMetadata::active).thenReturn(true);
++            for (var part : BedPart.values()) {
++                final var bed = Blocks.BED.red().defaultBlockState().setValue(BedBlock.PART, part);
++                final var face = BedrockBlockOcclusion.select(bed, Direction.DOWN, Shapes.block());
++                assertTrue(Shapes.joinIsNotEmpty(Shapes.block(), face, BooleanOp.ONLY_FIRST),
++                        "The floor under the " + part + " must remain visible");
++            }
++            final var stone = BedrockBlockOcclusion.select(Blocks.STONE.defaultBlockState(), Direction.DOWN, Shapes.empty());
++            assertFalse(Shapes.joinIsNotEmpty(Shapes.block(), stone, BooleanOp.ONLY_FIRST),
++                    "A solid neighbor must still occlude the complete floor face");
++        }
++    }
++
++    @Test
++    void leavingTheAcceptedWorldRestoresTheModsCachedFaceWithoutMutatingIt() {
++        try (var metadata = mockStatic(BedrockRenderingMetadata.class)) {
++            final var bed = Blocks.BED.red().defaultBlockState();
++            final var cached = Shapes.block();
++            assertSame(cached, BedrockBlockOcclusion.select(bed, Direction.DOWN, cached));
++            metadata.when(BedrockRenderingMetadata::active).thenReturn(true);
++            assertTrue(BedrockBlockOcclusion.select(bed, Direction.DOWN, cached).isEmpty());
++            metadata.when(BedrockRenderingMetadata::active).thenReturn(false);
++            assertSame(cached, BedrockBlockOcclusion.select(bed, Direction.DOWN, cached));
++        }
++    }
++}
+-- 
+2.56.0
+
