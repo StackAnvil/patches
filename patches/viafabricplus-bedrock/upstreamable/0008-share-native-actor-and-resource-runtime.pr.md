@@ -28,9 +28,13 @@ Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTe
 
 Native player hierarchies retain their authored crouch anchor instead of receiving Java's additional two-pixel render offset. Animated and visibility-only native trees share this rule. Passenger offsets, scale, and the Java fallback remain intact.
 
-A colored slim/wide/slim remote-peer fixture uses Bedrock 1.26.60.5/BDS 1.26.60.6 on protocol 2225. After core restores explicit remote posture metadata, the pre-fix Java renderer crouches but drops its foot anchor. The real-renderer regression fails at that extra offset and passes after compensation. The fixture isolates metadata and rendering; complete body rotation and the original local custom-skin report remain open.
+A colored slim/wide/slim remote-peer fixture uses Bedrock 1.26.60.5/BDS 1.26.60.6 on protocol 2225. After core restores explicit remote posture metadata, the pre-fix Java renderer crouches but drops its foot anchor. The real-renderer regression fails at that extra offset and passes after compensation. The fixture isolates metadata and rendering. Broader body rotation and the original local custom-skin report remain open.
 
-Rebuilt direct and ViaProxy controls restore crouching and the native foot anchor with identical skin and posture inputs. The combined four-project build passes 3,333 tests with 325 skipped and no failures or errors. Full stack replay, bundle, artifact checksums, and embedded core-class comparisons pass.
+Fresh spawn controls use the same slim skin with six new player identities at yaw 0, 180, 90, -90, -180, and 0. Official Bedrock 1.26.60.5/BDS 1.26.60.6 retains an angled body at nonzero yaw. The pre-fix Java client instead aligns body and head, despite native state present at ticks zero or one. A zero initial body seed restores the observed result on rebuilt direct and ViaProxy routes. Established Java rotation remains intact if native state arrives late.
+
+Strict protocol-2225 decoders verify matching skin bytes, spawn transforms, dimensions, fresh identities, removal order, and FOV60. Six marker projections per phase use three frames each. Both fixed routes have median marker centroids within 0.17% of each viewport axis and bounding coordinates within 0.42% of native. These stationary, floating peers establish selected spawn posture. Movement interpolation, idle-animation phase, lighting, and complete pose parity remain unverified. Two regressions cover signed spawn angles through settling and late native state. All 33 recorded process identities are gone. Cleanup restored the native profile, trust setting, external server lists, and owned server configuration exactly.
+
+Rebuilt direct and ViaProxy controls restore crouching and the native foot anchor with identical skin and posture inputs. The combined four-project build passes 3,335 tests with 325 skipped and no failures or errors. Full stack replay, bundle, artifact checksums, and embedded core-class comparisons pass.
 
 Native current/older/current cat and audio controls establish selected resource paths. Complete pose alignment, audio, particle, query, and visual parity remain unfinished.
 

@@ -1,4 +1,4 @@
-From ead24dedecf1aa7c7646c881770917a856ee017c Mon Sep 17 00:00:00 2001
+From 42ee24005f515c2e7608ca92bb4ba8198a047d77 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -45,6 +45,24 @@ Bind only remote Java players with native actor state. Preserve float
 position subtraction and use the existing translated swing state. These
 checks establish the body calculation and client binding, not full
 network interpolation, swing timing or visible native scene parity.
+
+Seed a fresh native remote player body from zero on its first control
+tick. Java initializes body rotation from the spawn yaw, which prevents
+the stationary native soft limit from reaching the observed offset.
+Retain the existing body when native state arrives after Java control
+has started. Scope initialization to the entity instance, and reset its
+previous body angle with the initial seed to avoid interpolating from
+the Java spawn value.
+
+Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls on protocol 2225 spawn
+six fresh player identities at yaw 0, 180, 90, -90, -180 and 0. Each uses
+the same slim skin, position, dimensions and camera. Native nonzero-yaw
+spawns retain an offset between body and head. The installed pre-fix
+Java client instead keeps them aligned, with native state present from
+ticks zero or one. Strict journal decoding verifies the fresh identities,
+skin bytes, spawn transforms, metadata and removal order. These controls
+support the initial zero body seed, not a change to the existing turn
+formula or complete network interpolation parity.
 
 Read every weighted alias in an animation-reference object. The licensed
 1.26.51.1 camel controller groups adult and baby animation aliases in a
@@ -537,7 +555,7 @@ rotation, movement timing, or the original custom-skin report.
  .../render/MixinAvatarAnimationState.java     |   40 +
  .../MixinBedrockModelPartTransforms.java      |   34 +
  .../render/MixinBedrockWalkingAnimation.java  |   35 +
- .../render/MixinLivingEntityBodyRotation.java |   28 +
+ .../render/MixinLivingEntityBodyRotation.java |   37 +
  .../render/MixinLivingEntityRenderer.java     |   26 +
  .../render/MixinNativeActorAttack.java        |   29 +
  .../render/MixinNativeActorPickingEntity.java |   58 +
@@ -570,7 +588,7 @@ rotation, movement timing, or the original custom-skin report.
  .../bedrock/render/BedrockModelLocators.java  |  122 ++
  .../render/BedrockModelTransforms.java        |   82 ++
  .../render/BedrockPlayerAnimationState.java   |   21 +
- .../render/BedrockPlayerBodyRotation.java     |   35 +
+ .../render/BedrockPlayerBodyRotation.java     |   43 +
  .../bedrock/render/BedrockPlayerModel.java    |   53 +
  .../bedrock/render/BedrockPlayerRenderer.java |   12 +
  .../bedrock/render/BedrockViewBobbing.java    |   51 +
@@ -664,13 +682,13 @@ rotation, movement timing, or the original custom-skin report.
  .../render/BedrockMaterialGeometryTest.java   |   87 ++
  .../render/BedrockModelLocatorsTest.java      |  112 ++
  .../render/BedrockModelTransformsTest.java    |   97 ++
- .../render/BedrockPlayerBodyRotationTest.java |   53 +
+ .../render/BedrockPlayerBodyRotationTest.java |   77 ++
  .../render/BedrockPlayerModelTest.java        |  145 +++
  .../render/BedrockPlayerRenderOffsetTest.java |   58 +
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
  .../render/NativeActorColorPayloadTest.java   |   50 +
- 212 files changed, 25135 insertions(+), 16 deletions(-)
+ 212 files changed, 25176 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -12023,10 +12041,10 @@ index 0000000..95fa67a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java
 new file mode 100644
-index 0000000..32cc817
+index 0000000..89c5db6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,37 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12039,16 +12057,25 @@ index 0000000..32cc817
 +import net.minecraft.client.player.RemotePlayer;
 +import net.minecraft.world.entity.LivingEntity;
 +import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
 +import org.spongepowered.asm.mixin.injection.At;
 +import org.spongepowered.asm.mixin.injection.Inject;
 +import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 +
 +@Mixin(LivingEntity.class)
 +public abstract class MixinLivingEntityBodyRotation {
++    @Unique
++    private BedrockPlayerBodyRotation nativeBodyRotation;
++
 +    @Inject(method = "tickHeadTurn", at = @At("HEAD"), cancellable = true)
 +    private void nativePlayerBodyRotation(final float javaTarget, final CallbackInfo ci) {
-+        if ((Object) this instanceof RemotePlayer player && BedrockActorState.state(player.getUUID()) != null) {
-+            player.yBodyRot = BedrockPlayerBodyRotation.tick(player.yBodyRot, player.getYRot(),
++        if (!((Object) this instanceof RemotePlayer player)) return;
++        if (this.nativeBodyRotation == null) this.nativeBodyRotation = new BedrockPlayerBodyRotation();
++        final boolean nativeActor = BedrockActorState.state(player.getUUID()) != null;
++        final float body = this.nativeBodyRotation.beginTick(nativeActor, player.yBodyRot);
++        if (nativeActor) {
++            if (body != player.yBodyRot) player.yBodyRotO = body;
++            player.yBodyRot = BedrockPlayerBodyRotation.tick(body, player.getYRot(),
 +                    (float) player.getX() - (float) player.xo, (float) player.getZ() - (float) player.zo,
 +                    player.getSwingAnimation(1F) > 0F, player.isPassenger());
 +            ci.cancel();
@@ -13971,10 +13998,10 @@ index 0000000..f10740a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotation.java
 new file mode 100644
-index 0000000..56d63f5
+index 0000000..be56b68
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotation.java
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,43 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -13984,7 +14011,15 @@ index 0000000..56d63f5
 +
 +/** The player body control uses different turn limits from the generic mob control. */
 +public final class BedrockPlayerBodyRotation {
-+    private BedrockPlayerBodyRotation() {}
++    private boolean ticked;
++
++    public float beginTick(final boolean nativeActor, final float body) {
++        final boolean firstTick = !this.ticked;
++        this.ticked = true;
++        // Native players start body control at zero rather than inheriting their spawn yaw.
++        // A late native snapshot must preserve rotation already established by Java.
++        return firstTick && nativeActor ? 0F : body;
++    }
 +
 +    public static float tick(final float body, final float yaw, final float dx, final float dz,
 +                             final boolean attacking, final boolean passenger) {
@@ -26982,10 +27017,10 @@ index 0000000..51be474
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotationTest.java
 new file mode 100644
-index 0000000..cd7051b
+index 0000000..45ef342
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotationTest.java
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,77 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -27003,6 +27038,30 @@ index 0000000..cd7051b
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +
 +final class BedrockPlayerBodyRotationTest {
++    @Test
++    void settlesFreshNativePlayersFromZeroInsteadOfTheirSpawnYaw() {
++        final float[][] cases = {{0F, 0F}, {180F, -130F}, {90F, 40F}, {-90F, -40F}, {-180F, -130F}};
++        for (final float[] value : cases) {
++            final var control = new BedrockPlayerBodyRotation();
++            float body = value[0];
++            for (int tick = 0; tick < 25; tick++) {
++                body = BedrockPlayerBodyRotation.tick(control.beginTick(true, body), value[0], 0F, 0F, false, false);
++            }
++            assertEquals(value[1], body);
++        }
++    }
++
++    @Test
++    void preservesEstablishedRotationWhenNativeStateArrivesLate() {
++        final var control = new BedrockPlayerBodyRotation();
++        assertEquals(135F, control.beginTick(false, 135F));
++        assertEquals(120F, control.beginTick(false, 120F));
++        float body = BedrockPlayerBodyRotation.tick(control.beginTick(true, 120F), 135F, 0F, 0F, false, false);
++        assertEquals(120F, body);
++        body = BedrockPlayerBodyRotation.tick(control.beginTick(true, body), 135F, .1F, 0F, false, false);
++        assertEquals(165F, body);
++    }
++
 +    @Test
 +    void appliesThePlayerSoftLimitAfterAStandingHalfTurn() {
 +        float body = -45F;
