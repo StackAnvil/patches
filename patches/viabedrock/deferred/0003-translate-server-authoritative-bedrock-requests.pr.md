@@ -13,6 +13,22 @@ Own predictions and responses by request, container object, and opening lifetime
 Regression coverage includes `ContainerTest`, `HorseContainerTest`, `NativeArmorPermissionsTest`, `NativeContainerActionSessionTest`, and `InventoryTransferBatchTest`.
 
 Late replies and replacement menus have targeted regressions.
+Client-initiated close acknowledgments retire native state without closing another Java screen.
+Genuine server-initiated closes retain their ordinary or correlated close path.
+An opening received while a previous close awaits acknowledgment is rejected by its own token.
+It needs fresh input after acknowledgment, rather than opening automatically when the wait ends.
+
+Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls establish this admission behavior on protocol 2225.
+A raw relay delays the close acknowledgment by four seconds for both player and workbench closures.
+Early E input sends no open interaction and leaves the screen closed after acknowledgment.
+The workbench control also captures a fresh E input opening normally after acknowledgment.
+Packet and tracker regressions cover acknowledgment consumption, server closes, early rejection, and fresh input.
+Java can briefly show its local screen before the rejection arrives. Client-side frame admission remains unverified.
+
+Rebuilt direct and ViaProxy clients use the same delayed-acknowledgment relay for player and workbench close controls.
+Both routes remain closed after early input without queuing an open interaction.
+Fresh-input controls reopen normally, with the 32-log stack unchanged.
+
 Scoped manual crafting batches reuse ordered prediction and response reconciliation. Native-shaped regressions cover reordered responses, rejection of a later craft, whole-batch rejection, and refusal of unrelated operations. Complete native response-manager behavior, live transactions, and every container remain unfinished.
 
 Installed direct and ViaProxy checks accept bundle insertion, extraction, and reinsertion requests and retain the contents after reopening.

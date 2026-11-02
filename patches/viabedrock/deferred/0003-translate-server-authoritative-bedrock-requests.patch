@@ -1,4 +1,4 @@
-From 220b535527f2c106a7e0e5df6dc7f5f16d7dee67 Mon Sep 17 00:00:00 2001
+From ccc44e9cb92bfdf4740792ad8cec809ea850a358 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -72,7 +72,7 @@ Use authoritative requests for hand swaps when negotiated by START_GAME. Queue o
 
 Allocate legacy inventory transaction IDs with a separate negative even counter. Static analysis of the matching Bedrock 1.26.51.1 executable confirms allocation starts at -4 and decreases by two; item-stack requests use the independent odd sequence. Keep native captures and disassembly private.
 
-Process temporary player inventory CLOSE acknowledgements without forwarding another Java screen close. Java owns its creative and player screen; forwarding the native acknowledgement prematurely closes it and causes subsequent inputs to affect the wrong UI. Keep genuine server-initiated closures intact.
+Process client-initiated container CLOSE acknowledgements without forwarding another Java screen close. Java already dismissed the owning screen; forwarding its native acknowledgement can close a later UI. Retire pending native state and service queued work before consuming the acknowledgement. Keep genuine server-initiated closures intact.
 
 Write stonecutter ingredients as typed HolderSet fields instead of raw
 VarInts. Both encodings produce the same Java wire bytes, but ViaBackwards
@@ -504,7 +504,7 @@ the newer construction/admission controls. Remove the superseded network
 name reader and its three tests so two independent state machines cannot
 drift. Native asset precedence and full ordinary names remain open.
 
-Own player inventory openings by the actual installed client screen over a negotiated payload shared by direct and proxy routes. Java reuses menu zero, so retain retired native opens until acknowledgment and correlate server closes to a monotonic client opening. Serialize rapid reopenings, discard retired screen clicks, and preserve later global inventory interactions. Reject malformed or stale lifecycle messages without changing native ownership.
+Own player inventory openings by the actual installed client screen over a negotiated payload shared by direct and proxy routes. Java reuses menu zero, so retain retired native opens until acknowledgment and correlate server closes to a monotonic client opening. Retain uncorrelated in-flight openings, reject new player openings while a previous close is pending, discard retired screen clicks, and preserve later global inventory interactions. Reject malformed or stale lifecycle messages without changing native ownership.
 
 Verify nonempty component readers inside complete native registry and
 late-block construction. Standalone reader controls cannot establish how
@@ -762,6 +762,20 @@ created-output transfers for crafting batches. Ordinary transfer admission
 continues to reject crafting actions. Native-shaped regression requests
 cover reordered success responses, a rejected later craft, whole-batch
 rejection and refusal of unrelated destructive actions.
+
+Official Bedrock 1.26.60.5 against BDS 1.26.60.6/protocol 2225 ignores
+a new inventory key while a previous player or workbench close awaits its
+acknowledgement. A raw relay delays that acknowledgement by four seconds.
+No OpenInventory interaction is sent for the early input, and the screen
+stays closed after the acknowledgement until a fresh key press.
+
+Reject an installed player opening received during that close wait through
+its own opening token. Do not queue it to open after the acknowledgement.
+A later input can open normally once the pending native container retires.
+Packet and tracker regressions cover both close sources, consumed client
+acknowledgements, genuine server closes, and the fresh-input requirement.
+Java can still briefly display its local screen before receiving the
+correlated rejection; client-side frame admission remains a separate gate.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
@@ -817,7 +831,7 @@ rejection and refusal of unrelated destructive actions.
  .../protocol/model/recipe/ItemRecipeKey.java  |   35 +
  .../protocol/packet/ClientPlayerPackets.java  |   60 +-
  .../protocol/packet/InteractionPackets.java   |   51 +-
- .../protocol/packet/InventoryPackets.java     | 1526 +++-
+ .../protocol/packet/InventoryPackets.java     | 1525 +++-
  .../protocol/packet/JoinPackets.java          |    2 +-
  .../protocol/packet/MultiStatePackets.java    |   34 +-
  .../protocol/packet/WorldPackets.java         |   12 +
@@ -829,7 +843,7 @@ rejection and refusal of unrelated destructive actions.
  .../storage/InventoryRequestStorage.java      |  232 +
  .../storage/InventoryRequestTracker.java      |  795 +++
  .../protocol/storage/InventoryTracker.java    |  282 +-
- .../storage/PlayerInventoryScreenTracker.java |  202 +
+ .../storage/PlayerInventoryScreenTracker.java |  207 +
  .../protocol/types/item/BedrockItemType.java  |   68 +-
  .../types/item/NetworkItemStackContext.java   |   18 +
  .../item/NetworkItemStackDescriptorType.java  |   79 +-
@@ -874,7 +888,7 @@ rejection and refusal of unrelated destructive actions.
  .../packet/ContainerLifecyclePacketTest.java  |  395 ++
  .../protocol/packet/DropTransactionTest.java  |   46 +
  .../packet/HotbarSelectionPacketTest.java     |  155 +
- .../protocol/packet/InventoryPacketsTest.java |  254 +
+ .../protocol/packet/InventoryPacketsTest.java |  290 +
  .../packet/MountInventoryPacketTest.java      |  163 +
  .../NativeContainerOpeningPacketTest.java     |  226 +-
  .../packet/Protocol2225InventoryTest.java     |  225 +
@@ -895,13 +909,13 @@ rejection and refusal of unrelated destructive actions.
  .../NativeContainerActionBackendTest.java     |   95 +
  .../storage/NativeContainerResponseTest.java  |  287 +
  .../PlayerInventoryScreenCodecTest.java       |   71 +
- .../PlayerInventoryScreenTrackerTest.java     |  271 +
+ .../PlayerInventoryScreenTrackerTest.java     |  294 +
  .../storage/StonecutterRecipePacketTest.java  |   53 +
  .../types/inventory/ItemStackCodecTest.java   |   12 +-
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 138 files changed, 28833 insertions(+), 2047 deletions(-)
+ 138 files changed, 28896 insertions(+), 2047 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
@@ -9625,7 +9639,7 @@ index 223db3d9..d8e307df 100644
              }
              chunkTracker.trackBlockPrediction(sequence, position, placedPosition);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index d22d7616..375f5f0c 100644
+index d22d7616..48721470 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -17,26 +17,28 @@
@@ -9789,7 +9803,7 @@ index d22d7616..375f5f0c 100644
  
          final CommandBlockSession command = wrapper.user().get(CommandBlockSession.class);
          if (command != null && command.matches((byte) (int) wrapper.get(Types.VAR_INT, 0))) {
-@@ -116,20 +187,34 @@ public final class InventoryPackets {
+@@ -116,20 +187,33 @@ public final class InventoryPackets {
              return;
          }
  
@@ -9821,14 +9835,13 @@ index d22d7616..375f5f0c 100644
 +        final boolean correlatedClose = container instanceof InventoryContainer && screens != null && screens.ownsClose();
          inventoryTracker.setCurrentContainerClosed(serverInitiated);
 -        if (!serverInitiated && inventoryTracker.getCurrentForm() != null) {
-+        if (correlatedClose) {
-+            wrapper.cancel();
-+        }
-+        if (!serverInitiated && (container instanceof InventoryContainer || inventoryTracker.getCurrentForm() != null)) {
++        // A client-initiated close already dismissed its Java screen. Its acknowledgment
++        // cannot close a later screen, but must still retire native state above.
++        if (correlatedClose || !serverInitiated) {
              wrapper.cancel();
          }
      }
-@@ -202,347 +287,863 @@ public final class InventoryPackets {
+@@ -202,347 +286,863 @@ public final class InventoryPackets {
      }
  
      public static void register(final BedrockProtocol protocol) {
@@ -11001,7 +11014,7 @@ index d22d7616..375f5f0c 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.EDIT_BOOK,
                  null,
-@@ -593,33 +1194,55 @@ public final class InventoryPackets {
+@@ -593,33 +1193,55 @@ public final class InventoryPackets {
                      updatedTag.put("pages", updatedPages);
                      book.setTag(updatedTag);
                  });
@@ -11079,7 +11092,7 @@ index d22d7616..375f5f0c 100644
          if (type == ContainerType.CONTAINER && actor != null) {
              final String filtered = actorTitle(actor, ActorDataIds.FILTERED_NAME);
              final String name = filtered.isEmpty() ? actorTitle(actor, ActorDataIds.NAME) : filtered;
-@@ -631,7 +1254,7 @@ public final class InventoryPackets {
+@@ -631,7 +1253,7 @@ public final class InventoryPackets {
              final String raw = customName.getValue();
              return new ContainerTitle(TextUtil.stringToTextComponent(user.get(ResourcePackStorage.class).getTexts().translate(raw)), raw, false);
          }
@@ -11088,7 +11101,7 @@ index d22d7616..375f5f0c 100644
      }
  
      private static String actorTitle(final Entity actor, final ActorDataIds field) {
-@@ -657,21 +1280,23 @@ public final class InventoryPackets {
+@@ -657,21 +1279,23 @@ public final class InventoryPackets {
              case HOPPER, MINECART_HOPPER -> size == 5 ? ContainerUi.Kind.HOPPER : null;
              case DISPENSER -> size == 9 ? ContainerUi.Kind.DISPENSER : null;
              case DROPPER -> size == 9 ? ContainerUi.Kind.DROPPER : null;
@@ -11116,7 +11129,7 @@ index d22d7616..375f5f0c 100644
              return;
          }
          final var resources = wrapper.user().get(ResourcePackStorage.class);
-@@ -680,22 +1305,33 @@ public final class InventoryPackets {
+@@ -680,22 +1304,33 @@ public final class InventoryPackets {
          }
          final var state = wrapper.user().get(NativeContainerUiState.class);
          final var ui = resources.getContainerUi();
@@ -11154,7 +11167,7 @@ index d22d7616..375f5f0c 100644
      private static Dialog createFormDialog(final UserConnection user, final int id, final Form form,
              final ServerFormUi.Presentation presentation) {
          final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
-@@ -986,13 +1622,148 @@ public final class InventoryPackets {
+@@ -986,13 +1621,148 @@ public final class InventoryPackets {
          }
      }
  
@@ -11305,7 +11318,7 @@ index d22d7616..375f5f0c 100644
                  for (String line : BedrockTextUtils.split(text, "\n")) {
                      final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(line));
                      textInput.setMaxLength(Integer.MAX_VALUE);
-@@ -1000,14 +1771,53 @@ public final class InventoryPackets {
+@@ -1000,14 +1770,53 @@ public final class InventoryPackets {
                      dialog.getInputs().add(new Input("dummy", textInput));
                  }
              } else { // VB compatibility
@@ -13941,10 +13954,10 @@ index 7472880e..19ffffe3 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTracker.java
 new file mode 100644
-index 00000000..e7a9d17d
+index 00000000..7256dcde
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTracker.java
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,207 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -14020,6 +14033,11 @@ index 00000000..e7a9d17d
 +            this.requests().clearQueuedScreenInteractions();
 +            this.latestOpening = request.opening();
 +            this.requested = true;
++            if (this.inventory().getPendingCloseContainer() != null) {
++                // Native ignores a new inventory key until the previous close is acknowledged.
++                this.retire();
++                return;
++            }
 +            this.requestedSince = System.nanoTime();
 +        } else {
 +            if (request.opening() != this.latestOpening || !this.requested) {
@@ -34709,10 +34727,10 @@ index 00000000..50ae8ed9
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
 new file mode 100644
-index 00000000..7dccb3cc
+index 00000000..d00218b7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,290 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -34739,6 +34757,7 @@ index 00000000..7dccb3cc
 +import io.netty.buffer.ByteBuf;
 +import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.api.model.container.ChestContainer;
++import net.raphimc.viabedrock.api.model.container.Container;
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.api.model.entity.Entity;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
@@ -34764,6 +34783,7 @@ index 00000000..7dccb3cc
 +import static org.junit.jupiter.api.Assertions.assertNull;
 +import static org.junit.jupiter.api.Assertions.assertSame;
 +import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.*;
 +
 +class InventoryPacketsTest {
 +
@@ -34786,6 +34806,40 @@ index 00000000..7dccb3cc
 +        assertFalse(fixture.inventory.serverInitiated);
 +        assertNull(fixture.inventory.getCurrentContainer());
 +        assertNull(fixture.inventory.getPendingCloseContainer());
++    }
++
++    @Test
++    void workbenchCloseAcknowledgementRetiresTheNativeMenuWithoutClosingReplacementJavaScreens() {
++        final CloseFixture fixture = new CloseFixture();
++        final Container workbench = mock(Container.class);
++        when(workbench.type()).thenReturn(ContainerType.WORKBENCH);
++        fixture.inventory.setCurrentContainer(workbench);
++        fixture.inventory.markPendingClose(workbench);
++        final PacketWrapper response = fixture.closePacket(ContainerType.NONE, false);
++        response.set(Types.VAR_INT, 0, 2);
++
++        InventoryPackets.handleContainerClose(response);
++
++        assertTrue(response.isCancelled());
++        assertFalse(fixture.inventory.serverInitiated);
++        assertNull(fixture.inventory.getCurrentContainer());
++        assertNull(fixture.inventory.getPendingCloseContainer());
++    }
++
++    @Test
++    void genuineServerWorkbenchClosureStillClosesTheJavaScreen() {
++        final CloseFixture fixture = new CloseFixture();
++        final Container workbench = mock(Container.class);
++        when(workbench.type()).thenReturn(ContainerType.WORKBENCH);
++        fixture.inventory.setCurrentContainer(workbench);
++        final PacketWrapper response = fixture.closePacket(ContainerType.WORKBENCH, true);
++        response.set(Types.VAR_INT, 0, 2);
++
++        InventoryPackets.handleContainerClose(response);
++
++        assertFalse(response.isCancelled());
++        assertTrue(fixture.inventory.serverInitiated);
++        assertNull(fixture.inventory.getCurrentContainer());
 +    }
 +
 +    @Test
@@ -40144,10 +40198,10 @@ index 00000000..66e78fc9
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTrackerTest.java
 new file mode 100644
-index 00000000..7882c712
+index 00000000..65e1be48
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTrackerTest.java
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,294 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -40201,7 +40255,7 @@ index 00000000..7882c712
 +    }
 +
 +    @Test
-+    void serializesReopeningTheSameJavaMenuAfterNativeClose() throws Exception {
++    void requiresFreshPlayerOpenAfterThePreviousCloseAcknowledgement() throws Exception {
 +        try (var f = new Fixture()) {
 +            f.request(1, true);
 +            f.acknowledge();
@@ -40210,11 +40264,34 @@ index 00000000..7882c712
 +            assertEquals(1, f.opens());
 +            f.request(1, false);
 +            f.request(2, true);
++            assertEquals(List.of(2L), f.closedScreens());
 +            assertEquals(1, f.opens());
 +            f.inventory.setCurrentContainerClosed(false);
++            assertEquals(1, f.opens());
++            f.request(3, true);
 +            assertEquals(2, f.opens());
 +            f.acknowledge();
 +            assertTrue(f.inventory.currentContainerGeneration() > oldGeneration);
++        }
++    }
++
++    @Test
++    void workbenchCloseWaitRejectsPlayerOpenWithoutQueuingItForTheAcknowledgement() throws Exception {
++        try (var f = new Fixture()) {
++            final var workbench = mock(Container.class);
++            when(workbench.type()).thenReturn(ContainerType.WORKBENCH);
++            f.inventory.setCurrentContainer(workbench);
++            f.inventory.markPendingClose(workbench);
++            f.request(1, true);
++            assertEquals(List.of(1L), f.closedScreens());
++            assertEquals(0, f.opens());
++            assertFalse(f.screens.acceptsClicks());
++            f.inventory.setCurrentContainerClosed(false);
++            assertEquals(0, f.opens());
++            f.request(2, true);
++            assertEquals(1, f.opens());
++            f.acknowledge();
++            assertTrue(f.screens.acceptsClicks());
 +        }
 +    }
 +

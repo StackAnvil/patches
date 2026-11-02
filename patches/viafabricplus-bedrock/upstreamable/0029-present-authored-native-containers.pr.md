@@ -41,7 +41,8 @@ The first Escape removes editor focus; the next closes the inventory.
 Controller regressions cover closing before a search reply, replacement commands, explicit clearing, late replies, and connection replacement.
 Rebuilt direct and ViaProxy controls delay search handling by four seconds, close with unsent edits, and retain the latest text and explicit clear after reopening.
 Both routes preserve the 32-log stack and the native two-step Escape behavior.
-A rapid player-inventory reopen during this forced stall can close again. Its close producer remains unresolved.
+The [core inventory patch](../../viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.pr.md) owns close-wait admission and close acknowledgments.
+Java can briefly display a local inventory before its correlated rejection arrives; client-side admission timing remains unverified.
 A real-editor screen regression clicks a recipe, returns to search, and types the inventory key without closing the screen.
 Installed direct and ViaProxy controls craft once, enter three replacement queries in the same opening, and retain completed output after reopening. Each route records one server-accepted craft request.
 Late replies and hover exits cannot affect a replacement opening or selection.

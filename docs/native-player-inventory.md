@@ -23,7 +23,10 @@ An authored presentation swap retains that token. An ordinary reopen receives a 
 
 The Bedrock open acknowledgment has no client token.
 Core serializes native openings and retains retired requests until their acknowledgments arrive.
-A new opening waits for the previous close acknowledgment.
+Native ignores the inventory key while a previous player or workbench close awaits acknowledgment.
+Core rejects a player opening received during that wait by its own opening token.
+It requires fresh input after acknowledgment instead of queuing the rejected opening.
+Client-initiated close acknowledgments retire native state without forwarding another Java screen close.
 Bind clicks, data, and closes to the connection, menu object, menu ID, and opening token.
 A stale reply must not operate on a replacement screen.
 Keep global player-inventory reconciliation independent of a retired temporary menu.
@@ -223,8 +226,8 @@ Installed direct and ViaProxy controls confirm these pointer, capacity, and reop
 
 Recipe families beyond the captured plank, cake, and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
 Native query lifetime across disconnects and world changes remains unverified.
-Under a forced search-processing stall, a rapid player-inventory reopen can close again.
-The close producer remains unverified.
+Java can briefly display its local inventory before a correlated close-wait rejection arrives.
+Client-side admission timing remains unverified.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
