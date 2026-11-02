@@ -4,6 +4,7 @@ import net.pistonmaster.stackanvil.replay.CameraPresetAudit;
 import net.pistonmaster.stackanvil.replay.PacketJournal;
 import net.pistonmaster.stackanvil.replay.PrivateFiles;
 import net.pistonmaster.stackanvil.replay.RecordingConnections;
+import net.pistonmaster.stackanvil.replay.RecordingReadiness;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.type.Types;
@@ -15,7 +16,6 @@ import io.netty.channel.*;
 import io.netty.util.ReferenceCountUtil;
 import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 import net.raphimc.viabedrock.netty.PacketCodec;
-import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
@@ -41,8 +41,7 @@ public final class FabricRecorder {
         PacketJournal journal = new PacketJournal(directory.resolve("packets.sbr"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
         context.pipeline().addAfter(PacketCodec.NAME, "stackanvil-recording", new ChannelDuplexHandler() {
             private boolean packsSaved;
-            private boolean playerInitialized;
-            private boolean gameplayReady;
+            private final RecordingReadiness readiness = new RecordingReadiness(directory);
             private byte[] pendingPresets;
             private io.netty.util.concurrent.ScheduledFuture<?> export;
 
@@ -83,16 +82,7 @@ public final class FabricRecorder {
                     byte[] bytes = new byte[buffer.readableBytes()];
                     buffer.getBytes(buffer.readerIndex(), bytes);
                     journal.append(clientbound, bytes);
-                    if (!clientbound && !gameplayReady) {
-                        final int packet = PacketJournal.packetId(bytes);
-                        if (packet == ServerboundBedrockPackets.SET_LOCAL_PLAYER_AS_INITIALIZED.getId()) playerInitialized = true;
-                        if (packet == ServerboundBedrockPackets.PLAYER_AUTH_INPUT.getId() && playerInitialized) {
-                            try (var output = PrivateFiles.newOutputStream(directory.resolve("gameplay-ready"))) {
-                                output.write(new byte[] {1});
-                            }
-                            gameplayReady = true;
-                        }
-                    }
+                    readiness.record(clientbound, bytes);
                 }
             }
 

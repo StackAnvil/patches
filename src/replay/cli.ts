@@ -227,6 +227,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
     join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/PacketJournal.java"),
     join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/CameraPresetAudit.java"),
     join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/RecordingConnections.java"),
+    join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/RecordingReadiness.java"),
     ...files,
   ]);
   await writeFile(
@@ -664,6 +665,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       "NativeCaptureSelfTest",
       "PrivateFilesSelfTest",
       "RecordingConnectionsSelfTest",
+      "RecordingReadinessSelfTest",
     ]) {
       const { stdout } = await execute("java", [
         "-cp",
@@ -949,10 +951,8 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     console.log(`Private ${mode} session: ${directory}`);
     // Keep connection setup separate from the requested gameplay scene.
     let waitingForNativeConnection = client === "native";
-    let waitingForAddonSpawn = client === "addon";
-    let until =
-      Date.now() +
-      (waitingForNativeConnection ? 300_000 : waitingForAddonSpawn ? 1_200_000 : seconds * 1000);
+    let waitingForJavaSpawn = client !== "native";
+    let until = Date.now() + (waitingForNativeConnection ? 300_000 : 1_200_000);
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
       javaCleanup?.captureDescendants();
       if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {
@@ -960,10 +960,10 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         until = Date.now() + seconds * 1000;
         console.log(`Native connection observed; capturing the full ${seconds}-second scene.`);
       }
-      if (waitingForAddonSpawn && existsSync(join(directory, "gameplay-ready"))) {
-        waitingForAddonSpawn = false;
+      if (waitingForJavaSpawn && existsSync(join(directory, "gameplay-ready"))) {
+        waitingForJavaSpawn = false;
         until = Date.now() + seconds * 1000;
-        console.log(`Add-on gameplay observed; capturing the full ${seconds}-second scene.`);
+        console.log(`Java gameplay observed; capturing the full ${seconds}-second scene.`);
       }
       const log = await logText(game.log);
       if (

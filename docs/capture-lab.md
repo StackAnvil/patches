@@ -170,6 +170,7 @@ The recorder retains offline game authentication and validates the SDP answer.
 
 A server spawn packet alone does not prove a successful join.
 Recordings require local-player initialization and movement acknowledgments.
+Direct and ViaProxy Java recordings start the requested scene duration after player initialization and the first subsequent input packet.
 They also reject an early client exit, cancellation, or a logged disconnect or packet failure.
 Inspect the private screenshot and server logs before reporting a live playable session.
 Gameplay acknowledgments can arrive after a transport timeout while the client drains queued packets.
