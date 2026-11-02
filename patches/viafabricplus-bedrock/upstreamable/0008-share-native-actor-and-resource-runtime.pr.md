@@ -34,6 +34,12 @@ Fresh spawn controls use the same slim skin with six new player identities at ya
 
 Strict protocol-2225 decoders verify matching skin bytes, spawn transforms, dimensions, fresh identities, removal order, and FOV60. Six marker projections per phase use three frames each. Both fixed routes have median marker centroids within 0.17% of each viewport axis and bounding coordinates within 0.42% of native. These stationary, floating peers establish selected spawn posture. Movement interpolation, idle-animation phase, lighting, and complete pose parity remain unverified. Two regressions cover signed spawn angles through settling and late native state. All 33 recorded process identities are gone. Cleanup restored the native profile, trust setting, external server lists, and owned server configuration exactly.
 
+Same-identity controls extend the fixture through a full yaw cycle, a pitch-only update, and east/west/center movement. Native and current direct/proxy routes retain the turn history and restore the center position. The camera and skin stay constant.
+
+Strict protocol-2225 decoders verify one spawn and identical 71 MovePlayer payloads per route. Three settled frames per phase compare six markers. Across 11 phases, both routes have median marker centroids within 0.30% of each viewport axis and bounding coordinates within 0.42% of native. The accepted Java fixtures disable their onboarding tutorial through its public API before observations. An earlier obstructed westward frame does not support pose comparison. All 33 recorded process identities are gone, and cleanup restored the native profile and server configuration exactly.
+
+These controls establish selected settled poses and position endpoints. Exact interpolation timing, movement curves, mounted head updates, ground state, full locomotion animation, and the original custom-skin report remain open. The [pitch-only packet control](../../viabedrock/upstreamable/0075-encode-head-rotation-in-java-26-3-field-order.pr.md) describes the retained head rotation semantics.
+
 Rebuilt direct and ViaProxy controls restore crouching and the native foot anchor with identical skin and posture inputs. The combined four-project build passes 3,335 tests with 325 skipped and no failures or errors. Full stack replay, bundle, artifact checksums, and embedded core-class comparisons pass.
 
 Native current/older/current cat and audio controls establish selected resource paths. Complete pose alignment, audio, particle, query, and visual parity remain unfinished.
