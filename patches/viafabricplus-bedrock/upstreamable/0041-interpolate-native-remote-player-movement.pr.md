@@ -4,13 +4,19 @@ Negotiated receipts retain the original player mode, native inputs, and actor li
 
 A decorator retains the real host handler. Unpaired packets, known riding, and local authority use the host path. Normal and actor interpolation retain the existing ticking guard. Resets and head-only input apply without that normal-mode gate. Ordinary Java movement keeps its interpolation history. Connection, world, entity, lifetime, and mount changes retire pending native movement.
 
-Head-only updates apply raw pitch immediately. They preserve live yaw, pending position and body targets, and forced queues. The head target uses the maximum remaining position/body counter. Explicit packet pairing prevents Java's rotation-only path from cancelling movement. Raw inputs avoid the legacy packet's byte-angle quantization. The outer packet path derives motion from raw source position minus the retained previous native eye. Entity ticks retain that float history before interpolation, including while idle.
+Head-only updates apply raw pitch immediately. They preserve live yaw, pending position and body targets, and forced queues. The head target uses the maximum remaining position/body counter. Explicit packet pairing prevents Java's rotation-only path from cancelling movement. Raw inputs avoid the legacy packet's byte-angle quantization.
+
+The outer packet path derives motion from raw source position minus the retained previous native eye. Body control reads the exact native displacement before the previous-position copy. The client retains that float history after body control, including while interpolation is idle. Historical physics replay does not advance this live history.
 
 ## Native evidence
 
 Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls use protocol 2225. Read-only StateVector samples show three steps after admitted normal movement, including an excursion beyond Java's distance cutoff. A small move produces X samples 2.166666746, 1.833333373, and 1.5. The [actor runtime evidence](0008-share-native-actor-and-resource-runtime.pr.md) links the earlier controls and their limits.
 
 Original instructions from the verified current executable establish the component rules. Mode helper `0x1402d92c0` passes 720 head-only cases, including pending counters and absent-component fallback. Callback `0x143630d70` and angle helper `0x143631440` pass 512 position, rotation, and head-counter cases. Producer `0x1422c8d20` and writer `0x142c74350` pass 432 target cases, including unsigned duration conversion and forced completion. Queue kernel `0x143634ae0` passes 108 handoff and signed-counter cases. Synthetic component stores and explicit boundary callbacks exclude allocation, scheduling, and full factory admission.
+
+Live remote actor vtables identify current player body control `0x1443419f0`, invoked through callback `0x146947130`. Read-only entry, return, and position-write samples establish the history order. After respawn, body yaw changes from 40 to 62.5 degrees before the previous-position copy, then settles at 60.5 degrees. The following return settles at 50 degrees.
+
+A head-only packet arrives with one interpolation step remaining and derives motion from the last completed body tick position. Debugger pauses alter wall-clock timing, so these controls establish state ordering only. The existing body-turn formula remains unchanged.
 
 Original mode-helper and setter instructions also pass 54 teleport-origin cases, including low-Y rounding and signed zero. A conditional Java/native test compares all 256 current callback cases with a head component. Default regressions cover observed position samples, overlapping head-only input, raw pitch, forced handoff, rotation wrapping, host fallback, and lifecycle replacement.
 
@@ -20,7 +26,7 @@ Earlier direct and ViaProxy controls retain the observed large- and small-move s
 
 The new fixture sends normal movement followed immediately by a head-only packet. Both rebuilt routes reach the native movement endpoint and retain the head target. A settled update keeps the raw 22.75-degree pitch. Sparse movement after the overlap still uses its independent receive cache. Read-only audits pass all eight position, pitch, yaw, and head-yaw checks per route.
 
-Strict journal decoders verify identical peer spawn, skin, normal, head-only, and sparse bytes against native. Camera instructions precede peer creation. Three settled images per phase compare six colored markers. All marker visibility checks agree. Current direct/proxy journals contain 2,301 and 2,061 frames. Median centroids stay within 0.41% of each viewport axis; boundaries stay within 0.91%. These projections do not establish frame timing or numeric native body angles.
+Strict journal decoders verify identical peer spawn, skin, normal, head-only, and sparse bytes against native. Camera instructions precede peer creation. Three settled images per phase compare six colored markers. All marker visibility checks agree. Current direct/proxy journals contain 2,014 and 1,709 frames. Median centroids stay within 0.39% of each viewport axis; boundaries stay within 0.91%. These projections do not establish frame timing or numeric native body angles.
 
 ## Validation and limits
 
@@ -28,11 +34,17 @@ The earlier normal/head comparisons use matching installed hashes. Their cleanup
 
 Current native reset controls establish immediate position changes and cleared motion/interpolation counters. Respawn resets pitch to zero and preserves previous position. Teleport retains wrapped pitch and resets previous position to its destination. Both retain the current head angle and queued movement. Teleport also retains the native float feet-to-eye roundtrip.
 
-A fourteen-phase native/direct baseline reproduces the old respawn-pitch and lost-queue defects. Rebuilt direct and ViaProxy routes now pass all fourteen position, pitch, yaw, and head checks. Forced queued movement resumes after either reset and reaches X=2.5. Complete journals contain 3,925 native, 2,933 direct, and 2,726 proxy frames. Strict decoders verify identical peer payloads. All marker visibility checks agree.
+Fourteen-phase installed direct and ViaProxy controls pass the declared position, pitch, yaw, head-yaw, and body-yaw expectations. Both queued-reset cases reach X=2.5. Respawn now settles at the native 60.5-degree body yaw, and the following return settles at 50 degrees. Strict decoders verify identical peer payloads for all fourteen phases. The current native journal contains 8,096 complete frames, including two auxiliary movement probes. Direct and proxy journals contain 2,927 and 2,735 complete frames.
 
-Reset-pose projections still differ. Median marker centroids differ by up to 0.97% of a viewport axis; boundaries differ by up to 1.44%. The largest centroid difference occurs at an arm after respawn. Native body-angle and tick-order comparisons remain open. State checks do not establish full pose parity. The accepted native capture uses corrected teleport payloads; earlier malformed and debugger-paused trials are excluded.
+Main rotation and body yaw match current native medians in all twelve traced phases. Head yaw matches in ten phases. In the other two phases, native completes one interpolation tick between normal movement and teleport. Its retained head yaw is 30 degrees; both Java routes process those packets before a tick and retain zero. The existing reset rule preserves either live angle. These samples do not establish packet/tick scheduling parity.
 
-Three targeted regressions fail before the correction and pass afterward. Further tests cover exact previous-eye precision, reset admission, retained live head state, distinct previous positions, and queued handoff through the real handler. The full build passes 3,358 tests, with 326 skipped and no failures. The conditional 256-case native comparison also passes separately. Fresh replay reproduces the exact built source trees. All 157 patches replay against pinned and current upstream tips. Bundle generation, ten artifact/manifest hashes, and 1,651 embedded core-class comparisons pass. Installed hashes match the compared builds.
+All marker visibility checks agree. Median marker centroids differ by up to 0.64% of a viewport axis, and boundaries differ by up to 1.44%. The largest remaining centroid difference occurs at the head after head-only input, with different retained head angles. These projections do not isolate a rendering defect or establish full pose parity.
+
+Targeted regressions cover respawn pitch, queued movement, and position-history ordering. Further tests cover exact previous-eye precision, reset admission, retained live head state, distinct previous positions, and queued handoff through the real handler.
+
+The current full build passes 3,361 tests, with 325 skipped and no failures. This run includes the conditional 256-case native comparison. The respawn body-history regression fails with the old ordering and passes with the correction. A separate replay-scope regression protects the live position history.
+
+Fresh replay reproduces the exact built source trees. All 157 patches replay against pinned and current upstream tips. Bundle generation, ten artifact/manifest hashes, and 1,651 embedded core-class comparisons pass. Installed hashes match the compared builds.
 
 All owned Java/display, relay, and server processes are gone. The reset comparison restores owned server configuration and leaves the native profile untouched.
 

@@ -1,4 +1,4 @@
-From c44453d7d2ed4c62bb9a53023de714b328927201 Mon Sep 17 00:00:00 2001
+From 408423877e8f84b10b58d94b23b59d924ab8e1d1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 2 Nov 2026 15:51:01 +0100
 Subject: [PATCH] fix(players): interpolate negotiated remote movement as
@@ -31,9 +31,12 @@ still runs after a reset leaves all counters at zero.
 
 Native packet dispatch derives motion from raw source position minus
 previous StateVector, including head-only packets. Retain exact native
-eye history at the entity tick boundary instead of rounding it through
-Java feet coordinates. Preserve source positions separately from their
-exact translated Java targets.
+eye history after native body control instead of rounding it through
+Java feet coordinates. Body control reads current-minus-previous before
+the StateVector copy. A respawn must retain that displacement through
+the first body tick. Copy it afterward, including while interpolation is
+idle. Historical physics replay must not advance this live history.
+Preserve source positions separately from their exact Java targets.
 
 Return known riding, local authority and unpaired packets to the host
 path. Normal interpolation retains the existing Java ticking guard;
@@ -52,19 +55,27 @@ packet handler 0x146bd39a0, teleport setter 0x140baed10 and reset method
 0x1402c77b0 establish the new packet/reset rules. Matching native/direct
 controls distinguish respawn pitch, previous position, retained head
 state and queued movement after both resets.
+
+Read-only remote actor vtables identify current PlayerBodyControl::tick
+0x1443419f0 through BodyControlComponent and callback 0x146947130. A
+respawn moves the body from 40 to 62.5 degrees before the previous-position
+copy, then settles at 60.5. A head-only packet received with one position
+step left derives motion from the last completed body tick position.
+These controls establish history ordering, not scheduler timing.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../MixinRemotePlayerInterpolation.java       |  22 ++
  ...xinRemotePlayerMovementPacketListener.java |  54 +++
- .../input/BedrockRemotePlayerMovement.java    |  81 +++++
+ .../render/MixinLivingEntityBodyRotation.java |   7 +-
+ .../input/BedrockRemotePlayerMovement.java    |  81 ++++
  .../input/RemotePlayerMovementPayload.java    |  22 ++
- .../movement/RemotePlayerInterpolation.java   | 142 ++++++++
- .../RemotePlayerInterpolationHandler.java     | 205 ++++++++++++
+ .../movement/RemotePlayerInterpolation.java   | 142 +++++++
+ .../RemotePlayerInterpolationHandler.java     | 216 +++++++++++
  .../viafabricplus-bedrock.mixins.json         |   2 +
- ...ativeRemoteInterpolationReferenceTest.java |  74 +++++
- .../RemotePlayerInterpolationHandlerTest.java | 311 ++++++++++++++++++
- .../RemotePlayerInterpolationTest.java        | 133 ++++++++
- 11 files changed, 1048 insertions(+)
+ ...ativeRemoteInterpolationReferenceTest.java |  74 ++++
+ .../RemotePlayerInterpolationHandlerTest.java | 356 ++++++++++++++++++
+ .../RemotePlayerInterpolationTest.java        | 133 +++++++
+ 12 files changed, 1110 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerInterpolation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerMovementPacketListener.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockRemotePlayerMovement.java
@@ -183,6 +194,34 @@ index 0000000..c9330c6
 +        original.call(packet);
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java
+index 89c5db6..8fea24b 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java
+@@ -5,6 +5,7 @@
+  */
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+ 
++import com.viaversion.viafabricplus.bedrock.movement.RemotePlayerInterpolationHandler;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerBodyRotation;
+ import net.minecraft.client.player.RemotePlayer;
+@@ -27,10 +28,14 @@ public abstract class MixinLivingEntityBodyRotation {
+         final boolean nativeActor = BedrockActorState.state(player.getUUID()) != null;
+         final float body = this.nativeBodyRotation.beginTick(nativeActor, player.yBodyRot);
+         if (nativeActor) {
++            final var interpolation = player.getInterpolation() instanceof RemotePlayerInterpolationHandler handler ? handler : null;
++            final var displacement = interpolation == null ? null : interpolation.bodyDisplacement();
+             if (body != player.yBodyRot) player.yBodyRotO = body;
+             player.yBodyRot = BedrockPlayerBodyRotation.tick(body, player.getYRot(),
+-                    (float) player.getX() - (float) player.xo, (float) player.getZ() - (float) player.zo,
++                    displacement == null ? (float) player.getX() - (float) player.xo : displacement.x(),
++                    displacement == null ? (float) player.getZ() - (float) player.zo : displacement.z(),
+                     player.getSwingAnimation(1F) > 0F, player.isPassenger());
++            if (interpolation != null) interpolation.finishBodyTick();
+             ci.cancel();
+         }
+     }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockRemotePlayerMovement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockRemotePlayerMovement.java
 new file mode 100644
 index 0000000..5169027
@@ -448,10 +487,10 @@ index 0000000..61a8f44
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
 new file mode 100644
-index 0000000..2eef0b4
+index 0000000..8cb6f5f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,216 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -583,6 +622,20 @@ index 0000000..2eef0b4
 +        return new Position3f((float) feet.x, (float) feet.y + this.originOffset, (float) feet.z);
 +    }
 +
++    public Position3f bodyDisplacement() {
++        if (PhysicalReplayContext.replaying() || !this.validContext()) return null;
++        if (!this.player.position().equals(this.appliedPosition)) this.captureEye();
++        return new Position3f(this.eye.x() - this.previousEye.x(), this.eye.y() - this.previousEye.y(), this.eye.z() - this.previousEye.z());
++    }
++
++    public void finishBodyTick() {
++        if (PhysicalReplayContext.replaying() || !this.validContext()) return;
++        if (!this.player.position().equals(this.appliedPosition)) this.captureEye();
++        // Native body control reads displacement before the end-of-tick StateVector copy.
++        this.previousEye = this.eye;
++        this.appliedPreviousPosition = this.player.oldPosition();
++    }
++
 +    @Override
 +    public void interpolate() {
 +        if (PhysicalReplayContext.replaying()) return;
@@ -595,9 +648,6 @@ index 0000000..2eef0b4
 +            return;
 +        }
 +        if (!this.player.position().equals(this.appliedPosition)) this.captureEye();
-+        // Entity.tick copies old position immediately before calling this handler, including while it is idle.
-+        this.previousEye = this.eye;
-+        this.appliedPreviousPosition = this.player.oldPosition();
 +        if (!this.nativeInterpolation.active()) return;
 +        final var next = this.nativeInterpolation.tick(this.eye, this.player.getXRot(), this.player.getYRot(), this.player.xRotO, this.player.yRotO, this.player.getYHeadRot());
 +        if (next.clearMotion()) this.player.setDeltaMovement(Vec3.ZERO);
@@ -752,10 +802,10 @@ index 0000000..1a00bf6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
 new file mode 100644
-index 0000000..cc3b1d1
+index 0000000..563d95a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,356 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -764,7 +814,9 @@ index 0000000..cc3b1d1
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
 +import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalReplayContext;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerBodyRotation;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.multiplayer.ClientLevel;
@@ -782,6 +834,7 @@ index 0000000..cc3b1d1
 +import org.junit.jupiter.api.Test;
 +import org.mockito.MockedStatic;
 +
++import java.util.Set;
 +import java.util.UUID;
 +import java.util.concurrent.atomic.AtomicReference;
 +
@@ -889,7 +942,7 @@ index 0000000..cc3b1d1
 +    }
 +
 +    @Test
-+    void headOnlyMotionUsesTheRawPacketPositionAndPreviousNativeTickPosition() {
++    void headOnlyMotionUsesTheRawPacketPositionAndLastCompletedNativePosition() {
 +        try (final var f = new Fixture()) {
 +            assertTrue(f.handler.receive(f.movement(0, false)));
 +            f.tick();
@@ -899,7 +952,7 @@ index 0000000..cc3b1d1
 +                    new Position3f(37, 123, 19), new Position3f(22.75F, 135, -135.25F), 1.62001F,
 +                    (short) 0, 0, false, new RemotePlayerMovement.JavaTarget(false, 0, 0, 0, 0, 22.5F, false));
 +            assertTrue(f.handler.receive(head));
-+            verify(f.player).setDeltaMovement(new Vec3(36.5F, 123F - 24.413341522216797F, 13.5F));
++            verify(f.player).setDeltaMovement(new Vec3(36F, 123F - 48.826683044433594F, 13.5F));
 +            assertEquals(1D, f.position.get().x);
 +            assertTrue(f.handler.hasActiveInterpolation());
 +        }
@@ -917,7 +970,48 @@ index 0000000..cc3b1d1
 +                    new Position3f(37, .125F, 19), Position3f.ZERO, source.originOffset(),
 +                    (short) 0, 0, false, new RemotePlayerMovement.JavaTarget(false, 0, 0, 0, 0, 0, false));
 +            assertTrue(f.handler.receive(head));
-+            verify(f.player).setDeltaMovement(new Vec3(36.5F, .024999991059303284F, 13.5F));
++            verify(f.player).setDeltaMovement(new Vec3(36F, -.07500001788139343F, 13.5F));
++        }
++    }
++
++    @Test
++    void bodyControlUsesTheRespawnDisplacementBeforeCopyingPreviousPosition() {
++        try (final var f = new Fixture()) {
++            assertTrue(f.handler.receive(f.movement(0, false)));
++            for (int i = 0; i < 3; i++) f.tick();
++            final var reset = new RemotePlayerMovement(17, f.uuid, f.lifetime, 1, false,
++                    new Position3f(.5F, 73.24002F, 4.5F), new Position3f(22.75F, 370.5F, -135.25F), 1.62001F,
++                    (short) 0, 3, false, f.movement(1, false).javaTarget());
++            assertTrue(f.handler.receive(reset));
++            // Java copies its render history before interpolation; native body control still needs the pre-reset position.
++            f.oldPosition.set(f.position.get());
++            f.handler.interpolate();
++            final var displacement = f.handler.bodyDisplacement();
++            assertEquals(new Position3f(-1, 0, -1), displacement);
++            float body = BedrockPlayerBodyRotation.tick(40F, f.player.getYRot(), displacement.x(), displacement.z(), false, false);
++            assertEquals(62.5F, body);
++            f.handler.finishBodyTick();
++            assertEquals(Position3f.ZERO, f.handler.bodyDisplacement());
++            for (int tick = 0; tick < 25; tick++) body = BedrockPlayerBodyRotation.tick(body, 10.5F, 0, 0, false, false);
++            assertEquals(60.5F, body);
++        }
++    }
++
++    @Test
++    void historicalBodyTicksDoNotAdvanceTheLiveNativePositionHistory() {
++        try (final var f = new Fixture()) {
++            assertTrue(f.handler.receive(f.movement(0, false)));
++            f.oldPosition.set(f.position.get());
++            f.handler.interpolate();
++            final var displacement = f.handler.bodyDisplacement();
++            assertEquals(.5F, displacement.x());
++            try (final var ignored = PhysicalReplayContext.enter(f.level, f.connection, Set.of(f.player))) {
++                assertNull(f.handler.bodyDisplacement());
++                f.handler.finishBodyTick();
++            }
++            assertEquals(displacement, f.handler.bodyDisplacement());
++            f.handler.finishBodyTick();
++            assertEquals(Position3f.ZERO, f.handler.bodyDisplacement());
 +        }
 +    }
 +
@@ -1051,6 +1145,7 @@ index 0000000..cc3b1d1
 +        private void tick() {
 +            this.oldPosition.set(this.position.get());
 +            this.handler.interpolate();
++            this.handler.finishBodyTick();
 +        }
 +
 +        private RemotePlayerMovement movement(final int mode, final boolean riding) {
