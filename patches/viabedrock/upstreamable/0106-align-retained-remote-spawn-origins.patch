@@ -1,39 +1,28 @@
-From f8b6dc11ac96bc6b58005404bcc76e8ece23e3a5 Mon Sep 17 00:00:00 2001
+From a8873599993f3914cb07f9bc28d24355b09cb6b7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 2 Nov 2026 13:09:03 +0100
 Subject: [PATCH] fix(players): align retained remote spawn origins
 
-AddPlayer supplies the remote player's feet, while MovePlayer supplies its
-eye position. Initialize the retained transform through setJavaPosition
-so picking proxies, relative click positions and spatial receive history
-use the same eye-origin convention from the first frame. Keep the Java
-spawn coordinates at the original feet position.
+AddPlayer supplies feet while MovePlayer supplies an eye position. Initialize the live transform through setJavaPosition so picking proxies and relative clicks align with visible feet from the first frame. Keep Java spawn coordinates at the supplied feet.
 
-Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls on protocol 2225 spawn two
-fresh player identities and send a stationary normal movement update for
-each. Native upper-body attacks succeed before and after both updates.
-The installed pre-fix direct client misses both initial attacks: its
-physical picking proxies begin 1.62001 blocks below their correct origin.
-The same ray hits after the movement update, although the visible player
-remains stationary. Complete journals and read-only client bounds audits
-establish the mismatch. The synthetic peer is not a server damage target;
-these controls establish client picking and outgoing attack admission.
+Keep the absolute/delta actor receive cache independent from that live spawn transform. Current Bedrock 1.26.60.5/BDS 1.26.60.6 protocol 2225 controls leave fresh player sparse coordinates and angles at zero. A normal MovePlayer does not populate that cache; an actor absolute update does. Preserve constructor flags and duration while initializing the fresh player cache.
 
-The registered-handler regression decodes Java spawn and movement output,
-checks visible feet and the retained eye origin, and preserves the initial
-receive cache through the first stationary movement update. It fails on
-the lowered retained origin before the correction.
+Native and pre-fix direct journals carry identical peer payloads. Sparse Z-only updates hide the native fresh player while Java incorrectly retains its spawn height. A separate native control supplies Y/Z with X omitted, then X alone: the player starts at the zero-X projection and returns to center only after explicit X. Fresh replacement peers repeat the result. Absolute/normal/delta mixtures retain the separate actor cache.
+
+The registered regression decodes Java spawn, normal movement and sparse movement. It preserves visible feet and the retained eye origin, and rejects spawn or normal movement leaking into omitted sparse axes and angles. Its fixture uses an empty held-item codec without relying on deferred inventory APIs.
+
+Earlier native upper-body attack controls establish initial picking and outgoing attack admission before and after stationary updates. Their synthetic peers do not establish server damage. Full movement trajectories, arbitrary actors, mounts and complete rendering parity remain unverified.
 ---
- .../protocol/packet/OtherPlayerPackets.java   |   3 +-
- .../packet/PlayerSpawnPositionPacketTest.java | 176 ++++++++++++++++++
- 2 files changed, 178 insertions(+), 1 deletion(-)
+ .../protocol/packet/OtherPlayerPackets.java   |   6 +-
+ .../packet/PlayerSpawnPositionPacketTest.java | 228 ++++++++++++++++++
+ 2 files changed, 233 insertions(+), 1 deletion(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpawnPositionPacketTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
-index 2162e5ee..e4758ac5 100644
+index 2162e5ee..8b37d578 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
-@@ -109,7 +109,8 @@ public final class OtherPlayerPackets {
+@@ -109,8 +109,12 @@ public final class OtherPlayerPackets {
              final int buildPlatform = wrapper.read(BedrockTypes.INT_LE); // build platform
  
              final PlayerEntity entity = entityTracker.addEntity(new PlayerEntity(wrapper.user(), entityRuntimeId, entityTracker.getNextJavaEntityId(), uuid, abilities));
@@ -41,14 +30,18 @@ index 2162e5ee..e4758ac5 100644
 +            // AddPlayer supplies feet rather than MovePlayer's eye origin.
 +            entity.setJavaPosition(position);
              entity.setRotation(rotation);
++            // AddPlayer does not seed the separate absolute/delta actor movement cache.
++            entity.retainSpatialUpdate(Position3f.ZERO, Position3f.ZERO,
++                    entity.lastReceivedMovementFlags(), entity.lastReceivedInterpolationTicks());
              entity.updateName(username);
              wrapper.user().get(PlayerListStorage.class).setGameType(uuid, abilities.entityUniqueId(), gameType);
+ 
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpawnPositionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpawnPositionPacketTest.java
 new file mode 100644
-index 00000000..c9ceacf1
+index 00000000..61176fef
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpawnPositionPacketTest.java
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,228 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -62,6 +55,7 @@ index 00000000..c9ceacf1
 +import com.viaversion.viaversion.api.protocol.packet.PacketType;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Type;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
@@ -80,7 +74,6 @@ index 00000000..c9ceacf1
 +import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
 +import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-+import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackDescriptorType;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.ArrayList;
@@ -94,7 +87,7 @@ index 00000000..c9ceacf1
 +class PlayerSpawnPositionPacketTest {
 +
 +    @Test
-+    void remoteSpawnAndItsFirstStationaryMoveShareTheVisibleFeetOrigin() throws Exception {
++    void remoteSpawnKeepsVisibleFeetAndAnIndependentActorMovementCache() throws Exception {
 +        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
 +        final var user = mock(UserConnection.class);
 +        final var tracker = new EntityTracker(user);
@@ -106,8 +99,19 @@ index 00000000..c9ceacf1
 +        when(user.get(PlayerListStorage.class)).thenReturn(new PlayerListStorage());
 +        when(user.get(ItemRewriter.class)).thenReturn(items);
 +        when(session.getLevelGameType()).thenReturn(GameType.Survival);
-+        when(items.createNetworkItem(0, (short) 0, (byte) 0, 0)).thenReturn(BedrockItem.empty());
-+        when(items.newItemType()).thenReturn(new NetworkItemStackDescriptorType(0, false, items));
++        when(items.newItemType()).thenReturn(new Type<>(BedrockItem.class) {
++            @Override
++            public BedrockItem read(final ByteBuf buffer) {
++                assertEquals(0L, buffer.readLong()); // This fixture only supplies an empty held-item descriptor.
++                return BedrockItem.empty();
++            }
++
++            @Override
++            public void write(final ByteBuf buffer, final BedrockItem value) {
++                assertTrue(value.isEmpty());
++                buffer.writeZero(8);
++            }
++        });
 +        final var fields = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaEntityDataFields");
 +        fields.setAccessible(true);
 +        final Object oldFields = fields.get(BedrockProtocol.MAPPINGS);
@@ -131,7 +135,7 @@ index 00000000..c9ceacf1
 +                BedrockTypes.STRING.write(input, "");
 +                BedrockTypes.POSITION_3F.write(input, feet);
 +                BedrockTypes.POSITION_3F.write(input, Position3f.ZERO);
-+                BedrockTypes.POSITION_3F.write(input, Position3f.ZERO);
++                BedrockTypes.POSITION_3F.write(input, new Position3f(22.5F, 90F, 90F));
 +                input.writeZero(8);
 +                BedrockTypes.VAR_INT.write(input, GameType.Survival.getValue());
 +                BedrockTypes.UNSIGNED_VAR_INT.write(input, 0);
@@ -150,7 +154,8 @@ index 00000000..c9ceacf1
 +                assertEquals(feet, player.javaPosition());
 +                assertEquals(nativeOrigin, player.position());
 +                final var initialOrigin = player.position();
-+                assertEquals(initialOrigin, player.lastReceivedPosition());
++                assertEquals(Position3f.ZERO, player.lastReceivedPosition());
++                assertEquals(Position3f.ZERO, player.lastReceivedRotation());
 +                final var emitted = sent.stream().filter(p -> p.getPacketType() == ClientboundPackets26_3.ADD_ENTITY).findFirst().orElseThrow();
 +                emitted.writeToBuffer(output);
 +                assertEquals(ClientboundPackets26_3.ADD_ENTITY.getId(), Types.VAR_INT.readPrimitive(output));
@@ -191,6 +196,45 @@ index 00000000..c9ceacf1
 +                assertEquals(0F, Types.FLOAT.read(output));
 +                assertTrue(Types.BOOLEAN.read(output));
 +                assertFalse(output.isReadable());
++
++                input.clear();
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 101L);
++                BedrockTypes.POSITION_3F.write(input, new Position3f(2F, 66.62001F, 4F));
++                BedrockTypes.POSITION_3F.write(input, new Position3f(22.5F, 90F, 90F));
++                input.writeByte(0).writeBoolean(true);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 0L);
++                input.writeBoolean(false);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 2L);
++                protocol.translate(packet(ClientboundBedrockPackets.MOVE_PLAYER, input, user, sent));
++                assertFalse(input.isReadable());
++                assertEquals(new Position3f(2F, 65F, 4F), player.javaPosition());
++
++                // A sparse actor update does not inherit AddPlayer or MovePlayer coordinates.
++                input.clear();
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 101L);
++                input.writeBoolean(false).writeBoolean(true).writeFloatLE(nativeOrigin.y());
++                input.writeBoolean(true).writeFloatLE(4F);
++                input.writeBoolean(false).writeBoolean(false).writeBoolean(false);
++                input.writeBoolean(true).writeBoolean(false).writeBoolean(false).writeBoolean(false);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 3L);
++                final var delta = packet(ClientboundBedrockPackets.MOVE_ENTITY_DELTA, input, user, sent);
++                protocol.translate(delta);
++                assertFalse(input.isReadable());
++                assertEquals(new Position3f(0F, 64F, 4F), player.javaPosition());
++                output.clear();
++                delta.writeToBuffer(output);
++                assertEquals(ClientboundPackets26_3.ENTITY_POSITION_SYNC.getId(), Types.VAR_INT.readPrimitive(output));
++                assertEquals(player.javaId(), Types.VAR_INT.readPrimitive(output));
++                assertEquals(1, Types.VAR_INT.readPrimitive(output));
++                assertEquals(1, Types.VAR_INT.readPrimitive(output));
++                assertEquals(0D, Types.DOUBLE.read(output));
++                assertEquals(64D, Types.DOUBLE.read(output), .00001D);
++                assertEquals(4D, Types.DOUBLE.read(output));
++                assertEquals(3, Types.VAR_INT.readPrimitive(output));
++                assertEquals(0F, Types.FLOAT.read(output));
++                assertEquals(0F, Types.FLOAT.read(output));
++                assertTrue(Types.BOOLEAN.read(output));
++                assertFalse(output.isReadable());
 +            } finally {
 +                input.release();
 +                output.release();
@@ -214,6 +258,7 @@ index 00000000..c9ceacf1
 +
 +        private TestProtocol() {
 +            OtherPlayerPackets.register(this);
++            EntityPackets.register(this);
 +        }
 +
 +        private void translate(final PacketWrapper packet) throws Exception {
