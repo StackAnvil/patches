@@ -16,14 +16,17 @@ Java screens do not reproduce those custom layouts.
 
 ## Screen lifetime
 
-Open the Bedrock inventory only after Java installs the actual screen.
-Constructing a screen does not open a server container.
-Each installed opening receives a monotonic connection token.
+Request the Bedrock inventory at the actual GUI admission attempt.
+Constructing a screen alone does not open a server container.
+Each requested opening receives a monotonic connection token.
 An authored presentation swap retains that token. An ordinary reopen receives a new one.
 
 The Bedrock open acknowledgment has no client token.
 Core serializes native openings and retains retired requests until their acknowledgments arrive.
-A new opening waits for the previous close acknowledgment.
+Native ignores the inventory key while a previous player or workbench close awaits acknowledgment.
+Core rejects a player opening received during that wait by its own opening token.
+It requires fresh input after acknowledgment instead of queuing the rejected opening.
+Client-initiated close acknowledgments retire native state without forwarding another Java screen close.
 Bind clicks, data, and closes to the connection, menu object, menu ID, and opening token.
 A stale reply must not operate on a replacement screen.
 Keep global player-inventory reconciliation independent of a retired temporary menu.
@@ -46,7 +49,15 @@ Programs advertise this behavior through the versioned core hurt contract.
 Without that contract, screens that require the hurt policy retain ordinary controls.
 Separate admission checks still exclude unfinished cooking bindings.
 
-The installed opening also owns a read-only recipe context while the native acknowledgment is pending.
+A negotiated player opening keeps the world visible until its native container acknowledgment arrives.
+Movement continues during that wait.
+Repeated E sends another open interaction under the same opening token.
+Escape or chat cancels the pending intent.
+A late acknowledgment cannot replace that other screen or reopen the inventory after exit.
+This admission applies with Bedrock inventory screens enabled or disabled.
+Older translators retain their existing screen behavior.
+
+A requested opening also owns a read-only recipe context while the native acknowledgment is pending.
 It reads the real cached crafting grid, hotbar, inventory, and cursor.
 The acknowledgment retains this model and its captured search policy.
 Item requests still require the acknowledged container and its generation.
@@ -104,10 +115,64 @@ The add-on owns input delivery and presentation over authoritative slots and cur
 Keep player destinations, offhand permissions, item locks, and creative actions explicit.
 A fallback acknowledgment must not consume a newer menu's request.
 
+Retain the latest local search edit within its connection before waiting for a command reply.
+Closing a screen retires its commands but preserves unsent text and explicit clearing.
+A replacement presentation submits that text with its own opening, generation, revision, and request sequence.
+Disconnect clears the client's retained edit.
+In Bedrock 1.26.60.5, Escape first removes search focus. The next Escape closes the inventory.
+
 Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
 A normal recipe click fills the grid. Taking its output sends a separate craft request.
 A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
-The request codec supports this format. Installed authored recipe actions remain unfinished.
+Core plans this request for shaped and shapeless recipes from their server-supplied results.
+The planner uses the first eligible ingredient allocation.
+Ordinary named ingredients retain their resolved recipe metadata, including wildcard auxiliary values.
+Tag and Molang ingredients use the selected source descriptor.
+Requests use the request ID for later references to a changed slot.
+Rejected requests restore the crafting grid, inventory, and cursor.
+
+Native 1.26.60.5 plank controls convert 16 of 32 logs into 64 planks per Shift-click.
+Output merges existing stacks and can use a slot freed by consumption.
+An unrelated held apple stays unchanged while output fits inventory.
+When inventory is full, an empty cursor receives the output.
+Held logs increase displayed availability, but bulk crafting leaves them unchanged.
+With full inventory, a full compatible cursor or an incompatible held stack prevents the craft request.
+A partially filled compatible cursor instead drops its held stack and receives the full crafted stack.
+Captured requests cover cursors with 60 and 63 planks; both produce 64 new planks.
+With one free inventory item-space, native crafting places one plank, drops any held stack, and takes the remaining 63.
+This behavior also applies to an incompatible cursor or a full compatible cursor.
+The initial capacity check precedes consumption.
+A full inventory and incompatible cursor prevent crafting even when consumption can free a source slot.
+An empty cursor admits that same craft. Output can then use the freed source slot.
+Native wooden-sword bulk crafting produces one sword despite ingredients for 32.
+The primary output stack limit caps the craft count. Returned containers do not reduce it.
+Recipe data includes returned buckets and bottles, so core does not need a separate remainder mapping.
+For two-output catalog recipes, native selects the secondary output before the primary output with `Create` actions.
+Each created stack chunk starts another merge pass before using empty inventory slots.
+Six cakes return 18 buckets as stacks of 16 and 2.
+When inventory is full, returned bottles drop directly from created-output slot 50.
+The primary honey blocks still use the cursor fallback.
+Complete request fixtures preserve split placement, repeated source references, and cursor replacement.
+The matching server accepts these native requests.
+Planner tests cover these request and prediction boundaries, including rejection rollback.
+Installed direct and ViaProxy controls each complete 11 server-accepted requests.
+Both routes match the captured split-placement, cursor-replacement, and freed-slot requests after stack-ID normalization.
+Additional controls consume the player crafting grid and produce one wooden sword with repeated references to its plank source.
+Reopening retains completed output and the returned cursor stack.
+The incompatible-cursor control sends no craft request until the cursor is empty.
+Separate installed direct and ViaProxy controls verify bucket chunks, returned bottles using a freed source slot, and bottle drops with a full inventory.
+The three craft requests per route match the native cake and honey captures after stack-ID normalization.
+Authoritative responses confirm inventory and cursor quantities. Reopening retains completed output.
+Rejected requests remain unit-tested. These live controls do not induce server rejection.
+
+Direct output-slot clicks craft once onto the cursor, including right-click.
+Manual crafting selects the primary output before returned containers and places returns in inventory, with overflow dropped from created output.
+Manual Shift-click leaves the cursor unchanged and uses combined inventory capacity.
+It sends the remaining stack-sized craft requests in one packet, with each request referring to earlier predicted stack identities.
+The native 20-millisecond click control crafts 128 planks through two requests of 64.
+State regressions cover both grids, returned containers, capacity across partial stacks, linked requests, and partial rejection.
+Installed direct and ViaProxy controls each match nine native craft requests and their authoritative response quantities across eight player/workbench cases.
+The controls cover right-click, linked Shift-click requests, returned containers, full inventory, partial bottle stacks, and retained output after reopening.
 
 Admit an authored player screen only when its required collections and controls are available.
 The shared UI renderer supports the local player portrait and separate body/head rotations.
@@ -127,6 +192,10 @@ Use the [source guide](bedrock-development-sources.md) for versioned native refe
 Core publishes the retained player/workbench rows and full item previews in compressed snapshots.
 Commands bind to the opening, container generation, snapshot revision, and request sequence.
 The add-on buffers search edits while a command awaits its reply.
+Returning to search after a recipe click restores text input without closing the inventory.
+Search text survives player and workbench reopenings within a connection, including an explicit clear.
+Each opening starts with a fresh model and no selected output.
+Installed direct and ViaProxy controls cover retained text and matching rows, replacement queries, explicit clearing, and a server-accepted player craft.
 
 The default player and workbench graphs resolve real slots, recipe rows, and local Help views.
 Survival Help opens Your First Craft. Creative Help opens the Encyclopedia at Creative Mode.
@@ -163,8 +232,13 @@ A full inventory accepts the input without an inventory request.
 Unchanged Java Creative slot echoes preserve the existing native stack and network ID.
 Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
 
-Bulk Survival recipe actions and complete installed native parity remain unfinished.
-Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
+Recipe families beyond the captured plank, cake, and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
+Native query lifetime across disconnects and world changes remains unverified.
+Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls delay the initial open acknowledgment by four seconds on protocol 2225.
+They establish visible admission, repeated input, movement, and cancellation through Escape or chat.
+Rebuilt direct and ViaProxy controls retain the world during that same delay in Survival, Creative, and workbench openings.
+Both routes preserve the pending opening through repeated E and close abandoned native containers after cancellation.
+Native model constructor timing and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
 The original inventory-background, rollback, food-use, and locator-bar reports remain unresolved.

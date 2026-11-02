@@ -21,7 +21,7 @@ BDS advertises these types; Lifeboat omits them. All 22,543 shared native state 
 The palette now follows that registration boundary. Installed add-on and ViaProxy tests spawn in air and walk through the rendered lobby.
 The authored Navigator opens on both routes. Full native appearance remains unverified.
 
-Upstream ViaBedrock #472 now supplies the NBT asset and loads its registry once.
+Upstream [ViaBedrock #472](https://github.com/ViaVersionAddons/ViaBedrock/pull/472) now supplies the NBT asset and loads its registry once.
 The palette filter reads that mapping registry and retains the native registration checks.
 
 The registration names now come directly from the unmodified [CloudburstMC/Data NBT snapshot](https://github.com/CloudburstMC/Data/blob/0021592b1a4253528bad1e1d8b537e306e097557/data_driven_blocks.nbt).

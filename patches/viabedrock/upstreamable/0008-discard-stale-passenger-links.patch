@@ -1,4 +1,4 @@
-From ce3b14e64985fdeb13f588b9b81db95d715db09f Mon Sep 17 00:00:00 2001
+From c01ffe7080e8397ec84906c1f63a1f7492efb4b2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:33 +0200
 Subject: [PATCH] fix(entities): resolve and order Bedrock passenger links
@@ -44,16 +44,16 @@ fixture inputs; unrelated position, notification and event effects remain
 boundaries. Queue timing, derived vehicle overrides, full cycle handling,
 removal lifetimes and mounted-camera rendering remain separate work.
 ---
- .../api/model/entity/ClientPlayerEntity.java  |  17 ++
+ .../api/model/entity/ClientPlayerEntity.java  |  17 +
  .../viabedrock/api/model/entity/Entity.java   |  15 +
  .../protocol/PlayerActionPacketFactory.java   |   9 +-
  .../protocol/packet/EntityPackets.java        |  12 +-
- .../protocol/packet/InteractionPackets.java   |  65 ++--
+ .../protocol/packet/InteractionPackets.java   |  70 ++---
  .../protocol/packet/OtherPlayerPackets.java   |   7 +-
  .../protocol/storage/EntityTracker.java       | 126 +++++++-
  .../api/model/entity/EntityRiderSeatTest.java |  36 +++
- .../protocol/storage/EntityTrackerTest.java   | 278 ++++++++++++++++++
- 9 files changed, 516 insertions(+), 49 deletions(-)
+ .../protocol/storage/EntityTrackerTest.java   | 293 ++++++++++++++++++
+ 9 files changed, 531 insertions(+), 54 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityRiderSeatTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 
@@ -188,7 +188,7 @@ index 39c8bf5f..c45e07d7 100644
          protocol.registerClientbound(ClientboundBedrockPackets.ADD_PAINTING, ClientboundPackets26_3.ADD_ENTITY, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index e4147ec3..919182e9 100644
+index d7260f7c..919182e9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 @@ -46,7 +46,6 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
@@ -199,7 +199,7 @@ index e4147ec3..919182e9 100644
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
-@@ -312,52 +311,32 @@ public final class InteractionPackets {
+@@ -312,57 +311,32 @@ public final class InteractionPackets {
                  }
              }
          });
@@ -223,6 +223,10 @@ index e4147ec3..919182e9 100644
 -            // TODO: Handle Passenger type if needed
 -            switch (linkType.type()) {
 -                case Riding, Passenger -> { // TODO: This needs to be ordered properly based on the link types (rider first, then passengers)
+-                    if (passenger == null) {
+-                        wrapper.cancel();
+-                        return;
+-                    }
 -                    vehicle.addPassenger(passenger.uniqueId());
 -
 -                    wrapper.write(Types.VAR_INT, entityTracker.getEntityByUid(linkType.fromEntityUniqueId()).javaId()); // vehicle
@@ -237,7 +241,8 @@ index e4147ec3..919182e9 100644
 -                    }
 -                }
 -                case None -> { // Remove
--                    vehicle.removePassenger(passenger.uniqueId());
+-                    // Passenger may already be despawned, but its uid can still be in the vehicle's passenger list
+-                    vehicle.removePassenger(linkType.toEntityUniqueId());
 -
 -                    wrapper.write(Types.VAR_INT, vehicle.javaId()); // vehicle
 -                    wrapper.write(Types.VAR_INT, vehicle.passengers().size()); // number of passengers
@@ -246,7 +251,7 @@ index e4147ec3..919182e9 100644
 -                    }
 +    }
  
--                    if (passenger.uniqueId() == entityTracker.getClientPlayer().uniqueId()) { // TODO: This could be applied to all passengers not just players
+-                    if (linkType.toEntityUniqueId() == entityTracker.getClientPlayer().uniqueId()) { // TODO: This could be applied to all passengers not just players
 -                        // The player is no longer riding an entity, update the state
 -                        entityTracker.getClientPlayer().setMountEntityRuntimeId(-1);
 -                        entityTracker.getClientPlayer().setRequestedDismount(false);
@@ -537,10 +542,10 @@ index 00000000..25f75218
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 new file mode 100644
-index 00000000..f618cb94
+index 00000000..77b9559d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,293 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -591,6 +596,21 @@ index 00000000..f618cb94
 +
 +        assertEquals(List.of(remaining.uniqueId()), vehicle.passengers());
 +        assertEquals(List.of(remaining), tracker.getTrackedPassengers(vehicle));
++    }
++
++    @Test
++    void unlinkRemovesStaleUniqueIdWithoutLivePassenger() {
++        final EntityTracker tracker = new EntityTracker(user());
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        final Entity remaining = tracker.addEntity(12, 102, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        vehicle.addPassenger(11);
++        vehicle.addPassenger(remaining.uniqueId());
++
++        tracker.applyEntityLink(link(vehicle.uniqueId(), 11, ActorLinkType.None));
++
++        assertEquals(List.of(remaining.uniqueId()), vehicle.passengers());
++        assertEquals(List.of(remaining), tracker.getTrackedPassengers(vehicle));
++        assertEquals(List.of(vehicle), tracker.drainPassengerUpdates());
 +    }
 +
 +    @Test

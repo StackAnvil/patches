@@ -6,6 +6,8 @@ Share bounded scene, layout, image, text and actor rendering primitives before r
 
 ## Design constraints
 
+GUI camera overrides retain their existing yaw values. World player queries use the [appearance layer's native head limits](0009-manage-character-creator-accounts-and-wardrobes.pr.md).
+
 Share authored scene, layout, image, text, actor, and focus primitives. Preserve same-pack bitmap metadata, legacy layouts, native atlas sampling, and GUI raster coverage.
 
 Prerequisites:

@@ -23,13 +23,13 @@ export function registerPlayerUseGameplay(context: ProbeContext) {
     const observation = observationFor(player);
     if (!observation) return;
     observation.impacts.push({ type: event.projectile.typeId, tick: system.currentTick,
-      playerPosition: { ...player.location } });
+      playerPosition: { ...player.location }, impactPosition: { ...event.location } });
   });
   system.runInterval(() => {
     const current = getActive();
     if (!current || current.fixture.closed) return;
     const observation = current.fixture.playerUse;
-    if (!observation || observation.events.length === 0) return;
+    if (!observation || (observation.events.length === 0 && observation.kind !== "pearl-wind-moving")) return;
     const player = world.getAllPlayers().find((candidate) => candidate.name === current.playerName);
     if (!player) return;
     try {
@@ -39,13 +39,13 @@ export function registerPlayerUseGameplay(context: ProbeContext) {
     } catch (error) { observation.error = String(error); }
   }, 1);
 
-  for (const id of ["pearl-wind-charge", "eat-moving-repeat", "eat-moving-last"] as const) {
+  for (const id of ["pearl-wind-charge", "pearl-wind-charge-moving", "eat-moving-repeat", "eat-moving-last"] as const) {
     define(id, "player-use", async (player): Promise<{ playerUse: PlayerUseObservation; closed: boolean }> => {
       await prepareArena(player);
       const from = position(-8, -1, -8), to = position(8, -1, 32);
       player.dimension.runCommand(`fill ${Math.floor(from.x)} ${from.y} ${Math.floor(from.z)} ${Math.floor(to.x)} ${to.y} ${Math.floor(to.z)} stone`);
       player.dimension.runCommand(`fill ${Math.floor(from.x)} ${from.y + 1} ${Math.floor(from.z)} ${Math.floor(to.x)} ${to.y + 11} ${Math.floor(to.z)} air`);
-      const kind = id === "pearl-wind-charge" ? "pearl-wind" : "food";
+      const kind = id === "pearl-wind-charge-moving" ? "pearl-wind-moving" : id === "pearl-wind-charge" ? "pearl-wind" : "food";
       const initialFood = kind === "food" ? id === "eat-moving-last" ? 1 : 6 : 0;
       if (kind === "food") inventory(player).setItem(0, new ItemStack("minecraft:golden_apple", initialFood));
       else {
@@ -65,9 +65,9 @@ export function registerPlayerUseGameplay(context: ProbeContext) {
       observation.remainingPearls = countItem(inventory(player), "minecraft:ender_pearl");
       observation.remainingWindCharges = countItem(inventory(player), "minecraft:wind_charge");
       observation.absorption = player.getEffect("absorption")?.duration ?? 0;
-      return { passed: observation.kind === "pearl-wind" ? pearlWindChargePasses(observation) : movingFoodUsePasses(observation),
-        observed: observation, expected: observation.kind === "pearl-wind"
-          ? "One pearl teleport, one immediate wind-charge impact, an upward impulse and a settled landing."
+      return { passed: observation.kind === "food" ? movingFoodUsePasses(observation) : pearlWindChargePasses(observation),
+        observed: observation, expected: observation.kind !== "food"
+          ? "A pearl teleport, a wind-charge launch, and a settled landing. The moving case also requires walking before the throw."
           : "Food completes while moving, grants absorption and stops when the last item is consumed." };
     });
   }

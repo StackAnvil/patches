@@ -56,6 +56,6 @@ The owning patch notes describe their specific validation and limits:
 ## Remaining limits
 
 Other wardrobe categories, rapid profile changes, and distinct LOD texture selection still need matching fixtures.
-Enchanted shields, complete first-person appearance, live mounts, remote skins, and motion timing remain partial or unverified.
+Exact enchanted-shield lighting and phase, complete first-person appearance, live mounts, remote skins, and motion timing remain partial or unverified.
 Platform purchases, complete account synchronization, and broader emote parity remain open.
 Keep current status in the [compatibility page](bedrock-coverage.md), not a chronological skin journal.

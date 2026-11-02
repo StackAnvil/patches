@@ -1,4 +1,4 @@
-From 6b1d8feb65d8c05c39aff4c34178278d03c0ee68 Mon Sep 17 00:00:00 2001
+From 6f32f144b2f85a70fb69e481e9f02dc0ea6a7c8c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(camera): render core-resolved server camera movement
@@ -124,12 +124,28 @@ of the native identity is reported as actor loss. This lets the shared
 runtime retire failed fixed-boom attachments without treating delayed
 render metadata as removal, while preserving existing target-tracker
 behavior until its physical center is available.
+
+Reset the interrupted blend origin when a LOCAL clear snapshot is drained,
+even if a later free-camera command is waiting in the same render frame.
+Otherwise the queue retains the previous detached pose and the next eased
+command never returns through the player camera. Keep ordinary interrupted
+free-camera blends anchored to the rendered pose.
+
+Official Bedrock 1.26.60.5 with BDS 1.26.60.6 on protocol 2225 establishes
+this reset in a colored height-band fixture. Two same-tick clear/set trials
+move from player height through the intermediate bands to the detached
+target height; the no-clear control stays at the detached height. Complete
+native packet framing confirms separate CLEAR and eased SET instructions.
+The installed pre-fix direct Java route stays at the old detached height.
+A client-frame regression fails at that stale position before the fix and
+passes afterward, alongside the no-clear blend control. These observations
+establish the blend origin, not complete frame timing or pixel parity.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  44 +++++
  .../camera/BedrockCameraAimAssist.java        |  70 +++++++
  .../bedrock/camera/BedrockCameraFade.java     |  40 ++++
  .../bedrock/camera/BedrockCameraFov.java      |  68 +++++++
- .../bedrock/camera/BedrockCameraPosition.java | 180 ++++++++++++++++++
+ .../bedrock/camera/BedrockCameraPosition.java | 183 ++++++++++++++++++
  .../bedrock/camera/BedrockCameraShake.java    |  49 +++++
  .../bedrock/camera/BedrockCameraWorld.java    |  95 +++++++++
  .../camera/CameraAimAssistControlPayload.java |  22 +++
@@ -151,7 +167,8 @@ behavior until its physical center is available.
  .../settings/impl/BedrockSettings.java        |   4 +
  .../viafabricplus-bedrock/lang/en_us.json     |   1 +
  .../viafabricplus-bedrock.mixins.json         |   8 +-
- 26 files changed, 959 insertions(+), 1 deletion(-)
+ .../camera/BedrockCameraPositionTest.java     |  68 +++++++
+ 27 files changed, 1030 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraAimAssist.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
@@ -173,9 +190,10 @@ behavior until its physical center is available.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraShake.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFollowInput.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockCameraListener.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPositionTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 6bc2c4c..53e6c84 100644
+index 0b69037..6d7f012 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -64,6 +64,19 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
@@ -434,10 +452,10 @@ index 0000000..49fab8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
 new file mode 100644
-index 0000000..09af5ad
+index 0000000..c76154a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,183 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -556,7 +574,10 @@ index 0000000..09af5ad
 +        while (!PENDING.isEmpty()) {
 +            final CameraPositionState snapshot = PENDING.removeFirst();
 +            state = snapshot;
-+            if (snapshot.mode() != Mode.LOCAL) {
++            if (snapshot.mode() == Mode.LOCAL) {
++                // Clear resets the next blend even when both commands arrive before this frame.
++                rendered = normal;
++            } else {
 +                // A snapshot lacks the old client's interrupted frame. Restore its settled target,
 +                // rather than replaying an expired or newly negotiated cutscene from a guessed pose.
 +                final boolean continuous = snapshot.live() && snapshot.sequence() == appliedSequence + 1;
@@ -1284,7 +1305,7 @@ index 0000000..9a5f289
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java
-index 2982b14..48d994f 100644
+index 3ee1544..872df4b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java
 @@ -44,6 +44,7 @@ public final class BedrockSettings {
@@ -1354,5 +1375,79 @@ index 549dc2b..605b96f 100644
    ],
    "injectors": {
      "defaultRequire": 1
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPositionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPositionTest.java
+new file mode 100644
+index 0000000..0836de0
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPositionTest.java
+@@ -0,0 +1,68 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.server.Bootstrap;
++import net.raphimc.viabedrock.api.model.CameraEase;
++import net.raphimc.viabedrock.api.model.CameraPose;
++import net.raphimc.viabedrock.api.model.CameraPositionState;
++import net.raphimc.viabedrock.api.model.CameraPositionState.Mode;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.mockStatic;
++
++final class BedrockCameraPositionTest {
++    private static final CameraPose PLAYER = CameraPose.fromDegrees(new CameraPose.Vector(.5F, 71.62F, .5F), 0, 0, 70, Mode.LOCAL.ordinal());
++    private static final CameraPose.Vector OLD = new CameraPose.Vector(-7.5F, 74.5F, -3.5F);
++    private static final CameraPose.Vector TARGET = new CameraPose.Vector(8.5F, 74.5F, -3.5F);
++
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @AfterEach
++    void clear() {
++        BedrockCameraPosition.clear();
++    }
++
++    @Test
++    void clearBeforeAnotherCommandInTheSameFrameStartsItsBlendAtThePlayerCamera() {
++        try (final var singleton = mockStatic(Minecraft.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(mock(Minecraft.class));
++            BedrockCameraPosition.accept(command(1, Mode.FREE, OLD, 0));
++            assertEquals(OLD, BedrockCameraPosition.frame(PLAYER).position());
++
++            BedrockCameraPosition.accept(command(2, Mode.LOCAL, CameraPose.Vector.ZERO, 0));
++            BedrockCameraPosition.accept(command(3, Mode.FREE, TARGET, 2));
++            final CameraPose first = BedrockCameraPosition.frame(PLAYER);
++            assertEquals(PLAYER.position(), first.position());
++        }
++    }
++
++    @Test
++    void anotherFreeCommandWithoutClearStartsItsBlendAtTheRenderedCamera() {
++        try (final var singleton = mockStatic(Minecraft.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(mock(Minecraft.class));
++            BedrockCameraPosition.accept(command(1, Mode.FREE, OLD, 0));
++            assertEquals(OLD, BedrockCameraPosition.frame(PLAYER).position());
++
++            BedrockCameraPosition.accept(command(2, Mode.FREE, TARGET, 2));
++            assertEquals(OLD, BedrockCameraPosition.frame(PLAYER).position());
++        }
++    }
++
++    private static CameraPositionState command(final long sequence, final Mode mode, final CameraPose.Vector position, final float duration) {
++        return new CameraPositionState(sequence, 0, true, mode, position, 0, 0, duration, CameraEase.LINEAR, true, false);
++    }
++}
 -- 
 2.56.0

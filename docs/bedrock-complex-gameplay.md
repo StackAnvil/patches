@@ -35,6 +35,7 @@ bun run test:integration -- --route java-bedrock --gameplay-complex
 ```
 
 Select individual cases through the [test-pack guide](bedrock-test-packs.md).
+Select `pearl-wind-charge` and `pearl-wind-charge-moving` to compare stationary and walking projectile combinations.
 The suite exercises ranged use, potion effects, fireballs, powder snow, fluids, and creative ascent.
 It is a runnable subset, not an exhaustive Bedrock simulation.
 The Java/Geyser fixture does not implement every BDS complex case.

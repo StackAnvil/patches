@@ -27,8 +27,8 @@ Live prediction and other actor writes no longer replace that source.
 Both absolute and sparse packets update the retained stream before the local-player admission check.
 An ignored local transform therefore still supplies the next sparse packet.
 Unknown and removed actors receive no update, and each actor instance owns its retained state.
-Initial actor placement supplies the bootstrap before movement packets arrive.
-Spawn angles use the native wrap and byte conversion before they enter the received cache.
+Actor spawns that run the native bootstrap retain their initial placement and packed angles before movement packets arrive.
+The [remote-player spawn control](0106-align-retained-remote-spawn-origins.pr.md) establishes the AddPlayer exception: its actor movement cache keeps constructor zeros, independently of the visible spawn and normal MovePlayer updates.
 The live spawn rotation keeps its original float values.
 
 The pinned 1.26.51.1 executable routes delta packets through dispatcher `141732ef0`, callback slot `710`, and derived client handler `14133ef30`.
@@ -52,7 +52,7 @@ The native cache comparison runs without skips.
 Offline tooling, static, and patch metadata checks pass.
 These results do not claim a fresh live trajectory or a complete interpolation port.
 
-The native spawn path calls `14103ff60` after proxy construction.
+The actor spawn bootstrap examined by the instruction fixture is `14103ff60`.
 That function stores the runtime ID and position, then wraps and packs the three angles into bytes.
 It divides by 360 before multiplication by 256.
 The previous bootstrap retained full spawn angles, so the first sparse packet used different omitted angles.
@@ -62,6 +62,7 @@ A further 1,024 controls execute two original inline initializers, the complete 
 They cover all six omission bits, distinct live positions, wrap boundaries, and large finite angles.
 The fixture supplies allocation, native frame data, ready-level and actor lookup callbacks, local-control storage, and the CRT remainder operation.
 Surrounding spawn-handler flow, complete actor construction, and live packet delivery remain outside this comparison.
+These instruction controls do not establish that every spawn handler calls the bootstrap.
 
 The current combined build passes 2,540 tests, with 215 optional skips and no failures or errors.
 All five packet-cache tests run without skips, including both native references.

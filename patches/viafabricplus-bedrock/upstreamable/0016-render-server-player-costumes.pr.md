@@ -6,6 +6,8 @@ A server can replace minecraft:player with property-driven geometry, textures an
 
 ## Design constraints
 
+World player controller selection uses the [appearance layer's native head query](0009-manage-character-creator-accounts-and-wardrobes.pr.md).
+
 Evaluate accepted server player graphs against native actor snapshots. Keep wearer appearance, material bindings, UV animation, and effect lifetimes separate from unrelated players.
 
 ## Validation and remaining limits

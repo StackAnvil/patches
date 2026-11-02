@@ -32,6 +32,30 @@ The consumer regression keeps raw binding quantities and genuine quickcraft prev
 Player and workbench snapshots retain actual menu slots, recipe identities, and full item previews.
 Commands carry the opening, generation, snapshot revision, and request sequence.
 Buffered search edits survive an acknowledgment that advances the container generation.
+The connection retains the latest local edit before command serialization, including an explicit clear.
+Closing retires pending commands. A replacement presentation sends retained text under its own opening and generation.
+Disconnect clears this client state; late replies cannot replace it.
+Search focus clears through the parent GUI owner when clicking elsewhere, hiding the editor, or exiting.
+Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls on protocol 2225 retain search text and explicit clearing after pointer close and reopening.
+The first Escape removes editor focus; the next closes the inventory.
+Controller regressions cover closing before a search reply, replacement commands, explicit clearing, late replies, and connection replacement.
+Rebuilt direct and ViaProxy controls delay search handling by four seconds, close with unsent edits, and retain the latest text and explicit clear after reopening.
+Both routes preserve the 32-log stack and the native two-step Escape behavior.
+The [core inventory patch](../../viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.pr.md) owns close-wait admission and close acknowledgments.
+The optional acknowledgment-bound bridge keeps the world visible until the native player open acknowledgment.
+This gate also applies with Bedrock inventory screens disabled.
+Repeated E retains its token and reissues the native interaction.
+Escape or chat cancels the pending intent, and late readiness cannot replace another screen.
+Controller regressions cover actual screen admission, cancellation, old tokens, capability withdrawal, and connection replacement.
+Initialization redirects retain the acknowledged token, including Java inventory switching to Creative during initialization.
+Replacement player menus retire the pending opening before its acknowledgment can display the old screen.
+Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls establish these visible behaviors with a four-second raw relay delay on protocol 2225.
+Movement continues during the wait. Internal model constructor timing and complete frame-level population parity remain unverified.
+Rebuilt direct and ViaProxy controls retain the world through delayed Survival, Creative, and workbench openings.
+Both routes retain movement, repeated input, Pause and Chat ownership, and the 32-log stack.
+The journals verify the repeated open interactions and native cleanup after cancellation.
+A real-editor screen regression clicks a recipe, returns to search, and types the inventory key without closing the screen.
+Installed direct and ViaProxy controls craft once, enter three replacement queries in the same opening, and retain completed output after reopening. Each route records one server-accepted craft request.
 Late replies and hover exits cannot affect a replacement opening or selection.
 
 Default player and workbench graphs retain all 46 menu slots and real recipe rows.

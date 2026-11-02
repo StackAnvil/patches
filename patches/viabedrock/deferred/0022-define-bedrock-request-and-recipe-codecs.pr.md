@@ -13,7 +13,7 @@ Separate semantic enum values from Cereal variant indexes. Use protocol-2225 exp
 Regression coverage includes `ItemStackCodecTest`, `ItemStackAutoCraftTypeTest`, `ItemStackRequestResultTypeTest`, `NetworkItemCountTest`, `CraftingDataReaderTest`.
 
 An official 1.26.60.5 capture verifies the automatic-craft action from a physical workbench Shift-click.
-The regression matches its complete ingredient payload. Separate schema vectors cover descriptor variants and field widths.
+The regression matches its complete ingredient payload. A second complete native packet selects returned bottles with Create, drops them from created-output slot 50, then selects honey blocks and takes them onto the cursor. Separate schema vectors cover descriptor variants, the unsigned result index, and field widths.
 
 Independent wire vectors and malformed-input tests protect codec boundaries. Encoding does not establish installed recipe actions or complete inventory parity.
 

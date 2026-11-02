@@ -61,6 +61,11 @@ Acknowledged container identity and generation still control item actions.
 A workbench model retains its exact container generation.
 Retired openings cannot read replacement sources or retire a later workbench model.
 
+The connection retains the raw search query when an opening retires and supplies it to the next fresh model.
+Native 1.26.60.5 controls establish reopening and workbench-to-player retention.
+Lifecycle regressions cover reused containers, query replacement and clearing, connection separation, and refusal of retired-model edits.
+See the [inventory reference](../../../docs/native-player-inventory.md) for installed validation and remaining lifetime limits.
+
 The constructed player profile starts with Search, Crafting, filtering off, and automatic layouts.
 Later server packets replace all five fields, including explicit zero tabs.
 The backend reads the current profile rather than retaining the controller's transient filter flag.
@@ -95,7 +100,7 @@ The current native callback selects How to Play topic 5 for Survival and Encyclo
 A physical 1.26.60.5 capture confirms the Survival Your First Craft topic.
 Translated Help paragraphs replace both plain text and rendered components, preserving the native color palette.
 Program round trips retain these components and navigation labels from authored topic and category variables. Full installed Help lifetimes and glyph appearance remain unverified.
-Bulk Survival recipe selection and complete installed action parity remain unfinished.
+Complete installed action and screen parity remain unfinished. The Survival bulk validation below covers selected recipe boundaries.
 
 The retained model exposes output quantity separately from availability and action admission.
 Candidate recipes share source consumption in priority order. Count reads retain the native crafting-input, cursor, and player-inventory order.
@@ -142,7 +147,22 @@ Installed direct and ViaProxy controls each complete seven server-accepted reque
 Both routes preserve the occupied cursor, leave empty slots unchanged, and retain the resulting inventory after reopening without Creative replacement requests.
 The installed add-ons and proxy match the rebuilt artifact hashes.
 
-Bulk Survival actions and complete native screen parity remain unfinished.
+Survival catalog bulk actions plan shaped and shapeless requests from the server recipe results, including returned containers.
+The planner uses the first ingredient allocation round and caps each request at one primary output stack.
+Native 1.26.60.5 and BDS 1.26.60.6 controls establish capacity admission before consumption, split placement, and cursor replacement.
+With one free inventory item-space, native drops an incompatible or full held stack after partial placement and takes the remainder.
+Request/state regressions cover descriptors, changed-slot references, grid sources, capacity, cursor preservation, and rejection rollback.
+A placeholder-recipe regression retains the following valid plan and leaves the source inventory unchanged.
+Ordinary named ingredients retain resolved recipe metadata. Tag and Molang ingredients use the selected source descriptor.
+A real registry regression covers named wildcard logs and sticks alongside concrete tag-selected planks.
+Installed direct and ViaProxy controls each complete 11 server-accepted requests with matching normalized structures across routes.
+Three requests per route match the native fixtures field for field after stack-ID normalization.
+Both routes also consume player grid slot 28, craft one wooden sword, and retain output after reopening.
+Installed add-on and proxy hashes match the rebuilt artifacts. Both recordings and their owned cleanup finish normally.
+Native 1.26.60.5 cake and honey controls cover returned-container placement and primary cursor output with two recipe results.
+Request/state regressions cover six cakes returning 18 buckets, merging across bucket chunks, bottle overflow, and rejection rollback.
+Installed direct and ViaProxy remainder controls each complete six server-accepted requests. Three craft requests per route match the native cake and honey captures field for field after stack-ID normalization. Authoritative responses confirm returned-container placement and primary cursor output. Both routes retain the completed output after reopening. Installed artifact hashes match the full rebuild.
+Broader recipe families, more than two outputs, live rejection controls, and complete native screen parity remain unfinished.
 
 Player and workbench graphs receive their tab and layout indices from the protocol-2225 enums.
 The native inventory graph references these controller variables in forced toggle indices.

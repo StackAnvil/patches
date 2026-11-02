@@ -805,6 +805,19 @@ export async function driveGameplay(
       await uiMouse(ui, "right", 60);
       await Bun.sleep(5000);
       return;
+    case "pearl-wind-charge-moving": {
+      await Promise.all([
+        ui(["ui", "key-hold", "w", "1200", "--client", "java"]),
+        (async () => {
+          await Bun.sleep(200);
+          await uiMouse(ui, "right", 80);
+          await ui(["ui", "key-hold", "2", "40", "--client", "java"]);
+          await uiMouse(ui, "right", 80);
+        })(),
+      ]);
+      await Bun.sleep(5000);
+      return;
+    }
     case "eat-moving-repeat":
     case "eat-moving-last": {
       const duration = id === "eat-moving-last" ? 3500 : 8000;

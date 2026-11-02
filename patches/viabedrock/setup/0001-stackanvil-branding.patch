@@ -1,17 +1,27 @@
-From 3160cef569883a5f886e40ba7326d0a34fe88d74 Mon Sep 17 00:00:00 2001
+From d5ce0cd14449fe8de9477d35bd97e79e87f310f8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:33 +0200
 Subject: [PATCH] chore(build): configure StackAnvil identity and compatibility
 
 Keep branded artifacts and local dependency routing together with the 1 GiB Checkstyle worker allocation required by the enlarged local source tree. Exclude these build compatibility changes from upstream PRs.
+
+Retain the unchanged legacy RakNet codec API while the pinned add-on,
+ViaProxy and capture tooling still import it. Core upstream removes these
+classes in1d76de72. Keep this host compatibility bridge in setup, outside
+all upstream PR branches. Preserve the original license and packet
+implementation; transport feature patches declare the compile APIs.
 ---
- build.gradle                                    | 17 ++++++++++++++++-
- .../main/groovy/viabedrock.checkstyle.gradle    |  1 +
- gradle.properties                               |  2 +-
- 3 files changed, 18 insertions(+), 2 deletions(-)
+ build.gradle                                  |  17 ++-
+ .../main/groovy/viabedrock.checkstyle.gradle  |   1 +
+ gradle.properties                             |   2 +-
+ .../netty/raknet/AesEncryptionCodec.java      | 100 ++++++++++++++++++
+ .../viabedrock/netty/raknet/MessageCodec.java |  65 ++++++++++++
+ 5 files changed, 183 insertions(+), 2 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/netty/raknet/AesEncryptionCodec.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/netty/raknet/MessageCodec.java
 
 diff --git a/build.gradle b/build.gradle
-index 8a16054d..bf1ef357 100644
+index 0c726ca3..bc49b9ed 100644
 --- a/build.gradle
 +++ b/build.gradle
 @@ -8,6 +8,10 @@ plugins {
@@ -44,7 +54,7 @@ index 8a16054d..bf1ef357 100644
      //mavenLocal() // Uncomment when updating
      maven {
          name = "ViaVersion"
-@@ -91,7 +106,7 @@ dependencies {
+@@ -80,7 +95,7 @@ dependencies {
      api "com.vdurmont:semver4j:3.1.0"
      api "com.mojang:brigadier:1.3.10"
      api "at.yawk.lz4:lz4-java:1.12.1"
@@ -75,5 +85,182 @@ index bde64c7f..f781d5a7 100644
  maven_name=ViaBedrock
 -maven_version=0.0.32-SNAPSHOT
 +maven_version=0.0.32-StackAnvil
+diff --git a/src/main/java/net/raphimc/viabedrock/netty/raknet/AesEncryptionCodec.java b/src/main/java/net/raphimc/viabedrock/netty/raknet/AesEncryptionCodec.java
+new file mode 100644
+index 00000000..2b486d54
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/netty/raknet/AesEncryptionCodec.java
+@@ -0,0 +1,100 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.netty.raknet;
++
++import com.google.common.primitives.Longs;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.ByteBufUtil;
++import io.netty.channel.ChannelHandlerContext;
++import io.netty.handler.codec.ByteToMessageCodec;
++import io.netty.handler.codec.CorruptedFrameException;
++
++import javax.crypto.Cipher;
++import javax.crypto.NoSuchPaddingException;
++import javax.crypto.SecretKey;
++import javax.crypto.spec.IvParameterSpec;
++import java.nio.ByteBuffer;
++import java.security.InvalidAlgorithmParameterException;
++import java.security.InvalidKeyException;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.Arrays;
++import java.util.List;
++
++public class AesEncryptionCodec extends ByteToMessageCodec<ByteBuf> {
++
++    private final SecretKey secretKey;
++    private final Cipher inCipher;
++    private final Cipher outCipher;
++    private final MessageDigest sha256;
++    private long sentPacketCounter;
++    private long receivedPacketCounter;
++
++    public AesEncryptionCodec(final SecretKey secretKey) throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidAlgorithmParameterException, InvalidKeyException {
++        final byte[] iv = new byte[16];
++        System.arraycopy(secretKey.getEncoded(), 0, iv, 0, 12);
++        iv[15] = 2;
++
++        this.secretKey = secretKey;
++        this.inCipher = Cipher.getInstance("AES/CTR/NoPadding");
++        this.inCipher.init(Cipher.DECRYPT_MODE, secretKey, new IvParameterSpec(iv));
++        this.outCipher = Cipher.getInstance("AES/CTR/NoPadding");
++        this.outCipher.init(Cipher.ENCRYPT_MODE, secretKey, new IvParameterSpec(iv));
++        this.sha256 = MessageDigest.getInstance("SHA-256");
++    }
++
++    @Override
++    protected void encode(final ChannelHandlerContext ctx, final ByteBuf in, final ByteBuf out) throws Exception {
++        final byte[] hash = this.generateHash(in, this.sentPacketCounter++);
++
++        final ByteBuffer inBuffer = in.nioBuffer();
++        out.ensureWritable(in.readableBytes() + 8);
++
++        this.outCipher.update(inBuffer, out.nioBuffer(0, in.readableBytes()));
++        this.outCipher.update(ByteBuffer.wrap(hash), out.nioBuffer(in.readableBytes(), 8));
++        out.writerIndex(in.readableBytes() + 8);
++    }
++
++    @Override
++    protected void decode(final ChannelHandlerContext ctx, final ByteBuf in, final List<Object> out) throws Exception {
++        final ByteBuffer inBuffer = in.nioBuffer();
++        final ByteBuffer outBuffer = inBuffer.duplicate();
++
++        this.inCipher.update(inBuffer, outBuffer);
++        final ByteBuf output = in.readRetainedSlice(in.readableBytes() - 8);
++
++        final byte[] receivedHash = new byte[8];
++        in.readBytes(receivedHash);
++        final byte[] expectedHash = this.generateHash(output, this.receivedPacketCounter++);
++        if (!MessageDigest.isEqual(receivedHash, expectedHash)) {
++            throw new CorruptedFrameException("Invalid encrypted packet");
++        }
++
++        out.add(output);
++    }
++
++    private byte[] generateHash(final ByteBuf buf, final long packetCounter) {
++        this.sha256.update(Longs.toByteArray(Long.reverseBytes(packetCounter)));
++        this.sha256.update(ByteBufUtil.getBytes(buf));
++        this.sha256.update(this.secretKey.getEncoded());
++        final byte[] hash = this.sha256.digest();
++        this.sha256.reset();
++        return Arrays.copyOf(hash, 8);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/netty/raknet/MessageCodec.java b/src/main/java/net/raphimc/viabedrock/netty/raknet/MessageCodec.java
+new file mode 100644
+index 00000000..28dfbf89
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/netty/raknet/MessageCodec.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.netty.raknet;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.CompositeByteBuf;
++import io.netty.channel.ChannelHandlerContext;
++import io.netty.handler.codec.MessageToMessageCodec;
++import net.raphimc.viabedrock.ViaBedrock;
++import org.cloudburstmc.netty.channel.raknet.RakReliability;
++import org.cloudburstmc.netty.channel.raknet.packet.RakMessage;
++
++import java.util.List;
++
++public class MessageCodec extends MessageToMessageCodec<RakMessage, ByteBuf> {
++
++    public static final String NAME = "viabedrock-raknet-message-codec";
++
++    private static final int MINECRAFT_MESSAGE_ID = 0xFE;
++
++    @Override
++    protected void encode(final ChannelHandlerContext ctx, final ByteBuf in, final List<Object> out) {
++        final CompositeByteBuf buf = ctx.alloc().compositeBuffer(2);
++        try {
++            buf.addComponent(true, ctx.alloc().ioBuffer(1).writeByte(MINECRAFT_MESSAGE_ID));
++            buf.addComponent(true, in.retainedSlice());
++            out.add(new RakMessage(buf.retain()));
++        } finally {
++            buf.release();
++        }
++    }
++
++    @Override
++    protected void decode(final ChannelHandlerContext ctx, final RakMessage in, final List<Object> out) {
++        if (in.channel() != 0 && in.reliability() != RakReliability.RELIABLE_ORDERED) {
++            return;
++        }
++        final ByteBuf buf = in.content();
++        if (!buf.isReadable()) {
++            return;
++        }
++        final int messageId = buf.readUnsignedByte();
++        if (messageId != MINECRAFT_MESSAGE_ID) { // Mojang client seems to ignore invalid messages
++            ViaBedrock.getPlatform().getLogger().warning("Received invalid RakNet message id: " + messageId);
++            return;
++        }
++        out.add(buf.readRetainedSlice(buf.readableBytes()));
++    }
++
++}
 -- 
 2.56.0

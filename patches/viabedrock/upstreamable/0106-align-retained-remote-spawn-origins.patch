@@ -1,0 +1,274 @@
+From a8873599993f3914cb07f9bc28d24355b09cb6b7 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 13:09:03 +0100
+Subject: [PATCH] fix(players): align retained remote spawn origins
+
+AddPlayer supplies feet while MovePlayer supplies an eye position. Initialize the live transform through setJavaPosition so picking proxies and relative clicks align with visible feet from the first frame. Keep Java spawn coordinates at the supplied feet.
+
+Keep the absolute/delta actor receive cache independent from that live spawn transform. Current Bedrock 1.26.60.5/BDS 1.26.60.6 protocol 2225 controls leave fresh player sparse coordinates and angles at zero. A normal MovePlayer does not populate that cache; an actor absolute update does. Preserve constructor flags and duration while initializing the fresh player cache.
+
+Native and pre-fix direct journals carry identical peer payloads. Sparse Z-only updates hide the native fresh player while Java incorrectly retains its spawn height. A separate native control supplies Y/Z with X omitted, then X alone: the player starts at the zero-X projection and returns to center only after explicit X. Fresh replacement peers repeat the result. Absolute/normal/delta mixtures retain the separate actor cache.
+
+The registered regression decodes Java spawn, normal movement and sparse movement. It preserves visible feet and the retained eye origin, and rejects spawn or normal movement leaking into omitted sparse axes and angles. Its fixture uses an empty held-item codec without relying on deferred inventory APIs.
+
+Earlier native upper-body attack controls establish initial picking and outgoing attack admission before and after stationary updates. Their synthetic peers do not establish server damage. Full movement trajectories, arbitrary actors, mounts and complete rendering parity remain unverified.
+---
+ .../protocol/packet/OtherPlayerPackets.java   |   6 +-
+ .../packet/PlayerSpawnPositionPacketTest.java | 228 ++++++++++++++++++
+ 2 files changed, 233 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpawnPositionPacketTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+index 2162e5ee..8b37d578 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+@@ -109,8 +109,12 @@ public final class OtherPlayerPackets {
+             final int buildPlatform = wrapper.read(BedrockTypes.INT_LE); // build platform
+ 
+             final PlayerEntity entity = entityTracker.addEntity(new PlayerEntity(wrapper.user(), entityRuntimeId, entityTracker.getNextJavaEntityId(), uuid, abilities));
+-            entity.setPosition(position);
++            // AddPlayer supplies feet rather than MovePlayer's eye origin.
++            entity.setJavaPosition(position);
+             entity.setRotation(rotation);
++            // AddPlayer does not seed the separate absolute/delta actor movement cache.
++            entity.retainSpatialUpdate(Position3f.ZERO, Position3f.ZERO,
++                    entity.lastReceivedMovementFlags(), entity.lastReceivedInterpolationTicks());
+             entity.updateName(username);
+             wrapper.user().get(PlayerListStorage.class).setGameType(uuid, abilities.entityUniqueId(), gameType);
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpawnPositionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpawnPositionPacketTest.java
+new file mode 100644
+index 00000000..61176fef
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpawnPositionPacketTest.java
+@@ -0,0 +1,228 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.Protocol;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
++import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.EntityPropertyTracker;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class PlayerSpawnPositionPacketTest {
++
++    @Test
++    void remoteSpawnKeepsVisibleFeetAndAnIndependentActorMovementCache() throws Exception {
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++        final var user = mock(UserConnection.class);
++        final var tracker = new EntityTracker(user);
++        final var session = mock(GameSessionStorage.class);
++        final var items = mock(ItemRewriter.class);
++        when(user.get(EntityTracker.class)).thenReturn(tracker);
++        when(user.get(EntityPropertyTracker.class)).thenReturn(mock(EntityPropertyTracker.class));
++        when(user.get(GameSessionStorage.class)).thenReturn(session);
++        when(user.get(PlayerListStorage.class)).thenReturn(new PlayerListStorage());
++        when(user.get(ItemRewriter.class)).thenReturn(items);
++        when(session.getLevelGameType()).thenReturn(GameType.Survival);
++        when(items.newItemType()).thenReturn(new Type<>(BedrockItem.class) {
++            @Override
++            public BedrockItem read(final ByteBuf buffer) {
++                assertEquals(0L, buffer.readLong()); // This fixture only supplies an empty held-item descriptor.
++                return BedrockItem.empty();
++            }
++
++            @Override
++            public void write(final ByteBuf buffer, final BedrockItem value) {
++                assertTrue(value.isEmpty());
++                buffer.writeZero(8);
++            }
++        });
++        final var fields = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaEntityDataFields");
++        fields.setAccessible(true);
++        final Object oldFields = fields.get(BedrockProtocol.MAPPINGS);
++        final var entityId = EntityTypes26_3.class.getDeclaredField("id");
++        entityId.setAccessible(true);
++        final int oldEntityId = entityId.getInt(EntityTypes26_3.PLAYER);
++        final List<PacketWrapper> sent = new ArrayList<>();
++        try (var factory = mockStatic(PacketWrapper.class)) {
++            entityId.setInt(EntityTypes26_3.PLAYER, 42);
++            fields.set(BedrockProtocol.MAPPINGS, Map.of(EntityTypes26_3.PLAYER, List.of(EntityDataFields.PLAYER_MODE_CUSTOMISATION)));
++            factory.when(() -> PacketWrapper.create(any(PacketType.class), eq(user))).thenAnswer(call -> packet(call.getArgument(0), null, user, sent));
++            final var protocol = new TestProtocol();
++            final var feet = new Position3f(1F, 64F, 3F);
++            final var nativeOrigin = new Position3f(1F, 65.62001F, 3F);
++            final var input = Unpooled.buffer();
++            final var output = Unpooled.buffer();
++            try {
++                BedrockTypes.UUID.write(input, new UUID(0, 21));
++                BedrockTypes.STRING.write(input, "Peer");
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 101L);
++                BedrockTypes.STRING.write(input, "");
++                BedrockTypes.POSITION_3F.write(input, feet);
++                BedrockTypes.POSITION_3F.write(input, Position3f.ZERO);
++                BedrockTypes.POSITION_3F.write(input, new Position3f(22.5F, 90F, 90F));
++                input.writeZero(8);
++                BedrockTypes.VAR_INT.write(input, GameType.Survival.getValue());
++                BedrockTypes.UNSIGNED_VAR_INT.write(input, 0);
++                BedrockTypes.UNSIGNED_VAR_INT.write(input, 0);
++                BedrockTypes.UNSIGNED_VAR_INT.write(input, 0);
++                BedrockTypes.PLAYER_ABILITIES.write(input, new PlayerAbilities(21, (byte) 0, (byte) 0));
++                BedrockTypes.UNSIGNED_VAR_INT.write(input, 0);
++                input.writeBoolean(false);
++                BedrockTypes.STRING.write(input, "");
++                input.writeIntLE(8);
++                final var spawn = packet(ClientboundBedrockPackets.ADD_PLAYER, input, user, sent);
++                protocol.translate(spawn);
++                assertFalse(input.isReadable());
++                final var player = tracker.getEntityByRid(101);
++                assertNotNull(player);
++                assertEquals(feet, player.javaPosition());
++                assertEquals(nativeOrigin, player.position());
++                final var initialOrigin = player.position();
++                assertEquals(Position3f.ZERO, player.lastReceivedPosition());
++                assertEquals(Position3f.ZERO, player.lastReceivedRotation());
++                final var emitted = sent.stream().filter(p -> p.getPacketType() == ClientboundPackets26_3.ADD_ENTITY).findFirst().orElseThrow();
++                emitted.writeToBuffer(output);
++                assertEquals(ClientboundPackets26_3.ADD_ENTITY.getId(), Types.VAR_INT.readPrimitive(output));
++                assertEquals(player.javaId(), Types.VAR_INT.readPrimitive(output));
++                assertEquals(player.javaUuid(), Types.UUID.read(output));
++                Types.VAR_INT.readPrimitive(output); // entity type comes from the installed test mapping
++                assertEquals(1D, Types.DOUBLE.read(output));
++                assertEquals(64D, Types.DOUBLE.read(output));
++                assertEquals(3D, Types.DOUBLE.read(output));
++                Types.LOW_PRECISION_VECTOR.read(output);
++                output.skipBytes(3); // pitch, yaw, head yaw
++                assertEquals(0, Types.VAR_INT.readPrimitive(output));
++                assertFalse(output.isReadable());
++                output.clear();
++                input.clear();
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 101L);
++                BedrockTypes.POSITION_3F.write(input, nativeOrigin);
++                BedrockTypes.POSITION_3F.write(input, Position3f.ZERO);
++                input.writeByte(0).writeBoolean(true);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 0L);
++                input.writeBoolean(false);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 1L);
++                final var move = packet(ClientboundBedrockPackets.MOVE_PLAYER, input, user, sent);
++                protocol.translate(move);
++                assertFalse(input.isReadable());
++                assertEquals(initialOrigin, player.position());
++                assertEquals(feet, player.javaPosition());
++                move.writeToBuffer(output);
++                assertEquals(ClientboundPackets26_3.ENTITY_POSITION_SYNC.getId(), Types.VAR_INT.readPrimitive(output));
++                assertEquals(player.javaId(), Types.VAR_INT.readPrimitive(output));
++                assertEquals(1, Types.VAR_INT.readPrimitive(output)); // stepped interpolation
++                assertEquals(1, Types.VAR_INT.readPrimitive(output)); // one position
++                assertEquals(1D, Types.DOUBLE.read(output));
++                assertEquals(64D, Types.DOUBLE.read(output), .00001D);
++                assertEquals(3D, Types.DOUBLE.read(output));
++                assertEquals(3, Types.VAR_INT.readPrimitive(output)); // interpolation steps
++                assertEquals(0F, Types.FLOAT.read(output));
++                assertEquals(0F, Types.FLOAT.read(output));
++                assertTrue(Types.BOOLEAN.read(output));
++                assertFalse(output.isReadable());
++
++                input.clear();
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 101L);
++                BedrockTypes.POSITION_3F.write(input, new Position3f(2F, 66.62001F, 4F));
++                BedrockTypes.POSITION_3F.write(input, new Position3f(22.5F, 90F, 90F));
++                input.writeByte(0).writeBoolean(true);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 0L);
++                input.writeBoolean(false);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 2L);
++                protocol.translate(packet(ClientboundBedrockPackets.MOVE_PLAYER, input, user, sent));
++                assertFalse(input.isReadable());
++                assertEquals(new Position3f(2F, 65F, 4F), player.javaPosition());
++
++                // A sparse actor update does not inherit AddPlayer or MovePlayer coordinates.
++                input.clear();
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 101L);
++                input.writeBoolean(false).writeBoolean(true).writeFloatLE(nativeOrigin.y());
++                input.writeBoolean(true).writeFloatLE(4F);
++                input.writeBoolean(false).writeBoolean(false).writeBoolean(false);
++                input.writeBoolean(true).writeBoolean(false).writeBoolean(false).writeBoolean(false);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(input, 3L);
++                final var delta = packet(ClientboundBedrockPackets.MOVE_ENTITY_DELTA, input, user, sent);
++                protocol.translate(delta);
++                assertFalse(input.isReadable());
++                assertEquals(new Position3f(0F, 64F, 4F), player.javaPosition());
++                output.clear();
++                delta.writeToBuffer(output);
++                assertEquals(ClientboundPackets26_3.ENTITY_POSITION_SYNC.getId(), Types.VAR_INT.readPrimitive(output));
++                assertEquals(player.javaId(), Types.VAR_INT.readPrimitive(output));
++                assertEquals(1, Types.VAR_INT.readPrimitive(output));
++                assertEquals(1, Types.VAR_INT.readPrimitive(output));
++                assertEquals(0D, Types.DOUBLE.read(output));
++                assertEquals(64D, Types.DOUBLE.read(output), .00001D);
++                assertEquals(4D, Types.DOUBLE.read(output));
++                assertEquals(3, Types.VAR_INT.readPrimitive(output));
++                assertEquals(0F, Types.FLOAT.read(output));
++                assertEquals(0F, Types.FLOAT.read(output));
++                assertTrue(Types.BOOLEAN.read(output));
++                assertFalse(output.isReadable());
++            } finally {
++                input.release();
++                output.release();
++            }
++        } finally {
++            fields.set(BedrockProtocol.MAPPINGS, oldFields);
++            entityId.setInt(EntityTypes26_3.PLAYER, oldEntityId);
++        }
++    }
++
++    private static PacketWrapper packet(final PacketType type, final ByteBuf input, final UserConnection user, final List<PacketWrapper> sent) {
++        return new PacketWrapperImpl(type, input, user) {
++            @Override
++            public void send(final Class<? extends Protocol> protocol, final boolean skipCurrentPipeline) {
++                sent.add(this);
++            }
++        };
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++
++        private TestProtocol() {
++            OtherPlayerPackets.register(this);
++            EntityPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
++    }
++
++}
+-- 
+2.56.0

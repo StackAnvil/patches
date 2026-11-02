@@ -24,4 +24,6 @@ Survival placement transactions travel inside `PlayerAuthInput`; the journal com
 Eye precision, other actor shapes, and overlapping multipart targets remain open.
 Successful native attacks emit two `Animate` packets, while these Java controls emit one. Animation packet counts and timing remain open.
 
+The [remote-player spawn control](0106-align-retained-remote-spawn-origins.pr.md) covers initial physical proxies and their first stationary movement update.
+
 The [owning patch](0099-bridge-native-actor-picking-hitboxes.patch) retains implementation rationale and versioned evidence.
