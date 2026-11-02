@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 import { Effect } from "effect";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
+import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
 import { installModpack } from "../integration/modpack.ts";
 import {
   configureShaders,
@@ -427,6 +428,13 @@ async function launchJava(
     { mode: 0o600 },
   );
   await cp(recorder, join(mods, "stackanvil-recorder.jar"));
+  await writeReplayArtifactEvidence(
+    join(directory, "client-artifacts.json"),
+    (await readdir(mods))
+      .filter((file) => file.endsWith(".jar"))
+      .toSorted()
+      .map((file) => ({ role: "client-mod", path: join(mods, file) })),
+  );
   await writeFile(join(game, "stackanvil-replay-directory.txt"), directory, { mode: 0o600 });
   const launcherLog = join(directory, "launcher.log");
   service(
@@ -779,6 +787,10 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   );
   await mkdir(join(proxyHome, "plugins"), { mode: 0o700 });
   await writeFile(join(proxyHome, "plugins/recorder.jar"), await readFile(plugin), { mode: 0o600 });
+  await writeReplayArtifactEvidence(join(directory, "transport-artifacts.json"), [
+    { role: "transport", path: jar },
+    { role: "proxy-recorder", path: join(proxyHome, "plugins/recorder.jar") },
+  ]);
   if (mode === "record") {
     if (client === "proxy" && (input !== "local" || option("--account"))) {
       const authPath = resolve(
