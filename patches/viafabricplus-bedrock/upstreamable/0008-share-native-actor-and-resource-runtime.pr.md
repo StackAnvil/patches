@@ -26,6 +26,12 @@ Prerequisites:
 
 Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTest`, `BedrockActorRenderSelectionTest`, `BedrockActorScaleTest`, and `BedrockActorPickingStateTest`.
 
+Native player hierarchies retain their authored crouch anchor instead of receiving Java's additional two-pixel render offset. Animated and visibility-only native trees share this rule. Passenger offsets, scale, and the Java fallback remain intact.
+
+A colored slim/wide/slim remote-peer fixture uses Bedrock 1.26.60.5/BDS 1.26.60.6 on protocol 2225. After core restores explicit remote posture metadata, the pre-fix Java renderer crouches but drops its foot anchor. The real-renderer regression fails at that extra offset and passes after compensation. The fixture isolates metadata and rendering; complete body rotation and the original local custom-skin report remain open.
+
+Rebuilt direct and ViaProxy controls restore crouching and the native foot anchor with identical skin and posture inputs. The combined four-project build passes 3,333 tests with 325 skipped and no failures or errors. Full stack replay, bundle, artifact checksums, and embedded core-class comparisons pass.
+
 Native current/older/current cat and audio controls establish selected resource paths. Complete pose alignment, audio, particle, query, and visual parity remain unfinished.
 
 Three native 26.60 non-cardinal picking controls establish the camera ray calculation.

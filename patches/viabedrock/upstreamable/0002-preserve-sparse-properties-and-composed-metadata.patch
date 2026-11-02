@@ -1,4 +1,4 @@
-From af61a3324c2b4756edd6c0739826ce2dccf395fe Mon Sep 17 00:00:00 2001
+From 6fdbf2ac49f8051d39622acfeffef60293135c86 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(metadata): preserve sparse properties and composed actor
@@ -136,10 +136,29 @@ Translate shulker dye variants from Bedrock black-to-white order into Java
 white-to-black order, preserving the undyed variant. The native 1.26.51.1
 shulker render controller establishes all seventeen variant textures.
 Actual metadata rewrite tests cover each color and the undyed state.
+
+Emit explicit Java poses for remote player metadata updates without
+requiring a previous crawling transition. Shared sneaking/swimming flags
+do not change a remote Java avatar's pose, so native player animations can
+remain standing despite the retained Bedrock posture. Resolve the pose
+from both retained native flag words after the sparse update. Preserve
+local prediction outside the existing crawling transition correction.
+Do not synthesize posture for name-only updates before any native flag
+word is known.
+
+A synthetic colored classic-skin peer on protocol 2225 demonstrates the
+missing crouch with official Bedrock 1.26.60.5 and BDS 1.26.60.6. Native
+crouches the peer for its sneaking flag while the installed pre-fix direct
+Java client remains standing. The fixture switches slim/wide/slim geometry
+without changing its limb colors. It isolates rendering and metadata;
+it does not establish movement simulation, complete body rotation, or the
+original local custom-skin report. Regressions cover remote sneak/stand,
+sparse flag composition, other established posture mappings, and retaining
+local prediction outside crawling transitions.
 ---
  .../viabedrock/api/model/entity/Entity.java   |  51 ++
  .../api/model/entity/LivingEntity.java        |   4 +-
- .../api/model/entity/PlayerEntity.java        |  40 +-
+ .../api/model/entity/PlayerEntity.java        |  43 +-
  .../entity/properties/EntityProperty.java     |  20 +-
  .../entity/properties/EntityPropertyList.java |  98 ++-
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
@@ -151,7 +170,7 @@ Actual metadata rewrite tests cover each color and the undyed state.
  .../storage/EntityPropertyTracker.java        |  22 +-
  .../entity_flag_molang_query_mappings.json    |   6 +-
  .../entity/EntityPropertyRenderTest.java      |  75 +++
- .../model/entity/PlayerCrawlingPoseTest.java  | 132 ++++
+ .../model/entity/PlayerCrawlingPoseTest.java  | 175 +++++
  .../properties/EntityPropertyListTest.java    |  92 +++
  .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
  .../ArmorStandMarkerMetadataTest.java         | 177 ++++++
@@ -159,7 +178,7 @@ Actual metadata rewrite tests cover each color and the undyed state.
  .../rewriter/EntityMetadataRewriterTest.java  | 318 ++++++++++
  .../rewriter/EntityNameFormattingTest.java    | 256 ++++++++
  .../rewriter/PotionActorMetadataTest.java     | 107 ++++
- 22 files changed, 2158 insertions(+), 210 deletions(-)
+ 22 files changed, 2204 insertions(+), 210 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/properties/EntityPropertyListTest.java
@@ -288,7 +307,7 @@ index d79489fc..78f5d211 100644
          this.updateAttributes(attributes, updateAttributes);
          updateAttributes.send(BedrockProtocol.class);
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
-index ef95055b..96856c42 100644
+index ef95055b..fe3fb21a 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
 @@ -27,6 +27,8 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
@@ -331,7 +350,7 @@ index ef95055b..96856c42 100644
          setPlayerTeam.write(Types.VAR_INT, TeamCollisionRule.NEVER.ordinal()); // collision rule
          setPlayerTeam.write(Types.BOOL_OPTIONAL_VAR_INT, null); // color
          setPlayerTeam.write(Types.BYTE, (byte) 3); // flags
-@@ -114,6 +123,33 @@ public class PlayerEntity extends LivingEntity {
+@@ -114,6 +123,36 @@ public class PlayerEntity extends LivingEntity {
          this.abilities = abilities;
      }
  
@@ -348,7 +367,10 @@ index ef95055b..96856c42 100644
 +    protected void finishEntityDataUpdate(final List<EntityData> javaEntityData) {
 +        final var flags = this.entityFlags();
 +        final boolean crawling = flags.contains(ActorFlags.CRAWLING);
-+        if (crawling || this.crawling) {
++        final boolean nativeFlagsKnown = this.entityData.containsKey(ActorDataIds.RESERVED_0)
++                || this.entityData.containsKey(ActorDataIds.RESERVED_092);
++        if (!(this instanceof ClientPlayerEntity) && nativeFlagsKnown || crawling || this.crawling) {
++            // Remote avatars do not derive their pose from Java's shared flags.
 +            // Java uses pose 3 for the short crawling body. Its swimming flag still
 +            // comes only from native SWIMMING, which controls different physics.
 +            final int pose = crawling || flags.contains(ActorFlags.SWIMMING) ? 3
@@ -1756,10 +1778,10 @@ index 00000000..642d1546
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java
 new file mode 100644
-index 00000000..b0ad3f0d
+index 00000000..886bee60
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,175 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1856,6 +1878,49 @@ index 00000000..b0ad3f0d
 +            update(player, flags(ActorDataIds.RESERVED_0, lowFlags[i]), flags(ActorDataIds.RESERVED_092, ActorFlags.CRAWLING));
 +            assertEquals(poses[i], value(update(player, flags(ActorDataIds.RESERVED_092)), EntityDataFields.POSE));
 +        }
++    }
++
++    @Test
++    void remoteSneakingChangesPoseAndSurvivesAnUnrelatedFlagWordUpdate() {
++        final PlayerEntity player = player();
++        assertEquals(5, value(update(player, flags(ActorDataIds.RESERVED_0, ActorFlags.SNEAKING)), EntityDataFields.POSE));
++        assertEquals(5, value(update(player, flags(ActorDataIds.RESERVED_092)), EntityDataFields.POSE));
++        assertEquals(0, value(update(player, flags(ActorDataIds.RESERVED_0)), EntityDataFields.POSE));
++    }
++
++    @Test
++    void remotePosturesDoNotRequireAnEarlierCrawlingTransition() {
++        final ActorFlags[] flags = {ActorFlags.SWIMMING, ActorFlags.GLIDING, ActorFlags.SLEEPING};
++        final int[] poses = {3, 1, 2};
++        final PlayerEntity player = player();
++        for (int i = 0; i < flags.length; i++) {
++            final EntityData low = flags(ActorDataIds.RESERVED_0, flags[i].getValue() < Long.SIZE ? new ActorFlags[]{flags[i]} : new ActorFlags[0]);
++            final EntityData high = flags(ActorDataIds.RESERVED_092, flags[i].getValue() >= Long.SIZE ? new ActorFlags[]{flags[i]} : new ActorFlags[0]);
++            assertEquals(poses[i], value(update(player, low, high), EntityDataFields.POSE));
++            assertEquals(0, value(update(player, flags(ActorDataIds.RESERVED_0), flags(ActorDataIds.RESERVED_092)), EntityDataFields.POSE));
++        }
++    }
++
++    @Test
++    void localPredictedPoseIsNotOverwrittenOutsideTheExistingCrawlingTransition() {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++        final var player = new ClientPlayerEntity(user, 1, new UUID(0, 1), new PlayerAbilities(1, (byte) 0, (byte) 0));
++        player.entityData().put(ActorDataIds.RESERVED_0, flags(ActorDataIds.RESERVED_0, ActorFlags.SNEAKING));
++        final List<EntityData> result = new ArrayList<>();
++        player.finishEntityDataUpdate(result);
++        assertTrue(result.isEmpty());
++
++        player.entityData().put(ActorDataIds.RESERVED_092, flags(ActorDataIds.RESERVED_092, ActorFlags.CRAWLING));
++        player.finishEntityDataUpdate(result);
++        assertEquals(3, value(result, EntityDataFields.POSE));
++        result.clear();
++        player.entityData().put(ActorDataIds.RESERVED_092, flags(ActorDataIds.RESERVED_092));
++        player.finishEntityDataUpdate(result);
++        assertEquals(5, value(result, EntityDataFields.POSE));
++        result.clear();
++        player.finishEntityDataUpdate(result);
++        assertTrue(result.isEmpty());
 +    }
 +
 +    private static PlayerEntity player() {

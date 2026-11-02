@@ -1,4 +1,4 @@
-From 357c77aad1b996db375932d8e50869f1748e9522 Mon Sep 17 00:00:00 2001
+From ead24dedecf1aa7c7646c881770917a856ee017c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -443,6 +443,20 @@ valid pose updates and held final pose. It fails on the complete stack
 before the correction with the same parser error as the live actor log.
 The native control establishes this captured failure, not every malformed
 expression's recovery or complete public-server actor visual parity.
+
+Keep the authored native hierarchy's crouch anchor instead of adding
+Java's separate two-pixel crouch render offset. Compensate only while an
+animation pose or explicit visibility selects the native tree. Preserve
+passenger offsets, scale, and the ordinary Java fallback.
+
+A protocol-2225 synthetic remote peer with a colored classic skin on
+Bedrock 1.26.60.5/BDS 1.26.60.6 retains its foot anchor through standing
+and crouching. After explicit remote posture metadata is restored in
+core, the installed Java route crouches but drops its entire model by
+Java's extra offset. A real-renderer regression reproduces that drop at
+non-unit scale and verifies native animated/visibility-only trees and
+fallback ownership. This establishes root anchoring, not complete body
+rotation, movement timing, or the original custom-skin report.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -558,6 +572,7 @@ expression's recovery or complete public-server actor visual parity.
  .../render/BedrockPlayerAnimationState.java   |   21 +
  .../render/BedrockPlayerBodyRotation.java     |   35 +
  .../bedrock/render/BedrockPlayerModel.java    |   53 +
+ .../bedrock/render/BedrockPlayerRenderer.java |   12 +
  .../bedrock/render/BedrockViewBobbing.java    |   51 +
  .../render/BedrockWalkingAnimation.java       |   35 +
  .../render/NativeActorAttackPayload.java      |   24 +
@@ -651,10 +666,11 @@ expression's recovery or complete public-server actor visual parity.
  .../render/BedrockModelTransformsTest.java    |   97 ++
  .../render/BedrockPlayerBodyRotationTest.java |   53 +
  .../render/BedrockPlayerModelTest.java        |  145 +++
+ .../render/BedrockPlayerRenderOffsetTest.java |   58 +
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
  .../render/NativeActorColorPayloadTest.java   |   50 +
- 210 files changed, 25065 insertions(+), 16 deletions(-)
+ 212 files changed, 25135 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -852,6 +868,7 @@ expression's recovery or complete public-server actor visual parity.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransformsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderOffsetTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/NativeActorColorPayloadTest.java
@@ -14052,6 +14069,36 @@ index 0000000..4bedd7f
 +        this.children.put("animated", this.animated.model().root());
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
+index a1e0f55..a4e6f37 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
+@@ -32,6 +32,7 @@ import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+ import net.minecraft.client.renderer.rendertype.RenderType;
+ import net.minecraft.client.renderer.texture.OverlayTexture;
+ import net.minecraft.resources.Identifier;
++import net.minecraft.world.phys.Vec3;
+ 
+ final class BedrockPlayerRenderer extends AvatarRenderer<AbstractClientPlayer> {
+ 
+@@ -61,6 +62,17 @@ final class BedrockPlayerRenderer extends AvatarRenderer<AbstractClientPlayer> {
+         return visible && !translucent && !state.isSpectator;
+     }
+ 
++    @Override
++    public Vec3 getRenderOffset(final AvatarRenderState state) {
++        final Vec3 offset = super.getRenderOffset(state);
++        if (state.isCrouching && state instanceof BedrockPlayerAnimationState nativeState
++                && (!nativeState.bedrockAnimationPose().isEmpty() || nativeState.bedrockBodyVisibility().specified())) {
++            // The native hierarchy already supplies its crouch posture and root position.
++            return offset.add(0, state.scale * 2D / 16D, 0);
++        }
++        return offset;
++    }
++
+     @Override
+     public void renderRightHand(final PoseStack poseStack, final SubmitNodeCollector collector, final int packedLight,
+                                 final Identifier skinTexture, final boolean hasSleeve) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java
 new file mode 100644
 index 0000000..389807a
@@ -27141,6 +27188,70 @@ index 0000000..166bca7
 +        public void bedrockAnimationPose(final Map<String, BedrockBoneAnimation.Transform> pose) {
 +            this.pose = pose;
 +        }
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderOffsetTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderOffsetTest.java
+new file mode 100644
+index 0000000..2103746
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderOffsetTest.java
+@@ -0,0 +1,58 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import net.minecraft.world.phys.Vec3;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.mockito.Mockito.CALLS_REAL_METHODS;
++import static org.mockito.Mockito.mock;
++
++final class BedrockPlayerRenderOffsetTest {
++    @Test
++    void nativeCrouchingKeepsThePassengerOffsetForAnimatedAndVisibilityOnlyBodies() {
++        final var renderer = mock(BedrockPlayerRenderer.class, CALLS_REAL_METHODS);
++        for (final boolean visibilityOnly : new boolean[]{false, true}) {
++            final var state = new State();
++            state.isCrouching = true;
++            state.scale = 2;
++            state.passengerOffset = new Vec3(1, 2, 3);
++            if (visibilityOnly) state.visibility = new BedrockActorAnimation.Visibility(true, List.of());
++            else state.pose = Map.of("body", new BedrockBoneAnimation.Transform(new BedrockBoneAnimation.Vector(0, 0, 0),
++                    new BedrockBoneAnimation.Vector(45, 0, 0), new BedrockBoneAnimation.Vector(1, 1, 1), false));
++            assertEquals(state.passengerOffset, renderer.getRenderOffset(state));
++        }
++    }
++
++    @Test
++    void fallbackKeepsTheJavaCrouchOffsetAndStandingKeepsThePassengerOffset() {
++        final var renderer = mock(BedrockPlayerRenderer.class, CALLS_REAL_METHODS);
++        final var state = new State();
++        state.scale = 2;
++        state.passengerOffset = new Vec3(1, 2, 3);
++        state.isCrouching = true;
++        assertEquals(new Vec3(1, 1.75, 3), renderer.getRenderOffset(state));
++        state.isCrouching = false;
++        assertEquals(state.passengerOffset, renderer.getRenderOffset(state));
++    }
++
++    private static final class State extends AvatarRenderState implements BedrockPlayerAnimationState {
++        private Map<String, BedrockBoneAnimation.Transform> pose = Map.of();
++        private BedrockActorAnimation.Visibility visibility = BedrockActorAnimation.Visibility.UNSPECIFIED;
++
++        @Override public BedrockActorAnimation.Visibility bedrockBodyVisibility() { return this.visibility; }
++        @Override public void bedrockBodyVisibility(final BedrockActorAnimation.Visibility visibility) { this.visibility = visibility; }
++        @Override public Map<String, BedrockBoneAnimation.Transform> bedrockAnimationPose() { return this.pose; }
++        @Override public void bedrockAnimationPose(final Map<String, BedrockBoneAnimation.Transform> pose) { this.pose = pose; }
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java
