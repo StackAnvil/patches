@@ -54,7 +54,6 @@ import {
 } from "./session-cleanup.ts";
 import { hiveTarget, publicTarget, viaProxyTarget } from "./targets.ts";
 import {
-  hasGameplayAcknowledgments,
   clientSessionFailed,
   verifyRendering,
   type SceneFeatures,
@@ -988,6 +987,10 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       );
     }
     unexpectedClientExit = !alive(gamePid);
+    if (waitingForJavaSpawn && !stopped && !unexpectedClientExit)
+      throw new Error(
+        "The Java client never reached initialized gameplay; the requested scene timer did not start. Read its private logs and screenshot.",
+      );
   } finally {
     try {
       await cleanupReplaySession({
@@ -1090,11 +1093,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       .toSorted((left, right) => Number(left.slice(11)) - Number(right.slice(11)));
     for (const name of names) {
       const connection = await inspectJournal(join(directory, name, "packets.sbr"));
-      if (
-        !connection.reachedStartGame ||
-        !connection.reachedSpawn ||
-        !hasGameplayAcknowledgments(connection.serverboundIds)
-      )
+      if (!connection.reachedStartGame || !connection.reachedSpawn || !connection.reachedGameplay)
         throw new Error(
           `Transfer ${name} did not reach initialized gameplay. Read its private journal.`,
         );
@@ -1112,7 +1111,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     throw new Error(
       "The server did not announce initialization and spawn. Read its private logs and screenshot.",
     );
-  if (!hasGameplayAcknowledgments(summary.serverboundIds))
+  if (!summary.reachedGameplay)
     throw new Error(
       "The server announced spawn, but the client did not initialize its player and begin gameplay movement. Read its private logs and screenshot.",
     );

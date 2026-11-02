@@ -73,6 +73,18 @@ describe("private Bedrock packet journals", () => {
     const serverOnly = summarizeJournal(journal([{ direction: 1, nanos: 0n, payload: [113] }]));
     expect(serverOnly.serverboundIds).toEqual({});
   });
+  test("admits gameplay only after client initialization and subsequent movement", () => {
+    for (const movement of [144, 19]) {
+      const input = { direction: 0, nanos: 0n, payload: packetHeader(movement, 0) };
+      const initialized = { direction: 0, nanos: 0n, payload: [113] };
+      expect(summarizeJournal(journal([input, initialized])).reachedGameplay).toBe(false);
+      expect(summarizeJournal(journal([input, initialized, input])).reachedGameplay).toBe(true);
+      expect(summarizeJournal(journal([{ ...initialized, direction: 1 }, input])).reachedGameplay).toBe(false);
+      expect(summarizeJournal(journal([initialized, { ...input, direction: 1 }])).reachedGameplay).toBe(false);
+      expect(summarizeJournal(journal([initialized])).reachedGameplay).toBe(false);
+      expect(summarizeJournal(journal([input])).reachedGameplay).toBe(false);
+    }
+  });
   test("rejects every partial entry instead of silently accepting a broken scene", () => {
     const bytes = journal([{ direction: 1, nanos: 0n, payload: [11, 1, 2, 3] }]);
     for (let length = 9; length < bytes.length; length++) expect(() => summarizeJournal(bytes.subarray(0, length))).toThrow();

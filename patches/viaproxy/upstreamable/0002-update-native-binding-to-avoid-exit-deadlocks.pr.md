@@ -13,7 +13,12 @@ Its Java API classes and all eight native binaries match the verified Maven arti
 
 An installed Lifeboat attempt stopped before gameplay after an HTTP 503 response.
 Cancellation stopped all owned processes normally and retained the artifact receipts.
-This attempt does not establish successful gameplay with the updated bundle.
+A retry recorded 20.65 seconds after gameplay readiness with matching staged artifact hashes.
+The journal contains 3,755 complete frames, and normal cleanup retained both artifact receipts.
+Cancellation before gameplay readiness also stopped all owned processes after the native backend connected.
+
+The saved Lifeboat view remains obscured by large geometry.
+These checks establish recording and shutdown behavior; visual spawn compatibility remains open.
 
 These checks establish selected Linux lifecycle behavior.
 Windows, macOS, and broader networking and native gameplay parity require separate validation.

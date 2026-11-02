@@ -158,7 +158,3 @@ export function verifyRendering(
     failures.push("The replay client disconnected or failed to handle a packet.");
   return failures;
 }
-/** Protocol 2193: client initialization plus movement proves more than a server spawn notification. */
-export function hasGameplayAcknowledgments(ids: Record<number, number>): boolean {
-  return (ids[113] ?? 0) > 0 && ((ids[144] ?? 0) > 0 || (ids[19] ?? 0) > 0);
-}
