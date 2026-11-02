@@ -5,7 +5,9 @@ The previous Java translation sent a start and stop for every use-on-block packe
 It opened a trapdoor where native Bedrock placed a closed neighbor.
 
 Transport the control lifetime and match each local prediction to its concluding Java sequence number.
-Prediction format 2 distinguishes placement, interaction, and failure and carries the native cursor relative to the target.
+Prediction format 3 adds sequence-owned air admission to placement, interaction, failure, and the native cursor.
+A distinct optional channel negotiates this format.
+The existing format-2 channel retains its prior default for older clients.
 Native held placement reuses its first world hit, including coordinates outside later target cubes.
 The core preserves those coordinates and rejects non-finite values or stale sequence ownership.
 
@@ -15,7 +17,9 @@ A failed local prediction does not start a session or submit a placement delta.
 Clients without the channels keep independent block uses.
 
 Native Survival predicts one consumed block for successful local placement.
-The first placement also sends a use-in-air phase with the remaining stack.
+The first placement sends a use-in-air phase with the remaining stack only when the client admits that phase.
+A fresh block call can run before the strict 200 ms air deadline expires.
+Suppressing its air phase does not suppress placement, inventory prediction, or session start.
 The last block uses request ID zero and omits the empty use-in-air phase.
 Creative placements and ordinary interactions carry no placement delta.
 The inventory owns one even legacy ID sequence for placements and other legacy transactions, independently of odd stack requests.
@@ -27,6 +31,9 @@ Held-use swings share the target protocol factory with ordinary punches and expl
 Native 1.26.60.5 and BDS 1.26.60.6 fixtures use protocol 2225.
 Fresh Survival fixtures force the native game mode and verify its HUD and inventory predictions.
 Earlier captures combined a Creative client default with server Survival consumption and did not establish the Survival inventory format.
+A fresh native flags-176 callback dispatches a rejected block use about 27 ms before the previous air deadline.
+It emits no second air transaction.
+The matching source applies that deadline to the air phase after block dispatch.
 Raw journals, screenshots, and proprietary resources remain private.
 
 Physical mouse rotation now retains the initial facing, upper-half state, and closed state in native, direct Java, and ViaProxy fixtures.
@@ -48,7 +55,14 @@ Matching session history explains the earlier apparent correction mismatch.
 The translator preserves both authoritative outcomes.
 
 All four project builds and the modpack bundle pass.
-Core: 2,052 tests, zero failures/errors, 176 optional skips.
-Add-on: 1,281 tests, zero failures/errors, 142 optional skips.
+Core: 2,038 passed, 176 skipped, zero failures or errors.
+Add-on: 1,245 passed, 149 skipped, zero failures or errors.
 CubeConverter: 21 tests. ViaProxy: four tests. Neither reports failures or errors.
-Focused tests cover held state, sequence ownership, cursor validation, use phases, inventory prediction, and independent request IDs.
+Focused tests cover held state, sequence ownership, cursor validation, air admission, use phases, inventory prediction, and independent request IDs.
+A literal legacy wire fixture retains the format-2 default.
+Format 3 preserves a suppressed air decision without changing build success.
+Current direct and ViaProxy rapid controls verify that a successful early placement keeps its consumption prediction but omits the air packet.
+
+Older cores cannot honor the new admission field.
+The add-on retains their legacy channel instead of sending an unsupported payload.
+Complete physical-edge sampling, dynamic capability changes, and broader use families still need comparisons.

@@ -1,4 +1,4 @@
-From 9c8c517925758438a76f556d0237f6810da64ccc Mon Sep 17 00:00:00 2001
+From eb7c9aec7d7bef63fa4a757a3e94c5ce23de41f9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 03:34:25 +0100
 Subject: [PATCH] feat(interaction): retain native held block-use sessions
@@ -14,8 +14,8 @@ world hit even outside later target cubes. Reject non-finite coordinates
 and stale sequence ownership without changing the Java raycast packet.
 
 Start the session only after predicted success. Native Survival predicts
-one consumed block and sends its remaining stack in the first use-in-air
-phase. Use a legacy request while the predicted stack remains nonempty;
+one consumed block. Send its remaining stack in the first use-in-air
+phase only when the client admits that phase. Use a legacy request while the predicted stack remains nonempty;
 consuming the last block uses ID zero and skips the empty use-in-air phase.
 Creative placements, failed attempts and ordinary interactions carry no
 placement delta. Retain predicted counts until authoritative correction,
@@ -40,21 +40,36 @@ The extra first use-in-air phase follows placement, not block activation.
 A fresh trapdoor activation consumes the interaction without calling the
 block item's air use. Failed use-on attempts retain Java's ordinary air
 fallback rather than synthesizing another phase.
+
+Fresh native block dispatch is independent of the strict 200 ms air
+clock. A verified current-build fresh callback dispatches rejected block
+use 27 ms before that clock expires, without another air transaction.
+The same source gates the air phase after successful placement. Do not
+synthesize an air packet solely because a fresh placement succeeded.
+
+Negotiate prediction format 3 on a distinct optional channel. Carry air
+admission with the sequence-owned result and cursor. A matched false
+admission suppresses only the extra air transaction, preserving build
+prediction, inventory consumption and session start. Keep format 2 on
+its existing channel for older clients, with its prior air default.
+Withdraw either prediction capability through the existing held owner.
+Tests cover the legacy wire fixture, the suppressed-air codec, sequence
+ownership and build success independently from the air decision.
 ---
- .../api/model/BlockUsePrediction.java         |  74 +++++++++++
+ .../api/model/BlockUsePrediction.java         |  90 +++++++++++++
  .../viabedrock/api/model/PlayerBlockUse.java  |  35 +++++
  .../container/player/InventoryContainer.java  |   2 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/packet/ClientPlayerPackets.java  |   2 +-
  .../protocol/packet/InteractionPackets.java   | 120 +++++++++++-------
- .../protocol/packet/MultiStatePackets.java    |  33 +++++
- .../protocol/storage/BlockUseStorage.java     |  82 ++++++++++++
+ .../protocol/packet/MultiStatePackets.java    |  35 +++++
+ .../protocol/storage/BlockUseStorage.java     |  83 ++++++++++++
  .../protocol/storage/InventoryTracker.java    |   6 +
  .../protocol/storage/PlayerInputStorage.java  |   4 +-
- .../api/model/BlockUsePredictionTest.java     |  50 ++++++++
+ .../api/model/BlockUsePredictionTest.java     |  70 ++++++++++
  .../packet/BlockItemUseTransactionTest.java   |  96 ++++++++++++++
- .../protocol/storage/BlockUseStorageTest.java | 101 +++++++++++++++
- 13 files changed, 560 insertions(+), 46 deletions(-)
+ .../protocol/storage/BlockUseStorageTest.java | 120 ++++++++++++++++++
+ 13 files changed, 618 insertions(+), 46 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerBlockUse.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java
@@ -64,10 +79,10 @@ fallback rather than synthesizing another phase.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
 new file mode 100644
-index 00000000..580ded14
+index 00000000..8183b1e0
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,90 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -85,28 +100,44 @@ index 00000000..580ded14
 +import java.util.Objects;
 +
 +/** Local result matched to the concluding Java prediction sequence. */
-+public record BlockUsePrediction(int sequence, Result result, Position3f cursor) {
++public record BlockUsePrediction(int sequence, Result result, Position3f cursor, boolean airAllowed) {
 +
 +    public static final String CHANNEL = "viabedrock:block_use_prediction";
-+    public static final Type<BlockUsePrediction> TYPE = new Type<>(BlockUsePrediction.class) {
-+        @Override
-+        public BlockUsePrediction read(final ByteBuf buffer) {
-+            if (Types.VAR_INT.readPrimitive(buffer) != 2
-+                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
-+                throw new IllegalArgumentException("Unsupported player block use");
-+            }
-+            return new BlockUsePrediction(Types.VAR_INT.readPrimitive(buffer), Result.read(buffer.readUnsignedByte()), BedrockTypes.POSITION_3F.read(buffer));
-+        }
++    public static final String AIR_CHANNEL = "viabedrock:block_use_prediction_v3";
++    public static final Type<BlockUsePrediction> TYPE = codec(false);
++    public static final Type<BlockUsePrediction> AIR_TYPE = codec(true);
 +
-+        @Override
-+        public void write(final ByteBuf buffer, final BlockUsePrediction value) {
-+            Types.VAR_INT.writePrimitive(buffer, 2);
-+            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
-+            Types.VAR_INT.writePrimitive(buffer, value.sequence());
-+            buffer.writeByte(value.result().id);
-+            BedrockTypes.POSITION_3F.write(buffer, value.cursor());
-+        }
-+    };
++    private static Type<BlockUsePrediction> codec(final boolean withAirAdmission) {
++        return new Type<>(BlockUsePrediction.class) {
++            @Override
++            public BlockUsePrediction read(final ByteBuf buffer) {
++                if (Types.VAR_INT.readPrimitive(buffer) != (withAirAdmission ? 3 : 2)
++                        || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                    throw new IllegalArgumentException("Unsupported player block use");
++                }
++                final int sequence = Types.VAR_INT.readPrimitive(buffer);
++                final Result result = Result.read(buffer.readUnsignedByte());
++                final Position3f cursor = BedrockTypes.POSITION_3F.read(buffer);
++                return new BlockUsePrediction(sequence, result, cursor, !withAirAdmission || buffer.readBoolean());
++            }
++
++            @Override
++            public void write(final ByteBuf buffer, final BlockUsePrediction value) {
++                Types.VAR_INT.writePrimitive(buffer, withAirAdmission ? 3 : 2);
++                Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++                Types.VAR_INT.writePrimitive(buffer, value.sequence());
++                buffer.writeByte(value.result().id);
++                BedrockTypes.POSITION_3F.write(buffer, value.cursor());
++                if (withAirAdmission) {
++                    buffer.writeBoolean(value.airAllowed());
++                }
++            }
++        };
++    }
++
++    public BlockUsePrediction(final int sequence, final Result result, final Position3f cursor) {
++        this(sequence, result, cursor, true);
++    }
 +
 +    public BlockUsePrediction {
 +        Objects.requireNonNull(result);
@@ -222,7 +253,7 @@ index 98d7d643..36f0e61c 100644
                  } else {
                      PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryContainer);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 0acee785..01389150 100644
+index 0acee785..223db3d9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 @@ -25,6 +25,7 @@ import com.viaversion.viaversion.api.type.Types;
@@ -347,7 +378,7 @@ index 0acee785..01389150 100644
 -                new BlockPosition(0, 0, 0),
 -                0
 -        );
-+        if (blockUse.held() && use.trigger() == ItemUseTriggerType.Player_Input && use.result() == BlockUsePrediction.Result.PLACED
++        if (blockUse.held() && use.airAllowed() && use.trigger() == ItemUseTriggerType.Player_Input && use.result() == BlockUsePrediction.Result.PLACED
 +                && usedItem.hasBlockState() && !prediction.remainder().isEmpty()) {
 +            // Native input invokes the block item's ordinary use after its first successful use-on.
 +            final PacketWrapper itemUse = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
@@ -418,7 +449,7 @@ index 0acee785..01389150 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 29541609..9cbf7341 100644
+index 29541609..8210c4cc 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -53,6 +53,9 @@ import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
@@ -431,25 +462,27 @@ index 29541609..9cbf7341 100644
  import net.raphimc.viabedrock.api.model.PlayerPrediction;
  import net.raphimc.viabedrock.api.model.VehiclePrediction;
  import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
-@@ -250,6 +253,10 @@ public final class MultiStatePackets {
+@@ -250,6 +253,11 @@ public final class MultiStatePackets {
          if (channel.equals("minecraft:unregister")) {
              final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
              wrapper.user().get(ChannelStorage.class).removeChannels(channels);
 +            if (channels.contains(PlayerBlockUse.CHANNEL) || channels.contains(BlockUsePrediction.CHANNEL)
++                    || channels.contains(BlockUsePrediction.AIR_CHANNEL)
 +                    || channels.contains(PlayerInputPermissions.CHANNEL)) {
 +                InteractionPackets.stopBlockUse(wrapper.user());
 +            }
              if (channels.contains(NativeSkinFragment.CHANNEL) || channels.contains(NativeSkinChange.Result.CHANNEL)) {
                  SkinChangeStorage.refreshCapability(wrapper.user());
              }
-@@ -300,6 +307,32 @@ public final class MultiStatePackets {
+@@ -300,6 +308,33 @@ public final class MultiStatePackets {
              }
              return;
          }
-+        if (channel.equals(BlockUsePrediction.CHANNEL)) {
++        if (channel.equals(BlockUsePrediction.CHANNEL) || channel.equals(BlockUsePrediction.AIR_CHANNEL)) {
 +            if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
 +                    && wrapper.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
-+                final BlockUsePrediction prediction = wrapper.read(BlockUsePrediction.TYPE);
++                final BlockUsePrediction prediction = wrapper.read(channel.equals(BlockUsePrediction.AIR_CHANNEL)
++                        ? BlockUsePrediction.AIR_TYPE : BlockUsePrediction.TYPE);
 +                if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
 +                    throw new IllegalArgumentException("Unexpected block-use prediction fields");
 +                }
@@ -477,10 +510,10 @@ index 29541609..9cbf7341 100644
                      && wrapper.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java
 new file mode 100644
-index 00000000..11fde035
+index 00000000..c2f5f75a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,83 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -521,6 +554,7 @@ index 00000000..11fde035
 +        final BlockUsePrediction.Result result = matched ? this.prediction.result() : BlockUsePrediction.Result.INTERACTED;
 +        final Position3f nativeCursor = matched ? this.prediction.cursor() : cursor;
 +        final boolean success = result != BlockUsePrediction.Result.FAILED;
++        final boolean airAllowed = !matched || this.prediction.airAllowed();
 +        this.prediction = null;
 +        final ItemUseTriggerType trigger = this.used ? ItemUseTriggerType.Simulation_Tick : ItemUseTriggerType.Player_Input;
 +        this.used = true;
@@ -529,7 +563,7 @@ index 00000000..11fde035
 +        if (this.active) {
 +            this.resultPosition = resultPosition;
 +        }
-+        return new Use(trigger, start, result, nativeCursor);
++        return new Use(trigger, start, result, nativeCursor, airAllowed);
 +    }
 +
 +    public BlockPosition complete() {
@@ -546,7 +580,7 @@ index 00000000..11fde035
 +        return result;
 +    }
 +
-+    public record Use(ItemUseTriggerType trigger, boolean start, BlockUsePrediction.Result result, Position3f cursor) {
++    public record Use(ItemUseTriggerType trigger, boolean start, BlockUsePrediction.Result result, Position3f cursor, boolean airAllowed) {
 +
 +        public boolean successful() {
 +            return this.result != BlockUsePrediction.Result.FAILED;
@@ -588,7 +622,7 @@ index 84f976c9..7472880e 100644
          if (containerId == this.inventoryContainer.containerId()) {
              return this.inventoryContainer;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
-index f8bf20f8..e4484383 100644
+index f8bf20f8..91374668 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 @@ -11,6 +11,8 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -605,16 +639,16 @@ index f8bf20f8..e4484383 100644
          final String vehicleChannel = this.user().get(ChannelStorage.class).hasChannel(VehiclePredictionContext.CHANNEL)
                  ? "\0" + VehiclePrediction.CHANNEL : "";
 -        register.write(Types.REMAINING_BYTES, (PlayerInput.CHANNEL + "\0" + PlayerPrediction.CHANNEL + vehicleChannel).getBytes(StandardCharsets.UTF_8));
-+        register.write(Types.REMAINING_BYTES, (PlayerInput.CHANNEL + "\0" + PlayerPrediction.CHANNEL + "\0" + PlayerBlockUse.CHANNEL + "\0" + BlockUsePrediction.CHANNEL + vehicleChannel).getBytes(StandardCharsets.UTF_8));
++        register.write(Types.REMAINING_BYTES, (PlayerInput.CHANNEL + "\0" + PlayerPrediction.CHANNEL + "\0" + PlayerBlockUse.CHANNEL + "\0" + BlockUsePrediction.CHANNEL + "\0" + BlockUsePrediction.AIR_CHANNEL + vehicleChannel).getBytes(StandardCharsets.UTF_8));
          register.send(BedrockProtocol.class);
          final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
          packet.write(Types.STRING, PlayerInputPermissions.CHANNEL);
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/BlockUsePredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/BlockUsePredictionTest.java
 new file mode 100644
-index 00000000..1b628fba
+index 00000000..819ca122
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/BlockUsePredictionTest.java
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,70 @@
 +package net.raphimc.viabedrock.api.model;
 +
 +import com.viaversion.viaversion.api.type.Types;
@@ -644,6 +678,26 @@ index 00000000..1b628fba
 +                    buffer.release();
 +                }
 +            }
++        }
++    }
++
++    @Test
++    void admissionChannelPreservesSuppressedAirAndLegacyPayloadsKeepTheirPriorDefault() {
++        final var buffer = Unpooled.buffer();
++        try {
++            final var value = new BlockUsePrediction(7, BlockUsePrediction.Result.PLACED, new Position3f(0.5F, 0.625F, 1F), false);
++            BlockUsePrediction.AIR_TYPE.write(buffer, value);
++            assertEquals(value, BlockUsePrediction.AIR_TYPE.read(buffer));
++            assertFalse(buffer.isReadable());
++            buffer.clear();
++            buffer.writeBytes(new byte[] {2, (byte) 0xB1, 17, 7, 2, 0, 0, 0, 63, 0, 0, 32, 63, 0, 0, (byte) 128, 63});
++            final var legacy = BlockUsePrediction.TYPE.read(buffer);
++            assertEquals(7, legacy.sequence());
++            assertEquals(BlockUsePrediction.Result.PLACED, legacy.result());
++            assertTrue(legacy.airAllowed());
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
 +        }
 +    }
 +
@@ -769,10 +823,10 @@ index 00000000..9b018d43
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorageTest.java
 new file mode 100644
-index 00000000..d2dd9cf6
+index 00000000..25cfe501
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorageTest.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,120 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -871,6 +925,25 @@ index 00000000..d2dd9cf6
 +        assertEquals(locked, use.begin(1, position, actual).cursor());
 +        use.predict(new BlockUsePrediction(2, BlockUsePrediction.Result.PLACED, locked));
 +        assertEquals(actual, use.begin(3, position, actual).cursor());
++    }
++
++    @Test
++    void airAdmissionBelongsToItsPredictionSequenceAndDoesNotChangeBuildSuccess() {
++        final var use = new BlockUseStorage();
++        final var position = new BlockPosition(0, 64, 0);
++        final var cursor = new Position3f(0.5F, 0.625F, 1F);
++        use.hold();
++        use.predict(new BlockUsePrediction(1, BlockUsePrediction.Result.PLACED, cursor, false));
++        final var suppressed = use.begin(1, position, cursor);
++        assertTrue(suppressed.successful());
++        assertTrue(suppressed.start());
++        assertFalse(suppressed.airAllowed());
++        use.release();
++        use.hold();
++        use.predict(new BlockUsePrediction(2, BlockUsePrediction.Result.PLACED, cursor, true));
++        assertTrue(use.begin(2, position, cursor).airAllowed());
++        use.predict(new BlockUsePrediction(3, BlockUsePrediction.Result.PLACED, cursor, false));
++        assertTrue(use.begin(4, position, cursor).airAllowed());
 +    }
 +
 +}
