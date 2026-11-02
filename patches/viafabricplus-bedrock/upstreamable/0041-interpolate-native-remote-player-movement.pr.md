@@ -28,7 +28,7 @@ Three additional original-callback controls retain pitch beyond Java's look limi
 
 ## Installed comparisons
 
-Six-phase direct and ViaProxy controls retain +179/-179-degree pitch through normal movement and immediate head-only input. Position, yaw, and head-yaw remain at their declared values. The native journal contains 2,696 complete frames. Fresh Java journals contain 1,579 and 1,287 frames after the upstream refresh. All three routes retain identical peer skin, spawn, and movement payloads. Installed add-on and proxy hashes match the verified build. The [appearance comparison](0009-manage-character-creator-accounts-and-wardrobes.pr.md) covers native pitch history, angular queries, and their remaining limits.
+Six-phase direct and ViaProxy controls retain +179/-179-degree pitch through normal movement and immediate head-only input. Position, yaw, and head-yaw remain at their declared values. The native journal contains 2,696 complete frames. Fresh Java journals contain 1,575 and 1,230 frames from the final review build. All three routes retain identical peer skin, spawn, and movement payloads. Installed add-on and proxy hashes match the verified build. The [appearance comparison](0009-manage-character-creator-accounts-and-wardrobes.pr.md) covers native pitch history, angular queries, and their remaining limits.
 
 Earlier direct and ViaProxy controls retain the observed large- and small-move steps. Twelve settled phases per route compare movement origins and poses, including the previously occluded leg. The overlapping-head regression also runs against the current rebuilt source with two fresh player identities.
 

@@ -152,13 +152,14 @@ The planner uses the first ingredient allocation round and caps each request at 
 Native 1.26.60.5 and BDS 1.26.60.6 controls establish capacity admission before consumption, split placement, and cursor replacement.
 With one free inventory item-space, native drops an incompatible or full held stack after partial placement and takes the remainder.
 Request/state regressions cover descriptors, changed-slot references, grid sources, capacity, cursor preservation, and rejection rollback.
+A placeholder-recipe regression retains the following valid plan and leaves the source inventory unchanged.
 Ordinary named ingredients retain resolved recipe metadata. Tag and Molang ingredients use the selected source descriptor.
 A real registry regression covers named wildcard logs and sticks alongside concrete tag-selected planks.
 Installed direct and ViaProxy controls each complete 11 server-accepted requests with matching normalized structures across routes.
 Three requests per route match the native fixtures field for field after stack-ID normalization.
 Both routes also consume player grid slot 28, craft one wooden sword, and retain output after reopening.
 Installed add-on and proxy hashes match the rebuilt artifacts. Both recordings and their owned cleanup finish normally.
-Native 1.26.60.5 controls cover cake and honey recipes with two outputs. Secondary outputs are selected before the primary output, split into stack-sized chunks, and merged before using empty slots for each chunk. Returned bottles drop directly from created-output slot 50 when inventory is full. Primary output keeps the cursor fallback.
+Native 1.26.60.5 cake and honey controls cover returned-container placement and primary cursor output with two recipe results.
 Request/state regressions cover six cakes returning 18 buckets, merging across bucket chunks, bottle overflow, and rejection rollback.
 Installed direct and ViaProxy remainder controls each complete six server-accepted requests. Three craft requests per route match the native cake and honey captures field for field after stack-ID normalization. Authoritative responses confirm returned-container placement and primary cursor output. Both routes retain the completed output after reopening. Installed artifact hashes match the full rebuild.
 Broader recipe families, more than two outputs, live rejection controls, and complete native screen parity remain unfinished.

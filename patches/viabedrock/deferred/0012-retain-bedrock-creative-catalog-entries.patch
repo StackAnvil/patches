@@ -1,4 +1,4 @@
-From db1e8cefd4db3bd7db6f7fc9b460085c08fc552a Mon Sep 17 00:00:00 2001
+From 2319a7daacc884a1c0f3132901972bf65d536558 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -363,12 +363,18 @@ container generation and action sequences scoped to their existing opening.
 An explicit empty query remains empty after reopening. Retired models
 cannot alter the replacement query, and another connection starts empty.
 Native query lifetime across disconnects and world changes remains unverified.
+
+Reject catalog recipes whose ingredient slots are all empty before
+calling the native counter. Its admission requires a nonempty ingredient.
+A placeholder must not abort the candidate loop and suppress the inventory
+result. The regression ignores a placeholder, plans the following valid
+recipe, and retains the untouched source inventory.
 ---
  .../model/NativePlayerInventoryAction.java    |  94 +++
  .../model/NativePlayerInventoryMessage.java   | 271 ++++++++
  .../model/NativePlayerInventoryResult.java    |  47 ++
  .../model/container/NativeRecipeCounter.java  |  74 ++
- .../model/container/NativeRecipeCrafting.java | 276 ++++++++
+ .../model/container/NativeRecipeCrafting.java | 286 ++++++++
  .../container/NativeRecipeDescriptor.java     |  10 +
  .../block/CraftingTableContainer.java         |   2 +-
  .../resourcepack/ui/PlayerInventoryUi.java    | 397 +++++++++++
@@ -398,8 +404,8 @@ Native query lifetime across disconnects and world changes remains unverified.
  .../storage/InventoryRequestTrackerTest.java  |  83 +++
  .../NativePlayerCreativeAuxiliaryTest.java    | 333 +++++++++
  .../storage/NativePlayerCreativePickTest.java | 138 ++++
- .../storage/NativeRecipeCraftingTest.java     | 491 +++++++++++++
- 35 files changed, 5729 insertions(+), 171 deletions(-)
+ .../storage/NativeRecipeCraftingTest.java     | 500 +++++++++++++
+ 35 files changed, 5748 insertions(+), 171 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -944,10 +950,10 @@ index fe874172..3ccb1532 100644
      /** A captured native collection. Slots in results are relative to this collection. */
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCrafting.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCrafting.java
 new file mode 100644
-index 00000000..07562ce6
+index 00000000..381dcbb2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCrafting.java
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,286 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -982,6 +988,16 @@ index 00000000..07562ce6
 +                            final InventoryTracker inventory, final List<BedrockItem> results, final ItemRewriter items,
 +                            final BiFunction<Integer, ItemRecipeDescriptor, ItemRecipeDescriptor> craftDescriptor) {
 +        if (recipeId == 0 || recipe.ingredientCount() == 0 || results.isEmpty() || results.size() > 256) {
++            return null;
++        }
++        boolean hasIngredient = false;
++        for (int index = 0; index < recipe.ingredientCount(); index++) {
++            if (!recipe.emptyIngredient(index)) {
++                hasIngredient = true;
++                break;
++            }
++        }
++        if (!hasIngredient) {
 +            return null;
 +        }
 +        for (final var output : results) {
@@ -1246,7 +1262,7 @@ index 271d9fad..5aad3b96 100644
      default boolean matchesSource(final BedrockItem source, final Registry registry,
                                    final Function<BedrockItem, ItemRecipeDescriptor> descriptor) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
-index a90cf752..b8efd50e 100644
+index cb10d8f5..93ee9a52 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
 @@ -145,7 +145,7 @@ public final class CraftingTableContainer extends Container {
@@ -1255,9 +1271,9 @@ index a90cf752..b8efd50e 100644
  
 -    private void refreshOutput() {
 +    public void refreshOutput() {
-         final CraftingDataStorage recipe =
-                 this.user.get(CraftingDataTracker.class).getRecipeData(this, "crafting_table");
-         this.setItem(50, recipe == null ? BedrockItem.empty() : result(recipe).copy());
+         this.updateOutput();
+         PacketFactory.sendJavaContainerSetContent(this.user, this);
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/PlayerInventoryUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/PlayerInventoryUi.java
 new file mode 100644
 index 00000000..6bad8d57
@@ -2383,7 +2399,7 @@ index 00000000..5b3cdb3b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index a0269a99..de7d0af7 100644
+index 15f46759..9125de3a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -22,6 +22,7 @@ import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
@@ -2423,7 +2439,7 @@ index a0269a99..de7d0af7 100644
  import java.util.logging.Level;
  
  public final class InventoryPackets {
-@@ -357,22 +365,33 @@ public final class InventoryPackets {
+@@ -363,22 +371,33 @@ public final class InventoryPackets {
              wrapper.cancel();
              final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
              final int groups = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
@@ -2464,7 +2480,7 @@ index a0269a99..de7d0af7 100644
          });
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CONTAINER_OPEN,
-@@ -1147,41 +1166,7 @@ public final class InventoryPackets {
+@@ -1153,41 +1172,7 @@ public final class InventoryPackets {
          protocol.registerServerbound(
                  ServerboundPackets26_3.SET_CREATIVE_MODE_SLOT,
                  null,
@@ -2507,7 +2523,7 @@ index a0269a99..de7d0af7 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.CUSTOM_CLICK_ACTION,
                  ServerboundBedrockPackets.MODAL_FORM_RESPONSE,
-@@ -1293,7 +1278,7 @@ public final class InventoryPackets {
+@@ -1299,7 +1284,7 @@ public final class InventoryPackets {
                                      if (container == null) {
                                          if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
                                              wrapper.user().get(InventoryRequestTracker.class)
@@ -2516,7 +2532,7 @@ index a0269a99..de7d0af7 100644
                                          }
                                          wrapper.cancel();
                                          return;
-@@ -1866,31 +1851,129 @@ public final class InventoryPackets {
+@@ -1872,31 +1857,129 @@ public final class InventoryPackets {
          return "container." + name;
      }
  
@@ -6490,10 +6506,10 @@ index 00000000..247e1993
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeRecipeCraftingTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeRecipeCraftingTest.java
 new file mode 100644
-index 00000000..8879b595
+index 00000000..ae956335
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeRecipeCraftingTest.java
-@@ -0,0 +1,491 @@
+@@ -0,0 +1,500 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6536,6 +6552,15 @@ index 00000000..8879b595
 +import static org.mockito.Mockito.*;
 +
 +class NativeRecipeCraftingTest {
++
++    @Test
++    void skipsAllEmptyIngredientRecipesAndStillPlansTheNextValidRecipe() {
++        final var f = new Fixture();
++        f.set(0, item(1, 32, 10));
++        assertNull(assertDoesNotThrow(() -> f.plan(recipe(0, 0, 0, 0), item(2, 4, null))));
++        assertNotNull(f.plan(recipe(1), item(2, 4, null)));
++        assertEquals(32, f.player().getItem(0).amount());
++    }
 +
 +    @Test
 +    void registeredRecipeDescriptorsKeepNamedWildcardsAndResolveTagIngredientsFromSource() throws Exception {

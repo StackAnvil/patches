@@ -1,4 +1,4 @@
-From eefc8ea306beadcc5a815378a442f3375501833a Mon Sep 17 00:00:00 2001
+From 19080cc9d2d4b43d37d8ee5605eff138e30663f5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -881,6 +881,13 @@ in request order. Regressions cover native-shaped request batches,
 partial rejection, aggregate capacity, returned-container overflow,
 right-button pickup and both crafting grids. Complete inventory parity,
 arbitrary recipe families and original reports remain separate work.
+
+Update the output model after each queued manual craft so each request
+keeps its own predicted preview. Send the full Java container refresh
+once after the complete batch instead of once per request. Keep rollback
+refreshing the restored model. Player and workbench regressions retain
+linked request identities and require one Java refresh for a two-request
+Shift-click. The Bedrock request payload and admission remain unchanged.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -890,10 +897,10 @@ arbitrary recipe families and original reports remain separate work.
  .../model/container/CraftingPlacement.java    | 229 +++++
  .../container/FurnaceRecipePlacement.java     | 221 +++++
  .../NativeCookingRecipeSelection.java         | 205 +++++
- .../model/container/NativeCraftingOutput.java | 271 ++++++
+ .../model/container/NativeCraftingOutput.java | 272 ++++++
  .../model/container/NativeRecipeCounter.java  | 202 ++++
  .../container/NativeRecipeDescriptor.java     |  60 +-
- .../block/CraftingTableContainer.java         | 110 +--
+ .../block/CraftingTableContainer.java         | 116 +--
  .../container/block/FurnaceContainer.java     | 209 +++++
  .../model/container/player/HudContainer.java  |   3 +
  .../container/player/InventoryContainer.java  | 114 ++-
@@ -956,7 +963,7 @@ arbitrary recipe families and original reports remain separate work.
  .../RegisteredPlayerRecipeSearchTest.java     | 268 ++++++
  .../ResolvedRecipeIngredientTest.java         | 283 ++++++
  .../storage/CookingRecipeBookTest.java        | 194 ++++
- .../protocol/storage/CraftingCursorTest.java  | 363 ++++++++
+ .../protocol/storage/CraftingCursorTest.java  | 364 ++++++++
  .../storage/CraftingDataTrackerTest.java      | 407 +++++++++
  .../storage/CraftingRecipeSourcesTest.java    | 128 +++
  .../storage/FurnaceRecipeRequestTest.java     | 797 ++++++++++++++++
@@ -972,7 +979,7 @@ arbitrary recipe families and original reports remain separate work.
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 90 files changed, 13024 insertions(+), 233 deletions(-)
+ 90 files changed, 13031 insertions(+), 234 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -2042,10 +2049,10 @@ index 00000000..acfb4b9b
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeCraftingOutput.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeCraftingOutput.java
 new file mode 100644
-index 00000000..f05cec35
+index 00000000..1e69ee4c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeCraftingOutput.java
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,272 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2081,7 +2088,7 @@ index 00000000..f05cec35
 +
 +    public static boolean handle(final UserConnection user, final Container owner, final Container grid,
 +                                 final int firstGridSlot, final RecipeMatch match, final int revision,
-+                                 final boolean toInventory, final Runnable refreshOutput) {
++                                 final boolean toInventory, final Runnable updateOutput, final Runnable refreshOutput) {
 +        final var requests = user.get(InventoryRequestTracker.class);
 +        if (!requests.canStartRecipePlacement()) {
 +            return false;
@@ -2113,13 +2120,14 @@ index 00000000..f05cec35
 +                final var storage = new InventoryRequestStorage(request, revision, hud.copy(),
 +                        owner == player ? List.of(player.copy()) : List.of(owner.copy(), player.copy()));
 +                step.apply(id);
-+                refreshOutput.run();
++                updateOutput.run();
 +                storage.capturePrediction(inventory);
 +                batch.add(storage);
 +                // Native 1.26.60 queues the remaining stack-sized crafts before sending any response.
 +                step = toInventory ? plan(results, grid, firstGridSlot, match.amounts(), inventory, items, true) : null;
 +            } while (step != null);
 +            requests.sendCraftingBatch(batch);
++            refreshOutput.run();
 +        } catch (final RuntimeException error) {
 +            hud.setItems(beforeHud.getItems());
 +            player.setItems(beforePlayer.getItems());
@@ -2632,7 +2640,7 @@ index a24c0fe6..271d9fad 100644
      record ComplexAlias(String name, NativeItemDefinitions.Definition<?> representative) implements NativeRecipeDescriptor {
          public ComplexAlias {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
-index fec81fe6..a90cf752 100644
+index fec81fe6..cb10d8f5 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
 @@ -22,6 +22,8 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -2665,7 +2673,7 @@ index fec81fe6..a90cf752 100644
  import java.util.List;
  
  public final class CraftingTableContainer extends Container {
-@@ -104,83 +105,42 @@ public final class CraftingTableContainer extends Container {
+@@ -104,92 +105,55 @@ public final class CraftingTableContainer extends Container {
          if (action != ContainerInput.PICKUP && action != ContainerInput.QUICK_MOVE) {
              return false;
          }
@@ -2687,7 +2695,7 @@ index fec81fe6..a90cf752 100644
              return false;
          }
 +        return NativeCraftingOutput.handle(this.user, this, this, 32, match,
-+                revision, action == ContainerInput.QUICK_MOVE, this::refreshOutput);
++                revision, action == ContainerInput.QUICK_MOVE, this::updateOutput, this::refreshOutput);
 +    }
 +
 +    public boolean handleRecipePlacement(final CraftingDataStorage recipe,
@@ -2773,7 +2781,21 @@ index fec81fe6..a90cf752 100644
          PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[] {request});
          return true;
      }
-@@ -202,18 +162,4 @@ public final class CraftingTableContainer extends Container {
+ 
+     private void refreshOutput() {
++        this.updateOutput();
++        PacketFactory.sendJavaContainerSetContent(this.user, this);
++    }
++
++    private void updateOutput() {
+         final CraftingDataStorage recipe =
+                 this.user.get(CraftingDataTracker.class).getRecipeData(this, "crafting_table");
+         this.setItem(50, recipe == null ? BedrockItem.empty() : result(recipe).copy());
+-        PacketFactory.sendJavaContainerSetContent(this.user, this);
+     }
+ 
+     private static BedrockItem result(final CraftingDataStorage data) {
+@@ -202,18 +166,4 @@ public final class CraftingTableContainer extends Container {
          return BedrockItem.empty();
      }
  
@@ -3046,7 +3068,7 @@ index 47bd4d6b..72ba1793 100644
              return slot - 27;
          } else {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
-index 892d6fac..465ada34 100644
+index 892d6fac..3ed75852 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
 @@ -26,23 +26,37 @@ import com.viaversion.viaversion.api.type.Types;
@@ -3198,7 +3220,7 @@ index 892d6fac..465ada34 100644
 +        }
 +        final var hud = this.user.get(InventoryTracker.class).getHudContainer();
 +        return NativeCraftingOutput.handle(this.user, this, hud, 28, match,
-+                revision, action == ContainerInput.QUICK_MOVE, this::refreshCraftingOutput);
++                revision, action == ContainerInput.QUICK_MOVE, this::updateCraftingOutput, this::refreshCraftingOutput);
 +    }
 +
 +    private static BedrockItem craftingResult(final CraftingDataStorage data) {
@@ -3965,7 +3987,7 @@ index 11c4d002..9dc86539 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 48721470..08fc5932 100644
+index 6c1434ed..1cb31d42 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -93,6 +93,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
@@ -4054,7 +4076,7 @@ index 48721470..08fc5932 100644
      }
  
      static void handleContainerClose(final PacketWrapper wrapper) {
-@@ -525,7 +585,13 @@ public final class InventoryPackets {
+@@ -531,7 +591,13 @@ public final class InventoryPackets {
                      if (container instanceof LecternContainer lectern) {
                          lectern.sendInitialState();
                      }
@@ -4069,7 +4091,7 @@ index 48721470..08fc5932 100644
                  });
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CONTAINER_CLOSE,
-@@ -562,6 +628,9 @@ public final class InventoryPackets {
+@@ -568,6 +634,9 @@ public final class InventoryPackets {
                          container.markServerUpdate();
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeContent(container);
@@ -4079,7 +4101,7 @@ index 48721470..08fc5932 100644
                          if (container instanceof StonecutterContainer stonecutter) {
                              stonecutter.refreshInput();
                              wrapper.cancel();
-@@ -569,6 +638,7 @@ public final class InventoryPackets {
+@@ -575,6 +644,7 @@ public final class InventoryPackets {
                          }
                          PacketFactory.writeJavaContainerSetContent(wrapper, container);
                          PacketFactory.sendJavaCursorForHudUpdate(wrapper.user(), container);
@@ -4087,7 +4109,7 @@ index 48721470..08fc5932 100644
                      } else {
                          wrapper.cancel();
                      }
-@@ -597,6 +667,12 @@ public final class InventoryPackets {
+@@ -603,6 +673,12 @@ public final class InventoryPackets {
                          container.markServerUpdate();
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeSlot(container, slot);
@@ -4100,7 +4122,7 @@ index 48721470..08fc5932 100644
                          if (container instanceof StonecutterContainer stonecutter && slot == 3) {
                              stonecutter.refreshInput();
                              wrapper.cancel();
-@@ -620,6 +696,7 @@ public final class InventoryPackets {
+@@ -626,6 +702,7 @@ public final class InventoryPackets {
                          }
                          wrapper.write(
                                  VersionedTypes.V26_3.item, container.getJavaItem(slot)); // item
@@ -4108,7 +4130,7 @@ index 48721470..08fc5932 100644
                      } else {
                          wrapper.cancel();
                      }
-@@ -681,6 +758,14 @@ public final class InventoryPackets {
+@@ -687,6 +764,14 @@ public final class InventoryPackets {
                          inventoryTracker.removeDynamicContainer(containerName);
                      }
                  });
@@ -4123,7 +4145,7 @@ index 48721470..08fc5932 100644
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CRAFTING_DATA,
                  null,
-@@ -690,7 +775,27 @@ public final class InventoryPackets {
+@@ -696,7 +781,27 @@ public final class InventoryPackets {
                              wrapper.user().get(CraftingDataTracker.class);
                      final CraftingDataReader.Data data = CraftingDataReader.read(wrapper);
                      tracker.updateCraftingDataList(data.recipes(), data.clearRecipes());
@@ -4151,7 +4173,7 @@ index 48721470..08fc5932 100644
                  });
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CONTAINER_SET_DATA,
-@@ -903,6 +1008,46 @@ public final class InventoryPackets {
+@@ -909,6 +1014,46 @@ public final class InventoryPackets {
                          PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
                      }
                  });
@@ -4198,7 +4220,7 @@ index 48721470..08fc5932 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.CONTAINER_BUTTON_CLICK,
                  null,
-@@ -1726,10 +1871,10 @@ public final class InventoryPackets {
+@@ -1732,10 +1877,10 @@ public final class InventoryPackets {
  
      private static BedrockItem readCreativeItem(final PacketWrapper wrapper, final ItemRewriter itemRewriter)
              throws InformativeException {
@@ -4211,7 +4233,7 @@ index 48721470..08fc5932 100644
              throws InformativeException {
          final int id = wrapper.read(BedrockTypes.VAR_INT);
          final int amount = wrapper.read(BedrockTypes.UNSIGNED_SHORT_LE);
-@@ -1739,13 +1884,12 @@ public final class InventoryPackets {
+@@ -1745,13 +1890,12 @@ public final class InventoryPackets {
          if (id == 0) {
              return BedrockItem.empty();
          }
@@ -4242,7 +4264,7 @@ index fa556209..5d9f0fb3 100644
          user.get(FogStorage.class).markJoined();
          user.get(FogStorage.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 57b24cc8..8a380c35 100644
+index c04231bd..ac448e28 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -20,7 +20,14 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -11801,10 +11823,10 @@ index 00000000..d64a324d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingCursorTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingCursorTest.java
 new file mode 100644
-index 00000000..071c2cfe
+index 00000000..3553ac7c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingCursorTest.java
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,364 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -11962,6 +11984,7 @@ index 00000000..071c2cfe
 +            assertTrue(fixture.output.handleClick(0, (short) 0, (byte) 0, ContainerInput.QUICK_MOVE));
 +            assertEquals(2, sent.size());
 +            packets.verify(() -> PacketFactory.sendBedrockInventoryRequest(eq(fixture.user), any()), times(1));
++            packets.verify(() -> PacketFactory.sendJavaContainerSetContent(fixture.user, fixture.output), times(1));
 +            assertEquals(16, assertInstanceOf(ItemStackRequestAction.CraftRecipeAction.class, sent.getFirst().actions().getFirst()).numberOfRequestedCrafts());
 +            assertEquals(15, assertInstanceOf(ItemStackRequestAction.CraftRecipeAction.class, sent.getLast().actions().getFirst()).numberOfRequestedCrafts());
 +            for (final var request : sent) {

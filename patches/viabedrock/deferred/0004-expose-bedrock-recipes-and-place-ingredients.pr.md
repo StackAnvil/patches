@@ -17,6 +17,7 @@ Manual requests keep CraftResults times one, select primary output before return
 Right-click crafts once. Shift-click fills inventory through linked stack-sized requests in one packet.
 Capacity sums compatible inventory stacks. Returned containers merge before empty slots and drop from created output when they do not fit.
 Player and workbench tests exercise the shared handler, predicted identities, returned-container placement, cursor preservation, and rollback.
+The two-request Shift-click regression requires one full Java refresh while retaining linked native requests and per-request predictions.
 Installed direct and ViaProxy checks match the native manual requests and authoritative quantities for the [documented controls](../../../docs/native-player-inventory.md).
 
 Controlled native recipe and naming references cover their declared boundaries. Complete installed player/cooking controllers and arbitrary recipe admission remain unfinished.
