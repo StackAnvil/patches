@@ -32,6 +32,7 @@ public final class RecordingPlugin extends ViaProxyPlugin {
         if (!used.compareAndSet(false, true)) { event.setCancelled(true); return; }
         Path directory = Path.of(System.getProperty("stackanvil.recording"));
         PacketJournal journal = new PacketJournal(directory.resolve("packets.sbr"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
+        RecordingReadiness readiness = new RecordingReadiness(directory);
         ProxyConnection connection = ProxyConnection.fromChannel(event.getChannel());
         event.getChannel().pipeline().addAfter(PacketCodec.NAME, "stackanvil-recording", new ChannelDuplexHandler() {
             private boolean packsSaved;
@@ -63,6 +64,7 @@ public final class RecordingPlugin extends ViaProxyPlugin {
                     byte[] payload = new byte[buffer.readableBytes()];
                     buffer.getBytes(buffer.readerIndex(), payload);
                     journal.append(clientbound, payload);
+                    readiness.record(clientbound, payload);
                 }
                 savePacks();
             }

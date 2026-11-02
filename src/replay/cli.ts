@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 import { Effect } from "effect";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
+import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
 import { installModpack } from "../integration/modpack.ts";
 import {
   configureShaders,
@@ -53,7 +54,6 @@ import {
 } from "./session-cleanup.ts";
 import { hiveTarget, publicTarget, viaProxyTarget } from "./targets.ts";
 import {
-  hasGameplayAcknowledgments,
   clientSessionFailed,
   verifyRendering,
   type SceneFeatures,
@@ -226,6 +226,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
     join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/PacketJournal.java"),
     join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/CameraPresetAudit.java"),
     join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/RecordingConnections.java"),
+    join(root, "src/replay/java/net/pistonmaster/stackanvil/replay/RecordingReadiness.java"),
     ...files,
   ]);
   await writeFile(
@@ -427,6 +428,13 @@ async function launchJava(
     { mode: 0o600 },
   );
   await cp(recorder, join(mods, "stackanvil-recorder.jar"));
+  await writeReplayArtifactEvidence(
+    join(directory, "client-artifacts.json"),
+    (await readdir(mods))
+      .filter((file) => file.endsWith(".jar"))
+      .toSorted()
+      .map((file) => ({ role: "client-mod", path: join(mods, file) })),
+  );
   await writeFile(join(game, "stackanvil-replay-directory.txt"), directory, { mode: 0o600 });
   const launcherLog = join(directory, "launcher.log");
   service(
@@ -654,8 +662,10 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     for (const test of [
       "ReplaySelfTest",
       "NativeCaptureSelfTest",
+      "NativeShutdownSelfTest",
       "PrivateFilesSelfTest",
       "RecordingConnectionsSelfTest",
+      "RecordingReadinessSelfTest",
     ]) {
       const { stdout } = await execute("java", [
         "-cp",
@@ -779,6 +789,10 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   );
   await mkdir(join(proxyHome, "plugins"), { mode: 0o700 });
   await writeFile(join(proxyHome, "plugins/recorder.jar"), await readFile(plugin), { mode: 0o600 });
+  await writeReplayArtifactEvidence(join(directory, "transport-artifacts.json"), [
+    { role: "transport", path: jar },
+    { role: "proxy-recorder", path: join(proxyHome, "plugins/recorder.jar") },
+  ]);
   if (mode === "record") {
     if (client === "proxy" && (input !== "local" || option("--account"))) {
       const authPath = resolve(
@@ -937,10 +951,8 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     console.log(`Private ${mode} session: ${directory}`);
     // Keep connection setup separate from the requested gameplay scene.
     let waitingForNativeConnection = client === "native";
-    let waitingForAddonSpawn = client === "addon";
-    let until =
-      Date.now() +
-      (waitingForNativeConnection ? 300_000 : waitingForAddonSpawn ? 1_200_000 : seconds * 1000);
+    let waitingForJavaSpawn = client !== "native";
+    let until = Date.now() + (waitingForNativeConnection ? 300_000 : 1_200_000);
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
       javaCleanup?.captureDescendants();
       if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {
@@ -948,10 +960,10 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         until = Date.now() + seconds * 1000;
         console.log(`Native connection observed; capturing the full ${seconds}-second scene.`);
       }
-      if (waitingForAddonSpawn && existsSync(join(directory, "gameplay-ready"))) {
-        waitingForAddonSpawn = false;
+      if (waitingForJavaSpawn && existsSync(join(directory, "gameplay-ready"))) {
+        waitingForJavaSpawn = false;
         until = Date.now() + seconds * 1000;
-        console.log(`Add-on gameplay observed; capturing the full ${seconds}-second scene.`);
+        console.log(`Java gameplay observed; capturing the full ${seconds}-second scene.`);
       }
       const log = await logText(game.log);
       if (
@@ -975,6 +987,10 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       );
     }
     unexpectedClientExit = !alive(gamePid);
+    if (waitingForJavaSpawn && !stopped && !unexpectedClientExit)
+      throw new Error(
+        "The Java client never reached initialized gameplay; the requested scene timer did not start. Read its private logs and screenshot.",
+      );
   } finally {
     try {
       await cleanupReplaySession({
@@ -1077,11 +1093,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       .toSorted((left, right) => Number(left.slice(11)) - Number(right.slice(11)));
     for (const name of names) {
       const connection = await inspectJournal(join(directory, name, "packets.sbr"));
-      if (
-        !connection.reachedStartGame ||
-        !connection.reachedSpawn ||
-        !hasGameplayAcknowledgments(connection.serverboundIds)
-      )
+      if (!connection.reachedStartGame || !connection.reachedSpawn || !connection.reachedGameplay)
         throw new Error(
           `Transfer ${name} did not reach initialized gameplay. Read its private journal.`,
         );
@@ -1099,7 +1111,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     throw new Error(
       "The server did not announce initialization and spawn. Read its private logs and screenshot.",
     );
-  if (!hasGameplayAcknowledgments(summary.serverboundIds))
+  if (!summary.reachedGameplay)
     throw new Error(
       "The server announced spawn, but the client did not initialize its player and begin gameplay movement. Read its private logs and screenshot.",
     );

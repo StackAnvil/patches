@@ -12,6 +12,7 @@ export interface PacketSummary {
   serverboundIds: Record<number, number>;
   reachedStartGame: boolean;
   reachedSpawn: boolean;
+  reachedGameplay: boolean;
   sceneSha256: string;
 }
 
@@ -28,12 +29,14 @@ export function summarizeJournal(bytes: Buffer): PacketSummary {
     serverboundIds: {},
     reachedStartGame: false,
     reachedSpawn: false,
+    reachedGameplay: false,
     sceneSha256: "",
   };
   const scene = createHash("sha256");
   let offset = 8;
   let previous = -1n;
   let count = 0;
+  let initialized = false;
   while (offset < bytes.length) {
     if (offset + 13 > bytes.length) throw new Error("Truncated packet journal entry.");
     const direction = bytes[offset]!;
@@ -74,6 +77,8 @@ export function summarizeJournal(bytes: Buffer): PacketSummary {
     } else {
       result.serverbound++;
       result.serverboundIds[id] = (result.serverboundIds[id] ?? 0) + 1;
+      initialized ||= id === 113;
+      result.reachedGameplay ||= initialized && (id === 144 || id === 19);
     }
     previous = nanos;
     result.elapsedSeconds = Number(nanos) / 1e9;

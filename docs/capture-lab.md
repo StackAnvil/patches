@@ -125,6 +125,12 @@ bun run lab down
 
 The private session has a raw `flows.mitm`, redacted `events.jsonl`, screenshots, and a `report.md`. `bun run capture compare <first-id> <second-id>` compares endpoint sets from two captures. A redacted report shows method, host, path shape, status, and JSON field shapes. It does not prove that a server response is valid or that a feature works. Keep raw flows and screenshots private because they may contain account or player data.
 
+Replay sessions save `transport-artifacts.json` for the verified ViaProxy JAR and staged proxy recorder before launch.
+Java sessions also save `client-artifacts.json` after staging all client mods and before launching Prism.
+These private receipts retain JAR filenames, sizes, and SHA-256 hashes after dependency cleanup, including failed runs.
+Compare their staged JAR hashes with build manifests when attributing a capture to a build.
+Use runtime observations to verify that the expected mods loaded.
+
 ## Inspect the Java client
 
 Use `bun run lab jvm list` to find a running Java process. `bun run lab jvm threads <pid>` and `bun run lab jvm properties <pid>` save private diagnostics. Use `jfr-start`, `jfr-dump`, and `jfr-stop` to record a Java Flight Recorder trace. For deeper analysis, compile your own Java agent JAR or JVMTI library and attach it with `bun run lab jvm agent <pid> <jar>` or `bun run lab jvm native-agent <pid> <library>`.
@@ -164,6 +170,7 @@ The recorder retains offline game authentication and validates the SDP answer.
 
 A server spawn packet alone does not prove a successful join.
 Recordings require local-player initialization and movement acknowledgments.
+Direct and ViaProxy Java recordings start the requested scene duration after player initialization and the first subsequent input packet.
 They also reject an early client exit, cancellation, or a logged disconnect or packet failure.
 Inspect the private screenshot and server logs before reporting a live playable session.
 Gameplay acknowledgments can arrive after a transport timeout while the client drains queued packets.
