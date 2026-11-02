@@ -16,9 +16,9 @@ Java screens do not reproduce those custom layouts.
 
 ## Screen lifetime
 
-Open the Bedrock inventory only after Java installs the actual screen.
-Constructing a screen does not open a server container.
-Each installed opening receives a monotonic connection token.
+Request the Bedrock inventory at the actual GUI admission attempt.
+Constructing a screen alone does not open a server container.
+Each requested opening receives a monotonic connection token.
 An authored presentation swap retains that token. An ordinary reopen receives a new one.
 
 The Bedrock open acknowledgment has no client token.
@@ -49,7 +49,15 @@ Programs advertise this behavior through the versioned core hurt contract.
 Without that contract, screens that require the hurt policy retain ordinary controls.
 Separate admission checks still exclude unfinished cooking bindings.
 
-The installed opening also owns a read-only recipe context while the native acknowledgment is pending.
+A negotiated player opening keeps the world visible until its native container acknowledgment arrives.
+Movement continues during that wait.
+Repeated E sends another open interaction under the same opening token.
+Escape or chat cancels the pending intent.
+A late acknowledgment cannot replace that other screen or reopen the inventory after exit.
+This admission applies with Bedrock inventory screens enabled or disabled.
+Older translators retain their existing screen behavior.
+
+A requested opening also owns a read-only recipe context while the native acknowledgment is pending.
 It reads the real cached crafting grid, hotbar, inventory, and cursor.
 The acknowledgment retains this model and its captured search policy.
 Item requests still require the acknowledged container and its generation.
@@ -226,9 +234,11 @@ Installed direct and ViaProxy controls confirm these pointer, capacity, and reop
 
 Recipe families beyond the captured plank, cake, and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
 Native query lifetime across disconnects and world changes remains unverified.
-Java can briefly display its local inventory before a correlated close-wait rejection arrives.
-Client-side admission timing remains unverified.
-Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
+Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls delay the initial open acknowledgment by four seconds on protocol 2225.
+They establish visible admission, repeated input, movement, and cancellation through Escape or chat.
+Rebuilt direct and ViaProxy controls retain the world during that same delay in Survival, Creative, and workbench openings.
+Both routes preserve the pending opening through repeated E and close abandoned native containers after cancellation.
+Native model constructor timing and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
 The original inventory-background, rollback, food-use, and locator-bar reports remain unresolved.

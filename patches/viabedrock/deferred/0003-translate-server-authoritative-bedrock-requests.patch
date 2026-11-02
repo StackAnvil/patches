@@ -1,4 +1,4 @@
-From ccc44e9cb92bfdf4740792ad8cec809ea850a358 Mon Sep 17 00:00:00 2001
+From b27caf00cff9f20385e2186139e821ce84219a2d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -774,12 +774,29 @@ its own opening token. Do not queue it to open after the acknowledgement.
 A later input can open normally once the pending native container retires.
 Packet and tracker regressions cover both close sources, consumed client
 acknowledgements, genuine server closes, and the fresh-input requirement.
-Java can still briefly display its local screen before receiving the
-correlated rejection; client-side frame admission remains a separate gate.
+The optional acknowledgment-bound client admission prevents the local
+screen from appearing before this correlated rejection arrives.
+
+Official 1.26.60.5 also keeps the world visible until the initial player
+ContainerOpen arrives. A four-second raw relay delay confirms movement
+continues, repeated E reissues the interaction without replacing the
+pending intent, and Escape or chat
+cancels the intent without a late acknowledgment stealing that screen.
+
+Negotiate acknowledgment-bound requests separately from legacy requests.
+Publish one opening-bound ready message only after installing the native
+container, or adopting an already acknowledged temporary inventory.
+Read-only recipe models are not an admission signal. Legacy clients keep
+the original request channel and never receive unsolicited ready messages.
+
+For acknowledgment-bound input, another request for the same pending
+opening reissues OpenInventory without allocating a new screen token.
+Keep legacy requests idempotent and publish readiness once per opening.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
- .../model/PlayerInventoryScreenRequest.java   |   52 +
+ .../api/model/PlayerInventoryScreenReady.java |   46 +
+ .../model/PlayerInventoryScreenRequest.java   |   53 +
  .../api/model/container/ChestContainer.java   |   66 +-
  .../api/model/container/Container.java        | 1117 ++-
  .../model/container/ContainerOpenContext.java |   19 +
@@ -843,7 +860,7 @@ correlated rejection; client-side frame admission remains a separate gate.
  .../storage/InventoryRequestStorage.java      |  232 +
  .../storage/InventoryRequestTracker.java      |  795 +++
  .../protocol/storage/InventoryTracker.java    |  282 +-
- .../storage/PlayerInventoryScreenTracker.java |  207 +
+ .../storage/PlayerInventoryScreenTracker.java |  254 +
  .../protocol/types/item/BedrockItemType.java  |   68 +-
  .../types/item/NetworkItemStackContext.java   |   18 +
  .../item/NetworkItemStackDescriptorType.java  |   79 +-
@@ -909,14 +926,15 @@ correlated rejection; client-side frame admission remains a separate gate.
  .../NativeContainerActionBackendTest.java     |   95 +
  .../storage/NativeContainerResponseTest.java  |  287 +
  .../PlayerInventoryScreenCodecTest.java       |   71 +
- .../PlayerInventoryScreenTrackerTest.java     |  294 +
+ .../PlayerInventoryScreenTrackerTest.java     |  345 +
  .../storage/StonecutterRecipePacketTest.java  |   53 +
  .../types/inventory/ItemStackCodecTest.java   |   12 +-
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 138 files changed, 28896 insertions(+), 2047 deletions(-)
+ 139 files changed, 29041 insertions(+), 2047 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/ContainerOpenContext.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
@@ -1077,12 +1095,64 @@ index 00000000..652570b8
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
+new file mode 100644
+index 00000000..ea9cb624
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
+@@ -0,0 +1,46 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++/** Admits one requested player screen after its native container acknowledgment. */
++public record PlayerInventoryScreenReady(long opening) {
++
++    public static final String CHANNEL = "viabedrock:player_inventory_screen_ready_v1";
++    public static final Type<PlayerInventoryScreenReady> TYPE = new Type<>(PlayerInventoryScreenReady.class) {
++
++        @Override
++        public PlayerInventoryScreenReady read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > 18 || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported inventory screen message");
++            }
++            final var result = new PlayerInventoryScreenReady(Types.VAR_LONG.readPrimitive(buffer));
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing inventory screen fields");
++            }
++            return result;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final PlayerInventoryScreenReady value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_LONG.writePrimitive(buffer, value.opening);
++        }
++    };
++
++    public PlayerInventoryScreenReady {
++        if (opening <= 0) {
++            throw new IllegalArgumentException("Invalid inventory screen opening");
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
 new file mode 100644
-index 00000000..f52cd9a9
+index 00000000..0ebbfc0a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,53 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1099,6 +1169,7 @@ index 00000000..f52cd9a9
 +public record PlayerInventoryScreenRequest(long opening, boolean open) {
 +
 +    public static final String CHANNEL = "viabedrock:player_inventory_screen_request_v1";
++    public static final String DEFERRED_CHANNEL = "viabedrock:player_inventory_screen_request_ack_v1";
 +    public static final Type<PlayerInventoryScreenRequest> TYPE = new Type<>(PlayerInventoryScreenRequest.class) {
 +
 +        @Override
@@ -11388,7 +11459,7 @@ index 5af0eca2..fa556209 100644
                      itemDefinitions.addFromNetworkTag(itemEntry.identifier(), itemEntry.componentData());
                  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 67129d78..57b24cc8 100644
+index 67129d78..c04231bd 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -17,17 +17,14 @@
@@ -11419,11 +11490,11 @@ index 67129d78..57b24cc8 100644
              }
              return;
          }
-+        if (channel.equals(PlayerInventoryScreenRequest.CHANNEL)) {
++        if (channel.equals(PlayerInventoryScreenRequest.CHANNEL) || channel.equals(PlayerInventoryScreenRequest.DEFERRED_CHANNEL)) {
 +            final var screens = wrapper.user().get(PlayerInventoryScreenTracker.class);
 +            if (screens != null && screens.enabled()) {
 +                try {
-+                    screens.request(wrapper.read(PlayerInventoryScreenRequest.TYPE));
++                    screens.request(wrapper.read(PlayerInventoryScreenRequest.TYPE), channel.equals(PlayerInventoryScreenRequest.DEFERRED_CHANNEL));
 +                } catch (final IllegalArgumentException | IndexOutOfBoundsException malformed) {
 +                    // Invalid messages cannot own a native opening or close another screen.
 +                }
@@ -13954,10 +14025,10 @@ index 7472880e..19ffffe3 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTracker.java
 new file mode 100644
-index 00000000..7256dcde
+index 00000000..9f2ccf71
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTracker.java
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,254 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -13975,6 +14046,7 @@ index 00000000..7256dcde
 +import java.util.concurrent.TimeUnit;
 +import net.raphimc.viabedrock.api.model.PlayerInventoryScreenClose;
 +import net.raphimc.viabedrock.api.model.PlayerInventoryScreenRequest;
++import net.raphimc.viabedrock.api.model.PlayerInventoryScreenReady;
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -13991,6 +14063,9 @@ index 00000000..7256dcde
 +    private long requestedSince;
 +    private long nativeOpening;
 +    private boolean advertised;
++    private boolean deferredAdvertised;
++    private boolean deferred;
++    private long readyOpening;
 +
 +    public PlayerInventoryScreenTracker(final UserConnection user) {
 +        super(user);
@@ -14005,34 +14080,60 @@ index 00000000..7256dcde
 +    public void refreshCapability() {
 +        if (this.user().getProtocolInfo().getClientState() != State.PLAY) {
 +            this.advertised = false;
++            this.deferredAdvertised = false;
 +            this.retire();
 +            return;
 +        }
 +        final boolean enabled = this.enabled();
-+        if (enabled == this.advertised) {
-+            return;
++        if (enabled != this.advertised) {
++            this.advertised = enabled;
++            this.advertise(PlayerInventoryScreenRequest.CHANNEL, enabled);
 +        }
-+        this.advertised = enabled;
-+        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
-+        packet.write(Types.STRING, enabled ? "minecraft:register" : "minecraft:unregister");
-+        packet.write(Types.REMAINING_BYTES, PlayerInventoryScreenRequest.CHANNEL.getBytes(StandardCharsets.UTF_8));
-+        packet.send(BedrockProtocol.class);
++        final boolean deferred = this.deferredEnabled();
++        if (deferred != this.deferredAdvertised) {
++            this.deferredAdvertised = deferred;
++            this.advertise(PlayerInventoryScreenRequest.DEFERRED_CHANNEL, deferred);
++            if (!deferred && this.deferred) {
++                this.retire();
++            }
++        }
 +        if (!enabled) {
 +            this.retire();
 +        }
 +    }
 +
 +    public void request(final PlayerInventoryScreenRequest request) {
-+        if (!this.enabled()) {
++        this.request(request, false);
++    }
++
++    private void advertise(final String channel, final boolean enabled) {
++        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        packet.write(Types.STRING, enabled ? "minecraft:register" : "minecraft:unregister");
++        packet.write(Types.REMAINING_BYTES, channel.getBytes(StandardCharsets.UTF_8));
++        packet.send(BedrockProtocol.class);
++    }
++
++    public boolean deferredEnabled() {
++        final var channels = this.user().get(ChannelStorage.class);
++        return this.enabled() && channels.hasChannel(PlayerInventoryScreenReady.CHANNEL);
++    }
++
++    public void request(final PlayerInventoryScreenRequest request, final boolean deferred) {
++        if (!this.enabled() || deferred && !this.deferredEnabled()) {
 +            return;
 +        }
 +        if (request.open()) {
 +            if (request.opening() <= this.latestOpening) {
++                if (deferred && this.deferred && this.requested && request.opening() == this.latestOpening
++                        && this.inFlight == this.latestOpening) {
++                    this.sendOpen();
++                }
 +                return;
 +            }
 +            this.requests().clearQueuedScreenInteractions();
 +            this.latestOpening = request.opening();
 +            this.requested = true;
++            this.deferred = deferred;
 +            if (this.inventory().getPendingCloseContainer() != null) {
 +                // Native ignores a new inventory key until the previous close is acknowledged.
 +                this.retire();
@@ -14073,6 +14174,7 @@ index 00000000..7256dcde
 +        this.nativeOpening = opening;
 +        if (this.enabled() && this.requested && opening == this.latestOpening) {
 +            this.requests().keepPlayerInventoryOpen();
++            this.ready();
 +            return;
 +        }
 +        // Old screen clicks were discarded when its request retired. Later global offhand
@@ -14142,6 +14244,7 @@ index 00000000..7256dcde
 +        if (inventory.getCurrentContainer() instanceof InventoryContainer) {
 +            // A temporary offhand opening can become the actual installed player screen.
 +            this.nativeOpening = this.latestOpening;
++            this.ready();
 +            return;
 +        }
 +        final boolean send = this.requests().beginInventoryOpen();
@@ -14149,11 +14252,26 @@ index 00000000..7256dcde
 +        if (!send) {
 +            return;
 +        }
++        this.sendOpen();
++    }
++
++    private void sendOpen() {
 +        final var packet = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, this.user());
 +        packet.write(Types.UNSIGNED_BYTE, (short) InteractPacketPayload_Action.OpenInventory.getValue());
 +        packet.write(BedrockTypes.UNSIGNED_VAR_LONG, this.user().get(EntityTracker.class).getClientPlayer().runtimeId());
 +        packet.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
 +        packet.sendToServer(BedrockProtocol.class);
++    }
++
++    private void ready() {
++        if (!this.deferred || this.readyOpening == this.latestOpening || !this.deferredEnabled()) {
++            return;
++        }
++        this.readyOpening = this.latestOpening;
++        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        packet.write(Types.STRING, PlayerInventoryScreenReady.CHANNEL);
++        packet.write(PlayerInventoryScreenReady.TYPE, new PlayerInventoryScreenReady(this.latestOpening));
++        packet.send(BedrockProtocol.class);
 +    }
 +
 +    private InventoryTracker inventory() {
@@ -40198,10 +40316,10 @@ index 00000000..66e78fc9
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTrackerTest.java
 new file mode 100644
-index 00000000..65e1be48
+index 00000000..702c97f7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInventoryScreenTrackerTest.java
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,345 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -40213,6 +40331,7 @@ index 00000000..65e1be48
 +import com.viaversion.viaversion.api.protocol.packet.PacketType;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 +import java.util.ArrayList;
 +import java.util.HashMap;
@@ -40221,6 +40340,7 @@ index 00000000..65e1be48
 +import java.util.concurrent.TimeUnit;
 +import net.raphimc.viabedrock.api.model.PlayerInventoryScreenClose;
 +import net.raphimc.viabedrock.api.model.PlayerInventoryScreenRequest;
++import net.raphimc.viabedrock.api.model.PlayerInventoryScreenReady;
 +import net.raphimc.viabedrock.api.model.container.Container;
 +import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
 +import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
@@ -40233,6 +40353,48 @@ index 00000000..65e1be48
 +import static org.mockito.Mockito.*;
 +
 +class PlayerInventoryScreenTrackerTest {
++
++    @Test
++    void deferredScreenBecomesReadyOnlyAfterItsNativeAcknowledgement() throws Exception {
++        try (var f = new Fixture()) {
++            f.user.get(ChannelStorage.class).addChannels(List.of(PlayerInventoryScreenReady.CHANNEL));
++            f.screens.request(new PlayerInventoryScreenRequest(1, true), true);
++            assertTrue(f.readyScreens().isEmpty());
++            assertEquals(1, f.opens());
++            f.screens.request(new PlayerInventoryScreenRequest(1, true), true);
++            assertEquals(2, f.opens());
++            assertTrue(f.readyScreens().isEmpty());
++            f.acknowledge();
++            assertEquals(List.of(1L), f.readyScreens());
++            f.screens.tick(System.nanoTime());
++            f.screens.request(new PlayerInventoryScreenRequest(1, true), true);
++            assertEquals(List.of(1L), f.readyScreens());
++        }
++    }
++
++    @Test
++    void cancelledDeferredScreenNeverBecomesReadyOnLateAcknowledgement() throws Exception {
++        try (var f = new Fixture()) {
++            f.user.get(ChannelStorage.class).addChannels(List.of(PlayerInventoryScreenReady.CHANNEL));
++            f.screens.request(new PlayerInventoryScreenRequest(1, true), true);
++            f.screens.request(new PlayerInventoryScreenRequest(1, false), true);
++            f.acknowledge();
++            assertTrue(f.readyScreens().isEmpty());
++            assertNotNull(f.inventory.getPendingCloseContainer());
++        }
++    }
++
++    @Test
++    void oldClientsNeverReceiveReadyMessagesAndCannotRequestDeferredAdmission() throws Exception {
++        try (var f = new Fixture()) {
++            f.screens.request(new PlayerInventoryScreenRequest(1, true), true);
++            assertEquals(0, f.opens());
++            f.request(1, true);
++            f.acknowledge();
++            assertEquals(1, f.opens());
++            assertTrue(f.readyScreens().isEmpty());
++        }
++    }
 +
 +    @Test
 +    void retiresAnEarlyCloseBeforeOpeningTheNewScreen() throws Exception {
@@ -40481,6 +40643,13 @@ index 00000000..65e1be48
 +
 +        private long opens() {
 +            return this.sent.stream().filter(p -> p.getPacketType() == ServerboundBedrockPackets.INTERACT).count();
++        }
++
++        private List<Long> readyScreens() {
++            return this.sent.stream().filter(p -> p.getPacketType() != ServerboundBedrockPackets.INTERACT
++                            && p.getPacketType() != ServerboundBedrockPackets.CONTAINER_CLOSE
++                            && PlayerInventoryScreenReady.CHANNEL.equals(p.get(Types.STRING, 0)))
++                    .map(p -> p.get(PlayerInventoryScreenReady.TYPE, 0).opening()).toList();
 +        }
 +
 +        private List<Long> closedScreens() {
