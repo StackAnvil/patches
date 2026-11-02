@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { link, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 interface ReplayArtifact {
   role: "client-mod" | "transport" | "proxy-recorder";
@@ -28,8 +28,16 @@ export async function writeReplayArtifactEvidence(
       sha256: hash.digest("hex"),
     });
   }
-  await writeFile(output, `${JSON.stringify({ schema: 1, artifacts }, null, 2)}\n`, {
-    mode: 0o600,
-    flag: "wx",
-  });
+  const staging = await mkdtemp(join(dirname(output), ".artifact-evidence-"));
+  try {
+    const temporary = join(staging, "receipt.json");
+    await writeFile(temporary, `${JSON.stringify({ schema: 1, artifacts }, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    // Publish complete bytes without replacing evidence from another attempt.
+    await link(temporary, output);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 }
