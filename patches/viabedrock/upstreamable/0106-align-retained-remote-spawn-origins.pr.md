@@ -20,6 +20,6 @@ The registered-handler regression decodes Java spawn, stationary movement, and s
 
 ## Remaining limits
 
-The longer Z-only sequence exposes a body-orientation mismatch after a large vertical excursion and later movement. The cache correction does not establish complete pose or trajectory parity. Native numeric world transforms, interpolation timing, other spawn poses, arbitrary actors, mounts, server damage, and complete skin or interaction parity remain unverified.
+The longer Z-only sequence exposes a body-orientation mismatch after a large vertical excursion and later movement. The [actor runtime evidence](../../viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md) identifies the host distance cutoff and different intermediate steps. The cache correction does not establish complete pose or trajectory parity. Native interpolation timing, other spawn poses, arbitrary actors, mounts, server damage, and complete skin or interaction parity remain unverified.
 
 One extended proxy join timed out during resource-pack negotiation before gameplay. It is excluded from validation. The fresh-server retry passes; reconnect robustness remains unverified.
