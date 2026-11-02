@@ -1,4 +1,4 @@
-From 36a84dea0418714bca8c27b09865ad0566670f72 Mon Sep 17 00:00:00 2001
+From 111f3c755fe09573e712afb47d9df25ba0e27fca Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 2 Nov 2026 15:51:01 +0100
 Subject: [PATCH] fix(players): interpolate negotiated remote movement as
@@ -71,6 +71,20 @@ retains wrapped pitch beyond those bounds. Installed protocol-2225 controls
 reproduced +179/-179 packets settling at +90/-90 before this correction.
 Keep the direct field access inside the admitted native remote handler;
 ordinary Java setters and local look input retain their host behavior.
+
+Retain native previous pitch before LivingEntity normalizes its render
+history by360 degrees. Capture the value after interpolation and before
+body-tick completion, and use it for immediate head-only updates as well
+as render queries. Retire this history with its native context; historical
+physics replay cannot advance it.
+
+A read-only live Bedrock1.26.60.5 trace records12 interpolation transitions
+and their rotation components on matching protocol2225 peer packets.
+Java changed previous179.66669 to-180.33331 at a normal wrap, producing
+query errors of360 degrees in11direct and12proxy samples. The native
+query retains its unwrapped result. Native executable SHA-256 remains
+988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a.
+Debugger pauses exclude wall-clock timing from this comparison.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../MixinRemotePlayerInterpolation.java       |  22 +
@@ -79,13 +93,13 @@ ordinary Java setters and local look input retain their host behavior.
  .../render/MixinLivingEntityBodyRotation.java |   7 +-
  .../input/BedrockRemotePlayerMovement.java    |  81 ++++
  .../input/RemotePlayerMovementPayload.java    |  22 +
- .../movement/RemotePlayerInterpolation.java   | 142 +++++++
- .../RemotePlayerInterpolationHandler.java     | 217 ++++++++++
+ .../movement/RemotePlayerInterpolation.java   | 142 ++++++
+ .../RemotePlayerInterpolationHandler.java     | 239 +++++++++++
  .../viafabricplus-bedrock.mixins.json         |   3 +
  ...ativeRemoteInterpolationReferenceTest.java |  74 ++++
- .../RemotePlayerInterpolationHandlerTest.java | 378 ++++++++++++++++++
+ .../RemotePlayerInterpolationHandlerTest.java | 406 ++++++++++++++++++
  .../RemotePlayerInterpolationTest.java        | 133 ++++++
- 13 files changed, 1151 insertions(+), 1 deletion(-)
+ 13 files changed, 1201 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerInterpolation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerMovementPacketListener.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/RemotePlayerRotationAccess.java
@@ -521,10 +535,10 @@ index 0000000..61a8f44
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
 new file mode 100644
-index 0000000..175b799
+index 0000000..a958a6d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,239 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -536,6 +550,7 @@ index 0000000..175b799
 +import com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement.RemotePlayerRotationAccess;
 +import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalReplayContext;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerPitch;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.multiplayer.ClientLevel;
 +import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -551,7 +566,7 @@ index 0000000..175b799
 +import java.util.UUID;
 +
 +/** Decorates the real host handler so ordinary Java and unsupported modes retain their existing path. */
-+public final class RemotePlayerInterpolationHandler implements InterpolationHandler {
++public final class RemotePlayerInterpolationHandler implements InterpolationHandler, BedrockPlayerPitch {
 +    private final RemotePlayer player;
 +    private final InterpolationHandler host;
 +    private final RemotePlayerInterpolation nativeInterpolation = new RemotePlayerInterpolation();
@@ -563,6 +578,8 @@ index 0000000..175b799
 +    private Position3f previousEye;
 +    private Vec3 appliedPosition;
 +    private Vec3 appliedPreviousPosition;
++    private float previousPitch;
++    private boolean hasPitchHistory;
 +
 +    public RemotePlayerInterpolationHandler(final RemotePlayer player, final InterpolationHandler host) {
 +        this.player = player;
@@ -586,7 +603,10 @@ index 0000000..175b799
 +            return false;
 +        }
 +        final boolean continuing = this.validContext() && movement.lifetime().equals(this.lifetime);
-+        if (!continuing) this.nativeInterpolation.clear();
++        if (!continuing) {
++            this.nativeInterpolation.clear();
++            this.hasPitchHistory = false;
++        }
 +        this.host.cancel();
 +        this.connection = client.getConnection();
 +        this.level = client.level;
@@ -630,12 +650,14 @@ index 0000000..175b799
 +    }
 +
 +    private void applyRotation(final float rawPitch, final float rawYaw) {
++        final float previousPitch = this.previousPitch();
 +        final float pitch = RemotePlayerInterpolation.wrap(rawPitch);
 +        final float yaw = RemotePlayerInterpolation.wrap(rawYaw);
 +        ((RemotePlayerRotationAccess) this.player).bedrockRemotePitch(pitch);
 +        this.player.setYRot(yaw);
-+        this.player.xRotO = RemotePlayerInterpolation.wrap((pitch - rawPitch) + this.player.xRotO);
++        this.player.xRotO = RemotePlayerInterpolation.wrap((pitch - rawPitch) + previousPitch);
 +        this.player.yRotO = RemotePlayerInterpolation.wrap((yaw - rawYaw) + this.player.yRotO);
++        this.capturePitchHistory();
 +    }
 +
 +    private boolean validContext() {
@@ -663,9 +685,21 @@ index 0000000..175b799
 +        return new Position3f(this.eye.x() - this.previousEye.x(), this.eye.y() - this.previousEye.y(), this.eye.z() - this.previousEye.z());
 +    }
 +
++    @Override
++    public float previousPitch() {
++        return this.hasPitchHistory && this.validContext() ? this.previousPitch : this.player.xRotO;
++    }
++
++    private void capturePitchHistory() {
++        this.previousPitch = this.player.xRotO;
++        this.hasPitchHistory = true;
++    }
++
 +    public void finishBodyTick() {
 +        if (PhysicalReplayContext.replaying() || !this.validContext()) return;
 +        if (!this.player.position().equals(this.appliedPosition)) this.captureEye();
++        // LivingEntity later shifts xRotO by 360 for its linear renderer; native queries retain this value.
++        this.capturePitchHistory();
 +        // Native body control reads displacement before the end-of-tick StateVector copy.
 +        this.previousEye = this.eye;
 +        this.appliedPreviousPosition = this.player.oldPosition();
@@ -696,6 +730,7 @@ index 0000000..175b799
 +        this.player.xRotO = next.previousPitch();
 +        this.player.yRotO = next.previousYaw();
 +        this.player.setYHeadRot(next.headYaw());
++        this.capturePitchHistory();
 +    }
 +
 +    @Override
@@ -734,6 +769,7 @@ index 0000000..175b799
 +    private void releaseNative() {
 +        this.nativeInterpolation.clear();
 +        this.lifetime = null;
++        this.hasPitchHistory = false;
 +        this.connection = null;
 +        this.level = null;
 +        this.eye = null;
@@ -838,10 +874,10 @@ index 0000000..1a00bf6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
 new file mode 100644
-index 0000000..dace424
+index 0000000..9fede7c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
-@@ -0,0 +1,378 @@
+@@ -0,0 +1,406 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -963,6 +999,34 @@ index 0000000..dace424
 +                    (short) 0, 0, false, new RemotePlayerMovement.JavaTarget(false, 0, 0, 0, 0, 0F, false));
 +            assertTrue(f.handler.receive(head));
 +            assertEquals(-179F, f.player.getXRot());
++        }
++    }
++
++    @Test
++    void retainsNativePitchHistoryAcrossHostNormalizationAndHeadOnlyInput() {
++        try (final var f = new Fixture()) {
++            ((RemotePlayerRotationAccess) f.player).bedrockRemotePitch(179F);
++            f.player.xRotO = 179F;
++            final var target = new RemotePlayerMovement(17, f.uuid, f.lifetime, 0, false,
++                    new Position3f(.5F, 73.24002F, 4.5F), new Position3f(-179F, 0F, 0F), 1.62001F,
++                    (short) 0, 3, false, f.movement(0, false).javaTarget());
++            assertTrue(f.handler.receive(target));
++            f.tick();
++            f.player.xRotO = f.player.getXRot();
++            f.tick();
++            // Live native component after the second interpolation step, before Java's tick normalization.
++            assertEquals(-179.66666F, f.player.getXRot());
++            assertEquals(179.66669F, f.handler.previousPitch());
++            f.player.xRotO = -180.33331F;
++            assertEquals(179.66669F, f.handler.previousPitch());
++            final var head = new RemotePlayerMovement(17, f.uuid, f.lifetime, 3, false,
++                    target.position(), new Position3f(-179F, 0F, 0F), 1.62001F,
++                    (short) 0, 0, false, new RemotePlayerMovement.JavaTarget(false, 0, 0, 0, 0, 0F, false));
++            assertTrue(f.handler.receive(head));
++            assertEquals(179.66669F, f.handler.previousPitch());
++            f.handler.cancel();
++            f.player.xRotO = 22F;
++            assertEquals(22F, f.handler.previousPitch());
 +        }
 +    }
 +

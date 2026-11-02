@@ -8,6 +8,8 @@ Head-only updates apply raw pitch immediately. They preserve live yaw, pending p
 
 The admitted native handler publishes wrapped pitch directly to the rotation field. Java 26.3's setter clips pitch to -90/+90 degrees. Native remote rotation permits angles beyond those limits. Ordinary Java and local look input retain their existing setters.
 
+The handler retains previous pitch before Java shifts its render history by 360 degrees. Immediate head-only updates use that retained value too. Completed body ticks refresh it, while historical physics replay cannot advance it. Context retirement restores the host history source. Java keeps its public render fields and normalizer.
+
 The outer packet path derives motion from raw source position minus the retained previous native eye. Body control reads the exact native displacement before the previous-position copy. The client retains that float history after body control, including while interpolation is idle. Historical physics replay does not advance this live history.
 
 ## Native evidence
@@ -26,7 +28,7 @@ Three additional original-callback controls retain pitch beyond Java's look limi
 
 ## Installed comparisons
 
-Six-phase direct and ViaProxy controls retain +179/-179-degree pitch through normal movement and immediate head-only input. Position, yaw, and head-yaw remain at their declared values. Complete journals contain 1,582 and 1,224 frames, with identical peer skin, spawn, and movement payloads. Installed add-on and proxy hashes match the verified build. The [appearance comparison](0009-manage-character-creator-accounts-and-wardrobes.pr.md) covers angular render queries and their remaining history limits.
+Six-phase direct and ViaProxy controls retain +179/-179-degree pitch through normal movement and immediate head-only input. Position, yaw, and head-yaw remain at their declared values. The native journal contains 2,696 complete frames. Fresh Java journals contain 1,579 and 1,287 frames after the upstream refresh. All three routes retain identical peer skin, spawn, and movement payloads. Installed add-on and proxy hashes match the verified build. The [appearance comparison](0009-manage-character-creator-accounts-and-wardrobes.pr.md) covers native pitch history, angular queries, and their remaining limits.
 
 Earlier direct and ViaProxy controls retain the observed large- and small-move steps. Twelve settled phases per route compare movement origins and poses, including the previously occluded leg. The overlapping-head regression also runs against the current rebuilt source with two fresh player identities.
 

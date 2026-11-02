@@ -10,7 +10,7 @@ Keep account entitlement, downloaded assets, character recipes, previews, and in
 
 World-player `target_y_rotation` applies the native float wrap and the -85/+85-degree limits. Unordered wrapped values select the lower bound. Server player controller selection uses the same helper. Existing GUI camera overrides retain their previous values.
 
-World-player pitch samples the shortest angular delta before animation and controller evaluation. The final sample remains unwrapped. Actors without a native snapshot retain Java sampling. GUI camera extraction takes precedence over the world sample.
+World-player pitch samples the shortest angular delta before animation and controller evaluation. The interpolation owner supplies native previous pitch before Java normalizes its public field. The final sample remains unwrapped. Actors without a native snapshot retain Java sampling. GUI camera extraction takes precedence over the world sample.
 
 Prerequisites:
 
@@ -26,7 +26,9 @@ Current Bedrock 1.26.60.5/protocol 2225 registration identifies target-y callbac
 
 Original target-x callback `0x140684ec0` and head-x callback `0x142cb53a0` agree on 15 pitch controls. Head-x uses numeric index zero. Synthetic rotation storage and CRT remainder are explicit boundaries. The query-map regression covers both wrap directions, ordinary pitch, alpha one, and the Java fallback. Previous 179/current -179 yields 180 at half a tick and 181 at alpha one.
 
-Read-only observers retain 66 direct and 63 ViaProxy query samples from the rebuilt clients. Both original callbacks reproduce every sampled result bit for bit. Two direct head-only frames differ from Java's linear formula. One returns 180.52 degrees where linear sampling would return -93.08 degrees. These comparisons supply the recorded Java frame inputs. Native rotation-history, scheduler, and complete frame parity remain unverified.
+The live official client supplies twelve interpolation transitions and twelve rendered target-x results on matching peer packets. Original-code execution reproduces every native query result. At a normal wrap, native previous pitch remains near +179.67 degrees while Java shifts its public field near -180.33 degrees. Baseline comparisons find eleven direct and twelve ViaProxy samples whose query results differ by 360 degrees.
+
+The rebuilt direct and ViaProxy clients retain the matching native history in all 67 and 68 sampled frames. Both original query callbacks reproduce every result bit for bit at each recorded Java frame alpha. The query-map regression covers native history despite a different public Java field. The handler regression fails before history retention and covers a following head-only packet and context retirement. These comparisons establish selected state transitions, not wall-clock timing. Broader histories, scheduler order, and complete frame parity remain unverified.
 
 Fourteen-phase installed direct and ViaProxy controls use matching peer skin, spawn, and movement bytes against the native fixture. A private scheduling pause aligns the intermediate normal-then-teleport state and the first three body ticks after teleport. All four sampled angles match the twelve traced native phases. The [movement comparison](0041-interpolate-native-remote-player-movement.pr.md) describes the state controls and their limits.
 
