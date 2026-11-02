@@ -6,6 +6,8 @@ A decorator retains the real host handler. Unpaired packets, known riding, and l
 
 Head-only updates apply raw pitch immediately. They preserve live yaw, pending position and body targets, and forced queues. The head target uses the maximum remaining position/body counter. Explicit packet pairing prevents Java's rotation-only path from cancelling movement. Raw inputs avoid the legacy packet's byte-angle quantization.
 
+The admitted native handler publishes wrapped pitch directly to the rotation field. Java 26.3's setter clips pitch to -90/+90 degrees. Native remote rotation permits angles beyond those limits. Ordinary Java and local look input retain their existing setters.
+
 The outer packet path derives motion from raw source position minus the retained previous native eye. Body control reads the exact native displacement before the previous-position copy. The client retains that float history after body control, including while interpolation is idle. Historical physics replay does not advance this live history.
 
 ## Native evidence
@@ -20,7 +22,11 @@ A head-only packet arrives with one interpolation step remaining and derives mot
 
 Original mode-helper and setter instructions also pass 54 teleport-origin cases, including low-Y rounding and signed zero. A conditional Java/native test compares all 256 current callback cases with a head component. Default regressions cover observed position samples, overlapping head-only input, raw pitch, forced handoff, rotation wrapping, host fallback, and lifecycle replacement.
 
+Three additional original-callback controls retain pitch beyond Java's look limits while moving from -179 toward 179 degrees. The installed baseline confirms that +179/-179 packets previously settled at +90/-90. The handler regression reproduces this clipping and covers normal movement followed by head-only input.
+
 ## Installed comparisons
+
+Six-phase direct and ViaProxy controls retain +179/-179-degree pitch through normal movement and immediate head-only input. Position, yaw, and head-yaw remain at their declared values. Complete journals contain 1,582 and 1,224 frames, with identical peer skin, spawn, and movement payloads. Installed add-on and proxy hashes match the verified build. The [appearance comparison](0009-manage-character-creator-accounts-and-wardrobes.pr.md) covers angular render queries and their remaining history limits.
 
 Earlier direct and ViaProxy controls retain the observed large- and small-move steps. Twelve settled phases per route compare movement origins and poses, including the previously occluded leg. The overlapping-head regression also runs against the current rebuilt source with two fresh player identities.
 

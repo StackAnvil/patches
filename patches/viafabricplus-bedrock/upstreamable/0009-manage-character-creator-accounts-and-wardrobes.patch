@@ -1,4 +1,4 @@
-From ec7196f3d606a8483edf4be16ad2bd1755598c04 Mon Sep 17 00:00:00 2001
+From 7866002ab986626f8d83c05f0a8c3a9338e82191 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(appearance): manage Character Creator accounts and
@@ -134,6 +134,17 @@ Current 1.26.60.5 query callback 0x140684fd0 and helper 0x142c896e0 establish
 this path through typed registration 0x142c898c0. Original instructions
 pass 60 controls with explicit actor-type and virtual-getter boundaries.
 A real player query-map regression fails before the correction.
+
+Sample player render pitch with the native float angle wrap before pose
+and controller extraction. Bedrock 1.26.60.5 target_x_rotation (140684ec0)
+and head_x_rotation head zero (142cb53a0) interpolate the short angular
+delta and leave the final result unwrapped. For previous179/current-179
+at half a tick, both original callbacks return180; Java linear sampling
+returns0. Original instructions use executable SHA-256
+988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a,
+with explicit actor-rotation storage and CRT fmodf boundaries.
+Only actors with a native snapshot replace the host pitch sample. Later
+GUI camera extraction keeps precedence over the world-player sample.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    7 +
  .../appearance/BedrockActorQueries.java       |   10 +
@@ -161,7 +172,7 @@ A real player query-map regression fails before the correction.
  .../appearance/NativeEmotePayload.java        |   78 +
  .../appearance/NativeEmotePolicyPayload.java  |   22 +
  .../ViaFabricPlusEmoteProvider.java           |   40 +
- .../render/MixinAvatarAnimationRenderer.java  |   35 +
+ .../render/MixinAvatarAnimationRenderer.java  |   36 +
  .../MixinBedrockFirstPersonBobbing.java       |   29 +
  .../MixinBedrockFirstPersonProjection.java    |   34 +
  .../MixinBedrockFirstPersonVisibility.java    |   58 +
@@ -170,7 +181,7 @@ A real player query-map regression fails before the correction.
  .../features/render/MixinOptionsEmote.java    |   34 +
  .../viabedrock/ViaFabricPlusSkinProvider.java |   16 +-
  .../bedrock/render/BedrockPlayerRenderer.java |    7 +-
- .../bedrock/render/BedrockPlayerSkins.java    |  661 ++++++-
+ .../bedrock/render/BedrockPlayerSkins.java    |  671 ++++++-
  .../screen/BedrockCharacterSlotsScreen.java   | 1401 +++++++++++++++
  .../screen/BedrockClassicSkinPackScreen.java  |   83 +-
  .../screen/BedrockDressingRoomScreen.java     |   88 +-
@@ -208,9 +219,9 @@ A real player query-map regression fails before the correction.
  .../appearance/BedrockPersonaTintTest.java    |  280 +++
  .../BedrockPlayerAnimationsTest.java          |   90 +
  .../appearance/NativeEmotePayloadTest.java    |  103 ++
- .../render/BedrockActorQuerySnapshotTest.java |  120 ++
+ .../render/BedrockActorQuerySnapshotTest.java |  154 ++
  .../BedrockStandardPlayerGeometryTest.java    |   28 +
- 75 files changed, 14922 insertions(+), 118 deletions(-)
+ 75 files changed, 14967 insertions(+), 118 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
@@ -6447,10 +6458,10 @@ index 0000000..40873b8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
 new file mode 100644
-index 0000000..5f01d8a
+index 0000000..d591a84
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,36 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6481,6 +6492,7 @@ index 0000000..5f01d8a
 +            final AvatarRenderState state,
 +            final float partialTick,
 +            final CallbackInfo ci) {
++        BedrockPlayerSkins.extractPitch(entity, state, partialTick);
 +        ((BedrockPlayerAnimationState) state)
 +                .bedrockAnimationPose(BedrockPlayerSkins.pose(entity, state, partialTick));
 +        ((BedrockPlayerAnimationState) state).bedrockBodyVisibility(BedrockPlayerSkins.bodyVisibility(entity.getUUID()));
@@ -6857,7 +6869,7 @@ index a4e6f37..385eb7b 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index c482ba2..c31a809 100644
+index c482ba2..6321473 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,37 +19,62 @@
@@ -7025,7 +7037,7 @@ index c482ba2..c31a809 100644
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
-@@ -212,13 +272,455 @@ public final class BedrockPlayerSkins {
+@@ -212,13 +272,465 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()),
                  surface.texture())).toList();
              appearance.renderer = BedrockPlayerLayerModels.construct(rendererContext, () -> new BedrockPlayerRenderer(rendererContext,
@@ -7314,10 +7326,20 @@ index c482ba2..c31a809 100644
 +        return geometry == null ? Map.of() : geometry.queries();
 +    }
 +
-+    static float targetYaw(final float relativeYaw) {
-+        float wrapped = (relativeYaw + 180F) % 360F;
++    public static void extractPitch(final Avatar entity, final AvatarRenderState state, final float partialTick) {
++        if (BedrockActorState.state(entity.getUUID()) == null) return;
++        // Native queries interpolate the shortest angular delta without wrapping the published result.
++        state.xRot = entity.xRotO + partialTick * wrapAngle(entity.getXRot() - entity.xRotO);
++    }
++
++    private static float wrapAngle(final float angle) {
++        float wrapped = (angle + 180F) % 360F;
 +        if (wrapped < 0F) wrapped += 360F;
-+        wrapped -= 180F;
++        return wrapped - 180F;
++    }
++
++    static float targetYaw(final float relativeYaw) {
++        final float wrapped = wrapAngle(relativeYaw);
 +        // Native MAXSS selects the lower bound for an unordered wrapped angle.
 +        return Float.isNaN(wrapped) ? -85F : Math.clamp(wrapped, -85F, 85F);
 +    }
@@ -7482,7 +7504,7 @@ index c482ba2..c31a809 100644
      public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
          if (skin == null || skin.body() == null) {
              return null;
-@@ -238,10 +740,55 @@ public final class BedrockPlayerSkins {
+@@ -238,10 +750,55 @@ public final class BedrockPlayerSkins {
      public static Model.Simple previewModel(final Identifier texture) {
          final UUID id = PLAYER_BY_TEXTURE.get(texture);
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
@@ -7541,7 +7563,7 @@ index c482ba2..c31a809 100644
      }
  
      /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
-@@ -251,14 +798,19 @@ public final class BedrockPlayerSkins {
+@@ -251,14 +808,19 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
          if (appearance.previewSurfaces == null)
              appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
@@ -7563,7 +7585,7 @@ index c482ba2..c31a809 100644
  
      public static void rendererContext(final EntityRendererProvider.Context context) {
          BedrockActorResources.clear();
-@@ -272,6 +824,7 @@ public final class BedrockPlayerSkins {
+@@ -272,6 +834,7 @@ public final class BedrockPlayerSkins {
          APPEARANCES.values().forEach(BedrockPlayerSkins::release);
          APPEARANCES.clear();
          PLAYER_BY_TEXTURE.clear();
@@ -7571,7 +7593,7 @@ index c482ba2..c31a809 100644
          SKIN_ASSEMBLER.clear();
          skinConnection = null;
      }
-@@ -289,7 +842,8 @@ public final class BedrockPlayerSkins {
+@@ -289,7 +852,8 @@ public final class BedrockPlayerSkins {
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
@@ -7581,7 +7603,7 @@ index c482ba2..c31a809 100644
      }
  
      private static boolean supportedImage(final BufferedImage image) {
-@@ -315,7 +869,10 @@ public final class BedrockPlayerSkins {
+@@ -315,7 +879,10 @@ public final class BedrockPlayerSkins {
  
      static String geometryName(final String resourcePatch, final String binding) {
          try {
@@ -7593,7 +7615,7 @@ index c482ba2..c31a809 100644
              final var name = geometry.get(binding);
              return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
                  ? name.getAsString() : "";
-@@ -345,7 +902,8 @@ public final class BedrockPlayerSkins {
+@@ -345,7 +912,8 @@ public final class BedrockPlayerSkins {
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
@@ -7603,7 +7625,7 @@ index c482ba2..c31a809 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock player geometry", e);
              return null;
-@@ -372,7 +930,8 @@ public final class BedrockPlayerSkins {
+@@ -372,7 +940,8 @@ public final class BedrockPlayerSkins {
              final Map<Integer, JsonObject> animatedModels = new HashMap<>();
              for (final var entry : models) {
                  final JsonObject model = entry.getAsJsonObject();
@@ -7613,7 +7635,7 @@ index c482ba2..c31a809 100644
                  if (name.equals(identifier)) {
                      if (body != null) {
                          return null;
-@@ -411,7 +970,8 @@ public final class BedrockPlayerSkins {
+@@ -411,7 +980,8 @@ public final class BedrockPlayerSkins {
                  final JsonObject model = animatedModels.get(type);
                  final var animation = animationByType.get(type);
                  if (model == null) {
@@ -7623,7 +7645,7 @@ index c482ba2..c31a809 100644
                          return null;
                      }
                      continue;
-@@ -426,7 +986,8 @@ public final class BedrockPlayerSkins {
+@@ -426,7 +996,8 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(parsed, false, meshes);
                  surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
              }
@@ -7633,7 +7655,7 @@ index c482ba2..c31a809 100644
                  if (!coverage.getOrDefault(part, false)) {
                      return null;
                  }
-@@ -437,7 +998,8 @@ public final class BedrockPlayerSkins {
+@@ -437,7 +1008,8 @@ public final class BedrockPlayerSkins {
                  return null;
              }
              BedrockGeometry.playerModel(parsedBody, false, bodyMeshes);
@@ -7643,7 +7665,7 @@ index c482ba2..c31a809 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock persona geometry", e);
              return null;
-@@ -474,12 +1036,21 @@ public final class BedrockPlayerSkins {
+@@ -474,12 +1046,21 @@ public final class BedrockPlayerSkins {
                      }
                  }
              }
@@ -7668,7 +7690,7 @@ index c482ba2..c31a809 100644
              }
          }
          return meshes;
-@@ -501,7 +1072,13 @@ public final class BedrockPlayerSkins {
+@@ -501,7 +1082,13 @@ public final class BedrockPlayerSkins {
          return vector;
      }
  
@@ -7683,7 +7705,7 @@ index c482ba2..c31a809 100644
          Surface face() {
              return this.surfaces.stream().filter(surface -> surface.animation().type() == 1).findFirst().orElse(null);
          }
-@@ -519,13 +1096,23 @@ public final class BedrockPlayerSkins {
+@@ -519,13 +1106,23 @@ public final class BedrockPlayerSkins {
          private final Identifier headId;
          private final long started = System.nanoTime();
          private final Geometry geometry;
@@ -16347,13 +16369,14 @@ index 0000000..f8e433d
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorQuerySnapshotTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorQuerySnapshotTest.java
 new file mode 100644
-index 0000000..5b88ad5
+index 0000000..2800806
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorQuerySnapshotTest.java
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,154 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
 +import java.lang.reflect.Modifier;
 +import java.util.Collections;
 +import java.util.IdentityHashMap;
@@ -16452,6 +16475,39 @@ index 0000000..5b88ad5
 +            final var queries = BedrockPlayerSkins.actorQueries(avatar, state, .5F);
 +            assertEquals(control[1], queries.get("target_y_rotation"));
 +        }
++    }
++
++    @Test
++    void samplesNativePitchAcrossTheWrapBeforePublishingAnimationQueries() {
++        final var avatar = mock(Avatar.class);
++        final UUID uuid = UUID.randomUUID();
++        when(avatar.getUUID()).thenReturn(uuid);
++        when(avatar.getMainArm()).thenReturn(HumanoidArm.RIGHT);
++        when(avatar.getMainHandItem()).thenReturn(ItemStack.EMPTY);
++        when(avatar.getUseItem()).thenReturn(ItemStack.EMPTY);
++        when(avatar.getItemBySlot(any(EquipmentSlot.class))).thenReturn(ItemStack.EMPTY);
++        when(avatar.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        final var state = new AvatarRenderState();
++        state.rightHandItemStack = ItemStack.EMPTY;
++        state.leftHandItemStack = ItemStack.EMPTY;
++        // Original 1.26.60.5 target_x_rotation and head_x_rotation callbacks, including alpha one.
++        final float[][] controls = {{179F, -179F, .5F, 180F}, {-179F, 179F, .5F, -180F},
++                {179F, -179F, 1F, 181F}, {-179F, 179F, .25F, -179.5F}, {11.25F, -22.75F, .5F, -5.75F}};
++        for (final float[] control : controls) {
++            avatar.xRotO = control[0];
++            when(avatar.getXRot()).thenReturn(control[1]);
++            state.xRot = 0F;
++            try (final var actors = mockStatic(BedrockActorState.class)) {
++                actors.when(() -> BedrockActorState.state(uuid)).thenReturn(mock(NativeActorMessage.Snapshot.class));
++                BedrockPlayerSkins.extractPitch(avatar, state, control[2]);
++            }
++            assertEquals(control[3], BedrockPlayerSkins.actorQueries(avatar, state, control[2]).get("target_x_rotation"));
++        }
++        state.xRot = 44F;
++        try (final var actors = mockStatic(BedrockActorState.class)) {
++            BedrockPlayerSkins.extractPitch(avatar, state, .5F);
++        }
++        assertEquals(44F, state.xRot, "Ordinary Java avatars retain the host sample");
 +    }
 +
 +    /** Inspect captured values directly; collection through System.gc() would make this lifecycle test flaky. */
