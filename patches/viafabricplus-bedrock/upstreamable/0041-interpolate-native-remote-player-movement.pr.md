@@ -28,4 +28,10 @@ The full four-project build passes 3,352 tests, with 326 skipped and no failures
 
 All owned game, display, relay, and server processes are gone. Cleanup restores the backed-up native world, options, external server lists, and owned server configuration.
 
-Full factory, readiness, region, scheduler, and ground-state admission remain unverified. Reset modes retain existing host behavior. Mounted movement, broader head/body transitions, complete trajectories, and skin parity remain open. The original custom-skin report remains unresolved.
+Current native reset controls expose remaining differences in the host fallback. Respawn applies position immediately, clears motion and interpolation counters, and resets pitch to zero. Teleport preserves pitch and resets previous position to its destination. Both retain the current head angle. A queued target survives either reset and resumes afterward.
+
+A fourteen-phase native/direct comparison verifies identical peer payloads and complete journals. Native resumes the queued target at X=2.5 after both resets. The current Java fallback instead stays at each reset destination and retains the supplied respawn pitch. These cases remain unfixed. The accepted native capture uses corrected teleport payloads and records seven reset-helper returns. An earlier malformed teleport trial and a later debugger pause are excluded.
+
+The outer native player handler also assigns motion before mode dispatch, including head-only packets. It subtracts the previous StateVector position from the raw packet position. Current head-only receipts retain live coordinates instead of that raw position. Packet-level motion and reset parity require broader integration; helper arithmetic alone does not establish them.
+
+Full factory, readiness, region, scheduler, and ground-state admission remain unverified. Mounted movement, broader head/body transitions, complete trajectories, and skin parity remain open. The original custom-skin report remains unresolved.
