@@ -11,6 +11,7 @@ import { Effect } from "effect";
 import { createCaptureUi } from "../capture/ui.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
+import { viaProxyTarget } from "../replay/targets.ts";
 import { artifact } from "../client-artifacts.ts";
 import { installPrism, prismProcess } from "../prism.ts";
 import { installEntityProbe, waitForProbe } from "./entity-probe.ts";
@@ -357,9 +358,11 @@ async function viaProxy(
       "--bind-address",
       `127.0.0.1:${port}`,
       "--target-address",
-      transport === "nethernet"
-        ? `nethernet://127.0.0.1:${bedrockPort}`
-        : `127.0.0.1:${bedrockPort}`,
+      viaProxyTarget(
+        transport === "nethernet"
+          ? `nethernet://127.0.0.1:${bedrockPort}`
+          : `127.0.0.1:${bedrockPort}`,
+      ),
       "--target-version",
       `Bedrock ${version}`,
       "--auth-method",
