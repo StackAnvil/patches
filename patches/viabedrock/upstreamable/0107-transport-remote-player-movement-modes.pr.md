@@ -14,4 +14,4 @@ The [client integration](../../viafabricplus-bedrock/upstreamable/0041-interpola
 
 ## Limits
 
-This patch transports inputs. It does not change interpolation, actor receive caches, collision history, or body-control formulas. Current head-only receipts retain live coordinates. Further native controls show that the outer player handler uses the raw input position to derive motion before mode dispatch. That input and its packet-level application remain missing. The client integration records the matching reset and queued-target differences. Full native readiness, region admission, scheduling, mounted movement, and pose parity remain open.
+This patch transports inputs. It does not change interpolation, actor receive caches, collision history, or body-control formulas. Head-only receipts retain raw position for native packet-level motion while leaving live position and the legacy Java target unchanged. The client integration covers reset state and queued movement. Full native readiness, region admission, scheduling, mounted movement, and pose parity remain open.

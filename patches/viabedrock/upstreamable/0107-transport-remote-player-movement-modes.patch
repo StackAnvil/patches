@@ -1,4 +1,4 @@
-From 104f1c47db9bb16d6f77ef331cc3ca6ef3b075f1 Mon Sep 17 00:00:00 2001
+From da3c1093042008fab5ed5df2366aed3c39f9d23b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 2 Nov 2026 15:43:18 +0100
 Subject: [PATCH] feat(players): transport remote movement modes and targets
@@ -15,8 +15,10 @@ exact Java target separately, including its packet family. Preserve the
 existing float/double Y arithmetic and byte-angle translation so pairing
 does not depend on reconstructing either packet family's rounding.
 
-Keep raw head-only pitch and head yaw. Its supplied position and
-conflicting main yaw remain inert. Current native mode helper
+Keep raw head-only position, pitch and head yaw. Its supplied position
+and conflicting main yaw remain inert for position and main yaw. The
+outer native packet handler 0x146bd39a0 derives motion from raw packet
+position minus the previous StateVector before mode dispatch. Current native mode helper
 0x1402d92c0 leaves pending position and main-rotation targets intact,
 applies pitch immediately, and refreshes the independent head counter.
 The client can reproduce this branch without changing legacy packets.
@@ -33,8 +35,8 @@ from normal player movement and client interpolation.
  .../protocol/packet/EntityPackets.java        |   3 +
  .../protocol/packet/OtherPlayerPackets.java   |   4 +
  .../api/model/RemotePlayerMovementTest.java   | 100 +++++++
- .../RemotePlayerMovementPacketTest.java       | 248 ++++++++++++++++++
- 7 files changed, 519 insertions(+)
+ .../RemotePlayerMovementPacketTest.java       | 249 ++++++++++++++++++
+ 7 files changed, 520 insertions(+)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTracker.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/RemotePlayerMovementTest.java
@@ -188,7 +190,7 @@ index 00000000..1e88b1de
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index b47f5471..2dd368c8 100644
+index b47f5471..a4b3ec09 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -29,6 +29,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
@@ -205,14 +207,14 @@ index b47f5471..2dd368c8 100644
  
 +    /** Preserve the source mode without changing the legacy Java translation or actor receive cache. */
 +    public final void sendRemotePlayerMovement(final int mode, final boolean riding, final short flags, final long duration) {
-+        this.sendRemotePlayerMovement(mode, riding, flags, duration, this.rotation);
++        this.sendRemotePlayerMovement(mode, riding, flags, duration, this.position, this.rotation);
 +    }
 +
-+    public final void sendRemotePlayerMovement(final int mode, final boolean riding, final short flags, final long duration, final Position3f sourceRotation) {
++    public final void sendRemotePlayerMovement(final int mode, final boolean riding, final short flags, final long duration, final Position3f sourcePosition, final Position3f sourceRotation) {
 +        final var channels = this.user == null ? null : this.user.get(ChannelStorage.class);
 +        if (!(this instanceof PlayerEntity) || this instanceof ClientPlayerEntity || channels == null
 +                || !channels.hasChannel(RemotePlayerMovement.CHANNEL)
-+                || !this.nativeStateAvailable() || !RemotePlayerMovement.finite(this.position)
++                || !this.nativeStateAvailable() || !RemotePlayerMovement.finite(this.position) || !RemotePlayerMovement.finite(sourcePosition)
 +                || !RemotePlayerMovement.finite(sourceRotation)
 +                || this.user.get(EntityTracker.class).getEntityByUid(this.uniqueId()) != this) {
 +            return;
@@ -224,7 +226,7 @@ index b47f5471..2dd368c8 100644
 +                position ? this.javaRotation().y() : MathUtil.byte2Float(MathUtil.float2Byte(this.rotation.y())),
 +                position ? this.javaRotation().x() : MathUtil.byte2Float(MathUtil.float2Byte(this.rotation.x())), this.isOnGround());
 +        final var movement = new RemotePlayerMovement(this.javaId(), this.javaUuid(),
-+                this.nativeLifetime, mode, riding, this.position, sourceRotation, this.eyeOffset(), flags, duration, this.isOnGround(), target);
++                this.nativeLifetime, mode, riding, sourcePosition, sourceRotation, this.eyeOffset(), flags, duration, this.isOnGround(), target);
 +        final var payload = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user);
 +        payload.write(Types.STRING, RemotePlayerMovement.CHANNEL);
 +        payload.write(RemotePlayerMovement.TYPE, movement);
@@ -263,7 +265,7 @@ index 4578a73f..6f65acbc 100644
              wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
              wrapper.write(Types.VAR_INT, 1); // Stepped
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
-index 8b37d578..1bd8cc1b 100644
+index 8b37d578..0a90ef87 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 @@ -186,6 +186,8 @@ public final class OtherPlayerPackets {
@@ -271,7 +273,7 @@ index 8b37d578..1bd8cc1b 100644
              if (mode == PositionMode.OnlyHeadRot) {
                  entity.setRotation(new Position3f(rotation.x(), entity.rotation().y(), entity.rotation().z()));
 +                entity.sendRemotePlayerMovement(mode.getValue(), ridingEntityRuntimeId != 0
-+                        && entityTracker.getEntityByRid(ridingEntityRuntimeId) != null, (short) (onGround ? 1 : 0), 0, rotation);
++                        && entityTracker.getEntityByRid(ridingEntityRuntimeId) != null, (short) (onGround ? 1 : 0), 0, position, rotation);
                  wrapper.setPacketType(ClientboundPackets26_3.MOVE_ENTITY_ROT);
                  wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
                  wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
@@ -392,10 +394,10 @@ index 00000000..0b199629
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/RemotePlayerMovementPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/RemotePlayerMovementPacketTest.java
 new file mode 100644
-index 00000000..8cbe8670
+index 00000000..c88feb12
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/RemotePlayerMovementPacketTest.java
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,249 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -466,7 +468,8 @@ index 00000000..8cbe8670
 +                        assertEquals(new Position3f(22.75F, 135, -135), receipt.rotation());
 +                        assertEquals(90F, receipt.javaTarget().yaw());
 +                        assertEquals(22.5F, receipt.javaTarget().pitch());
-+                        assertEquals(new Position3f(1.5F, 73.24002F, 4.5F), receipt.position());
++                        assertEquals(new Position3f(37, 123, 19), receipt.position());
++                        assertEquals(new Position3f(1.5F, 73.24002F, 4.5F), fixture.player.position());
 +                    }
 +                } finally {
 +                    input.release();

@@ -1,4 +1,4 @@
-From 6ae81e929d0207f136784e938f439e354b47d751 Mon Sep 17 00:00:00 2001
+From c44453d7d2ed4c62bb9a53023de714b328927201 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 2 Nov 2026 15:51:01 +0100
 Subject: [PATCH] fix(players): interpolate negotiated remote movement as
@@ -22,30 +22,49 @@ uses the maximum remaining position/body counter. Pair the rotation-only
 Java packet explicitly so the host path cannot cancel pending movement.
 Cancel the superseded Java head lerp through its existing public API.
 
-Return reset modes, known riding, local authority, unticking entities
-and unpaired packets to the host path. Preserve ordinary Java movement
-history. Retire native state on connection, world, entity, lifetime or
-mount changes. Keep body formulas and collision-history ownership intact.
+Apply respawn and teleport positions immediately. Both clear motion and
+active interpolation counters while preserving the current head angle
+and any queued target. Respawn resets pitch to zero and retains previous
+position; teleport retains wrapped pitch and resets previous position.
+Retain the native float feet-to-eye roundtrip on teleport. Queue handoff
+still runs after a reset leaves all counters at zero.
+
+Native packet dispatch derives motion from raw source position minus
+previous StateVector, including head-only packets. Retain exact native
+eye history at the entity tick boundary instead of rounding it through
+Java feet coordinates. Preserve source positions separately from their
+exact translated Java targets.
+
+Return known riding, local authority and unpaired packets to the host
+path. Normal interpolation retains the existing Java ticking guard;
+resets and head-only updates have no native normal-mode readiness gate.
+Preserve ordinary Java history. Retire native state on connection, world,
+entity, lifetime or mount changes. Keep body formulas and the independent
+absolute/delta receive cache and collision-history ownership intact.
 
 Current native helper 0x1402d92c0, callback 0x143630d70, angle helper
 0x143631440, target producer 0x1422c8d20 and queue kernel 0x143634ae0
 establish these component rules. Instruction controls exclude component
 allocation and native scheduler admission. Live comparisons establish
 selected steps and poses; complete timing and trajectory parity remain
-open alongside reset, mounted and unknown-factory behavior.
+open alongside mounted and unknown-factory behavior. Current native
+packet handler 0x146bd39a0, teleport setter 0x140baed10 and reset method
+0x1402c77b0 establish the new packet/reset rules. Matching native/direct
+controls distinguish respawn pitch, previous position, retained head
+state and queued movement after both resets.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../MixinRemotePlayerInterpolation.java       |  22 ++
- ...xinRemotePlayerMovementPacketListener.java |  54 +++++
- .../input/BedrockRemotePlayerMovement.java    |  81 ++++++++
+ ...xinRemotePlayerMovementPacketListener.java |  54 +++
+ .../input/BedrockRemotePlayerMovement.java    |  81 +++++
  .../input/RemotePlayerMovementPayload.java    |  22 ++
- .../movement/RemotePlayerInterpolation.java   | 133 ++++++++++++
- .../RemotePlayerInterpolationHandler.java     | 165 +++++++++++++++
+ .../movement/RemotePlayerInterpolation.java   | 142 ++++++++
+ .../RemotePlayerInterpolationHandler.java     | 205 ++++++++++++
  .../viafabricplus-bedrock.mixins.json         |   2 +
- ...ativeRemoteInterpolationReferenceTest.java |  74 +++++++
- .../RemotePlayerInterpolationHandlerTest.java | 190 ++++++++++++++++++
- .../RemotePlayerInterpolationTest.java        | 114 +++++++++++
- 11 files changed, 859 insertions(+)
+ ...ativeRemoteInterpolationReferenceTest.java |  74 +++++
+ .../RemotePlayerInterpolationHandlerTest.java | 311 ++++++++++++++++++
+ .../RemotePlayerInterpolationTest.java        | 133 ++++++++
+ 11 files changed, 1048 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerInterpolation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinRemotePlayerMovementPacketListener.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockRemotePlayerMovement.java
@@ -281,10 +300,10 @@ index 0000000..e07848c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolation.java
 new file mode 100644
-index 0000000..07ca2fe
+index 0000000..61a8f44
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolation.java
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,142 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -307,6 +326,11 @@ index 0000000..07ca2fe
 +    private Queued queued;
 +
 +    public void receive(final RemotePlayerMovement movement) {
++        if (movement.mode() == 1 || movement.mode() == 2) {
++            this.resetTargets();
++            this.headTarget = movement.rotation().z();
++            return;
++        }
 +        if (movement.mode() == 3) {
 +            this.headTarget = movement.rotation().z();
 +            this.headSteps = Math.max(this.positionSteps, this.rotationSteps);
@@ -392,13 +416,18 @@ index 0000000..07ca2fe
 +    }
 +
 +    public boolean active() {
-+        return this.positionSteps != 0 || this.rotationSteps != 0 || this.headSteps != 0;
++        return this.positionSteps != 0 || this.rotationSteps != 0 || this.headSteps != 0 || this.queued != null;
 +    }
 +
 +    public Position3f target() { return this.target; }
 +    public Position3f rotation() { return this.rotation; }
 +
 +    public void clear() {
++        this.resetTargets();
++        this.queued = null;
++    }
++
++    private void resetTargets() {
 +        this.target = null;
 +        this.rotation = null;
 +        this.positionSteps = 0;
@@ -406,7 +435,6 @@ index 0000000..07ca2fe
 +        this.headSteps = 0;
 +        this.headTarget = 0F;
 +        this.mustComplete = false;
-+        this.queued = null;
 +    }
 +
 +    static float wrap(final float value) {
@@ -420,10 +448,10 @@ index 0000000..07ca2fe
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
 new file mode 100644
-index 0000000..9961a14
+index 0000000..2eef0b4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandler.java
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,205 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -458,7 +486,9 @@ index 0000000..9961a14
 +    private UUID lifetime;
 +    private float originOffset;
 +    private Position3f eye;
++    private Position3f previousEye;
 +    private Vec3 appliedPosition;
++    private Vec3 appliedPreviousPosition;
 +
 +    public RemotePlayerInterpolationHandler(final RemotePlayer player, final InterpolationHandler host) {
 +        this.player = player;
@@ -466,7 +496,7 @@ index 0000000..9961a14
 +    }
 +
 +    public boolean receive(final RemotePlayerMovement movement) {
-+        if (movement == null || movement.mode() == 1 || movement.mode() == 2 || movement.riding() || this.player.isPassenger()
++        if (movement == null || movement.riding() || this.player.isPassenger()
 +                || this.player.isLocalInstanceAuthoritative() || !BedrockInputPermissions.isBedrockConnection()
 +                || !movement.uuid().equals(this.player.getUUID()) || movement.entityId() != this.player.getId()
 +                || !movement.lifetime().equals(BedrockActorState.liveLifetime(this.player.getUUID()))) {
@@ -475,7 +505,8 @@ index 0000000..9961a14
 +        }
 +        final Minecraft client = Minecraft.getInstance();
 +        if (client.level == null || client.getConnection() == null || !client.getConnection().getConnection().isConnected() || this.player.level() != client.level
-+                || client.level.getEntity(this.player.getId()) != this.player || !client.level.isTickingEntity(this.player)
++                || client.level.getEntity(this.player.getId()) != this.player
++                || ((movement.mode() == 0 || movement.mode() == RemotePlayerMovement.ACTOR) && !client.level.isTickingEntity(this.player))
 +                || client.player == null || this.player.hasIndirectPassenger(client.player) || this.player.isRemoved()) {
 +            this.releaseNative();
 +            return false;
@@ -488,21 +519,49 @@ index 0000000..9961a14
 +        this.lifetime = movement.lifetime();
 +        this.originOffset = movement.originOffset();
 +        if (!continuing || !this.player.position().equals(this.appliedPosition)) this.captureEye();
++        final Vec3 oldPosition = this.player.oldPosition();
++        if (!continuing || !oldPosition.equals(this.appliedPreviousPosition)) {
++            this.previousEye = oldPosition.equals(this.appliedPosition) ? this.eye : this.eyePosition(oldPosition);
++            this.appliedPreviousPosition = oldPosition;
++        }
++        if (movement.mode() != RemotePlayerMovement.ACTOR) {
++            // Native packet dispatch computes motion before the mode-specific helper, even for head-only input.
++            this.player.setDeltaMovement(new Vec3(movement.position().x() - this.previousEye.x(),
++                    movement.position().y() - this.previousEye.y(), movement.position().z() - this.previousEye.z()));
++        }
 +        this.nativeInterpolation.receive(movement);
 +        // Every legacy head packet for these sources precedes its paired position packet.
 +        this.player.lerpHeadTo(this.player.getYHeadRot(), 0);
-+        if (movement.mode() == 3) {
-+            final float rawPitch = movement.rotation().x();
-+            final float rawYaw = this.player.getYRot();
-+            final float pitch = RemotePlayerInterpolation.wrap(rawPitch);
-+            final float yaw = RemotePlayerInterpolation.wrap(rawYaw);
-+            this.player.setXRot(pitch);
-+            this.player.setYRot(yaw);
-+            this.player.xRotO = RemotePlayerInterpolation.wrap((pitch - rawPitch) + this.player.xRotO);
-+            this.player.yRotO = RemotePlayerInterpolation.wrap((yaw - rawYaw) + this.player.yRotO);
++        if (movement.mode() == 1 || movement.mode() == 2 || movement.mode() == 3) {
++            this.applyRotation(movement.rotation().x(), movement.mode() == 3 ? this.player.getYRot() : movement.rotation().y());
++        }
++        if (movement.mode() == 1 || movement.mode() == 2) {
++            final Position3f source = movement.position();
++            // Teleport passes through native feet and eye conversions; respawn publishes the raw eye position.
++            this.eye = movement.mode() == 2 ? new Position3f(source.x() + 0F,
++                    (source.y() - this.originOffset) + this.originOffset, source.z() + 0F) : source;
++            this.player.setPos(this.eye.x(), (double) this.eye.y() - this.originOffset, this.eye.z());
++            this.appliedPosition = this.player.position();
++            this.player.setDeltaMovement(Vec3.ZERO);
++            if (movement.mode() == 1) {
++                this.player.setXRot(0F);
++            } else {
++                this.player.setOldPosAndRot(this.appliedPosition, this.player.yRotO, this.player.xRotO);
++                this.previousEye = this.eye;
++                this.appliedPreviousPosition = this.player.oldPosition();
++            }
 +        }
 +        this.player.onInterpolationStart(this);
 +        return true;
++    }
++
++    private void applyRotation(final float rawPitch, final float rawYaw) {
++        final float pitch = RemotePlayerInterpolation.wrap(rawPitch);
++        final float yaw = RemotePlayerInterpolation.wrap(rawYaw);
++        this.player.setXRot(pitch);
++        this.player.setYRot(yaw);
++        this.player.xRotO = RemotePlayerInterpolation.wrap((pitch - rawPitch) + this.player.xRotO);
++        this.player.yRotO = RemotePlayerInterpolation.wrap((yaw - rawYaw) + this.player.yRotO);
 +    }
 +
 +    private boolean validContext() {
@@ -516,8 +575,12 @@ index 0000000..9961a14
 +    }
 +
 +    private void captureEye() {
-+        this.eye = new Position3f((float) this.player.getX(), (float) this.player.getY() + this.originOffset, (float) this.player.getZ());
++        this.eye = this.eyePosition(this.player.position());
 +        this.appliedPosition = this.player.position();
++    }
++
++    private Position3f eyePosition(final Vec3 feet) {
++        return new Position3f((float) feet.x, (float) feet.y + this.originOffset, (float) feet.z);
 +    }
 +
 +    @Override
@@ -531,8 +594,11 @@ index 0000000..9961a14
 +            this.cancel();
 +            return;
 +        }
-+        if (!this.nativeInterpolation.active()) return;
 +        if (!this.player.position().equals(this.appliedPosition)) this.captureEye();
++        // Entity.tick copies old position immediately before calling this handler, including while it is idle.
++        this.previousEye = this.eye;
++        this.appliedPreviousPosition = this.player.oldPosition();
++        if (!this.nativeInterpolation.active()) return;
 +        final var next = this.nativeInterpolation.tick(this.eye, this.player.getXRot(), this.player.getYRot(), this.player.xRotO, this.player.yRotO, this.player.getYHeadRot());
 +        if (next.clearMotion()) this.player.setDeltaMovement(Vec3.ZERO);
 +        if (!next.position().equals(this.eye)) {
@@ -586,7 +652,9 @@ index 0000000..9961a14
 +        this.connection = null;
 +        this.level = null;
 +        this.eye = null;
++        this.previousEye = null;
 +        this.appliedPosition = null;
++        this.appliedPreviousPosition = null;
 +    }
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
@@ -684,10 +752,10 @@ index 0000000..1a00bf6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
 new file mode 100644
-index 0000000..c88158b
+index 0000000..cc3b1d1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationHandlerTest.java
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,311 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -790,16 +858,115 @@ index 0000000..c88158b
 +    }
 +
 +    @Test
-+    void resetModesAndMountedPlayersReturnToTheHostPath() {
-+        for (int mode = 0; mode <= 2; mode++) {
++    void resetModesApplyImmediatelyAndPreserveTheLiveHeadAndDistinctPreviousPositions() {
++        for (int mode : new int[]{1, 2}) {
 +            try (final var f = new Fixture()) {
++                f.player.setXRot(11.25F);
++                f.player.setYRot(90F);
++                f.player.setYHeadRot(90F);
++                f.player.xRotO = 11.25F;
++                f.player.yRotO = 90F;
++                final Vec3 previous = f.oldPosition.get();
 +                assertTrue(f.handler.receive(f.movement(0, false)));
-+                assertFalse(f.handler.receive(f.movement(mode, mode == 0)));
++                final var reset = new RemotePlayerMovement(17, f.uuid, f.lifetime, mode, false,
++                        new Position3f(.5F, 73.24002F, 4.5F), new Position3f(22.75F, 370.5F, -135.25F), 1.62001F,
++                        (short) 0, 3, false, f.movement(mode, false).javaTarget());
++                assertTrue(f.handler.receive(reset));
++                assertEquals(new Vec3(.5D, (double) 73.24002F - 1.62001F, 4.5D), f.position.get());
++                assertEquals(mode == 1 ? 0F : 22.75F, f.player.getXRot());
++                assertEquals(10.5F, f.player.getYRot());
++                assertEquals(11.25F, f.player.xRotO);
++                assertEquals(90F, f.player.yRotO);
++                assertEquals(90F, f.player.getYHeadRot());
++                assertEquals(mode == 1 ? previous : f.position.get(), f.oldPosition.get());
 +                assertFalse(f.handler.hasActiveInterpolation());
 +                f.handler.interpolate();
-+                verify(f.host).interpolate();
-+                verify(f.player, never()).setPos(anyDouble(), anyDouble(), anyDouble());
++                assertEquals(.5D, f.position.get().x);
++                verify(f.player).setDeltaMovement(Vec3.ZERO);
++                verify(f.host, never()).interpolate();
 +            }
++        }
++    }
++
++    @Test
++    void headOnlyMotionUsesTheRawPacketPositionAndPreviousNativeTickPosition() {
++        try (final var f = new Fixture()) {
++            assertTrue(f.handler.receive(f.movement(0, false)));
++            f.tick();
++            f.tick();
++            assertEquals(1D, f.position.get().x);
++            final var head = new RemotePlayerMovement(17, f.uuid, f.lifetime, 3, false,
++                    new Position3f(37, 123, 19), new Position3f(22.75F, 135, -135.25F), 1.62001F,
++                    (short) 0, 0, false, new RemotePlayerMovement.JavaTarget(false, 0, 0, 0, 0, 22.5F, false));
++            assertTrue(f.handler.receive(head));
++            verify(f.player).setDeltaMovement(new Vec3(36.5F, 123F - 24.413341522216797F, 13.5F));
++            assertEquals(1D, f.position.get().x);
++            assertTrue(f.handler.hasActiveInterpolation());
++        }
++    }
++
++    @Test
++    void packetMotionRetainsPreviousEyePrecisionAcrossTheJavaFeetConversion() {
++        try (final var f = new Fixture()) {
++            final var source = f.movement(0, false);
++            assertTrue(f.handler.receive(new RemotePlayerMovement(17, f.uuid, f.lifetime, 0, false,
++                    new Position3f(1.5F, .3F, 5.5F), Position3f.ZERO, source.originOffset(), (short) 0, 3, false, source.javaTarget())));
++            f.tick();
++            f.tick();
++            final var head = new RemotePlayerMovement(17, f.uuid, f.lifetime, 3, false,
++                    new Position3f(37, .125F, 19), Position3f.ZERO, source.originOffset(),
++                    (short) 0, 0, false, new RemotePlayerMovement.JavaTarget(false, 0, 0, 0, 0, 0, false));
++            assertTrue(f.handler.receive(head));
++            verify(f.player).setDeltaMovement(new Vec3(36.5F, .024999991059303284F, 13.5F));
++        }
++    }
++
++    @Test
++    void queuedActorMovementResumesAfterAnImmediatePlayerReset() {
++        for (int mode : new int[]{1, 2}) {
++            try (final var f = new Fixture()) {
++                final var source = f.movement(0, false);
++                for (boolean forced : new boolean[]{true, false}) {
++                    assertTrue(f.handler.receive(new RemotePlayerMovement(17, f.uuid, f.lifetime, RemotePlayerMovement.ACTOR, false,
++                            new Position3f(forced ? -2 : 2.5F, 73.24002F, forced ? 6.5F : 4.5F), new Position3f(11.25F, 45, 45),
++                            source.originOffset(), (short) (forced ? 8 : 0), 6, false, source.javaTarget())));
++                }
++                assertTrue(f.handler.receive(f.movement(mode, false)));
++                assertEquals(1.5D, f.position.get().x);
++                assertTrue(f.handler.hasActiveInterpolation());
++                f.tick();
++                assertEquals(1.5D, f.position.get().x);
++                for (int i = 0; i < 6; i++) f.tick();
++                assertEquals(new Vec3(2.5D, (double) 73.24002F - 1.62001F, 4.5D), f.position.get());
++                assertEquals(11.25F, f.player.getXRot());
++                assertEquals(45F, f.player.getYRot());
++                assertFalse(f.handler.hasActiveInterpolation());
++                verify(f.host, never()).interpolate();
++            }
++        }
++    }
++
++    @Test
++    void resetsAndHeadOnlyUpdatesApplyWithoutNormalMovementTickAdmission() {
++        for (int mode : new int[]{1, 2, 3}) {
++            try (final var f = new Fixture()) {
++                when(f.level.isTickingEntity(f.player)).thenReturn(false);
++                assertFalse(f.handler.receive(f.movement(0, false)));
++                assertTrue(f.handler.receive(f.movement(mode, false)));
++                assertEquals(mode == 3 ? 0D : 1.5D, f.position.get().x);
++                verify(f.host, never()).interpolateTo(any(), anyFloat(), anyFloat(), anyBoolean());
++            }
++        }
++    }
++
++    @Test
++    void mountedPlayersRetainTheHostFallback() {
++        try (final var f = new Fixture()) {
++            assertTrue(f.handler.receive(f.movement(0, false)));
++            assertFalse(f.handler.receive(f.movement(0, true)));
++            f.handler.interpolate();
++            verify(f.host).interpolate();
++            verify(f.player, never()).setPos(anyDouble(), anyDouble(), anyDouble());
 +        }
 +    }
 +
@@ -835,6 +1002,10 @@ index 0000000..c88158b
 +        private final RemotePlayer player = mock(RemotePlayer.class);
 +        private final InterpolationHandler host = mock(InterpolationHandler.class);
 +        private final AtomicReference<Vec3> position = new AtomicReference<>(new Vec3(0, -(double) 1.62001F, 5.5));
++        private final AtomicReference<Vec3> oldPosition = new AtomicReference<>(this.position.get());
++        private final AtomicReference<Float> pitch = new AtomicReference<>(0F);
++        private final AtomicReference<Float> yaw = new AtomicReference<>(0F);
++        private final AtomicReference<Float> headYaw = new AtomicReference<>(0F);
 +        private final RemotePlayerInterpolationHandler handler = new RemotePlayerInterpolationHandler(this.player, this.host);
 +        private final MockedStatic<Minecraft> game = mockStatic(Minecraft.class);
 +        private final MockedStatic<BedrockActorState> actors = mockStatic(BedrockActorState.class);
@@ -855,6 +1026,19 @@ index 0000000..c88158b
 +            when(this.level.getEntity(17)).thenReturn(this.player);
 +            when(this.level.isTickingEntity(this.player)).thenReturn(true);
 +            when(this.player.position()).thenAnswer(_ -> this.position.get());
++            when(this.player.oldPosition()).thenAnswer(_ -> this.oldPosition.get());
++            when(this.player.getXRot()).thenAnswer(_ -> this.pitch.get());
++            when(this.player.getYRot()).thenAnswer(_ -> this.yaw.get());
++            when(this.player.getYHeadRot()).thenAnswer(_ -> this.headYaw.get());
++            doAnswer(call -> { this.pitch.set(call.getArgument(0)); return null; }).when(this.player).setXRot(anyFloat());
++            doAnswer(call -> { this.yaw.set(call.getArgument(0)); return null; }).when(this.player).setYRot(anyFloat());
++            doAnswer(call -> { this.headYaw.set(call.getArgument(0)); return null; }).when(this.player).setYHeadRot(anyFloat());
++            doAnswer(call -> {
++                this.oldPosition.set(call.getArgument(0));
++                this.player.yRotO = call.getArgument(1);
++                this.player.xRotO = call.getArgument(2);
++                return null;
++            }).when(this.player).setOldPosAndRot(any(Vec3.class), anyFloat(), anyFloat());
 +            when(this.player.getX()).thenAnswer(_ -> this.position.get().x);
 +            when(this.player.getY()).thenAnswer(_ -> this.position.get().y);
 +            when(this.player.getZ()).thenAnswer(_ -> this.position.get().z);
@@ -862,6 +1046,11 @@ index 0000000..c88158b
 +                this.position.set(new Vec3(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
 +                return null;
 +            }).when(this.player).setPos(anyDouble(), anyDouble(), anyDouble());
++        }
++
++        private void tick() {
++            this.oldPosition.set(this.position.get());
++            this.handler.interpolate();
 +        }
 +
 +        private RemotePlayerMovement movement(final int mode, final boolean riding) {
@@ -880,10 +1069,10 @@ index 0000000..c88158b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationTest.java
 new file mode 100644
-index 0000000..d3c0422
+index 0000000..32c2a6a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/RemotePlayerInterpolationTest.java
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,133 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -943,6 +1132,25 @@ index 0000000..d3c0422
 +            assertEquals(x, position.x());
 +        }
 +        assertFalse(interpolation.active());
++    }
++
++    @Test
++    void queuedMovementSurvivesRespawnAndTeleportAfterTheirActiveCountersAreCleared() {
++        for (int mode : new int[]{1, 2}) {
++            final var interpolation = new RemotePlayerInterpolation();
++            interpolation.receive(movement(RemotePlayerMovement.ACTOR, new Position3f(9, 0, 0), 8, 6));
++            interpolation.receive(movement(RemotePlayerMovement.ACTOR, new Position3f(12, 0, 0), 0, 6));
++            interpolation.receive(movement(mode, new Position3f(1, 0, 0), 0, 3));
++            assertTrue(interpolation.active());
++            Position3f position = new Position3f(1, 0, 0);
++            final var handoff = interpolation.tick(position, 0, 0, 0, 0, 90);
++            assertEquals(position, handoff.position());
++            assertEquals(90F, handoff.headYaw());
++            assertFalse(handoff.clearMotion());
++            for (int i = 0; i < 6; i++) position = interpolation.tick(position, 0, 0, 0, 0, 90).position();
++            assertEquals(new Position3f(12, 0, 0), position);
++            assertFalse(interpolation.active());
++        }
 +    }
 +
 +    @Test
