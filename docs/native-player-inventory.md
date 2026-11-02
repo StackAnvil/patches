@@ -104,6 +104,12 @@ The add-on owns input delivery and presentation over authoritative slots and cur
 Keep player destinations, offhand permissions, item locks, and creative actions explicit.
 A fallback acknowledgment must not consume a newer menu's request.
 
+Retain the latest local search edit within its connection before waiting for a command reply.
+Closing a screen retires its commands but preserves unsent text and explicit clearing.
+A replacement presentation submits that text with its own opening, generation, revision, and request sequence.
+Disconnect clears the client's retained edit.
+In Bedrock 1.26.60.5, Escape first removes search focus. The next Escape closes the inventory.
+
 Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
 A normal recipe click fills the grid. Taking its output sends a separate craft request.
 A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
@@ -217,7 +223,8 @@ Installed direct and ViaProxy controls confirm these pointer, capacity, and reop
 
 Recipe families beyond the captured plank, cake, and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
 Native query lifetime across disconnects and world changes remains unverified.
-Query edits that race menu closure still need native comparison.
+Under a forced search-processing stall, a rapid player-inventory reopen can close again.
+The close producer remains unverified.
 Native constructor timing relative to the open acknowledgment and frame-level population timing remain unverified.
 An unpositioned player inventory uses the fallback crafting context.
 Native model-position initialization and arbitrary custom component admission remain unverified.
