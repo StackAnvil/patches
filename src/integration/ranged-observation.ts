@@ -1,5 +1,6 @@
 export const complexGameplayCaseIds = [
   "pearl-wind-charge",
+  "pearl-wind-charge-moving",
   "eat-moving-repeat",
   "eat-moving-last",
   "bow-release",

@@ -2,7 +2,7 @@ import type { KnockbackFrame } from "./knockback-observation.ts";
 import type { RangedAction } from "./ranged-observation.ts";
 
 export interface PlayerUseObservation {
-  kind: "pearl-wind" | "food";
+  kind: "pearl-wind" | "pearl-wind-moving" | "food";
   initialFood: number;
   remainingFood: number;
   remainingPearls: number;
@@ -10,7 +10,12 @@ export interface PlayerUseObservation {
   absorption: number;
   start: { x: number; y: number; z: number };
   events: { item: string; action: RangedAction; tick: number }[];
-  impacts: { type: string; tick: number; playerPosition: { x: number; y: number; z: number } }[];
+  impacts: {
+    type: string;
+    tick: number;
+    playerPosition: { x: number; y: number; z: number };
+    impactPosition?: { x: number; y: number; z: number };
+  }[];
   frames: KnockbackFrame[];
   error?: string;
 }
@@ -18,9 +23,14 @@ export interface PlayerUseObservation {
 function validFrames(observation: PlayerUseObservation): boolean {
   return (
     !observation.error &&
-    [observation.start, ...observation.impacts.map((impact) => impact.playerPosition)].every((v) =>
-      [v.x, v.y, v.z].every(Number.isFinite),
-    ) &&
+    [
+      observation.start,
+      ...observation.impacts.flatMap((impact) =>
+        impact.impactPosition
+          ? [impact.playerPosition, impact.impactPosition]
+          : [impact.playerPosition],
+      ),
+    ].every((v) => [v.x, v.y, v.z].every(Number.isFinite)) &&
     observation.events.every((event) => Number.isInteger(event.tick)) &&
     observation.impacts.every((impact) => Number.isInteger(impact.tick)) &&
     observation.frames.length > 1 &&
@@ -35,7 +45,11 @@ function validFrames(observation: PlayerUseObservation): boolean {
 
 /** Require both native uses and impacts, a teleport, a wind jump, then a quiet landing. */
 export function pearlWindChargePasses(observation: PlayerUseObservation): boolean {
-  if (!validFrames(observation) || observation.kind !== "pearl-wind") return false;
+  if (
+    !validFrames(observation) ||
+    (observation.kind !== "pearl-wind" && observation.kind !== "pearl-wind-moving")
+  )
+    return false;
   const uses = observation.events.filter((event) => event.action === "use");
   const [pearl, wind] = uses;
   const pearlHit = observation.impacts.find((impact) => impact.type === "minecraft:ender_pearl");
@@ -60,6 +74,25 @@ export function pearlWindChargePasses(observation: PlayerUseObservation): boolea
     ) < 0.4
   )
     return false;
+  if (observation.kind === "pearl-wind-moving") {
+    // Observe walking before either projectile can teleport or propel the player.
+    const before = observation.frames.filter((frame) => frame.tick < pearl.tick).slice(-6);
+    const first = before[0];
+    const last = before.at(-1);
+    if (
+      !first ||
+      !last ||
+      !pearlHit.impactPosition ||
+      before.filter((frame) => Math.hypot(frame.velocity.x, frame.velocity.z) > 0.05).length < 2 ||
+      Math.hypot(last.position.x - first.position.x, last.position.z - first.position.z) <= 0.2 ||
+      Math.hypot(
+        pearlHit.playerPosition.x - pearlHit.impactPosition.x,
+        pearlHit.playerPosition.y - pearlHit.impactPosition.y,
+        pearlHit.playerPosition.z - pearlHit.impactPosition.z,
+      ) > 0.02
+    )
+      return false;
+  }
   const after = observation.frames.filter((frame) => frame.tick >= windHit.tick);
   const tail = after.slice(-20);
   const end = tail.at(-1);

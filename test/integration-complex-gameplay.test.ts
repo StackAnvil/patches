@@ -90,7 +90,7 @@ test("player-use outcomes exclude other players and stop with the active fixture
   const source = { ...player, typeId: "minecraft:player", location: { x: 0, y: 70, z: 1 } };
   const use = (p: object) => callbacks.get("itemUse")!({ source: p, itemStack: { typeId: "minecraft:ender_pearl" } });
   const impact = (p: object) => callbacks.get("projectileHitBlock")!({ source: p,
-    projectile: { typeId: "minecraft:ender_pearl" } });
+    projectile: { typeId: "minecraft:ender_pearl" }, location: { x: 0.5, y: 70, z: 2 } });
   use({ ...source, name: "OtherPlayer" });
   impact({ ...source, name: "OtherPlayer" });
   expect(observation.events).toHaveLength(0);
@@ -99,6 +99,8 @@ test("player-use outcomes exclude other players and stop with the active fixture
   impact(source);
   expect(observation.events).toHaveLength(1);
   expect(observation.impacts).toHaveLength(1);
+  expect(observation.impacts[0]).toMatchObject({ playerPosition: { x: 0, y: 70, z: 1 },
+    impactPosition: { x: 0.5, y: 70, z: 2 } });
   fixture.closed = true;
   use(source);
   impact(source);

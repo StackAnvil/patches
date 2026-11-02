@@ -94,6 +94,42 @@ test("pearl and wind charge require both native outcomes and a quiet landing", (
   }
 });
 
+test("moving pearl and wind charge require walking before projectile movement", () => {
+  const moving = pearlWind();
+  moving.kind = "pearl-wind-moving";
+  moving.events.forEach((event) => { event.tick += 4; });
+  moving.impacts.forEach((impact) => { impact.tick += 4; });
+  moving.frames.forEach((frame) => { frame.tick += 4; });
+  moving.impacts[0]!.impactPosition = { ...moving.impacts[0]!.playerPosition };
+  moving.frames.unshift(
+    { tick: 1, position: { x: 0, y: 70, z: 0 }, velocity: { x: 0, y: 0, z: 0.1 }, onGround: true },
+    { tick: 2, position: { x: 0, y: 70, z: 0.15 }, velocity: { x: 0, y: 0, z: 0.15 }, onGround: true },
+    { tick: 3, position: { x: 0, y: 70, z: 0.35 }, velocity: { x: 0, y: 0, z: 0.2 }, onGround: true },
+    { tick: 4, position: { x: 0, y: 70, z: 0.55 }, velocity: { x: 0, y: 0, z: 0.2 }, onGround: true },
+  );
+  expect(pearlWindChargePasses(moving)).toBe(true);
+
+  const stationary = structuredClone(moving);
+  for (const frame of stationary.frames.filter((frame) => frame.tick < 5)) {
+    frame.position.z = 0;
+    frame.velocity.z = 0;
+  }
+  expect(pearlWindChargePasses(stationary)).toBe(false);
+
+  const teleported = structuredClone(moving);
+  for (const frame of teleported.frames.filter((frame) => frame.tick < 5)) frame.velocity.z = 0;
+  expect(pearlWindChargePasses(teleported)).toBe(false);
+
+  const noPearlTeleport = structuredClone(moving);
+  noPearlTeleport.impacts[0]!.playerPosition.z = 0.55;
+  expect(pearlWindChargePasses(noPearlTeleport)).toBe(false);
+
+  const noApproach = pearlWind();
+  noApproach.kind = "pearl-wind-moving";
+  noApproach.impacts[0]!.impactPosition = { ...noApproach.impacts[0]!.playerPosition };
+  expect(pearlWindChargePasses(noApproach)).toBe(false);
+});
+
 test("moving eating must complete and consume the same number of items", () => {
   expect(movingFoodUsePasses(food())).toBe(true);
   for (const alter of [
