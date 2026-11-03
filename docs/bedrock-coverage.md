@@ -39,7 +39,7 @@ No complete area has verified Bedrock parity.
 
 Retain these reports until a matching reproduction establishes the result:
 
-- Lifeboat dialog text was reported as untranslated. For the captured Navigator form, [authored presentation](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md) produces the correct title, labels, and response indices. Native and Java routes received identical form bytes. The reported dialog still needs a matching reproduction.
+- Lifeboat dialog text was reported as untranslated. For the captured Navigator form, [authored presentation](../patches/viabedrock/upstreamable/0095-integrate-authored-native-ui-presentation.pr.md) produces the correct title, labels, and response indices. Native and Java routes received identical form bytes. Image-only dialog actions retain their source captions instead of narration keys. The reported dialog still needs a matching reproduction.
 - Lifeboat's opaque player-head obstruction matches a missing native near-camera fade. World player materials now use the [native ordered fade](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md). GPU checks cover color and depth through native and Iris programs. A matching offline scene reveals the lobby through nearby players. Broader spawn and rendering parity remain open.
 - WildFFA inventory opened with E shows items without the expected background.
 - An update from 0.3.61 to 0.4.2 caused reported inventory lag spikes and overlapping menus.

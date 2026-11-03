@@ -85,3 +85,11 @@ Program export preserves the selected format and pack-layer precedence. PNG pref
 Regressions cover byte preservation, both override directions, program round trips, metadata, and resource export.
 The rebuilt add-on accepts MegaSMP's converted pack under Java's existing download cap and reaches a visible lobby.
 A fresh walking control remains grounded. The attempted hotbar menu input opens no screen; complete gameplay remains unverified.
+
+Java dialog projection uses visible authored labels and the original translated caption for image-only actions.
+The captured 1.26.60.5 Navigator Close action previously exposed a narration key.
+The corrected projection retains Close at response index 8 and preserves the other eight captions and indices.
+A regression covers image-only captions, authored labels, and hidden actions.
+A rebuilt Java dialog shows the captured Navigator labels and sends response 8 when the source Close action is clicked.
+The local diagnostic control disables authored-form capability without changing the recorded scene packets.
+The original reported dialog remains unmatched.
