@@ -1,6 +1,9 @@
 package net.pistonmaster.stackanvil.replay.fabric;
 
 import com.viaversion.viaversion.libs.gson.JsonObject;
+import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen;
+import com.viaversion.viafabricplus.bedrock.screen.form.BedrockFormController;
+import com.viaversion.viafabricplus.bedrock.screen.form.BedrockFallbackFormScreen;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +36,25 @@ public final class NativeFormAuditSelfTest {
         require(!report.toString().contains("private"));
         require(NativeFormAudit.lineBreaks("\\n\r\n\r\n") == 2);
 
+        Map<String, Object> authored = NativeFormAudit.observe(new NativeUiSceneScreen(new BedrockFormController(37), root));
+        require(authored.get("nativeForm").equals(true));
+        require(authored.get("presentation").equals("authored-form"));
+        require(authored.get("formId").equals(37));
+        require(authored.get("rows").equals(rows));
+        require(authored.get("pointer").equals(List.of(12d, 24d)));
+        Map<String, Object> shared = NativeFormAudit.observe(new NativeUiSceneScreen(new Object(), root));
+        require(shared.get("nativeForm").equals(false));
+        require(shared.get("nativeScene").equals(true));
+        require(shared.get("presentation").equals("authored-scene"));
+        require(!shared.containsKey("formId"));
+        require(shared.get("rows").equals(rows));
+        Map<String, Object> fallback = NativeFormAudit.observe(new BedrockFallbackFormScreen(37));
+        require(fallback.get("nativeForm").equals(false));
+        require(fallback.get("presentation").equals("addon-fallback-form"));
+        require(fallback.get("formId").equals(37));
+        require(NativeFormAudit.observe(new OrdinaryDialog()).get("presentation").equals("java-dialog"));
+        require(NativeFormAudit.observe(null).get("presentation").equals("other"));
+
         List<Box> many = new ArrayList<>();
         for (int index = 0; index < 600; index++) many.add(child);
         Box large = new Box(new Node("panel", new JsonObject(), false, Integer.MIN_VALUE), bounds, clip, clip, many);
@@ -49,6 +71,8 @@ public final class NativeFormAuditSelfTest {
             throw new AssertionError("Non-finite observed bounds accepted");
         } catch (IllegalStateException expected) { }
     }
+
+    private static final class OrdinaryDialog extends net.minecraft.client.gui.screens.dialog.DialogScreen { }
 
     public record Rect(double x, double y, double width, double height) { }
     public record Box(Node node, Rect bounds, Rect clip, Rect visibleBounds, List<Box> children) {

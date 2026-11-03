@@ -172,6 +172,12 @@ Private `camera-audit.jsonl` observations include frame time, world clocks, play
 
 Private `held-item-light-audit.jsonl` observations record actual first-person submissions. They include packed light, quad normals, tint layers, material emission, and the selected pipeline. Observations do not change the item or camera. Compare them with the screenshot timestamp; startup light values can change while chunks load.
 
+Private `native-form-audit.json` observations distinguish authored forms, shared scenes, add-on fallback forms, and standard Java dialogs.
+For authored forms, the observer reads identity from the form controller and geometry from the shared screen.
+The `presentation` field identifies the path. `nativeForm` is true only for an authored form.
+Shared scenes can belong to another domain. A Java dialog classification does not prove that Bedrock supplied it.
+The bounded geometry report excludes authored labels, URLs, and input text.
+
 Private `movement-audit.jsonl` observations record position, velocity, item use, held item, and selected hotbar slot at each observed movement phase.
 The `epochMillis` timestamp aligns those observations with external input markers.
 Use the item and slot fields to distinguish a changed selection from a missing movement impulse.
