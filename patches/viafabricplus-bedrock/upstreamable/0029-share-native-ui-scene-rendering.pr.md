@@ -74,8 +74,16 @@ The installed control matrix matches all 63 selected bitmap masks across the fou
 Tooltips retain their separate CR/CRLF normalization.
 The [shared program](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md) selects whole-string font fallbacks before rendering.
 
+Nine-slice regions draw when their destination has area, including regions that sample a single texture point.
+Bedrock 1.26.60.5 uses this layout for its opaque 2×2 Black texture with one-pixel borders.
+The draw regression fails with the previous UV filter and also checks that an empty destination emits no graphics calls.
+The installed add-on matches all 266,072 sampled background pixels at 1280 × 720 and native UI scale 2.
+Java GUI scales 1, 2, 3, and return to 1 retain that match and all 63 selected bitmap glyph masks.
+The background comparison excludes text bounds and the separate action button.
+The complete 180-second replay preserves the source scene payload and verifies the installed add-on bytes.
+
 Other TrueType families, glyph raster appearance, native font-type aliases, and complete screen appearance remain open.
-Backgrounds, action appearance, and complete column placement remain open.
+Other background layouts, action appearance, and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.
 The regression uses the native four-row armor shape, which previously shifted down and overlapped the main inventory.
