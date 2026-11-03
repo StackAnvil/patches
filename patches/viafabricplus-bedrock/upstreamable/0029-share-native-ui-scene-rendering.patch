@@ -1,4 +1,4 @@
-From 5ed6fe3614f5ee59287aee0701dc47a2e28216a8 Mon Sep 17 00:00:00 2001
+From afff750929f557c0414967054342c46ee6d02839 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -773,6 +773,27 @@ container captions. Keep image component color conversion independent.
 The renderer regression fails with the previous rounding and checks mixed
 channels, missing-channel defaults and opacity bounds. Full text material,
 image tint and native frame timing parity remain separate requirements.
+
+Release the layout allocation of a grouped scrollbar when its content fits.
+Official Bedrock 1.26.60.5/protocol 2225 callback 141c3b430 hides the panel
+unless scrollbar_always_visible is set. The native visibility setter
+141c684b0 and computed-dimension reset 140509c50 clear both measured axes.
+The executable SHA-256 is
+988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a.
+
+Twenty-four original-instruction controls cover both orientations, empty,
+fitting, exact-fit, one-ULP overflow, and larger content with the visibility
+option on and off. Fixtures supply settled extents, weak references,
+layout/property storage, TLS/CFG, event publication, invalidation and
+notification boundaries. Native construction, complete layout scheduling,
+input, animation and GPU parity remain outside those controls.
+
+Apply computed visibility by node identity within each scroll view, retain
+declared dimensions, and reflow until visibility settles under the existing
+work bound. Reject cyclic visibility states instead of returning stale
+geometry. Regressions cover native boundaries, resize restoration and
+identical panel names in independent views. Ordinary painting already hid
+these panels; retaining their width shifted the authored menu columns.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -831,7 +852,7 @@ image tint and native frame timing parity remain separate requirements.
  .../bedrock/screen/ui/NativeUiInput.java      |  248 ++++
  .../screen/ui/NativeUiInputRouter.java        |   72 ++
  .../screen/ui/NativeUiJpegTexture.java        |   83 ++
- .../bedrock/screen/ui/NativeUiLayout.java     |  563 +++++++++
+ .../bedrock/screen/ui/NativeUiLayout.java     |  595 ++++++++++
  .../screen/ui/NativeUiMultilineInput.java     |  267 +++++
  .../screen/ui/NativeUiPlayerCamera.java       |   72 ++
  .../screen/ui/NativeUiPresentation.java       |  162 +++
@@ -888,12 +909,14 @@ image tint and native frame timing parity remain separate requirements.
  .../screen/ui/NativeUiRendererTest.java       |   85 ++
  .../NativeUiSceneScreenInteractionTest.java   |  359 ++++++
  .../bedrock/screen/ui/NativeUiSceneTest.java  |   40 +
+ .../ui/NativeUiScrollbarLayoutTest.java       |  107 ++
  .../bedrock/screen/ui/NativeUiSliderTest.java |  120 ++
  .../bedrock/screen/ui/NativeUiTextTest.java   |   56 +
  .../ui/NativeUiTextureAnimationTest.java      |  108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
- 119 files changed, 13574 insertions(+), 37 deletions(-)
+ .../native-scrollbar-visibility.json          |  162 +++
+ 121 files changed, 13875 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
@@ -985,11 +1008,13 @@ image tint and native frame timing parity remain separate requirements.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScrollbarLayoutTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSliderTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextureAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiToggleTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java
+ create mode 100644 src/test/resources/native-scrollbar-visibility.json
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index e0cc7f9..f64ad7c 100644
@@ -6345,10 +6370,10 @@ index 0000000..a0dfa44
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java
 new file mode 100644
-index 0000000..7e4d4f0
+index 0000000..a4f8d68
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java
-@@ -0,0 +1,563 @@
+@@ -0,0 +1,595 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6358,10 +6383,12 @@ index 0000000..7e4d4f0
 +
 +import com.google.gson.JsonElement;
 +import java.util.ArrayList;
++import java.util.Collections;
 +import java.util.HashMap;
 +import java.util.IdentityHashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Set;
 +
 +/** Resolves authored anchors and content dimensions independently of the rendering backend. */
 +public final class NativeUiLayout {
@@ -6394,26 +6421,56 @@ index 0000000..7e4d4f0
 +
 +    public Box layout(final NativeUiScene.Node node, final int width, final int height,
 +                      final Map<NativeUiScene.Node, Float> scroll) {
-+        this.measured.clear();
-+        this.visibleNodes.clear();
-+        this.windows.clear();
-+        this.verticalLimit = LIMIT;
-+        this.visibility(node, true);
 +        this.work = 0;
-+        final Size size = this.measure(node, width, height);
 +        final Rect viewport = new Rect(0, 0, width, height);
-+        return this.place(node, viewport, size, 0, viewport, scroll, null);
++        Set<NativeUiScene.Node> hidden = Collections.newSetFromMap(new IdentityHashMap<>());
++        final List<Set<NativeUiScene.Node>> states = new ArrayList<>();
++        while (true) {
++            this.measured.clear();
++            this.visibleNodes.clear();
++            this.windows.clear();
++            this.verticalLimit = LIMIT;
++            this.visibility(node, true, hidden);
++            final Size size = this.measure(node, width, height);
++            final Box result = this.place(node, viewport, size, 0, viewport, scroll, null);
++            // Native scrollbar callbacks change computed visibility and schedule layout again.
++            // Keep the declared dimensions intact so resize and content refresh can restore them.
++            final Set<NativeUiScene.Node> next = Collections.newSetFromMap(new IdentityHashMap<>());
++            this.scrollVisibility(result, next);
++            if (sameNodes(hidden, next)) return result;
++            if (states.stream().anyMatch(state -> sameNodes(state, next))) {
++                throw new IllegalArgumentException("Native UI scrollbar layout does not settle");
++            }
++            states.add(hidden);
++            hidden = next;
++        }
 +    }
 +
-+    private void visibility(final NativeUiScene.Node node, final boolean inherited) {
-+        final boolean visible = inherited && node.flag("visible", true) && !node.flag("ignored", false);
++    private static boolean sameNodes(final Set<NativeUiScene.Node> first, final Set<NativeUiScene.Node> second) {
++        return first.size() == second.size() && first.stream().allMatch(second::contains);
++    }
++
++    private void scrollVisibility(final Box box, final Set<NativeUiScene.Node> hidden) {
++        if (!this.visibleNodes.getOrDefault(box.node, true)) return;
++        if (box.node.scroll() && !box.node.flag("scrollbar_always_visible", false) && NativeUiScroll.maximum(box) == 0) {
++            final Box panel = NativeUiScroll.descendant(box, box.node.string("scroll_box_and_track_panel", ""));
++            if (panel != null && List.of("scroll_content", "scroll_view_port", "scrollbar_track", "scrollbar_box").stream()
++                    .allMatch(property -> NativeUiScroll.descendant(box, box.node.string(property, "")) != null)) {
++                hidden.add(panel.node);
++            }
++        }
++        for (final var child : box.children) this.scrollVisibility(child, hidden);
++    }
++
++    private void visibility(final NativeUiScene.Node node, final boolean inherited, final Set<NativeUiScene.Node> hidden) {
++        final boolean visible = inherited && node.flag("visible", true) && !node.flag("ignored", false) && !hidden.contains(node);
 +        this.visibleNodes.put(node, visible);
 +        final var window = NativeUiCollectionWindow.from(node);
 +        if (window != null) {
 +            this.windows.put(node, window);
 +            this.verticalLimit += window.size() * window.cellHeight();
 +        }
-+        for (final var child : node.children()) this.visibility(child, visible);
++        for (final var child : node.children()) this.visibility(child, visible, hidden);
 +    }
 +
 +    private Size measure(final NativeUiScene.Node node, final float parentWidth, final float parentHeight) {
@@ -15250,6 +15307,119 @@ index 0000000..c7b4bc4
 +        return new NativeUiScene.Node("", "button", JsonParser.parseString("{\"enabled\":" + encoded + "}").getAsJsonObject(), List.of(), Integer.MIN_VALUE);
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScrollbarLayoutTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScrollbarLayoutTest.java
+new file mode 100644
+index 0000000..8f22cae
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScrollbarLayoutTest.java
+@@ -0,0 +1,107 @@
++package com.viaversion.viafabricplus.bedrock.screen.ui;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.util.Map;
++import java.util.Set;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class NativeUiScrollbarLayoutTest {
++    @Test
++    void fittingScrollbarsReleaseTheirLayoutSpaceAtTheNativeBoundary() throws IOException {
++        try (final var stream = getClass().getResourceAsStream("/native-scrollbar-visibility.json")) {
++            assertNotNull(stream);
++            final var fixture = JsonParser.parseString(new String(stream.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
++            for (final var entry : fixture.getAsJsonArray("cases")) {
++                final var row = entry.getAsJsonObject();
++                final boolean horizontal = row.get("orientation").getAsInt() == 1;
++                final var scene = scene(scroll(horizontal, row.get("alwaysVisible").getAsBoolean(), row.get("contentExtent").getAsFloat()));
++                final int extent = row.get("viewportExtent").getAsInt();
++                final var box = solver().layout(scene.root(), extent, extent, Map.of());
++                final var panel = NativeUiScroll.descendant(box, "bar");
++                final var viewport = NativeUiScroll.descendant(box, "viewport");
++                final var expected = row.getAsJsonArray("panelSize");
++                assertEquals(expected.get(0).getAsFloat(), panel.bounds().width(), row.toString());
++                assertEquals(expected.get(1).getAsFloat(), panel.bounds().height(), row.toString());
++                final float reserved = row.get("panelVisible").getAsBoolean() ? 8 : 0;
++                assertEquals(extent - reserved, horizontal ? viewport.bounds().height() : viewport.bounds().width(), row.toString());
++            }
++        }
++    }
++
++    @Test
++    void resizeRestoresAuthoredScrollbarDimensionsWithoutChangingTheScene() {
++        final var scene = scene(scroll(false, false, 210));
++        final var solver = solver();
++        final var panelNode = scene.root().children().getFirst().children().get(1);
++        final var original = panelNode.properties().deepCopy();
++        for (final int height : new int[]{200, 210, 220, 200}) {
++            final var box = solver.layout(scene.root(), 210, height, Map.of());
++            final var panel = NativeUiScroll.descendant(box, "bar");
++            assertEquals(height < 210 ? 8 : 0, panel.bounds().width());
++            assertEquals(height < 210 ? 202 : 210, NativeUiScroll.descendant(box, "viewport").bounds().width());
++        }
++        assertEquals(original, panelNode.properties());
++    }
++
++    @Test
++    void identicalPanelNamesInOtherScrollViewsKeepTheirOwnVisibility() {
++        final var root = node("root", "panel", "fill", "fill", scroll(false, false, 100), scroll(false, false, 600));
++        final var box = solver().layout(scene(root).root(), 210, 210, Map.of());
++        assertEquals(0, NativeUiScroll.descendant(box.children().getFirst(), "bar").bounds().width());
++        assertEquals(8, NativeUiScroll.descendant(box.children().get(1), "bar").bounds().width());
++    }
++
++    private static NativeUiLayout solver() {
++        return new NativeUiLayout(_ -> new NativeUiLayout.Size(0, 0));
++    }
++
++    private static NativeUiScene scene(final JsonObject root) {
++        final var scene = new JsonObject();
++        scene.addProperty("format", 1);
++        scene.add("root", root);
++        return NativeUiScene.parse(scene.toString(), Set.of());
++    }
++
++    private static JsonObject scroll(final boolean horizontal, final boolean always, final float extent) {
++        final var content = node("content", "panel", horizontal ? extent : "fill", horizontal ? "fill" : extent);
++        final var viewport = node("viewport", "panel", horizontal ? "fill" : "fill", horizontal ? "fill" : "fill", content);
++        final var thumb = node("thumb", "scrollbar_box", horizontal ? 16 : 8, horizontal ? 8 : 16);
++        thumb.addProperty("draggable", horizontal ? "horizontal" : "vertical");
++        final var track = node("track", "scroll_track", horizontal ? "fill" : 8, horizontal ? 8 : "fill", thumb);
++        final var panel = node("bar", "panel", horizontal ? "fill" : 8, horizontal ? 8 : "fill", track);
++        final var stack = node("stack", "stack_panel", "fill", "fill", viewport, panel);
++        stack.addProperty("orientation", horizontal ? "vertical" : "horizontal");
++        final var scroll = node("view", "scroll_view", "fill", "fill", stack);
++        scroll.addProperty("scroll_content", "content");
++        scroll.addProperty("scroll_view_port", "viewport");
++        scroll.addProperty("scrollbar_track", "track");
++        scroll.addProperty("scrollbar_box", "thumb");
++        scroll.addProperty("scroll_box_and_track_panel", "bar");
++        scroll.addProperty("scrollbar_always_visible", always);
++        return scroll;
++    }
++
++    private static JsonObject node(final String name, final String type, final Object width, final Object height, final JsonObject... children) {
++        final var node = new JsonObject();
++        node.addProperty("name", name);
++        node.addProperty("type", type);
++        node.addProperty("anchor_from", "top_left");
++        node.addProperty("anchor_to", "top_left");
++        final var size = new JsonArray();
++        for (final Object value : new Object[]{width, height}) {
++            if (value instanceof Number number) size.add(number);
++            else size.add(value.toString());
++        }
++        node.add("size", size);
++        final var nodes = new JsonArray();
++        for (final var child : children) nodes.add(child);
++        node.add("children", nodes);
++        return node;
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSliderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSliderTest.java
 new file mode 100644
 index 0000000..4e7a747
@@ -15744,6 +15914,174 @@ index 0000000..e394a6f
 +            }
 +        }
 +    }
++}
+diff --git a/src/test/resources/native-scrollbar-visibility.json b/src/test/resources/native-scrollbar-visibility.json
+new file mode 100644
+index 0000000..da3913b
+--- /dev/null
++++ b/src/test/resources/native-scrollbar-visibility.json
+@@ -0,0 +1,162 @@
++{
++  "version": "1.26.60.5",
++  "protocol": 2225,
++  "executableSha256": "988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a",
++  "scope": "Settled scrollbar visibility and computed panel size; supplied UI layout/property backing and event boundaries. Native control construction, scheduling and GPU parity remain outside this fixture.",
++  "cases": [
++    {
++      "orientation": 1,
++      "alwaysVisible": false,
++      "contentExtent": 0.0,
++      "viewportExtent": 210.0,
++      "panelVisible": false,
++      "panelSize": [
++        0.0,
++        0.0
++      ]
++    },
++    {
++      "orientation": 1,
++      "alwaysVisible": false,
++      "contentExtent": 137.5,
++      "viewportExtent": 210.0,
++      "panelVisible": false,
++      "panelSize": [
++        0.0,
++        0.0
++      ]
++    },
++    {
++      "orientation": 1,
++      "alwaysVisible": false,
++      "contentExtent": 210.0,
++      "viewportExtent": 210.0,
++      "panelVisible": false,
++      "panelSize": [
++        0.0,
++        0.0
++      ]
++    },
++    {
++      "orientation": 1,
++      "alwaysVisible": false,
++      "contentExtent": 210.00001525878906,
++      "viewportExtent": 210.0,
++      "panelVisible": true,
++      "panelSize": [
++        210.0,
++        8.0
++      ]
++    },
++    {
++      "orientation": 1,
++      "alwaysVisible": false,
++      "contentExtent": 600.0,
++      "viewportExtent": 210.0,
++      "panelVisible": true,
++      "panelSize": [
++        210.0,
++        8.0
++      ]
++    },
++    {
++      "orientation": 1,
++      "alwaysVisible": true,
++      "contentExtent": 137.5,
++      "viewportExtent": 210.0,
++      "panelVisible": true,
++      "panelSize": [
++        210.0,
++        8.0
++      ]
++    },
++    {
++      "orientation": 1,
++      "alwaysVisible": true,
++      "contentExtent": 600.0,
++      "viewportExtent": 210.0,
++      "panelVisible": true,
++      "panelSize": [
++        210.0,
++        8.0
++      ]
++    },
++    {
++      "orientation": 2,
++      "alwaysVisible": false,
++      "contentExtent": 0.0,
++      "viewportExtent": 210.0,
++      "panelVisible": false,
++      "panelSize": [
++        0.0,
++        0.0
++      ]
++    },
++    {
++      "orientation": 2,
++      "alwaysVisible": false,
++      "contentExtent": 137.5,
++      "viewportExtent": 210.0,
++      "panelVisible": false,
++      "panelSize": [
++        0.0,
++        0.0
++      ]
++    },
++    {
++      "orientation": 2,
++      "alwaysVisible": false,
++      "contentExtent": 210.0,
++      "viewportExtent": 210.0,
++      "panelVisible": false,
++      "panelSize": [
++        0.0,
++        0.0
++      ]
++    },
++    {
++      "orientation": 2,
++      "alwaysVisible": false,
++      "contentExtent": 210.00001525878906,
++      "viewportExtent": 210.0,
++      "panelVisible": true,
++      "panelSize": [
++        8.0,
++        210.0
++      ]
++    },
++    {
++      "orientation": 2,
++      "alwaysVisible": false,
++      "contentExtent": 600.0,
++      "viewportExtent": 210.0,
++      "panelVisible": true,
++      "panelSize": [
++        8.0,
++        210.0
++      ]
++    },
++    {
++      "orientation": 2,
++      "alwaysVisible": true,
++      "contentExtent": 137.5,
++      "viewportExtent": 210.0,
++      "panelVisible": true,
++      "panelSize": [
++        8.0,
++        210.0
++      ]
++    },
++    {
++      "orientation": 2,
++      "alwaysVisible": true,
++      "contentExtent": 600.0,
++      "viewportExtent": 210.0,
++      "panelVisible": true,
++      "panelSize": [
++        8.0,
++        210.0
++      ]
++    }
++  ]
 +}
 -- 
 2.56.0
