@@ -72,7 +72,7 @@ Regressions cover bound-text changes across program transport, winning-file repl
 Malformed tables and truncated or oversized coverage are rejected or select the bitmap fallback.
 Disabling coverage selection makes the binding-refresh regression fail.
 The target native font uses cmap format 4. Supplementary format-12 behavior has synthetic coverage and still needs matching native controls.
-Complete TrueType raster appearance and native font-type aliases remain open.
+Other font families, mixed aliases, ranged or scaled fallbacks, and complete typography remain open.
 
 Bedrock 1.26.60.5 derives the base TrueType scale from the target render height and hhea ascent/descent range.
 Its glyph cache doubles that scale for 2×2 oversampling and retains fractional packed metrics.
@@ -91,6 +91,13 @@ Selected TrueType labels carry their 1.5 display grid through program transport.
 TrueType exports retain original font bytes and a descriptor with the native cache height.
 The add-on reads that descriptor from the selected font pack. Older exports retain Java font loading.
 The [client provider](../../viafabricplus-bedrock/upstreamable/0029-share-native-ui-scene-rendering.pr.md) owns bounded outline rendering and resource retirement.
+
+Native font registrations survive downloaded font metadata. Unrestricted, unscaled primary aliases retain their face, coverage, and line height across transport.
+Explicit `unicode` labels select Unicode even for ASCII. Canonical font-file overrides remain unverified.
+Regressions cover these selection boundaries and cyclic alias rejection.
+Native Bedrock 1.26.60.5 controls cover server declarations, the built-in primary alias, and explicit Unicode.
+At 1280 × 720, 28 of 32 label crops match across Java GUI scales 1, 2, 3, and return to 1.
+Four MinecraftTen crops of `AgW@éj` still differ by 16–24 pixels. The `@` and `é` CPU rasters match native.
 
 UI labels and dynamic domain text use the fully merged globals, including the bundled default palette.
 Program transport retains these colors. Protocol text keeps server-only overrides.
