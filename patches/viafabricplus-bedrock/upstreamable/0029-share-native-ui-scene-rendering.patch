@@ -1,4 +1,4 @@
-From 69d6456e9fe03b3362b9f2c5a1e6463e625af71a Mon Sep 17 00:00:00 2001
+From 51c3203ad547057875233c80f9b517a4d433c11f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -816,6 +816,23 @@ Native glyph-mask fixtures and a batch-boundary regression cover the
 conversion. Short authored label heights suppress the native text in a
 separate control; that text-layout rule and complete screen appearance
 remain outside this scissor correction.
+
+Native Bedrock 1.26.60.5 with BDS 1.26.60.6, protocol 2225, admits
+bitmap label rows at heights 8, 18, and 28 times the font scale. A captured
+MinecraftTen pack admits rows at 10, 22, and 34, including the adjacent
+lower floats at scales 0.5, 1, and 1.5. Admission rounds the line metric,
+while glyph placement retains the fractional 11.8125-unit advance. Keep
+these operations separate and avoid float addition that rounds a rejected
+height onto a boundary. Measure the full wrapped text independently.
+
+Append a width-fitted three-dot marker to the last admitted line. Preserve
+the original line-ending style, including empty trailing formatting runs,
+and omit a marker that cannot fit. Cache this display with the wrapped
+text so unchanged frames do not repeat splitting or glyph-width work.
+Admitted glyphs use the inherited parent scissor rather than clipping to
+the label's own height. Native MinecraftTen pixels cross that local edge.
+Whole-string font fallback, carriage-return handling, other TrueType
+families, and complete authored-screen parity remain separate open work.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -868,7 +885,7 @@ remain outside this scissor correction.
  .../bedrock/screen/ui/NativeUiDimension.java  |   93 ++
  .../bedrock/screen/ui/NativeUiFlipbook.java   |   47 +
  .../bedrock/screen/ui/NativeUiFocus.java      |  329 ++++++
- .../bedrock/screen/ui/NativeUiFont.java       |   58 +
+ .../bedrock/screen/ui/NativeUiFont.java       |   66 ++
  .../bedrock/screen/ui/NativeUiGraphics.java   |   56 +
  .../screen/ui/NativeUiHurtPayload.java        |   22 +
  .../bedrock/screen/ui/NativeUiImageCache.java |  229 ++++
@@ -881,14 +898,14 @@ remain outside this scissor correction.
  .../screen/ui/NativeUiMultilineInput.java     |  267 +++++
  .../screen/ui/NativeUiPlayerCamera.java       |   72 ++
  .../screen/ui/NativeUiPresentation.java       |  162 +++
- .../bedrock/screen/ui/NativeUiRenderer.java   |  157 +++
+ .../bedrock/screen/ui/NativeUiRenderer.java   |  182 +++
  .../bedrock/screen/ui/NativeUiScene.java      |  107 ++
  .../screen/ui/NativeUiSceneScreen.java        |  822 ++++++++++++++
  .../bedrock/screen/ui/NativeUiScissor.java    |   73 ++
  .../bedrock/screen/ui/NativeUiScreen.java     |   13 +
  .../bedrock/screen/ui/NativeUiScroll.java     |   69 ++
  .../bedrock/screen/ui/NativeUiSlider.java     |  123 ++
- .../bedrock/screen/ui/NativeUiText.java       |   64 ++
+ .../bedrock/screen/ui/NativeUiText.java       |  102 ++
  .../bedrock/screen/ui/NativeUiToggle.java     |   94 ++
  .../bedrock/screen/ui/NativeUiViewport.java   |   32 +
  .../bedrock/settings/base/NativeUiScale.java  |   27 +
@@ -932,19 +949,19 @@ remain outside this scissor correction.
  .../screen/ui/NativeUiMultilineInputTest.java |  210 ++++
  .../screen/ui/NativeUiPlayerCameraTest.java   |  132 +++
  .../screen/ui/NativeUiPresentationTest.java   |  258 +++++
- .../screen/ui/NativeUiRendererTest.java       |   85 ++
+ .../screen/ui/NativeUiRendererTest.java       |  170 +++
  .../NativeUiSceneScreenInteractionTest.java   |  359 ++++++
  .../bedrock/screen/ui/NativeUiSceneTest.java  |   40 +
  .../screen/ui/NativeUiScissorTest.java        |   69 ++
  .../ui/NativeUiScrollbarLayoutTest.java       |  107 ++
  .../bedrock/screen/ui/NativeUiSliderTest.java |  120 ++
- .../bedrock/screen/ui/NativeUiTextTest.java   |   56 +
+ .../bedrock/screen/ui/NativeUiTextTest.java   |   78 ++
  .../ui/NativeUiTextureAnimationTest.java      |  108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
  .../native-scrollbar-visibility.json          |  162 +++
  .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
- 127 files changed, 14726 insertions(+), 37 deletions(-)
+ 127 files changed, 14904 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -5359,10 +5376,10 @@ index 0000000..0d64363
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
 new file mode 100644
-index 0000000..73691f2
+index 0000000..1960ce6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,66 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5408,6 +5425,14 @@ index 0000000..73691f2
 +            throw new IllegalArgumentException("Unsupported native UI font line height");
 +        }
 +        return height;
++    }
++
++    /** Native labels admit rounded rows with a two-unit allowance on the final row. */
++    public static int visibleLines(final NativeUiScene.Node node, final float height) {
++        final float scale = scale(node);
++        if (scale == 0 || height < 0) return 0;
++        // Retain precision at the preceding float: float addition can round it onto the boundary.
++        return Math.max(0, (int) Math.floor(((double) height / scale + 2) / Math.ceil(lineHeight(node))));
 +    }
 +
 +    public static NativeUiLayout.Size intrinsic(final NativeUiScene.Node node, final float width,
@@ -7625,10 +7650,10 @@ index 0000000..99d79fd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 new file mode 100644
-index 0000000..0480b87
+index 0000000..9e728a6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,182 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7638,6 +7663,7 @@ index 0000000..0480b87
 +
 +import com.mojang.serialization.JsonOps;
 +import java.util.IdentityHashMap;
++import java.util.ArrayList;
 +import java.util.Collections;
 +import java.util.List;
 +import java.util.Set;
@@ -7686,7 +7712,7 @@ index 0000000..0480b87
 +    @Override
 +    public NativeUiLayout.Size constrained(final NativeUiScene.Node node, final float width) {
 +        if (!node.type().equals("label")) return this.intrinsic(node);
-+        final int lines = this.lines(node, this.text(node), NativeUiFont.wrapWidth(node, width)).size();
++        final int lines = this.lines(node, this.text(node), NativeUiFont.wrapWidth(node, width)).lines.size();
 +        return NativeUiFont.constrained(node, width, lines);
 +    }
 +
@@ -7723,7 +7749,7 @@ index 0000000..0480b87
 +        final float scale = NativeUiFont.scale(node);
 +        if (scale == 0) return;
 +        final int width = NativeUiFont.wrapWidth(node, box.bounds().width());
-+        final var lines = this.lines(node, text, width);
++        final var lines = this.lines(node, text, width).visible(this.font, NativeUiFont.visibleLines(node, box.bounds().height()));
 +        final String alignment = node.string("text_alignment", "left");
 +        final int uiScale = NativeUiViewport.current().scale();
 +        float y = box.bounds().y();
@@ -7743,15 +7769,39 @@ index 0000000..0480b87
 +        }
 +    }
 +
-+    private List<FormattedCharSequence> lines(final NativeUiScene.Node node, final Component text, final int width) {
++    private WrappedText lines(final NativeUiScene.Node node, final Component text, final int width) {
 +        final var previous = this.wrapped.get(node);
-+        if (previous != null && previous.text == text && previous.width == width) return previous.lines;
-+        final var lines = NativeUiText.tooltipLines(this.font, text, width);
-+        this.wrapped.put(node, new WrappedText(text, width, lines));
-+        return lines;
++        if (previous != null && previous.text == text && previous.width == width) return previous;
++        final var value = new WrappedText(text, width, NativeUiText.labelLines(this.font, text, width));
++        this.wrapped.put(node, value);
++        return value;
 +    }
 +
-+    private record WrappedText(Component text, int width, List<FormattedCharSequence> lines) {}
++    private static final class WrappedText {
++        final Component text;
++        final int width;
++        final List<NativeUiText.Line> lines;
++        private int visible = -1;
++        private List<FormattedCharSequence> display = List.of();
++
++        WrappedText(final Component text, final int width, final List<NativeUiText.Line> lines) {
++            this.text = text;
++            this.width = width;
++            this.lines = lines;
++        }
++
++        List<FormattedCharSequence> visible(final Font font, final int limit) {
++            final int count = Math.min(limit, this.lines.size());
++            if (this.visible == count) return this.display;
++            final List<FormattedCharSequence> result = new ArrayList<>(count);
++            for (int i = 0; i < count; i++) {
++                final var line = this.lines.get(i);
++                result.add(i + 1 == count && count < this.lines.size() ? line.ellipsis(font, this.width) : line.text());
++            }
++            this.visible = count;
++            return this.display = List.copyOf(result);
++        }
++    }
 +
 +    public Component text(final NativeUiScene.Node node) {
 +        return this.texts.computeIfAbsent(node, value -> {
@@ -7901,7 +7951,7 @@ index 0000000..e0ed675
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
 new file mode 100644
-index 0000000..20c0bd6
+index 0000000..05f9080
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
 @@ -0,0 +1,822 @@
@@ -8119,7 +8169,7 @@ index 0000000..20c0bd6
 +            NativeUiScene.Node tooltip = null;
 +            for (final NativeUiPresentation.Draw draw : draws) {
 +                final var box = draw.box();
-+                final var clip = box.node().type().equals("label") ? box.visibleBounds() : box.clip();
++                final var clip = box.clip();
 +                if (draw.enabled() && draw.alpha() > 0 && box.node().type().equals("custom")
 +                    && box.node().string("renderer", "").equals("hover_text_renderer")
 +                    && !box.node().string("hover_text", "").isEmpty()) tooltip = box.node();
@@ -9031,10 +9081,10 @@ index 0000000..9726a32
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiText.java
 new file mode 100644
-index 0000000..f1f207d
+index 0000000..58013b0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiText.java
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,102 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9066,6 +9116,44 @@ index 0000000..f1f207d
 +            else result.addAll(wrapped);
 +        }
 +        return List.copyOf(result);
++    }
++
++    static List<Line> labelLines(final Font font, final Component text, final int width) {
++        final List<Line> result = new ArrayList<>();
++        for (final var paragraph : paragraphs(text)) {
++            final var wrapped = font.split(paragraph, width);
++            // paragraphs() retains an empty styled run after a trailing formatting change.
++            final Style ending = paragraph.getSiblings().isEmpty() ? paragraph.getStyle()
++                : paragraph.getSiblings().getLast().getStyle();
++            if (wrapped.isEmpty()) result.add(new Line(FormattedCharSequence.EMPTY, ending));
++            for (int i = 0; i < wrapped.size(); i++) {
++                final var line = wrapped.get(i);
++                final Style[] style = {ending};
++                if (i + 1 < wrapped.size()) line.accept((index, current, codePoint) -> { style[0] = current; return true; });
++                result.add(new Line(line, style[0]));
++            }
++        }
++        return List.copyOf(result);
++    }
++
++    record Line(FormattedCharSequence text, Style ending) {
++        FormattedCharSequence ellipsis(final Font font, final int width) {
++            final var marker = FormattedCharSequence.forward("...", this.ending);
++            final float markerWidth = font.getSplitter().stringWidth(marker);
++            if (markerWidth > width) return FormattedCharSequence.EMPTY;
++            final List<FormattedCharSequence> parts = new ArrayList<>();
++            final float[] remaining = {width - markerWidth};
++            this.text.accept((index, style, codePoint) -> {
++                final var glyph = FormattedCharSequence.codepoint(codePoint, style);
++                final float advance = font.getSplitter().stringWidth(glyph);
++                if (advance > remaining[0]) return false;
++                remaining[0] -= advance;
++                parts.add(glyph);
++                return true;
++            });
++            parts.add(marker);
++            return FormattedCharSequence.composite(parts);
++        }
 +    }
 +
 +    static List<Component> paragraphs(final Component text) {
@@ -15025,10 +15113,10 @@ index 0000000..d8bc9ec
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
 new file mode 100644
-index 0000000..f38690b
+index 0000000..981093b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,170 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15039,6 +15127,12 @@ index 0000000..f38690b
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +import java.util.List;
++import java.util.ArrayList;
++import net.minecraft.client.StringSplitter;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.locale.Language;
++import net.minecraft.network.chat.Style;
++import org.joml.Matrix3x2fStack;
 +import java.util.UUID;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.client.gui.Font;
@@ -15106,6 +15200,85 @@ index 0000000..f38690b
 +        node.properties().add("color", JsonParser.parseString("[-0.01,1.01,0.1]"));
 +        assertEquals(0xFF00FF19, NativeUiRenderer.color(node, 1.2F));
 +        assertEquals(0x0000FF19, NativeUiRenderer.color(node, -.1F));
++    }
++
++    @Test
++    void submitsOnlyTheNativeAdmittedLinesAtAdjacentFloatBoundaries() {
++        // Native 1.26.60.5 bitmap and MinecraftTen captures, including scaled second and third rows.
++        final float[][] samples = {
++            {10, .5F, 4, 1}, {10, 1, 8, 1}, {10, 1.5F, 12, 1},
++            {10, 1, 18, 2}, {10, 1, 28, 3},
++            {11.8125F, .5F, 5, 1}, {11.8125F, .5F, 11, 2}, {11.8125F, .5F, 17, 3},
++            {11.8125F, 1, 10, 1}, {11.8125F, 1, 22, 2}, {11.8125F, 1, 34, 3},
++            {11.8125F, 1.5F, 15, 1}, {11.8125F, 1.5F, 33, 2}, {11.8125F, 1.5F, 51, 3}
++        };
++        try (final var viewport = mockStatic(NativeUiViewport.class)) {
++            viewport.when(NativeUiViewport::current).thenReturn(new NativeUiViewport(640, 360, 2, 2));
++            for (final var sample : samples) {
++                final var node = label("WWW\nWWW\nWWW");
++                node.properties().addProperty("font_line_height", sample[0]);
++                node.properties().addProperty("font_scale_factor", sample[1]);
++                final var font = drawingFont();
++                final var renderer = new NativeUiRenderer(font, mock(NativeUiImages.class));
++                final var submitted = new ArrayList<String>();
++                final var graphics = graphics(font, submitted, new ArrayList<>());
++                renderer.label(graphics, box(node, Math.nextDown(sample[2])), 1);
++                assertEquals((int) sample[3] - 1, submitted.size(), "preceding float: " + sample[2]);
++                submitted.clear();
++                renderer.label(graphics, box(node, sample[2]), 1);
++                assertEquals((int) sample[3], submitted.size(), "exact boundary: " + sample[2]);
++                if (sample[3] < 3) assertTrue(submitted.getLast().endsWith("..."));
++                else assertEquals(List.of("WWW", "WWW", "WWW"), submitted);
++                // Height admission does not reduce the complete wrapped measurement or rebuild it on resize.
++                assertEquals(3 * sample[0] * sample[1], renderer.constrained(node, 70).height());
++                verify(font, times(3)).split(any(FormattedText.class), anyInt());
++            }
++        }
++    }
++
++    @Test
++    void keepsFractionalGlyphSpacingWhenAdmissionUsesRoundedRows() {
++        try (final var viewport = mockStatic(NativeUiViewport.class)) {
++            viewport.when(NativeUiViewport::current).thenReturn(new NativeUiViewport(640, 360, 2, 2));
++            final var node = label("WWW\nWWW\nWWW");
++            node.properties().addProperty("font_line_height", 11.8125F);
++            final var font = drawingFont();
++            final var positions = new ArrayList<Float>();
++            new NativeUiRenderer(font, mock(NativeUiImages.class)).label(
++                graphics(font, new ArrayList<>(), positions), box(node, 34), 1);
++            assertEquals(List.of(1F, 12.5F, 24.5F), positions);
++        }
++    }
++
++    private static NativeUiLayout.Box box(final NativeUiScene.Node node, final float height) {
++        final var bounds = new NativeUiLayout.Rect(0, 0, 70, height);
++        return new NativeUiLayout.Box(node, bounds, new NativeUiLayout.Rect(0, 0, 640, 360),
++            new NativeUiLayout.Size(70, 30), bounds, 0, List.of());
++    }
++
++    private static Font drawingFont() {
++        final var font = mock(Font.class);
++        final var splitter = new StringSplitter((codePoint, style) -> codePoint == '.' ? 2 : 6);
++        when(font.getSplitter()).thenReturn(splitter);
++        when(font.width(any(FormattedCharSequence.class))).thenAnswer(call -> (int) Math.ceil(splitter.stringWidth((FormattedCharSequence) call.getArgument(0))));
++        when(font.split(any(FormattedText.class), anyInt())).thenAnswer(call -> splitter
++            .splitLines((FormattedText) call.getArgument(0), (int) call.getArgument(1), Style.EMPTY).stream()
++            .map(Language.getInstance()::getVisualOrder).toList());
++        return font;
++    }
++
++    private static GuiGraphicsExtractor graphics(final Font font, final List<String> text, final List<Float> positions) {
++        final var graphics = mock(GuiGraphicsExtractor.class);
++        final var pose = new Matrix3x2fStack(16);
++        when(graphics.pose()).thenReturn(pose);
++        doAnswer(call -> {
++            final StringBuilder value = new StringBuilder();
++            ((FormattedCharSequence) call.getArgument(1)).accept((index, style, codePoint) -> { value.appendCodePoint(codePoint); return true; });
++            text.add(value.toString());
++            positions.add(pose.m21());
++            return null;
++        }).when(graphics).text(eq(font), any(FormattedCharSequence.class), eq(0), eq(0), anyInt(), eq(false));
++        return graphics;
 +    }
 +
 +    private static NativeUiScene.Node label(final String value) {
@@ -15841,10 +16014,10 @@ index 0000000..4e7a747
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java
 new file mode 100644
-index 0000000..9ebdb57
+index 0000000..5fb51a9
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,78 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15884,6 +16057,28 @@ index 0000000..9ebdb57
 +        assertTrue(wrapped.stream().allMatch(line -> plain(line).length() <= 5));
 +        assertEquals("CatBackswagPresstopurchase", wrapped.stream().map(NativeUiTextTest::plain).reduce("", String::concat).replace(" ", ""));
 +        assertEquals(1, NativeUiText.paragraphs(Component.literal("literal\\ntext")).size());
++    }
++
++    @Test
++    void truncationRetainsOriginalLineEndingStyleAndReservesTheWholeMarker() {
++        final var font = mock(Font.class);
++        final var splitter = new StringSplitter((codePoint, style) -> codePoint == '.' ? 2 : 6);
++        when(font.getSplitter()).thenReturn(splitter);
++        when(font.split(any(FormattedText.class), anyInt())).thenAnswer(call -> splitter
++            .splitLines((FormattedText) call.getArgument(0), (int) call.getArgument(1), Style.EMPTY).stream()
++            .map(Language.getInstance()::getVisualOrder).toList());
++        final var text = Component.literal("WWW").withStyle(ChatFormatting.RED)
++            .append(Component.literal("\nWWW").withStyle(ChatFormatting.GREEN));
++        final var line = NativeUiText.labelLines(font, text, 70).getFirst();
++        assertEquals("WW...", plain(line.ellipsis(font, 20)));
++        final var styles = new ArrayList<Style>();
++        line.ellipsis(font, 20).accept((index, style, codePoint) -> { styles.add(style); return true; });
++        assertEquals(Style.EMPTY.withColor(ChatFormatting.GREEN).getColor(), styles.getLast().getColor());
++        assertEquals(Style.EMPTY.withColor(ChatFormatting.RED).getColor(), styles.getFirst().getColor());
++        assertEquals("...", plain(line.ellipsis(font, 6)));
++        assertEquals("", plain(line.ellipsis(font, 5)));
++        final var blank = NativeUiText.labelLines(font, Component.literal("WWW\n\nWWW"), 70).get(1);
++        assertEquals("...", plain(blank.ellipsis(font, 70)));
 +    }
 +
 +    private static Font font() {

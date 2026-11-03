@@ -49,12 +49,23 @@ Native 1.26.60.5 controls cover fractional origins, all four edges, and nested p
 At 1280 × 720 and native UI scale 2, the installed add-on matches all 36 selected glyph masks at Java GUI scales 1, 2, and 3.
 Return to scale 1 retains those masks.
 A batch-boundary regression keeps distinct physical clips separate when their coarse GUI bounds match.
-Label height admission remains unimplemented.
-Native Bedrock 1.26.60.5 admits the first bitmap line at 8 times the font scale and advances later lines by 10 times the font scale.
-When space permits, truncated bitmap labels append three dots to the final visible line and retain its original ending style.
-The tested MinecraftTen labels require 10 times the font scale for their first line.
-Explicit newlines switch those MinecraftTen labels to bitmap rendering.
-TrueType wrapping and font fallback still need matching native controls before implementation.
+Labels admit complete rows using the rounded line metric and a two-unit allowance on the final row.
+Glyph placement retains the fractional metric.
+Native Bedrock 1.26.60.5 bitmap controls establish scaled admission heights 8, 18, and 28.
+Twenty-four MinecraftTen controls establish heights 10, 22, and 34 at font scales 0.5, 1, and 1.5.
+Each preceding float excludes the next line. The glyph baselines retain their 11.8125-unit advance.
+
+Truncated labels cache a width-fitted three-dot marker with the original line-ending style, including trailing formatting changes.
+A marker that cannot fit contributes no pixels. Empty paragraphs still consume rows.
+Labels retain inherited parent scissors because admitted native glyphs can cross the label's own height.
+Regressions cover draw submission at adjacent float boundaries, fractional placement, blank rows, marker width, style, and retained wrapping across resize.
+Disabling admission makes the boundary regression fail.
+At 1280 × 720 and native UI scale 2, the installed add-on matches all 56 selected bitmap glyph masks.
+Java GUI scales 1, 2, 3, and return to 1 retain those masks.
+These controls cover short heights, scaled labels, explicit newlines, automatic wrapping, and overflow markers.
+At the same viewport and scale controls, all 24 installed MinecraftTen cases admit the native number of lines.
+Their glyph masks still differ. These controls establish line admission, not complete TrueType raster parity.
+Whole-string font fallback, carriage-return handling, other TrueType families, and complete screen appearance remain open.
 Backgrounds, action appearance, and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.

@@ -146,3 +146,6 @@ The [owning patch](0029-present-authored-native-containers.patch) retains implem
 Authored container draws use the [shared physical-pixel scissor path](0029-share-native-ui-scene-rendering.pr.md).
 This preserves fractional layout bounds for labels, items, portraits, and nested inputs.
 The selected native glyph comparisons cover static form controls. Complete container GPU parity remains open.
+
+Container labels share the renderer's height admission and retain inherited parent scissors.
+The [shared renderer notes](0029-share-native-ui-scene-rendering.pr.md) describe the native controls and remaining font limits.
