@@ -1,4 +1,4 @@
-From 058f16e77f8092531a1d29231b6c35102a6d7406 Mon Sep 17 00:00:00 2001
+From bd4c381b174b5751cb666feb2d69ec4c451a3e65 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -889,6 +889,15 @@ glyph producer submits the cache rectangle without Java's 0.01-texel
 inset. This correction and cache-space precision are both required by
 the current native label controls. The baked-glyph regression checks
 submitted vertices before the pose transform and preserves world text.
+
+Bedrock 1.26.60.5 TrueType glyph records retain an integer italic flag.
+The original shared quad expansion at 0x140e6da3c..0x140e6dced shifts
+top vertices by +1 and bottom vertices by -1 in cache coordinates.
+Apply that fixed shear before half-float conversion and the 1.5 display
+transform instead of Java's height-dependent shear. Preserve the Java
+world-text path and bound both geometries for draw batching. The native
+instruction fixture supplies settled cache and tessellator state; it does
+not establish full styled-screen or bold/shadow parity.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -926,7 +935,7 @@ submitted vertices before the pose transform and preserves world text.
  .../render/font/BedrockBitmapFont.java        |  251 +++++
  .../render/font/BedrockBitmapGlyph.java       |  105 ++
  .../render/font/BedrockBitmapPipeline.java    |   49 +
- .../render/font/BedrockTrueTypeFont.java      |  179 +++
+ .../render/font/BedrockTrueTypeFont.java      |  195 ++++
  .../render/font/BedrockTrueTypeRaster.java    |  325 ++++++
  .../bedrock/screen/ui/BedrockHudOverlays.java |  128 +++
  .../screen/ui/BedrockNativeUiHurt.java        |   67 ++
@@ -987,7 +996,7 @@ submitted vertices before the pose transform and preserves world text.
  .../render/font/BedrockBitmapFontTest.java    |  239 ++++
  .../render/font/BedrockBitmapGlyphTest.java   |   71 ++
  .../font/BedrockBitmapShaderGpuTest.java      |  291 +++++
- .../render/font/BedrockTrueTypeFontTest.java  |  203 ++++
+ .../render/font/BedrockTrueTypeFontTest.java  |  248 ++++
  .../bedrock/screen/ui/AnimationPrograms.java  |   23 +
  .../screen/ui/BedrockNativeUiHurtTest.java    |   71 ++
  .../screen/ui/NativeHudOverlayStateTest.java  |  153 +++
@@ -1025,7 +1034,7 @@ submitted vertices before the pose transform and preserves world text.
  .../resources/font/native-outline-fixture.txt |    4 +
  .../native-scrollbar-visibility.json          |  162 +++
  .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
- 135 files changed, 15790 insertions(+), 37 deletions(-)
+ 135 files changed, 15851 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -3281,10 +3290,10 @@ index 0000000..299cd6d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java
 new file mode 100644
-index 0000000..4fa6e5f
+index 0000000..e48f5c8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,195 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3377,7 +3386,10 @@ index 0000000..4fa6e5f
 +            @Override public GlyphInfo info() { return baked.info(); }
 +            @Override public TextRenderable.Styled createGlyph(final float x, final float y, final int color, final int shadowColor,
 +                                                               final Style style, final float bold, final float shadow) {
-+                return new Instance(baked.createGlyph(x, y, color, shadowColor, style, bold, shadow));
++                final var source = baked.createGlyph(x, y, color, shadowColor, style, bold, shadow);
++                final var gui = style.isItalic()
++                        ? baked.createGlyph(x, y, color, shadowColor, style.withItalic(false), bold, shadow) : source;
++                return new Instance(source, gui, style.isItalic());
 +            }
 +        };
 +    }
@@ -3409,17 +3421,28 @@ index 0000000..4fa6e5f
 +    }
 +
 +    /** Native stores cache-space vertices as half floats before the 1.5 display transform. */
-+    private record CacheVertices(VertexConsumer target) implements VertexConsumer {
++    private static final class CacheVertices implements VertexConsumer {
++        private final VertexConsumer target;
++        private final boolean italic;
++        private int vertex;
++
++        private CacheVertices(final VertexConsumer target, final boolean italic) {
++            this.target = target;
++            this.italic = italic;
++        }
 +        @Override public VertexConsumer addVertex(final float x, final float y, final float z) {
 +            this.target.addVertex(x, y, z);
 +            return this;
 +        }
 +        @Override public VertexConsumer addVertex(final Matrix4fc pose, final float x, final float y, final float z) {
-+            this.target.addVertex(pose, cacheCoordinate(x), cacheCoordinate(y), z);
++            // Java submits top-left, bottom-left, bottom-right, top-right for each glyph quad.
++            final int corner = this.vertex++ & 3;
++            final float shear = this.italic ? (corner == 0 || corner == 3 ? 1 : -1) : 0;
++            this.target.addVertex(pose, cacheCoordinate(x, shear), cacheCoordinate(y, 0), z);
 +            return this;
 +        }
-+        private static float cacheCoordinate(final float value) {
-+            return Float.float16ToFloat(Float.floatToFloat16(value / 1.5F)) * 1.5F;
++        private static float cacheCoordinate(final float value, final float shear) {
++            return Float.float16ToFloat(Float.floatToFloat16(value / 1.5F + shear)) * 1.5F;
 +        }
 +        @Override public VertexConsumer setColor(final int r, final int g, final int b, final int a) { this.target.setColor(r, g, b, a); return this; }
 +        @Override public VertexConsumer setColor(final int color) { this.target.setColor(color); return this; }
@@ -3435,17 +3458,19 @@ index 0000000..4fa6e5f
 +        @Override public BakedGlyph bake(final Stitcher stitcher) { return this.font.bake(stitcher, this.codepoint, this.info); }
 +    }
 +
-+    private record Instance(TextRenderable.Styled source) implements TextRenderable.Styled {
++    private record Instance(TextRenderable.Styled source, TextRenderable.Styled gui, boolean italic) implements TextRenderable.Styled {
 +        @Override public void render(final Matrix4fc pose, final VertexConsumer vertices, final int light, final boolean inverseDepth) {
-+            this.source.render(pose, inverseDepth ? new CacheVertices(vertices) : vertices, light, inverseDepth);
++            if (inverseDepth) this.gui.render(pose, new CacheVertices(vertices, this.italic), light, true);
++            else this.source.render(pose, vertices, light, false);
 +        }
 +        @Override public RenderType renderType(final Font.DisplayMode mode) { return this.source.renderType(mode); }
 +        @Override public GpuTextureView textureView() { return this.source.textureView(); }
 +        @Override public RenderPipeline guiPipeline() { return Pipeline.GUI; }
 +        @Override public Style style() { return this.source.style(); }
-+        @Override public float left() { return this.source.left(); }
++        // Bounds cover both native GUI shear and the retained Java world-text geometry.
++        @Override public float left() { return this.italic ? Math.min(this.source.left(), this.gui.left() - 1.5F) : this.source.left(); }
 +        @Override public float top() { return this.source.top(); }
-+        @Override public float right() { return this.source.right(); }
++        @Override public float right() { return this.italic ? Math.max(this.source.right(), this.gui.right() + 1.5F) : this.source.right(); }
 +        @Override public float bottom() { return this.source.bottom(); }
 +    }
 +
@@ -11364,10 +11389,10 @@ index 0000000..0e8ffc2
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java
 new file mode 100644
-index 0000000..4a3b84f
+index 0000000..f101780
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,248 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11466,6 +11491,51 @@ index 0000000..4a3b84f
 +            verify(worldVertices, times(4)).addVertex(same(pose), worldX.capture(), anyFloat(), anyFloat());
 +            assertEquals(28.232056F, worldX.getAllValues().getFirst());
 +            assertNotEquals(nativeX.getAllValues(), worldX.getAllValues());
++        }
++    }
++
++    @Test
++    void usesFixedNativeItalicEdgesInGuiAndPreservesWorldGeometry() throws Exception {
++        try (var font = new BedrockTrueTypeFont(new BedrockTrueTypeRaster(fixture(), 32), "")) {
++            final var stitcher = mock(UnbakedGlyph.Stitcher.class);
++            final BakedSheetGlyph[] sheet = new BakedSheetGlyph[1];
++            when(stitcher.stitch(any(), any())).thenAnswer(call -> {
++                final GlyphInfo info = call.getArgument(0);
++                final GlyphBitmap bitmap = call.getArgument(1);
++                sheet[0] = new BakedSheetGlyph(info, null, null, 0, 1, 0, 1,
++                        bitmap.getLeft(), bitmap.getRight(), bitmap.getTop(), bitmap.getBottom());
++                return sheet[0];
++            });
++            final var style = Style.EMPTY.withItalic(true);
++            final var glyph = font.getGlyph(65).bake(stitcher).createGlyph(0, 0, -1, 0, style, 0, 0);
++            final var pose = new Matrix4f();
++            final var gui = mock(VertexConsumer.class, Answers.RETURNS_SELF);
++            glyph.render(pose, gui, 0, true);
++            final var guiX = ArgumentCaptor.forClass(Float.class);
++            verify(gui, times(4)).addVertex(same(pose), guiX.capture(), anyFloat(), anyFloat());
++            // Native 1.26.60.5 quad expansion: top +1, bottom -1 before the 1.5 display transform.
++            assertEquals(List.of(1.40625F, -1.59375F, -.09375F, 2.90625F), guiX.getAllValues());
++            assertTrue(glyph.left() <= -1.59375F);
++            assertTrue(glyph.right() >= 2.90625F);
++            assertEquals(style, glyph.style());
++            final var fractional = font.getGlyph(65).bake(stitcher).createGlyph(.114990324F, 0, -1, 0, style, 0, 0);
++            final var fractionalVertices = mock(VertexConsumer.class, Answers.RETURNS_SELF);
++            fractional.render(pose, fractionalVertices, 0, true);
++            final var fractionalX = ArgumentCaptor.forClass(Float.class);
++            verify(fractionalVertices, times(4)).addVertex(same(pose), fractionalX.capture(), anyFloat(), anyFloat());
++            // Applying display-space shear before normalization rounds onto the other half-float.
++            assertEquals(1.5205078125F, fractionalX.getAllValues().getFirst());
++
++            final var world = mock(VertexConsumer.class, Answers.RETURNS_SELF);
++            final var originalWorld = mock(VertexConsumer.class, Answers.RETURNS_SELF);
++            glyph.render(pose, world, 0, false);
++            sheet[0].createGlyph(0, 0, -1, 0, style, 0, 0).render(pose, originalWorld, 0, false);
++            final var worldX = ArgumentCaptor.forClass(Float.class);
++            final var originalX = ArgumentCaptor.forClass(Float.class);
++            verify(world, times(4)).addVertex(same(pose), worldX.capture(), anyFloat(), anyFloat());
++            verify(originalWorld, times(4)).addVertex(same(pose), originalX.capture(), anyFloat(), anyFloat());
++            assertEquals(originalX.getAllValues(), worldX.getAllValues());
++            assertNotEquals(guiX.getAllValues(), worldX.getAllValues());
 +        }
 +    }
 +
