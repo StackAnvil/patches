@@ -1,4 +1,4 @@
-From 8bff58f1fabcf7a5998433bc12cc9315e548b682 Mon Sep 17 00:00:00 2001
+From 83fe770a268dc50492d3e189505ae6ae4c2231d3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -906,6 +906,30 @@ bottom by +1 and -1 regardless of the cell height or vertical offset.
 Java's shear instead varies with those bounds, which distorts the native
 12-unit cells with a -3 offset. Retain original Java world vertices and
 conservative active bounds while the GUI path uses the native geometry.
+
+Preserve TrueType sample phase when Java relocates native glyphs. The
+1.26.60.5/protocol2225 GPU capture supplies twelve real draws: all 288 UV
+vertices use a 65536 packing scale and UNORM16 decode by 65535. Each
+channel of the captured 1024 atlas matches the original native raster.
+Nearest sampling depends on the resulting fraction of a texel, so applying
+the same packing to Java atlas coordinates alone still changes pixels.
+
+Reconstruct the native 256-codepoint shelf layout lazily from checked font
+bounds, including the shared missing-glyph cell and exact-fit wrap/reject
+boundaries. Preserve its UV quantization in texel space at Java upload
+locations. Keep the existing glyph atlas, resource ownership, and world
+text path. Authored-font UV controls fail before the fix; isolated GPU
+controls retain native samples after relocation to two different origins.
+
+Initialize the one-pixel trailing gutter reserved by FontTexture for each
+owned bitmap. The paired native/Java GPU capture has identical six-glyph
+interiors, but Java atlas gutter bytes differ from native zero padding.
+At exact italic sample boundaries those stale bytes become visible white
+pixels. Clearing only those reserved gutters removes both differences in
+the captured draw replay without changing geometry or shader sampling.
+Clamp upload extents at the texture edge; do not resize the glyph or
+overwrite another atlas allocation. The upload regression checks native
+pixels, zero padding, and an atlas-edge upload, and fails before the fix.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -943,8 +967,8 @@ conservative active bounds while the GUI path uses the native geometry.
  .../render/font/BedrockBitmapFont.java        |  251 +++++
  .../render/font/BedrockBitmapGlyph.java       |  127 +++
  .../render/font/BedrockBitmapPipeline.java    |   49 +
- .../render/font/BedrockTrueTypeFont.java      |  195 ++++
- .../render/font/BedrockTrueTypeRaster.java    |  325 ++++++
+ .../render/font/BedrockTrueTypeFont.java      |  213 ++++
+ .../render/font/BedrockTrueTypeRaster.java    |  375 ++++++
  .../bedrock/screen/ui/BedrockHudOverlays.java |  128 +++
  .../screen/ui/BedrockNativeUiHurt.java        |   67 ++
  .../screen/ui/NativeHudOverlayState.java      |   66 ++
@@ -1004,7 +1028,7 @@ conservative active bounds while the GUI path uses the native geometry.
  .../render/font/BedrockBitmapFontTest.java    |  239 ++++
  .../render/font/BedrockBitmapGlyphTest.java   |  107 ++
  .../font/BedrockBitmapShaderGpuTest.java      |  291 +++++
- .../render/font/BedrockTrueTypeFontTest.java  |  248 ++++
+ .../render/font/BedrockTrueTypeFontTest.java  |  329 ++++++
  .../bedrock/screen/ui/AnimationPrograms.java  |   23 +
  .../screen/ui/BedrockNativeUiHurtTest.java    |   71 ++
  .../screen/ui/NativeHudOverlayStateTest.java  |  153 +++
@@ -1042,7 +1066,7 @@ conservative active bounds while the GUI path uses the native geometry.
  .../resources/font/native-outline-fixture.txt |    4 +
  .../native-scrollbar-visibility.json          |  162 +++
  .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
- 135 files changed, 15909 insertions(+), 37 deletions(-)
+ 135 files changed, 16058 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -3320,10 +3344,10 @@ index 0000000..299cd6d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java
 new file mode 100644
-index 0000000..e48f5c8
+index 0000000..6818204
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,213 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3419,7 +3443,7 @@ index 0000000..e48f5c8
 +                final var source = baked.createGlyph(x, y, color, shadowColor, style, bold, shadow);
 +                final var gui = style.isItalic()
 +                        ? baked.createGlyph(x, y, color, shadowColor, style.withItalic(false), bold, shadow) : source;
-+                return new Instance(source, gui, style.isItalic());
++                return new Instance(source, gui, style.isItalic(), glyph.sampling());
 +            }
 +        };
 +    }
@@ -3443,8 +3467,14 @@ index 0000000..e48f5c8
 +        @Override public float getBearingTop() { return 7 - this.glyph.top(); }
 +        @Override public boolean isColored() { return false; }
 +        @Override public void upload(final int x, final int y, final GpuTexture texture) {
-+            try (var image = new NativeImage(NativeImage.Format.LUMINANCE, this.glyph.width(), this.glyph.height(), false)) {
-+                image.getPixelBytes().put(this.glyph.pixels());
++            // FontTexture reserves a one-pixel gutter; native cache padding is zero.
++            final int width = Math.min(this.glyph.width() + 1, texture.getWidth(0) - x);
++            final int height = Math.min(this.glyph.height() + 1, texture.getHeight(0) - y);
++            try (var image = new NativeImage(NativeImage.Format.LUMINANCE, width, height, true)) {
++                final var pixels = image.getPixelBytes();
++                for (int row = 0; row < this.glyph.height(); row++) {
++                    pixels.position(row * width).put(this.glyph.pixels(), row * this.glyph.width(), this.glyph.width());
++                }
 +                RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture, image, 0, 0, x, y);
 +            }
 +        }
@@ -3454,11 +3484,17 @@ index 0000000..e48f5c8
 +    private static final class CacheVertices implements VertexConsumer {
 +        private final VertexConsumer target;
 +        private final boolean italic;
++        private final BedrockTrueTypeRaster.Sampling sampling;
++        private final int width, height;
 +        private int vertex;
 +
-+        private CacheVertices(final VertexConsumer target, final boolean italic) {
++        private CacheVertices(final VertexConsumer target, final boolean italic, final BedrockTrueTypeRaster.Sampling sampling,
++                              final GpuTextureView texture) {
 +            this.target = target;
 +            this.italic = italic;
++            this.sampling = sampling;
++            this.width = texture.getWidth(0);
++            this.height = texture.getHeight(0);
 +        }
 +        @Override public VertexConsumer addVertex(final float x, final float y, final float z) {
 +            this.target.addVertex(x, y, z);
@@ -3476,7 +3512,12 @@ index 0000000..e48f5c8
 +        }
 +        @Override public VertexConsumer setColor(final int r, final int g, final int b, final int a) { this.target.setColor(r, g, b, a); return this; }
 +        @Override public VertexConsumer setColor(final int color) { this.target.setColor(color); return this; }
-+        @Override public VertexConsumer setUv(final float u, final float v) { this.target.setUv(u, v); return this; }
++        @Override public VertexConsumer setUv(final float u, final float v) {
++            final int corner = (this.vertex - 1) & 3;
++            this.target.setUv(u + this.sampling.correction(true, corner == 2 || corner == 3) / this.width,
++                    v + this.sampling.correction(false, corner == 1 || corner == 2) / this.height);
++            return this;
++        }
 +        @Override public VertexConsumer setUv1(final int u, final int v) { this.target.setUv1(u, v); return this; }
 +        @Override public VertexConsumer setUv2(final int u, final int v) { this.target.setUv2(u, v); return this; }
 +        @Override public VertexConsumer setUv3(final float u, final float v) { this.target.setUv3(u, v); return this; }
@@ -3488,9 +3529,10 @@ index 0000000..e48f5c8
 +        @Override public BakedGlyph bake(final Stitcher stitcher) { return this.font.bake(stitcher, this.codepoint, this.info); }
 +    }
 +
-+    private record Instance(TextRenderable.Styled source, TextRenderable.Styled gui, boolean italic) implements TextRenderable.Styled {
++    private record Instance(TextRenderable.Styled source, TextRenderable.Styled gui, boolean italic,
++                            BedrockTrueTypeRaster.Sampling sampling) implements TextRenderable.Styled {
 +        @Override public void render(final Matrix4fc pose, final VertexConsumer vertices, final int light, final boolean inverseDepth) {
-+            if (inverseDepth) this.gui.render(pose, new CacheVertices(vertices, this.italic), light, true);
++            if (inverseDepth) this.gui.render(pose, new CacheVertices(vertices, this.italic, this.sampling, this.textureView()), light, true);
 +            else this.source.render(pose, vertices, light, false);
 +        }
 +        @Override public RenderType renderType(final Font.DisplayMode mode) { return this.source.renderType(mode); }
@@ -3521,10 +3563,10 @@ index 0000000..e48f5c8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeRaster.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeRaster.java
 new file mode 100644
-index 0000000..83b7310
+index 0000000..7a6265e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeRaster.java
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,375 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3561,6 +3603,7 @@ index 0000000..83b7310
 +    private final int height;
 +    private final float scale;
 +    private final Int2IntOpenHashMap glyphs = new Int2IntOpenHashMap();
++    private final Map<Integer, Sampling[]> pages = new HashMap<>();
 +    private ByteBuffer data;
 +    private long library;
 +    private FT_Face face;
@@ -3621,6 +3664,7 @@ index 0000000..83b7310
 +        final int width = x1 - x0 + 1;
 +        final int rows = y1 - y0 + 1;
 +        if (width < 1 || rows < 1 || width > MAX_SIDE || rows > MAX_SIDE) throw new IOException("Native font glyph exceeds raster bounds");
++        final Sampling sampling = this.sampling(codepoint);
 +        final ByteBuffer pixels = MemoryUtil.memCalloc(width * rows);
 +        try (var bitmap = STBTTBitmap.malloc(); var vertices = this.vertices(glyph, new IntOpenHashSet())) {
 +            for (final var vertex : vertices) {
@@ -3655,10 +3699,48 @@ index 0000000..83b7310
 +            final float baseline = (8 + (int) (this.tables.descent * this.scale) * normalization) * 1.5F;
 +            return new Glyph(width, rows, (x0 * .5F - .25F) * normalization * 1.5F,
 +                    baseline + (y0 * .5F - .25F) * normalization * 1.5F,
-+                    this.advance(codepoint), this.height / 6F, image);
++                    this.advance(codepoint), this.height / 6F, image, sampling);
 +        } finally {
 +            MemoryUtil.memFree(pixels);
 +        }
++    }
++
++    /** Native packs each 256-codepoint page in codepoint order, including one missing-glyph cell. */
++    private Sampling sampling(final int codepoint) throws IOException {
++        final int page = codepoint >>> 8;
++        final Sampling[] cached = this.pages.get(page);
++        if (cached != null) return cached[codepoint & 255];
++        final int[][] sizes = new int[256][2];
++        boolean missing = false;
++        final float rasterScale = this.scale * 2;
++        for (int index = 0; index < 256; index++) {
++            final int glyph = this.glyphs.get((page << 8) + index);
++            if (glyph == 0 && missing) continue;
++            missing |= glyph == 0;
++            final Box box = this.tables.box(glyph);
++            sizes[index][0] = (int) Math.ceil(box.right * rasterScale) - (int) Math.floor(box.left * rasterScale) + 2;
++            sizes[index][1] = (int) Math.ceil(-box.bottom * rasterScale) - (int) Math.floor(-box.top * rasterScale) + 2;
++        }
++        // These are the target client's candidates, including its non-power-of-two final page.
++        for (final int side : new int[]{256, 512, 1024, 2048, 4086}) {
++            final Sampling[] cells = new Sampling[256];
++            int x = 0, y = 0, bottom = 0;
++            boolean complete = true;
++            for (int index = 0; index < 256; index++) {
++                final int width = sizes[index][0], height = sizes[index][1];
++                if (width > side || height > side) { complete = false; break; }
++                if (x + width >= side) { x = 0; y = bottom; }
++                if (y + height >= side) { complete = false; break; }
++                cells[index] = new Sampling(side, x + 1, y + 1, width - 1, height - 1);
++                x += width;
++                bottom = Math.max(bottom, y + height);
++            }
++            if (complete) {
++                this.pages.put(page, cells);
++                return cells[codepoint & 255];
++            }
++        }
++        throw new IOException("Native font page exceeds atlas bounds");
 +    }
 +
 +    private STBTTVertex.Buffer vertices(final int glyph, final IntSet parents) throws IOException {
@@ -3784,9 +3866,19 @@ index 0000000..83b7310
 +        if (this.face != null) FreeType.FT_Done_Face(this.face);
 +        if (this.library != 0) FreeType.FT_Done_FreeType(this.library);
 +        if (this.data != null) MemoryUtil.memFree(this.data);
++        this.pages.clear();
 +    }
 +
-+    public record Glyph(int width, int height, float left, float top, float advance, float oversample, byte[] pixels) { }
++    public record Glyph(int width, int height, float left, float top, float advance, float oversample, byte[] pixels, Sampling sampling) { }
++    public record Sampling(int side, int x, int y, int width, int height) {
++        /** Retain native UNORM16 rounding in texel space when Java relocates the bitmap. */
++        float correction(final boolean horizontal, final boolean end) {
++            final int texel = horizontal ? this.x + (end ? this.width : 0) : this.y + (end ? this.height : 0);
++            final float uv = texel * (1F / this.side);
++            final int packed = Math.min(65535, (int) (uv * 65536F));
++            return (packed / 65535F) * this.side - texel;
++        }
++    }
 +    private record Box(int left, int bottom, int right, int top) {
 +        boolean contains(final int x, final int y) { return x >= this.left && x <= this.right && y >= this.bottom && y <= this.top; }
 +    }
@@ -11455,10 +11547,10 @@ index 0000000..0e8ffc2
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java
 new file mode 100644
-index 0000000..f101780
+index 0000000..29743c7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,329 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11470,6 +11562,12 @@ index 0000000..f101780
 +import com.mojang.blaze3d.font.GlyphInfo;
 +import com.mojang.blaze3d.font.UnbakedGlyph;
 +import com.mojang.blaze3d.vertex.VertexConsumer;
++import com.mojang.blaze3d.platform.NativeImage;
++import com.mojang.blaze3d.systems.RenderSystem;
++import com.mojang.renderpearl.api.commands.CommandEncoder;
++import com.mojang.renderpearl.api.device.GpuDevice;
++import com.mojang.renderpearl.api.textures.GpuTexture;
++import com.mojang.renderpearl.api.textures.GpuTextureView;
 +import java.io.ByteArrayInputStream;
 +import java.io.IOException;
 +import java.nio.ByteBuffer;
@@ -11483,6 +11581,7 @@ index 0000000..f101780
 +import org.joml.Matrix4f;
 +import org.mockito.Answers;
 +import java.util.List;
++import java.util.ArrayList;
 +import net.minecraft.resources.Identifier;
 +import net.minecraft.server.packs.PackResources;
 +import net.minecraft.server.packs.PackType;
@@ -11507,6 +11606,13 @@ index 0000000..f101780
 +            assertNotNull(stream);
 +            return stream.readAllBytes();
 +        }
++    }
++
++    private static GpuTextureView texture() {
++        final var texture = mock(GpuTextureView.class);
++        when(texture.getWidth(0)).thenReturn(256);
++        when(texture.getHeight(0)).thenReturn(256);
++        return texture;
 +    }
 +
 +    @Test
@@ -11535,13 +11641,80 @@ index 0000000..f101780
 +    }
 +
 +    @Test
++    void clearsReservedGlyphGuttersAndKeepsUploadsInsideTheAtlas() throws Exception {
++        try (var font = new BedrockTrueTypeFont(new BedrockTrueTypeRaster(fixture(), 32), "");
++             var system = mockStatic(RenderSystem.class)) {
++            final var texture = mock(GpuTexture.class);
++            when(texture.getWidth(0)).thenReturn(20);
++            when(texture.getHeight(0)).thenReturn(20);
++            final var device = mock(GpuDevice.class);
++            final var encoder = mock(CommandEncoder.class);
++            system.when(RenderSystem::getDevice).thenReturn(device);
++            when(device.createCommandEncoder()).thenReturn(encoder);
++            final var uploads = new ArrayList<byte[]>();
++            final var dimensions = new ArrayList<List<Integer>>();
++            doAnswer(call -> {
++                final NativeImage image = call.getArgument(1);
++                final byte[] pixels = new byte[image.getWidth() * image.getHeight()];
++                image.getPixelBytes().get(pixels);
++                uploads.add(pixels);
++                dimensions.add(List.of(image.getWidth(), image.getHeight()));
++                return null;
++            }).when(encoder).writeToTexture(same(texture), any(NativeImage.class), eq(0), eq(0), anyInt(), anyInt());
++            final var stitcher = mock(UnbakedGlyph.Stitcher.class);
++            when(stitcher.stitch(any(), any())).thenAnswer(call -> {
++                final GlyphBitmap bitmap = call.getArgument(1);
++                bitmap.upload(5, 7, texture);
++                bitmap.upload(12, 12, texture);
++                return mock(BakedGlyph.class);
++            });
++            font.getGlyph(65).bake(stitcher);
++            assertEquals(List.of(List.of(9, 9), List.of(8, 8)), dimensions);
++            assertArrayEquals(HexFormat.of().parseHex("193333333333230a00"
++                    + "59b2b2b2b2b27c2300" + "7fffffffffffb23300" + "7fffffffffffb23300"
++                    + "7fffffffffffb23300" + "7fffffffffffb23300" + "7fffffffffffb23300"
++                    + "3f7f7f7f7f7f591900" + "000000000000000000"), uploads.getFirst());
++            assertArrayEquals(HexFormat.of().parseHex(RECTANGLE), uploads.getLast());
++        }
++    }
++
++    @Test
++    void preservesNativeAtlasSamplingWhenJavaRelocatesGlyphs() throws Exception {
++        try (var font = new BedrockTrueTypeFont(new BedrockTrueTypeRaster(fixture(), 32), "")) {
++            final var stitcher = mock(UnbakedGlyph.Stitcher.class);
++            final var texture = texture();
++            when(stitcher.stitch(any(), any())).thenAnswer(call -> {
++                final GlyphInfo info = call.getArgument(0);
++                final GlyphBitmap bitmap = call.getArgument(1);
++                return new BakedSheetGlyph(info, null, texture, 1 / 256F, 9 / 256F, 17 / 256F, 25 / 256F,
++                        bitmap.getLeft(), bitmap.getRight(), bitmap.getTop(), bitmap.getBottom());
++            });
++            final var glyph = font.getGlyph(65).bake(stitcher).createGlyph(0, 0, -1, 0, Style.EMPTY, 0, 0);
++            final var gui = mock(VertexConsumer.class, Answers.RETURNS_SELF);
++            glyph.render(new Matrix4f(), gui, 0, true);
++            final var u = ArgumentCaptor.forClass(Float.class);
++            final var v = ArgumentCaptor.forClass(Float.class);
++            verify(gui, times(4)).setUv(u.capture(), v.capture());
++            // Original 1.26.60.5 shelf places A at [5,1..13,9] on a 256 page.
++            // Retain its captured fixed-point sample phase at Java's [1,17..9,25].
++            assertEquals(List.of(.003906548F, .003906548F, .035157025F, .035157025F), u.getAllValues());
++            assertEquals(List.of(.06640631F, .09765679F, .09765679F, .06640631F), v.getAllValues());
++            final var world = mock(VertexConsumer.class, Answers.RETURNS_SELF);
++            glyph.render(new Matrix4f(), world, 0, false);
++            final var worldU = ArgumentCaptor.forClass(Float.class);
++            verify(world, times(4)).setUv(worldU.capture(), anyFloat());
++            assertEquals(List.of(1 / 256F, 1 / 256F, 9 / 256F, 9 / 256F), worldU.getAllValues());
++        }
++    }
++
++    @Test
 +    void submitsCachePrecisionBeforeTheDisplayTransformAndPreservesWorldVertices() throws Exception {
 +        try (var font = new BedrockTrueTypeFont(new BedrockTrueTypeRaster(fixture(), 32), "")) {
 +            final var stitcher = mock(UnbakedGlyph.Stitcher.class);
 +            when(stitcher.stitch(any(), any())).thenAnswer(call -> {
 +                final GlyphInfo info = call.getArgument(0);
 +                final GlyphBitmap bitmap = call.getArgument(1);
-+                return new BakedSheetGlyph(info, null, null, 0, 1, 0, 1,
++                return new BakedSheetGlyph(info, null, texture(), 0, 1, 0, 1,
 +                        bitmap.getLeft(), bitmap.getRight(), bitmap.getTop(), bitmap.getBottom());
 +            });
 +            final var glyph = font.getGlyph(65).bake(stitcher).createGlyph(28.325806F, 0, -1, 0, Style.EMPTY, 0, 0);
@@ -11568,7 +11741,7 @@ index 0000000..f101780
 +            when(stitcher.stitch(any(), any())).thenAnswer(call -> {
 +                final GlyphInfo info = call.getArgument(0);
 +                final GlyphBitmap bitmap = call.getArgument(1);
-+                sheet[0] = new BakedSheetGlyph(info, null, null, 0, 1, 0, 1,
++                sheet[0] = new BakedSheetGlyph(info, null, texture(), 0, 1, 0, 1,
 +                        bitmap.getLeft(), bitmap.getRight(), bitmap.getTop(), bitmap.getBottom());
 +                return sheet[0];
 +            });

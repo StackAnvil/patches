@@ -107,10 +107,12 @@ Original Bedrock 1.26.60.5 bitmap and TrueType glyph writers and shared quad ins
 Eighteen bitmap instruction cases retain the same shear across three cell heights and offsets.
 Baked-glyph regressions cover tall cells, the TrueType normalization boundary, conservative bounds, and unchanged Java world vertices.
 A fresh 24-label native scene covers plain and italic text at three font scales.
-All 12 bitmap labels and six plain TrueType labels match across Java GUI scales 1, 2, 3, and return to 1.
-The six TrueType italic labels retain nine differing pixels.
+All 24 selected labels match across Java GUI scales 1, 2, 3, and return to 1.
+Paired native and Java GPU captures establish the native TrueType UV packing and zero atlas gutters.
+The renderer preserves that sampling phase after Java relocates glyphs and clears their reserved trailing gutters.
+Regressions cover relocated UVs, unchanged world sampling, zero padding, and uploads at the atlas edge.
 A normal resource reload preserves all 24 crops. The full build and complete 180-second replay pass.
-Remaining pixel differences, bold, shadow, other font families, mixed or scaled aliases, and complete screens remain open.
+Bold, shadow, other font families, mixed or scaled aliases, and complete screens remain open.
 
 Other background layouts, action appearance, and complete column placement remain open.
 
