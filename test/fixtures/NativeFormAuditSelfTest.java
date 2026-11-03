@@ -1,6 +1,7 @@
 package net.pistonmaster.stackanvil.replay.fabric;
 
 import com.viaversion.viaversion.libs.gson.JsonObject;
+import com.viaversion.viaversion.libs.gson.JsonParser;
 import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen;
 import com.viaversion.viafabricplus.bedrock.screen.form.BedrockFormController;
 import com.viaversion.viafabricplus.bedrock.screen.form.BedrockFallbackFormScreen;
@@ -35,6 +36,18 @@ public final class NativeFormAuditSelfTest {
         require(row.get("input").equals(Map.of("kind", "slider", "index", 4)));
         require(!report.toString().contains("private"));
         require(NativeFormAudit.lineBreaks("\\n\r\n\r\n") == 2);
+
+        for (var malformed : List.of("null", "[]", "false", "\"private\"")) {
+            JsonObject invalid = new JsonObject();
+            invalid.add("input", JsonParser.parseString(malformed));
+            Box mixed = new Box(new Node("button", invalid, true, 9), bounds, clip, clip, List.of(child));
+            Map<String, Object> observed = NativeFormAudit.project(mixed);
+            List<?> inputs = (List<?>) observed.get("rows");
+            require(inputs.size() == 2);
+            require(!((Map<?, ?>) inputs.getFirst()).containsKey("input"));
+            require(((Map<?, ?>) inputs.get(1)).get("input").equals(Map.of("kind", "slider", "index", 4)));
+            require(!observed.toString().contains("private"));
+        }
 
         Map<String, Object> authored = NativeFormAudit.observe(new NativeUiSceneScreen(new BedrockFormController(37), root));
         require(authored.get("nativeForm").equals(true));

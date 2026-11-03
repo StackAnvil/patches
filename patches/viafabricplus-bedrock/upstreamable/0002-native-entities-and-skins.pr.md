@@ -19,7 +19,7 @@ Prerequisites:
 
 ## Validation and remaining limits
 
-Regression coverage includes `MixinIrisJavaAlphaTest`, `BedrockAcceptedResourcesTest`, `BedrockActorDepthGpuTest`, and `BedrockActorGlintFramesTest`.
+Regression coverage includes `BedrockAcceptedResourcesTest`, `BedrockActorDepthGpuTest`, `BedrockActorGlintFramesTest`, `BedrockShaderAlphaTest`, and `BedrockPlayerFadeGpuTest`.
 
 Official Bedrock 1.26.60.5 (protocol 2225) GPU draws establish the player fade across zero to one block of signed view depth.
 The native near-player draws remain two-sided. A matching Java replay initially obscures the lobby with an opaque player head.

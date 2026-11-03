@@ -150,17 +150,20 @@ public final class NativeFormAudit {
             Object properties = call(node, "properties");
             Object input = call(properties, "get", new Class<?>[] {String.class}, "input");
             if (input != null && input.toString().length() <= 4096) {
-                JsonObject values = JsonParser.parseString(input.toString()).getAsJsonObject();
-                Map<String, Object> metadata = new LinkedHashMap<>();
-                for (String key : List.of("index", "option")) {
-                    if (values.has(key) && values.get(key).isJsonPrimitive() && values.get(key).getAsJsonPrimitive().isNumber())
-                        metadata.put(key, values.get(key).getAsInt());
+                var parsed = JsonParser.parseString(input.toString());
+                if (parsed.isJsonObject()) {
+                    JsonObject values = parsed.getAsJsonObject();
+                    Map<String, Object> metadata = new LinkedHashMap<>();
+                    for (String key : List.of("index", "option")) {
+                        if (values.has(key) && values.get(key).isJsonPrimitive() && values.get(key).getAsJsonPrimitive().isNumber())
+                            metadata.put(key, values.get(key).getAsInt());
+                    }
+                    if (values.has("kind") && values.get("kind").isJsonPrimitive()) {
+                        String kind = values.get("kind").getAsString();
+                        if (List.of("toggle", "slider", "step_slider", "input", "dropdown", "multiselect", "submit").contains(kind)) metadata.put("kind", kind);
+                    }
+                    row.put("input", metadata);
                 }
-                if (values.has("kind") && values.get("kind").isJsonPrimitive()) {
-                    String kind = values.get("kind").getAsString();
-                    if (List.of("toggle", "slider", "step_slider", "input", "dropdown", "multiselect", "submit").contains(kind)) metadata.put("kind", kind);
-                }
-                row.put("input", metadata);
             }
             target.add(row);
         }
