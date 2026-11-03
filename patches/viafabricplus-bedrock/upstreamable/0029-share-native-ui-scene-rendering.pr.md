@@ -49,7 +49,13 @@ Native 1.26.60.5 controls cover fractional origins, all four edges, and nested p
 At 1280 × 720 and native UI scale 2, the installed add-on matches all 36 selected glyph masks at Java GUI scales 1, 2, and 3.
 Return to scale 1 retains those masks.
 A batch-boundary regression keeps distinct physical clips separate when their coarse GUI bounds match.
-Authored labels shorter than a text line still need native height admission. Backgrounds, action appearance, and complete column placement remain open.
+Label height admission remains unimplemented.
+Native Bedrock 1.26.60.5 admits the first bitmap line at 8 times the font scale and advances later lines by 10 times the font scale.
+When space permits, truncated bitmap labels append three dots to the final visible line and retain its original ending style.
+The tested MinecraftTen labels require 10 times the font scale for their first line.
+Explicit newlines switch those MinecraftTen labels to bitmap rendering.
+TrueType wrapping and font fallback still need matching native controls before implementation.
+Backgrounds, action appearance, and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.
 The regression uses the native four-row armor shape, which previously shifted down and overlapped the main inventory.
