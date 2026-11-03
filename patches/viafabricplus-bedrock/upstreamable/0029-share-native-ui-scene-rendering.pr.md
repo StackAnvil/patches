@@ -43,7 +43,9 @@ The fixture supplies settled geometry, control storage, and event boundaries. Na
 Regressions preserve declared dimensions across resize and keep identical panel names in separate scroll views independent.
 The rebuilt add-on passes an unchanged 240-second Navigator replay. Close sends the original response index 8 exactly once.
 At the matched 1280 × 720 viewport, selected left-label offsets fall from 7–8 pixels to 3–4, and right-label offsets fall from 11–12 pixels to 0–1.
-Column placement and glyph-edge coverage still need native comparisons before complete authored-screen parity can be established.
+Matched fractional-label controls retain the first glyph column in native 1.26.60.5, while Java GUI scales 1 and 2 clip it.
+Java scale 3 preserves that column through coarse scissor rounding.
+Physical-pixel clipping across Java GUI scales and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.
 The regression uses the native four-row armor shape, which previously shifted down and overlapped the main inventory.
