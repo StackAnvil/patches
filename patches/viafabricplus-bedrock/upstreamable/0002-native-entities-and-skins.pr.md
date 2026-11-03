@@ -15,7 +15,6 @@ Prerequisites:
 
 - viabedrock/0064-evaluate-named-actor-properties.patch: Publish the versioned custom-actor sampler snapshot and immutable evaluated texture bindings.
 
-- viabedrock/0000-update-cubeconverter.patch: Publish ViaBedrock with the merged CubeConverter face UV rotation API.
 
 ## Validation and remaining limits
 

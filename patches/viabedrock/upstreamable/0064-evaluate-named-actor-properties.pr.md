@@ -12,7 +12,6 @@ Prerequisites:
 
 - viabedrock/0064-share-native-float-molang-runtime.patch: Land the bounded float runtime before actor property evaluation.
 
-- viabedrock/0000-update-cubeconverter.patch: Publish the merged CubeConverter ordered-material API through ViaBedrock.
 
 ## Validation and remaining limits
 
