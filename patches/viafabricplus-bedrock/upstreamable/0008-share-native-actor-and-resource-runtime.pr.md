@@ -18,7 +18,6 @@ Prerequisites:
 
 - viabedrock/0099-bridge-native-actor-picking-hitboxes.patch: Publish the negotiated picking message used by the actor adapter.
 
-- cubeconverter/0002-preserve-actor-lighting-controls.patch: Publish ordered render-controller material and visibility declarations.
 
 - viabedrock/0085-resolve-server-effects-relative-to-their-actor.patch: Publish native animation-controller command snapshots consumed by the shared graph runtime.
 
@@ -77,5 +76,14 @@ An installed complete MegaSMP packet replay preserves all scene payloads, loads 
 Both `mvmodels:holy_knight` and `mvmodels:mecha_oondasta` retain loaded graphs and non-empty poses.
 The overall rendering check still fails on unresolved mappings, including the custom block gaps.
 This control does not establish every malformed expression's recovery or complete public-server actor appearance.
+
+Official Bedrock 1.26.60.5 controls equip an owned Black Hat, add a diamond helmet, and remove it at a fixed camera position.
+The helmet collapses exactly four brim vertices. Removal restores those four positions exactly.
+An installed controlled replay preserves the full native persona, including its animated face, and observes the same visible, hidden, and visible sequence.
+The helmet and return GPU frames use the captured body texture and face-frame bytes. Body draws change from 360 to 366 indices, while the face retains 72 indices.
+`BedrockPlayerHeadwearTest` covers the same surface lifetime through equipment queries, the sampled controller, and vertex emission.
+These controls cover one headwear item. Observer FOV effects and idle-pose differences prevent a pixel-parity claim.
+Full skin geometry, lighting, and account parity remain open.
+The full add-on suite passes: 1,464 tests, 153 optional skips, and no failures. A fresh full-stack replay reproduces the tested source tree.
 
 The [owning patch](0008-share-native-actor-and-resource-runtime.patch) retains implementation rationale and versioned evidence.

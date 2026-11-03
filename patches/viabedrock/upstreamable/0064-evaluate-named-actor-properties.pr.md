@@ -12,7 +12,6 @@ Prerequisites:
 
 - viabedrock/0064-share-native-float-molang-runtime.patch: Land the bounded float runtime before actor property evaluation.
 
-- cubeconverter/0002-preserve-actor-lighting-controls.patch: Publish ordered material assignments, including repeated patterns, before evaluating actor materials.
 
 ## Validation and remaining limits
 

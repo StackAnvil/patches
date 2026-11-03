@@ -72,22 +72,33 @@ Regressions cover bound-text changes across program transport, winning-file repl
 Malformed tables and truncated or oversized coverage are rejected or select the bitmap fallback.
 Disabling coverage selection makes the binding-refresh regression fail.
 The target native font uses cmap format 4. Supplementary format-12 behavior has synthetic coverage and still needs matching native controls.
-Complete TrueType raster appearance and native font-type aliases remain open.
+Other font families, mixed aliases, ranged or scaled fallbacks, and complete typography remain open.
 
 Bedrock 1.26.60.5 derives the base TrueType scale from the target render height and hhea ascent/descent range.
 Its glyph cache doubles that scale for 2×2 oversampling and retains fractional packed metrics.
-Java 26.3 rounds the FreeType EM pixel size after multiplying the provider size by its oversample value.
+Stock Java 26.3 rounds the FreeType EM pixel size after multiplying the provider size by its oversample value.
 For MinecraftTen at target height 64, the native base scale corresponds to about 51.61 EM pixels and the raster scale to 103.23.
-The current Java provider requests 77. Changing oversampling alone does not reproduce the native raster path.
+The stock Java provider requests 77. Changing oversampling alone does not reproduce the native raster path.
 
 Original initializer, glyph lookup, outline, rectangle, raster, and filter instructions supply 36 CPU cache controls.
 All cache pixels and packed metrics match the installed LWJGL 3.4.3 STB rasterizer.
 The controls cover six glyphs at heights 32, 64, and 96 for MinecraftTen and an additional curved-outline font.
 The fixture supplies atlas placement and external allocation, memory, and rounding interfaces.
 It does not execute cache I/O, GPU upload, shaders, or complete native screens.
-A replacement provider still needs bounded font validation, resource lifecycle checks, and native GPU comparisons.
+Original page packing and raster instructions produce a 1,024-pixel atlas with 256 glyph records.
+All atlas bytes and packed records match LWJGL STB with the native placements.
+Selected TrueType labels carry their 1.5 display grid through program transport. Bitmap fallbacks retain their own grid.
+TrueType exports retain original font bytes and a descriptor with the native cache height.
+The add-on reads that descriptor from the selected font pack. Older exports retain Java font loading.
+The [client provider](../../viafabricplus-bedrock/upstreamable/0029-share-native-ui-scene-rendering.pr.md) owns bounded outline rendering and resource retirement.
 
-Dynamic domain text uses the same native palette as ordinary labels.
+Native font registrations survive downloaded font metadata. Unrestricted, unscaled primary aliases retain their face, coverage, and line height across transport.
+Explicit `unicode` labels select Unicode even for ASCII. Canonical font-file overrides remain unverified.
+Regressions cover these selection boundaries and cyclic alias rejection.
+Native Bedrock 1.26.60.5 controls cover server declarations, the built-in primary alias, and explicit Unicode.
+
+UI labels and dynamic domain text use the fully merged globals, including the bundled default palette.
+Program transport retains these colors. Protocol text keeps server-only overrides.
 Help regressions cover translated components and exported program round trips.
 
 The [owning patch](0095-share-native-ui-programs-and-resources.patch) retains implementation rationale and versioned evidence.

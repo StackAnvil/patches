@@ -15,7 +15,6 @@ Prerequisites:
 
 - viabedrock/0064-evaluate-named-actor-properties.patch: Publish the versioned custom-actor sampler snapshot and immutable evaluated texture bindings.
 
-- cubeconverter/0003-preserve-authored-face-uv-rotations.patch: Preserve authored per-face rotations in parsed geometry and Java item export.
 
 ## Validation and remaining limits
 

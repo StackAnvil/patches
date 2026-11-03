@@ -1,0 +1,129 @@
+From c938338f2d4ec1a85fea04fd2767a047559b71ec Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 20:20:17 +0100
+Subject: [PATCH] fix(resources): keep resource image codecs in memory
+
+Resource image bytes already reside in memory, but the ImageIO stream convenience methods can spool them to temporary files. An unavailable cache can prevent the bundled default skin from decoding and abort login, or stop PNG export.
+
+Use memory-backed input and output streams for Content images without changing global ImageIO cache settings. Respect ImageIO input ownership and retain the original PNG passthrough. Test pixel decoding and both PNG export paths with an unwritable disk cache.
+---
+ .../api/resourcepack/content/Content.java     | 17 ++++--
+ .../content/ContentImageCacheTest.java        | 58 +++++++++++++++++++
+ 2 files changed, 70 insertions(+), 5 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
+index 622e99d2..e63777a3 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
+@@ -22,6 +22,8 @@ import com.viaversion.viaversion.util.GsonUtil;
+ import net.raphimc.viabedrock.api.util.JsonUtil;
+ 
+ import javax.imageio.ImageIO;
++import javax.imageio.stream.MemoryCacheImageInputStream;
++import javax.imageio.stream.MemoryCacheImageOutputStream;
+ import java.awt.image.BufferedImage;
+ import java.io.ByteArrayInputStream;
+ import java.io.ByteArrayOutputStream;
+@@ -142,8 +144,8 @@ public abstract class Content {
+ 
+     public boolean putPngImage(final String path, final BufferedImage image) {
+         final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+-        try {
+-            ImageIO.write(image, "png", baos);
++        try (var output = new MemoryCacheImageOutputStream(baos)) {
++            ImageIO.write(image, "png", output);
+         } catch (final IOException e) {
+             throw new UncheckedIOException(e);
+         }
+@@ -189,7 +191,12 @@ public abstract class Content {
+         public BufferedImage getImage() {
+             if (this.image == null) {
+                 try {
+-                    this.image = ImageIO.read(new ByteArrayInputStream(this.bytes));
++                    final var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(this.bytes));
++                    this.image = ImageIO.read(input);
++                    // ImageIO closes the stream when it selects a reader, but leaves unmatched input open.
++                    if (this.image == null) {
++                        input.close();
++                    }
+                 } catch (final IOException e) {
+                     throw new RuntimeException(e);
+                 }
+@@ -207,8 +214,8 @@ public abstract class Content {
+             } else {
+                 final BufferedImage image = this.getImage();
+                 final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+-                try {
+-                    ImageIO.write(image, "png", baos);
++                try (var output = new MemoryCacheImageOutputStream(baos)) {
++                    ImageIO.write(image, "png", output);
+                 } catch (final IOException e) {
+                     throw new RuntimeException(e);
+                 }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
+new file mode 100644
+index 00000000..5b14f400
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
+@@ -0,0 +1,58 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++import org.junit.jupiter.api.parallel.Isolated;
++
++import javax.imageio.ImageIO;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.attribute.PosixFileAttributeView;
++import java.nio.file.attribute.PosixFilePermissions;
++import java.util.Base64;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++@Isolated("Changes ImageIO's disk-cache policy to exercise an unavailable cache")
++class ContentImageCacheTest {
++
++    @TempDir
++    Path directory;
++
++    @Test
++    void readsAndWritesResourcePixelsWhenTheImageIoDiskCacheIsUnwritable() throws Exception {
++        assumeTrue(Files.getFileStore(this.directory).supportsFileAttributeView(PosixFileAttributeView.class));
++        final Path cache = Files.createDirectory(this.directory.resolve("image-cache"));
++        final boolean previousPolicy = ImageIO.getUseCache();
++        final var previousDirectory = ImageIO.getCacheDirectory();
++        final byte[] png = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVR4nGMUWm3yP2XlvwYAEYkEfZ7zExIAAAAASUVORK5CYII=");
++        try {
++            ImageIO.setCacheDirectory(cache.toFile());
++            ImageIO.setUseCache(true);
++            Files.setPosixFilePermissions(cache, PosixFilePermissions.fromString("r-x------"));
++            final var content = new InMemoryContent();
++            content.put("texture.png", png);
++            final var image = content.getImage("texture.png").getImage();
++            assertNotNull(image);
++            assertEquals(0xFF12AB34, image.getRGB(0, 0));
++            assertEquals(0x7F765432, image.getRGB(1, 0));
++            content.putPngImage("copy.png", image);
++            final var copy = new Content.LazyImage(content.getImage("copy.png").getPngBytes(true), "png").getImage();
++            assertEquals(0xFF12AB34, copy.getRGB(0, 0));
++            assertEquals(0x7F765432, copy.getRGB(1, 0));
++            assertTrue(ImageIO.getUseCache());
++            assertEquals(cache.toFile(), ImageIO.getCacheDirectory());
++        } finally {
++            ImageIO.setCacheDirectory(previousDirectory);
++            ImageIO.setUseCache(previousPolicy);
++            Files.setPosixFilePermissions(cache, PosixFilePermissions.fromString("rwx------"));
++        }
++    }
++
++}
+-- 
+2.56.0

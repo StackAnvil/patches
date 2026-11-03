@@ -66,7 +66,7 @@ Java GUI scales 1, 2, 3, and return to 1 retain those masks.
 These controls cover short heights, scaled labels, explicit newlines, automatic wrapping, and overflow markers.
 
 At the same viewport and scale controls, all 24 installed MinecraftTen cases admit the native number of lines.
-Their glyph masks still differ. These controls establish line admission, not complete TrueType raster parity.
+These controls establish line admission. The current raster comparisons appear below.
 
 Labels preserve carriage-return glyphs during measurement and drawing, including before LF.
 NUL terminates label traversal across styled runs and excludes suffixes from measurement.
@@ -82,7 +82,38 @@ Java GUI scales 1, 2, 3, and return to 1 retain that match and all 63 selected b
 The background comparison excludes text bounds and the separate action button.
 The complete 180-second replay preserves the source scene payload and verifies the installed add-on bytes.
 
-Other TrueType families, glyph raster appearance, native font-type aliases, and complete screen appearance remain open.
+Selected TrueType labels use their native 1.5 display grid.
+Origin conversion follows native float operations and truncates toward zero, including negative coordinates.
+Regressions cover submitted draw positions and the UI-scale-3 precision boundary.
+
+TrueType labels use FreeType to read font files and STB to turn checked outlines into pixels.
+Font bytes never reach STB. The provider reads the cache height from the selected font pack and preserves older exports without this descriptor.
+It bounds files, outlines, raster dimensions, and compound glyphs. Java owns glyph texture upload and retirement.
+Regressions cover original native pixels, translated and scaled components, malformed data, cycles, close/reload, and pack ownership.
+
+Original Bedrock 1.26.60.5 instructions supply 36 raster controls across two fonts and heights 32, 64, and 96.
+Five authored fixture controls also match, including curves and composite coordinates that FreeType normally shifts.
+At 1280 × 720 and native UI scale 2, the shipping add-on matches all 72 tested label crops without an experimental mod.
+Java GUI scales 1, 2, 3, and return to 1 retain all 63 bitmap and nine TrueType matches.
+A completed resource reload retains all 72 matches. The full build and 180-second replay pass.
+
+TrueType GUI vertices retain half precision in cache coordinates before the 1.5 display transform.
+The owned native bitmaps keep exact atlas bounds. A baked-glyph regression checks vertex submission before the pose and preserves world text.
+At 1280 × 720 and native UI scale 2, all 32 font-selection labels match native Bedrock 1.26.60.5.
+The controls include `AgW@éj`, formatted text, the primary MinecraftTenEmoticon alias, and explicit Unicode.
+Java GUI scales 1, 2, 3, return to 1, and a completed resource reload retain these matches.
+GUI italics use fixed cache-space edge shear before half-float conversion and display scaling.
+Original Bedrock 1.26.60.5 bitmap and TrueType glyph writers and shared quad instructions establish that geometry.
+Eighteen bitmap instruction cases retain the same shear across three cell heights and offsets.
+Baked-glyph regressions cover tall cells, the TrueType normalization boundary, conservative bounds, and unchanged Java world vertices.
+A fresh 24-label native scene covers plain and italic text at three font scales.
+All 24 selected labels match across Java GUI scales 1, 2, 3, and return to 1.
+Paired native and Java GPU captures establish the native TrueType UV packing and zero atlas gutters.
+The renderer preserves that sampling phase after Java relocates glyphs and clears their reserved trailing gutters.
+Regressions cover relocated UVs, unchanged world sampling, zero padding, and uploads at the atlas edge.
+A normal resource reload preserves all 24 crops. The full build and complete 180-second replay pass.
+Bold, shadow, other font families, mixed or scaled aliases, and complete screens remain open.
+
 Other background layouts, action appearance, and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.
@@ -102,7 +133,7 @@ Tests cover different durations, repeated requests, successor chains, missing co
 Native Bedrock 1.26.60.5 Escape frames retain the fade after the size track finishes.
 This mechanism does not establish exact native frame timing.
 These controls do not establish identical native pooling or frame timing.
-Broader viewports, complete inventory pixels, entrance timing, and TrueType comparisons remain open.
+Broader viewports, complete inventory pixels, entrance timing, and other TrueType families remain open.
 
 The shared hurt receiver binds queued events to the connection and local actor lifetime.
 It consumes pending events against the current scene and retains the counter across ordinary screen changes.
