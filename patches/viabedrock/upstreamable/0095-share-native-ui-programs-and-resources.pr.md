@@ -76,9 +76,9 @@ Complete TrueType raster appearance and native font-type aliases remain open.
 
 Bedrock 1.26.60.5 derives the base TrueType scale from the target render height and hhea ascent/descent range.
 Its glyph cache doubles that scale for 2×2 oversampling and retains fractional packed metrics.
-Java 26.3 rounds the FreeType EM pixel size after multiplying the provider size by its oversample value.
+Stock Java 26.3 rounds the FreeType EM pixel size after multiplying the provider size by its oversample value.
 For MinecraftTen at target height 64, the native base scale corresponds to about 51.61 EM pixels and the raster scale to 103.23.
-The current Java provider requests 77. Changing oversampling alone does not reproduce the native raster path.
+The stock Java provider requests 77. Changing oversampling alone does not reproduce the native raster path.
 
 Original initializer, glyph lookup, outline, rectangle, raster, and filter instructions supply 36 CPU cache controls.
 All cache pixels and packed metrics match the installed LWJGL 3.4.3 STB rasterizer.
@@ -88,7 +88,9 @@ It does not execute cache I/O, GPU upload, shaders, or complete native screens.
 Original page packing and raster instructions produce a 1,024-pixel atlas with 256 glyph records.
 All atlas bytes and packed records match LWJGL STB with the native placements.
 Selected TrueType labels carry their 1.5 display grid through program transport. Bitmap fallbacks retain their own grid.
-The production raster provider remains FreeType. A replacement still needs bounded validation and resource lifecycle checks.
+TrueType exports retain original font bytes and a descriptor with the native cache height.
+The add-on reads that descriptor from the selected font pack. Older exports retain Java font loading.
+The [client provider](../../viafabricplus-bedrock/upstreamable/0029-share-native-ui-scene-rendering.pr.md) owns bounded outline rendering and resource retirement.
 
 UI labels and dynamic domain text use the fully merged globals, including the bundled default palette.
 Program transport retains these colors. Protocol text keeps server-only overrides.

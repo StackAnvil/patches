@@ -86,14 +86,19 @@ Selected TrueType labels use their native 1.5 display grid.
 Origin conversion follows native float operations and truncates toward zero, including negative coordinates.
 Regressions cover submitted draw positions and the UI-scale-3 precision boundary.
 
-At 1280 × 720 and native UI scale 2, the installed private STB probe matches all 72 label crops.
-Java GUI scales 1, 2, 3, and return to 1 retain all 63 bitmap and nine TrueType matches.
-This probe changes rasterization and the font shader. Production code supplies the origin grid and palette without experimental overrides.
-A separate shipping-client replay retains all 63 bitmap matches and native red (255,84,84).
-Its nine TrueType crops retain 370 differing pixels at each GUI scale.
-A replacement provider needs bounded font validation and resource lifecycle checks.
+TrueType labels use FreeType to read font files and STB to turn checked outlines into pixels.
+Font bytes never reach STB. The provider reads the cache height from the selected font pack and preserves older exports without this descriptor.
+It bounds files, outlines, raster dimensions, and compound glyphs. Java owns glyph texture upload and retirement.
+Regressions cover original native pixels, translated and scaled components, malformed data, cycles, close/reload, and pack ownership.
 
-Other TrueType families, glyph raster appearance, native font-type aliases, and complete screen appearance remain open.
+Original Bedrock 1.26.60.5 instructions supply 36 raster controls across two fonts and heights 32, 64, and 96.
+Five authored fixture controls also match, including curves and composite coordinates that FreeType normally shifts.
+At 1280 × 720 and native UI scale 2, the shipping add-on matches all 72 tested label crops without an experimental mod.
+Java GUI scales 1, 2, 3, and return to 1 retain all 63 bitmap and nine TrueType matches.
+A completed resource reload retains all 72 matches. The full build and 180-second replay pass.
+
+Installed comparisons for other TrueType families, native font aliases, and complete screen appearance remain open.
+
 Other background layouts, action appearance, and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.
