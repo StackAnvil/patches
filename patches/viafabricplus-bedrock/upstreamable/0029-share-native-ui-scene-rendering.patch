@@ -1,4 +1,4 @@
-From bd4c381b174b5751cb666feb2d69ec4c451a3e65 Mon Sep 17 00:00:00 2001
+From 8bff58f1fabcf7a5998433bc12cc9315e548b682 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -898,6 +898,14 @@ transform instead of Java's height-dependent shear. Preserve the Java
 world-text path and bound both geometries for draw batching. The native
 instruction fixture supplies settled cache and tessellator state; it does
 not establish full styled-screen or bold/shadow parity.
+
+Apply the same native italic edge field to bitmap cells before half-float
+packing. The 1.26.60.5 bitmap writer at 0x141590f60 retains an integer
+italic flag in its glyph record. Shared quad expansion offsets top and
+bottom by +1 and -1 regardless of the cell height or vertical offset.
+Java's shear instead varies with those bounds, which distorts the native
+12-unit cells with a -3 offset. Retain original Java world vertices and
+conservative active bounds while the GUI path uses the native geometry.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -933,7 +941,7 @@ not establish full styled-screen or bold/shadow parity.
  .../render/BedrockPlayerAttachables.java      |   17 +-
  .../bedrock/render/BedrockPlayerSkins.java    |   44 +-
  .../render/font/BedrockBitmapFont.java        |  251 +++++
- .../render/font/BedrockBitmapGlyph.java       |  105 ++
+ .../render/font/BedrockBitmapGlyph.java       |  127 +++
  .../render/font/BedrockBitmapPipeline.java    |   49 +
  .../render/font/BedrockTrueTypeFont.java      |  195 ++++
  .../render/font/BedrockTrueTypeRaster.java    |  325 ++++++
@@ -994,7 +1002,7 @@ not establish full styled-screen or bold/shadow parity.
  .../render/BedrockActorMaterialsGpuTest.java  |   38 +-
  .../render/BedrockShaderPipelinesTest.java    |   24 +
  .../render/font/BedrockBitmapFontTest.java    |  239 ++++
- .../render/font/BedrockBitmapGlyphTest.java   |   71 ++
+ .../render/font/BedrockBitmapGlyphTest.java   |  107 ++
  .../font/BedrockBitmapShaderGpuTest.java      |  291 +++++
  .../render/font/BedrockTrueTypeFontTest.java  |  248 ++++
  .../bedrock/screen/ui/AnimationPrograms.java  |   23 +
@@ -1034,7 +1042,7 @@ not establish full styled-screen or bold/shadow parity.
  .../resources/font/native-outline-fixture.txt |    4 +
  .../native-scrollbar-visibility.json          |  162 +++
  .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
- 135 files changed, 15851 insertions(+), 37 deletions(-)
+ 135 files changed, 15909 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -3124,10 +3132,10 @@ index 0000000..c8d0c36
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyph.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyph.java
 new file mode 100644
-index 0000000..392b627
+index 0000000..c79fb7a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyph.java
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,127 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3150,7 +3158,7 @@ index 0000000..392b627
 +import net.minecraft.network.chat.Style;
 +import org.joml.Matrix4fc;
 +
-+/** Carries native cell bounds through GUI text while retaining Java's styled glyph geometry. */
++/** Carries native cell geometry through GUI text and preserves Java's world-text path. */
 +final class BedrockBitmapGlyph implements BakedGlyph {
 +    private final BakedSheetGlyph glyph;
 +    private final Cell cell;
@@ -3168,27 +3176,35 @@ index 0000000..392b627
 +    @Override
 +    public TextRenderable.Styled createGlyph(final float x, final float y, final int color, final int shadowColor,
 +                                             final Style style, final float boldOffset, final float shadowOffset) {
-+        return new Instance(this.glyph.createGlyph(x, y, color, shadowColor, style, boldOffset, shadowOffset), this.cell,
++        final var source = this.glyph.createGlyph(x, y, color, shadowColor, style, boldOffset, shadowOffset);
++        final var gui = style.isItalic()
++                ? this.glyph.createGlyph(x, y, color, shadowColor, style.withItalic(false), boldOffset, shadowOffset) : source;
++        return new Instance(source, gui, this.cell, style.isItalic(),
 +                this.smooth && NativeUiViewport.current().scale() == 1);
 +    }
 +
-+    private record Instance(TextRenderable.Styled source, Cell cell, boolean smooth) implements TextRenderable.Styled {
++    private record Instance(TextRenderable.Styled source, TextRenderable.Styled gui, Cell cell, boolean italic,
++                            boolean smooth) implements TextRenderable.Styled {
 +        @Override
 +        public void render(final Matrix4fc pose, final VertexConsumer vertices, final int light, final boolean inverseDepth) {
-+            this.source.render(pose, inverseDepth ? new CellVertices(vertices, this.cell, Minecraft.getInstance().getWindow().getGuiScale()) : vertices, light, inverseDepth);
++            if (inverseDepth) {
++                this.gui.render(pose, new CellVertices(vertices, this.cell, Minecraft.getInstance().getWindow().getGuiScale(), this.italic), light, true);
++            } else {
++                this.source.render(pose, vertices, light, false);
++            }
 +        }
 +
 +        @Override public RenderType renderType(final Font.DisplayMode mode) { return this.source.renderType(mode); }
 +        @Override public GpuTextureView textureView() { return this.source.textureView(); }
 +        @Override public RenderPipeline guiPipeline() { return this.smooth ? BedrockBitmapPipeline.GUI_SMOOTH : BedrockBitmapPipeline.GUI; }
 +        @Override public Style style() { return this.source.style(); }
-+        @Override public float left() { return this.source.left(); }
++        @Override public float left() { return this.italic ? Math.min(this.source.left(), this.gui.left() - 1) : this.source.left(); }
 +        @Override public float top() { return this.source.top(); }
-+        @Override public float right() { return this.source.right(); }
++        @Override public float right() { return this.italic ? Math.max(this.source.right(), this.gui.right() + 1) : this.source.right(); }
 +        @Override public float bottom() { return this.source.bottom(); }
-+        @Override public float activeLeft() { return this.source.activeLeft(); }
++        @Override public float activeLeft() { return this.italic ? Math.min(this.source.activeLeft(), this.gui.activeLeft() - 1) : this.source.activeLeft(); }
 +        @Override public float activeTop() { return this.source.activeTop(); }
-+        @Override public float activeRight() { return this.source.activeRight(); }
++        @Override public float activeRight() { return this.italic ? Math.max(this.source.activeRight(), this.gui.activeRight() + 1) : this.source.activeRight(); }
 +        @Override public float activeBottom() { return this.source.activeBottom(); }
 +    }
 +
@@ -3202,14 +3218,28 @@ index 0000000..392b627
 +     * Carries native vertex precision and top-edge coverage into Java's offscreen GUI target.
 +     * One native 8-bit raster step selects the top half-pixel edge; the shader cancels its UV displacement.
 +     */
-+    private record CellVertices(VertexConsumer target, Cell cell, int guiScale) implements VertexConsumer {
++    private static final class CellVertices implements VertexConsumer {
++        private final VertexConsumer target;
++        private final Cell cell;
++        private final int guiScale;
++        private final boolean italic;
++        private int vertex;
++
++        private CellVertices(final VertexConsumer target, final Cell cell, final int guiScale, final boolean italic) {
++            this.target = target;
++            this.cell = cell;
++            this.guiScale = guiScale;
++            this.italic = italic;
++        }
 +        @Override public VertexConsumer addVertex(final float x, final float y, final float z) {
 +            this.target.addVertex(rasterSnap(x, this.guiScale),
 +                rasterSnap(y, this.guiScale) - 1F / (256 * this.guiScale), z);
 +            return this;
 +        }
 +        @Override public VertexConsumer addVertex(final Matrix4fc pose, final float x, final float y, final float z) {
-+            return VertexConsumer.super.addVertex(pose, half(x), half(y), half(z));
++            final int corner = this.vertex++ & 3;
++            final float shear = this.italic ? (corner == 0 || corner == 3 ? 1 : -1) : 0;
++            return VertexConsumer.super.addVertex(pose, half(x + shear), half(y), half(z));
 +        }
 +        private static float half(final float value) {
 +            return Float.float16ToFloat(Float.floatToFloat16(value));
@@ -11015,10 +11045,10 @@ index 0000000..64784a5
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyphTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyphTest.java
 new file mode 100644
-index 0000000..f6651d3
+index 0000000..8724755
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapGlyphTest.java
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,107 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11038,6 +11068,8 @@ index 0000000..f6651d3
 +import net.minecraft.network.chat.Style;
 +import org.joml.Matrix4f;
 +import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.ArgumentMatchers.*;
@@ -11089,6 +11121,40 @@ index 0000000..f6651d3
 +        verify(world).setUv(cell.u0(), cell.v0());
 +        verify(world, times(4)).setLight(0x00A00050);
 +    }
++    @Test
++    void usesFixedItalicEdgesForTallBitmapCellsAndPreservesWorldVertices() {
++        final var cell = BedrockBitmapFont.Cell.bitmap(1, 4, 8, 12, 128, 128, -3);
++        final var sheet = new BakedSheetGlyph(GlyphInfo.simple(4), mock(GlyphRenderTypes.class), mock(GpuTextureView.class),
++                cell.u0(), cell.u1(), cell.v0(), cell.v1(), cell.left(), cell.right(), cell.top(), cell.bottom());
++        final var style = Style.EMPTY.withItalic(true);
++        final var glyph = new BedrockBitmapGlyph(sheet, cell, false).createGlyph(0, 0, -1, 0, style, 0, 0);
++        final var pose = new Matrix4f();
++        final var client = mock(Minecraft.class);
++        final var window = mock(Window.class);
++        when(client.getWindow()).thenReturn(window);
++        when(window.getGuiScale()).thenReturn(1);
++        final var gui = mock(VertexConsumer.class, RETURNS_SELF);
++        try (final var minecraft = mockStatic(Minecraft.class)) {
++            minecraft.when(Minecraft::getInstance).thenReturn(client);
++            glyph.render(pose, gui, 0, true);
++        }
++        final var guiX = ArgumentCaptor.forClass(Float.class);
++        verify(gui, times(4)).addVertex(guiX.capture(), anyFloat(), anyFloat());
++        // Original 1.26.60.5 bitmap writer and quad expansion for height 12 and offset -3.
++        assertEquals(List.of(1F, -1F, 7F, 9F), guiX.getAllValues());
++        assertTrue(glyph.left() <= -1);
++        assertTrue(glyph.right() >= 9);
++        assertTrue(glyph.activeLeft() <= -1);
++        assertTrue(glyph.activeRight() >= 5);
++
++        final var world = mock(VertexConsumer.class, RETURNS_SELF);
++        glyph.render(pose, world, 0, false);
++        final var worldX = ArgumentCaptor.forClass(Float.class);
++        verify(world, times(4)).addVertex(same(pose), worldX.capture(), anyFloat(), anyFloat());
++        assertEquals(List.of(1.75F, -1.25F, 6.75F, 9.75F), worldX.getAllValues());
++        assertNotEquals(guiX.getAllValues(), worldX.getAllValues());
++    }
++
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockBitmapShaderGpuTest.java
 new file mode 100644

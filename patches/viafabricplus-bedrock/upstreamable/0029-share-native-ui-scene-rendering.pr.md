@@ -102,14 +102,15 @@ The owned native bitmaps keep exact atlas bounds. A baked-glyph regression check
 At 1280 × 720 and native UI scale 2, all 32 font-selection labels match native Bedrock 1.26.60.5.
 The controls include `AgW@éj`, formatted text, the primary MinecraftTenEmoticon alias, and explicit Unicode.
 Java GUI scales 1, 2, 3, return to 1, and a completed resource reload retain these matches.
-TrueType GUI italics use fixed edge shear before cache half precision and the display transform.
-Original Bedrock 1.26.60.5 glyph and quad instructions establish that geometry.
-The baked-glyph regression covers the cache-normalization boundary and retains Java world vertices.
+GUI italics use fixed cache-space edge shear before half-float conversion and display scaling.
+Original Bedrock 1.26.60.5 bitmap and TrueType glyph writers and shared quad instructions establish that geometry.
+Eighteen bitmap instruction cases retain the same shear across three cell heights and offsets.
+Baked-glyph regressions cover tall cells, the TrueType normalization boundary, conservative bounds, and unchanged Java world vertices.
 A fresh 24-label native scene covers plain and italic text at three font scales.
-All plain labels and Unicode italic labels match across Java GUI scales 1, 2, 3, and return to 1.
-The six TrueType italic labels retain nine differing pixels. Three default bitmap italic labels retain 326.
-A normal resource reload preserves all 24 crops. The complete 180-second replay and full build pass.
-These pixel differences remain open with bold, shadow, other font families, mixed or scaled aliases, and complete screens.
+All 12 bitmap labels and six plain TrueType labels match across Java GUI scales 1, 2, 3, and return to 1.
+The six TrueType italic labels retain nine differing pixels.
+A normal resource reload preserves all 24 crops. The full build and complete 180-second replay pass.
+Remaining pixel differences, bold, shadow, other font families, mixed or scaled aliases, and complete screens remain open.
 
 Other background layouts, action appearance, and complete column placement remain open.
 
