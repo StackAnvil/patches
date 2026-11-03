@@ -49,7 +49,33 @@ Native 1.26.60.5 controls cover fractional origins, all four edges, and nested p
 At 1280 × 720 and native UI scale 2, the installed add-on matches all 36 selected glyph masks at Java GUI scales 1, 2, and 3.
 Return to scale 1 retains those masks.
 A batch-boundary regression keeps distinct physical clips separate when their coarse GUI bounds match.
-Authored labels shorter than a text line still need native height admission. Backgrounds, action appearance, and complete column placement remain open.
+Labels admit complete rows using the rounded line metric and a two-unit allowance on the final row.
+Glyph placement retains the fractional metric.
+Native Bedrock 1.26.60.5 bitmap controls establish scaled admission heights 8, 18, and 28.
+Twenty-four MinecraftTen controls establish heights 10, 22, and 34 at font scales 0.5, 1, and 1.5.
+Each preceding float excludes the next line. The glyph baselines retain their 11.8125-unit advance.
+
+Truncated labels cache a width-fitted three-dot marker with the original line-ending style, including trailing formatting changes.
+A marker that cannot fit contributes no pixels. Empty paragraphs still consume rows.
+Labels retain inherited parent scissors because admitted native glyphs can cross the label's own height.
+
+Regressions cover draw submission at adjacent float boundaries, fractional placement, blank rows, marker width, style, and retained wrapping across resize.
+Disabling admission makes the boundary regression fail.
+At 1280 × 720 and native UI scale 2, the installed add-on matches all 56 selected bitmap glyph masks.
+Java GUI scales 1, 2, 3, and return to 1 retain those masks.
+These controls cover short heights, scaled labels, explicit newlines, automatic wrapping, and overflow markers.
+
+At the same viewport and scale controls, all 24 installed MinecraftTen cases admit the native number of lines.
+Their glyph masks still differ. These controls establish line admission, not complete TrueType raster parity.
+
+Labels preserve carriage-return glyphs during measurement and drawing, including before LF.
+NUL terminates label traversal across styled runs and excludes suffixes from measurement.
+The installed control matrix matches all 63 selected bitmap masks across the four GUI-scale controls.
+Tooltips retain their separate CR/CRLF normalization.
+The [shared program](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md) selects whole-string font fallbacks before rendering.
+
+Other TrueType families, glyph raster appearance, native font-type aliases, and complete screen appearance remain open.
+Backgrounds, action appearance, and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.
 The regression uses the native four-row armor shape, which previously shifted down and overlapped the main inventory.
