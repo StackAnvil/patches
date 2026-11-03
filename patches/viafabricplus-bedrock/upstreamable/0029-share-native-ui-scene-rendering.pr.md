@@ -35,6 +35,14 @@ Other controls, world pixels, items, and frame timing remain outside that compar
 
 At 1280 × 720, all 16 current-font labels match native 26.60 at UI scales 1 and 2. All 16 legacy labels match at UI scale 2. Direct and ViaProxy controls pass Java GUI scale changes and resource reloads. The point-sampling GPU regression fails before the correction and passes on Intel and software rendering.
 
+Grouped scrollbar panels release their layout space when content fits, unless `scrollbar_always_visible` is set.
+Twenty-four original-instruction controls from Bedrock 1.26.60.5 verify both orientations and the exact fit boundary, including the native visibility setter and dimension reset.
+The fixture supplies settled geometry, control storage, and event boundaries. Native construction, complete scheduling, input, and GPU parity remain outside that fixture.
+Regressions preserve declared dimensions across resize and keep identical panel names in separate scroll views independent.
+The rebuilt add-on passes an unchanged 240-second Navigator replay. Close sends the original response index 8 exactly once.
+At the matched 1280 × 720 viewport, selected left-label offsets fall from 7–8 pixels to 3–4, and right-label offsets fall from 11–12 pixels to 0–1.
+Column placement and glyph-edge coverage still need native comparisons before complete authored-screen parity can be established.
+
 Unanchored manual-grid cells use their grid origins.
 The regression uses the native four-row armor shape, which previously shifted down and overlapped the main inventory.
 Explicit anchors and full-parent percentage dimensions retain separate regression coverage.
