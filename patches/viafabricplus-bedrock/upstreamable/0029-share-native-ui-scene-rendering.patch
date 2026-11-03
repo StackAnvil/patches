@@ -1,4 +1,4 @@
-From 51c3203ad547057875233c80f9b517a4d433c11f Mon Sep 17 00:00:00 2001
+From 0e8dda882ad4bd0256d97d5c10903ec8374719aa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -833,6 +833,17 @@ Admitted glyphs use the inherited parent scissor rather than clipping to
 the label's own height. Native MinecraftTen pixels cross that local edge.
 Whole-string font fallback, carriage-return handling, other TrueType
 families, and complete authored-screen parity remain separate open work.
+
+Keep carriage return as a label glyph, including before newline. The
+matching MinecraftTen cmap maps CR to a blank glyph, and native Bedrock
+1.26.60.5 keeps W/CR/W on one line. Split label paragraphs only at newline
+for both measurement and drawing. Preserve the separate tooltip CR/CRLF
+normalization contract.
+
+Terminate label component traversal at NUL across styled runs. Native
+1.26.60.5 paints only the prefix and ignores formatting changes after
+the terminator. Apply the same prefix to intrinsic measurement without
+changing tooltip paragraph normalization.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -905,7 +916,7 @@ families, and complete authored-screen parity remain separate open work.
  .../bedrock/screen/ui/NativeUiScreen.java     |   13 +
  .../bedrock/screen/ui/NativeUiScroll.java     |   69 ++
  .../bedrock/screen/ui/NativeUiSlider.java     |  123 ++
- .../bedrock/screen/ui/NativeUiText.java       |  102 ++
+ .../bedrock/screen/ui/NativeUiText.java       |  114 ++
  .../bedrock/screen/ui/NativeUiToggle.java     |   94 ++
  .../bedrock/screen/ui/NativeUiViewport.java   |   32 +
  .../bedrock/settings/base/NativeUiScale.java  |   27 +
@@ -949,19 +960,19 @@ families, and complete authored-screen parity remain separate open work.
  .../screen/ui/NativeUiMultilineInputTest.java |  210 ++++
  .../screen/ui/NativeUiPlayerCameraTest.java   |  132 +++
  .../screen/ui/NativeUiPresentationTest.java   |  258 +++++
- .../screen/ui/NativeUiRendererTest.java       |  170 +++
+ .../screen/ui/NativeUiRendererTest.java       |  173 +++
  .../NativeUiSceneScreenInteractionTest.java   |  359 ++++++
  .../bedrock/screen/ui/NativeUiSceneTest.java  |   40 +
  .../screen/ui/NativeUiScissorTest.java        |   69 ++
  .../ui/NativeUiScrollbarLayoutTest.java       |  107 ++
  .../bedrock/screen/ui/NativeUiSliderTest.java |  120 ++
- .../bedrock/screen/ui/NativeUiTextTest.java   |   78 ++
+ .../bedrock/screen/ui/NativeUiTextTest.java   |  100 ++
  .../ui/NativeUiTextureAnimationTest.java      |  108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
  .../native-scrollbar-visibility.json          |  162 +++
  .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
- 127 files changed, 14904 insertions(+), 37 deletions(-)
+ 127 files changed, 14941 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -7650,7 +7661,7 @@ index 0000000..99d79fd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 new file mode 100644
-index 0000000..9e728a6
+index 0000000..476c650
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 @@ -0,0 +1,182 @@
@@ -7726,7 +7737,7 @@ index 0000000..9e728a6
 +    public NativeUiLayout.Size intrinsic(final NativeUiScene.Node node) {
 +        return switch (node.type()) {
 +            case "label" -> {
-+                final var paragraphs = NativeUiText.paragraphs(this.text(node));
++                final var paragraphs = NativeUiText.labelParagraphs(this.text(node));
 +                final int width = paragraphs.stream().mapToInt(this.font::width).max().orElse(0);
 +                yield NativeUiFont.intrinsic(node, width, paragraphs.size());
 +            }
@@ -9081,10 +9092,10 @@ index 0000000..9726a32
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiText.java
 new file mode 100644
-index 0000000..58013b0
+index 0000000..c21e081
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiText.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,114 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9120,7 +9131,7 @@ index 0000000..58013b0
 +
 +    static List<Line> labelLines(final Font font, final Component text, final int width) {
 +        final List<Line> result = new ArrayList<>();
-+        for (final var paragraph : paragraphs(text)) {
++        for (final var paragraph : labelParagraphs(text)) {
 +            final var wrapped = font.split(paragraph, width);
 +            // paragraphs() retains an empty styled run after a trailing formatting change.
 +            final Style ending = paragraph.getSiblings().isEmpty() ? paragraph.getStyle()
@@ -9156,7 +9167,15 @@ index 0000000..58013b0
 +        }
 +    }
 +
++    static List<Component> labelParagraphs(final Component text) {
++        return paragraphs(text, false);
++    }
++
 +    static List<Component> paragraphs(final Component text) {
++        return paragraphs(text, true);
++    }
++
++    private static List<Component> paragraphs(final Component text, final boolean normalizeCarriageReturns) {
 +        final List<Component> lines = new ArrayList<>();
 +        final MutableComponent[] current = {Component.empty()};
 +        final boolean[] carriageReturn = {false};
@@ -9164,12 +9183,16 @@ index 0000000..58013b0
 +            final StringBuilder run = new StringBuilder();
 +            for (int i = 0; i < value.length(); i++) {
 +                final char character = value.charAt(i);
-+                if (carriageReturn[0] && character == '\n') {
++                if (!normalizeCarriageReturns && character == 0) {
++                    current[0].append(Component.literal(run.toString()).withStyle(style));
++                    return Optional.of(Boolean.TRUE);
++                }
++                if (normalizeCarriageReturns && carriageReturn[0] && character == '\n') {
 +                    carriageReturn[0] = false;
 +                    continue;
 +                }
-+                carriageReturn[0] = character == '\r';
-+                if (character == '\n' || character == '\r') {
++                carriageReturn[0] = normalizeCarriageReturns && character == '\r';
++                if (character == '\n' || normalizeCarriageReturns && character == '\r') {
 +                    current[0].append(Component.literal(run.toString()).withStyle(style));
 +                    run.setLength(0);
 +                    lines.add(current[0]);
@@ -15113,10 +15136,10 @@ index 0000000..d8bc9ec
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
 new file mode 100644
-index 0000000..981093b
+index 0000000..5bf1740
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,173 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15166,6 +15189,9 @@ index 0000000..981093b
 +        final var escaped = label(first + "\\n" + second);
 +        assertEquals(Math.ceil((first.length() + second.length() + 2) * 6.5F), renderer.intrinsic(escaped).width());
 +        assertEquals(10, renderer.intrinsic(escaped).height());
++        final var terminated = label("WW" + (char) 0 + "WWW\nWWW");
++        assertEquals(13, renderer.intrinsic(terminated).width());
++        assertEquals(10, renderer.intrinsic(terminated).height());
 +    }
 +
 +    @Test
@@ -16014,10 +16040,10 @@ index 0000000..4e7a747
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java
 new file mode 100644
-index 0000000..5fb51a9
+index 0000000..3e8c2f8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,100 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -16079,6 +16105,28 @@ index 0000000..5fb51a9
 +        assertEquals("", plain(line.ellipsis(font, 5)));
 +        final var blank = NativeUiText.labelLines(font, Component.literal("WWW\n\nWWW"), 70).get(1);
 +        assertEquals("...", plain(blank.ellipsis(font, 70)));
++    }
++
++    @Test
++    void labelCarriageReturnsRemainGlyphsWhileTooltipCrLfKeepsItsParagraphContract() {
++        // MinecraftTen maps CR to a real blank glyph. Native 1.26.60.5 keeps W/CR/W on one line.
++        final var text = Component.literal("W\r").withStyle(ChatFormatting.RED)
++            .append(Component.literal("\nW\rW").withStyle(ChatFormatting.GREEN));
++        final var labels = NativeUiText.labelLines(font(), text, Integer.MAX_VALUE);
++        assertEquals(List.of("W\r", "W\rW"), labels.stream().map(line -> plain(line.text())).toList());
++        final var tooltips = NativeUiText.tooltipLines(font(), text, Integer.MAX_VALUE);
++        assertEquals(List.of("W", "W", "W"), tooltips.stream().map(NativeUiTextTest::plain).toList());
++    }
++
++    @Test
++    void labelNulTerminatesVisibleTextAcrossStyledRuns() {
++        final var text = Component.literal("W" + (char) 0 + "ignored\nsuffix").withStyle(ChatFormatting.RED)
++            .append(Component.literal("tail").withStyle(ChatFormatting.GREEN));
++        final var labels = NativeUiText.labelLines(font(), text, Integer.MAX_VALUE);
++        assertEquals(List.of("W"), labels.stream().map(line -> plain(line.text())).toList());
++        assertEquals(Style.EMPTY.withColor(ChatFormatting.RED).getColor(), labels.getFirst().ending().getColor());
++        assertTrue(NativeUiText.tooltipLines(font(), text, Integer.MAX_VALUE).stream().map(NativeUiTextTest::plain)
++            .reduce("", String::concat).contains("tail"));
 +    }
 +
 +    private static Font font() {

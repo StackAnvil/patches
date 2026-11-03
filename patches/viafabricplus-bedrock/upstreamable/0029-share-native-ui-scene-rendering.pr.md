@@ -58,14 +58,23 @@ Each preceding float excludes the next line. The glyph baselines retain their 11
 Truncated labels cache a width-fitted three-dot marker with the original line-ending style, including trailing formatting changes.
 A marker that cannot fit contributes no pixels. Empty paragraphs still consume rows.
 Labels retain inherited parent scissors because admitted native glyphs can cross the label's own height.
+
 Regressions cover draw submission at adjacent float boundaries, fractional placement, blank rows, marker width, style, and retained wrapping across resize.
 Disabling admission makes the boundary regression fail.
 At 1280 × 720 and native UI scale 2, the installed add-on matches all 56 selected bitmap glyph masks.
 Java GUI scales 1, 2, 3, and return to 1 retain those masks.
 These controls cover short heights, scaled labels, explicit newlines, automatic wrapping, and overflow markers.
+
 At the same viewport and scale controls, all 24 installed MinecraftTen cases admit the native number of lines.
 Their glyph masks still differ. These controls establish line admission, not complete TrueType raster parity.
-Whole-string font fallback, carriage-return handling, other TrueType families, and complete screen appearance remain open.
+
+Labels preserve carriage-return glyphs during measurement and drawing, including before LF.
+NUL terminates label traversal across styled runs and excludes suffixes from measurement.
+The installed control matrix matches all 63 selected bitmap masks across the four GUI-scale controls.
+Tooltips retain their separate CR/CRLF normalization.
+The [shared program](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md) selects whole-string font fallbacks before rendering.
+
+Other TrueType families, glyph raster appearance, native font-type aliases, and complete screen appearance remain open.
 Backgrounds, action appearance, and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.

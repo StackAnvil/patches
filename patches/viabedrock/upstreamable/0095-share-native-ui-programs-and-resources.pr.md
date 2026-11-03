@@ -53,6 +53,27 @@ The scene node budget remains unchanged.
 
 Program compilation, resource, and transport tests cover supported content. Transport acceptance does not establish screen interaction or visual parity.
 
+TrueType labels use one font for the visible formatted string.
+NUL ends that string before font selection, while the original binding values remain intact.
+Missing glyphs select the bitmap or Unicode fallback and exclude the declared TrueType line metrics.
+Compressed Unicode coverage accompanies exported font identifiers, so bound-text refresh retains this decision on both routes.
+Native Bedrock 1.26.60.5 MinecraftTen controls cover newline, tab, carriage return, space, formatting, accent, Han, and snowman text.
+The parser matches all eight captured selections with the original font bytes, including after coverage transport.
+
+Native controls also cover all 32 C0 inputs in bitmap and MinecraftTen labels, plus distinguishing NUL suffixes.
+Bitmap conversion retains raw control cells alongside printable aliases. CR/LF keeps the CR glyph on the first line.
+The conversion namespace invalidates older fonts without these aliases.
+
+The installed add-on matches all 63 selected bitmap glyph masks at 1280 × 720 and native UI scale 2.
+Java GUI scales 1, 2, 3, and return to 1 retain these masks.
+The complete 180-second replay preserves the source scene payload and verifies the installed JAR.
+
+Regressions cover bound-text changes across program transport, winning-file replacement, missing glyphs before and after delta adjustment, and supplementary coverage.
+Malformed tables and truncated or oversized coverage are rejected or select the bitmap fallback.
+Disabling coverage selection makes the binding-refresh regression fail.
+The target native font uses cmap format 4. Supplementary format-12 behavior has synthetic coverage and still needs matching native controls.
+Complete TrueType raster appearance and native font-type aliases remain open.
+
 Dynamic domain text uses the same native palette as ordinary labels.
 Help regressions cover translated components and exported program round trips.
 
