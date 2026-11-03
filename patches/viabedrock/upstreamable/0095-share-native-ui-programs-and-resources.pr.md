@@ -85,9 +85,13 @@ All cache pixels and packed metrics match the installed LWJGL 3.4.3 STB rasteriz
 The controls cover six glyphs at heights 32, 64, and 96 for MinecraftTen and an additional curved-outline font.
 The fixture supplies atlas placement and external allocation, memory, and rounding interfaces.
 It does not execute cache I/O, GPU upload, shaders, or complete native screens.
-A replacement provider still needs bounded font validation, resource lifecycle checks, and matching native GPU output.
+Original page packing and raster instructions produce a 1,024-pixel atlas with 256 glyph records.
+All atlas bytes and packed records match LWJGL STB with the native placements.
+Selected TrueType labels carry their 1.5 display grid through program transport. Bitmap fallbacks retain their own grid.
+The production raster provider remains FreeType. A replacement still needs bounded validation and resource lifecycle checks.
 
-Dynamic domain text uses the same native palette as ordinary labels.
+UI labels and dynamic domain text use the fully merged globals, including the bundled default palette.
+Program transport retains these colors. Protocol text keeps server-only overrides.
 Help regressions cover translated components and exported program round trips.
 
 The [owning patch](0095-share-native-ui-programs-and-resources.patch) retains implementation rationale and versioned evidence.

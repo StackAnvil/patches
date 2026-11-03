@@ -1,6 +1,6 @@
 CubeCraft updates an existing sidebar objective from a text title to a pack image. The previous translation discarded that title update.
 
-Preserve objective and score identities, emit title changes, hide sidebar numbers with Java BlankFormat, and send styled row components. Apply finite static ordinary and named material color overrides from effective server UI globals. CubeCraft supplies §9 as RGB 58,169,255. Convert float colors to the nearest representable Java RGB; native reverse lookup does not establish framebuffer rounding.
+Preserve objective and score identities, emit title changes, hide sidebar numbers with Java BlankFormat, and send styled row components. Apply finite static ordinary and named material color overrides from effective server UI globals. CubeCraft supplies §9 as RGB 58,169,255. Native Bedrock 1.26.60.5 glyph batching multiplies float channels by 255 and truncates them to bytes. Original instruction controls establish this conversion.
 
 Convert bounded active scoreboard UI image definitions into dedicated fonts, original textures, and metadata for the add-on. The recorded protocol 2193 CubeCraft pack declares a 66×21 title image and 10-pixel rows. Unsupported dynamic UI definitions retain text fallback. Bump the converted-pack cache version so old receipts cannot omit these assets.
 
@@ -14,4 +14,4 @@ Keep global palette parsing in `TextFormattingDefinitions`, separate from scoreb
 
 Preserve active bold and italic styles across palette color codes, including codes the dependency does not know. Entity metadata tests exercise player and custom actor names, sparse updates, blank names, independent connection palettes, and immutable emitted components. Pack storage finishes before supported entity creation; the protocol rejects replacement pack information within an existing connection.
 
-The converted-pack identity advances to version 10 after correcting equipped attachable selectors and adding cutout-plane back faces. This prevents earlier cached exports with doubled variant names or missing plant faces from reaching the client. Cache regressions cover version rollover and reuse.
+Native UI programs read their complete merged palette, including bundled defaults. Protocol text retains server-only overrides. Regressions cover channel truncation, pack priority, program transport, and protocol fallback.

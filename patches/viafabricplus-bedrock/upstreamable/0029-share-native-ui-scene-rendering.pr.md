@@ -82,12 +82,16 @@ Java GUI scales 1, 2, 3, and return to 1 retain that match and all 63 selected b
 The background comparison excludes text bounds and the separate action button.
 The complete 180-second replay preserves the source scene payload and verifies the installed add-on bytes.
 
-An installed private STB prototype matches the verified cache raster but still differs after GPU rendering.
-At 1280 × 720 and native UI scale 2, seven settled sampler, shader, and placement controls retain all 63 selected bitmap masks.
-The best TrueType control matches three of nine label crops; other positions and styled labels still differ.
-An unsettled post-reload frame is excluded because its bitmap controls fail.
-These results do not justify a global placement adjustment or establish complete TrueType parity.
-Production font behavior remains unchanged. Native quad geometry, cursor advances, and texture addressing still need verification.
+Selected TrueType labels use their native 1.5 display grid.
+Origin conversion follows native float operations and truncates toward zero, including negative coordinates.
+Regressions cover submitted draw positions and the UI-scale-3 precision boundary.
+
+At 1280 × 720 and native UI scale 2, the installed private STB probe matches all 72 label crops.
+Java GUI scales 1, 2, 3, and return to 1 retain all 63 bitmap and nine TrueType matches.
+This probe changes rasterization and the font shader. Production code supplies the origin grid and palette without experimental overrides.
+A separate shipping-client replay retains all 63 bitmap matches and native red (255,84,84).
+Its nine TrueType crops retain 370 differing pixels at each GUI scale.
+A replacement provider needs bounded font validation and resource lifecycle checks.
 
 Other TrueType families, glyph raster appearance, native font-type aliases, and complete screen appearance remain open.
 Other background layouts, action appearance, and complete column placement remain open.

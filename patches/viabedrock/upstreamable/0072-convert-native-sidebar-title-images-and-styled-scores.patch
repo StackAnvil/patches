@@ -1,8 +1,11 @@
-From 06dd591d5f9a6ccf499f6f50fb41ffdd07ee69ef Mon Sep 17 00:00:00 2001
+From 543cf8710d7fb0aafe19811905bda64475d8f51a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(scoreboard): convert native sidebar title images and
  styled scores
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 Bedrock 1.26.51 resource packs can replace the objective title with a JSON UI image binding. Convert a bounded subset with literal title equality, a matching hidden label, explicit dimensions, and native sidebar anchors. Resolve active server UI and texture priority, isolate each image in its own font, and advertise authored dimensions for client integrations. Unsupported controls retain ordinary text.
 
@@ -26,11 +29,15 @@ Preserve the authored sidebar image box and transport source dimensions with kee
 Bedrock 1.26.51.1 enables keep_ratio by default. Its image loader selects flag 8 when the property is absent, and its draw path fits the source aspect inside the destination. The captured CubeCraft logo is 360 by 94 pixels inside a 66 by 21 box; its fitted height is about 17.23 units.
 
 Tests cover default aspect preservation, explicit stretching, metadata dimensions, and transparent fallback padding.
+
+Bedrock 1.26.60.5 glyph batching at 140e6d97f..140e6da30 multiplies float channels by 255, truncates toward zero and clamps before packing. Original instructions map the native red palette [1,.333,.333] to FF5454 and [.5,.1,1] to 7F19FF. Match that quantization for effective formatting colors instead of rounding to a neighboring byte. The installed native label control retains the resulting red glyph pixels.
+
+Read the full effective palette from the UI program’s merged globals separately from server-only protocol-text overrides. The native default red [1,.333,.333] differs from the Java legacy default even without a server override. Keep each palette immutable and preserve pack priority; do not apply UI-only default colors to protocol text.
 ---
  .../api/model/entity/PlayerEntity.java        |   2 +-
  .../model/scoreboard/ScoreboardObjective.java |  22 +-
  .../definition/ScoreboardUiDefinitions.java   | 430 ++++++++++++++++++
- .../definition/TextFormattingDefinitions.java | 109 +++++
+ .../definition/TextFormattingDefinitions.java | 126 +++++
  .../http/ConvertedResourcePackCache.java      |  29 +-
  .../raphimc/viabedrock/api/util/TextUtil.java |  30 +-
  .../protocol/packet/HudPackets.java           |  38 +-
@@ -39,11 +46,11 @@ Tests cover default aspect preservation, explicit stretching, metadata dimension
  .../protocol/storage/ResourcePackStorage.java |  12 +
  .../ScoreboardPresentationTest.java           |  72 +++
  .../ScoreboardUiDefinitionsTest.java          | 353 ++++++++++++++
- .../TextFormattingDefinitionsTest.java        | 119 +++++
+ .../TextFormattingDefinitionsTest.java        | 121 +++++
  .../http/ConvertedResourcePackCacheTest.java  |  32 ++
  .../api/util/TextPaletteFormattingTest.java   |  39 ++
  .../protocol/packet/HudPacketsTest.java       |  39 ++
- 16 files changed, 1433 insertions(+), 21 deletions(-)
+ 16 files changed, 1452 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
@@ -562,10 +569,10 @@ index 00000000..acd07aa2
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java
 new file mode 100644
-index 00000000..72539af5
+index 00000000..0f94de2b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -595,13 +602,17 @@ index 00000000..72539af5
 +import java.util.Map;
 +import java.util.Set;
 +
-+/** Static formatting-color overrides from the effective server UI globals. */
++/** Native UI colors and server formatting overrides from effective pack globals. */
 +public final class TextFormattingDefinitions {
 +
 +    private static final Map<Character, String> COLOR_VARIABLES = colorVariables();
 +    private final Map<Character, Integer> colors;
 +
 +    public TextFormattingDefinitions(final ResourcePackStorage storage) {
++        this.colors = readColors(storage);
++    }
++
++    private static Map<Character, Integer> readColors(final ResourcePackStorage storage) {
 +        final Map<Character, Integer> colors = new HashMap<>();
 +        final Set<Character> seen = new HashSet<>();
 +        for (final ResourcePack pack : storage.getPackStackTopToBottom()) {
@@ -625,7 +636,20 @@ index 00000000..72539af5
 +                // Dynamic variables and malformed files are outside this static subset.
 +            }
 +        }
-+        this.colors = Map.copyOf(colors);
++        return Map.copyOf(colors);
++    }
++
++    /** Reads the UI program's merged globals, including its bundled defaults. */
++    public static Map<Character, Integer> uiColors(final Map<String, JsonElement> globals) {
++        final Map<Character, Integer> colors = new HashMap<>();
++        COLOR_VARIABLES.forEach((code, variable) -> {
++            final JsonElement value = globals.get(variable);
++            final Integer color = value == null ? null : rgb(value);
++            if (color != null) {
++                colors.put(code, color);
++            }
++        });
++        return Map.copyOf(colors);
 +    }
 +
 +    public Map<Character, Integer> colors() {
@@ -669,7 +693,7 @@ index 00000000..72539af5
 +            if (!Float.isFinite(n) || n < 0F || n > 1F) {
 +                return null;
 +            }
-+            rgb = rgb << 8 | Math.round(n * 255F);
++            rgb = rgb << 8 | (int) (n * 255F);
 +        }
 +        return rgb;
 +    }
@@ -1536,10 +1560,10 @@ index 00000000..0a21d906
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitionsTest.java
 new file mode 100644
-index 00000000..6f0ed29b
+index 00000000..b632cad7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitionsTest.java
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,121 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1576,17 +1600,19 @@ index 00000000..6f0ed29b
 +class TextFormattingDefinitionsTest {
 +
 +    @Test
-+    void effectiveColorsUsePackPriorityAndNearestRgbWithoutChangingDefaultFormatting() {
++    void effectiveColorsUsePackPriorityAndNativeChannelTruncation() {
 +        final var lower = new JsonObject();
 +        lower.add("$9_color_format", rgb(1, 0, 0));
 +        lower.add("$a_color_format", rgb(0, 1, 0));
 +        lower.add("$b_color_format", rgb(0.5, 0.1, 1));
++        lower.add("$c_color_format", rgb(1, 0.333, 0.333));
 +        final var higher = new JsonObject();
 +        higher.add("$9_color_format", rgb(0.22745098, 0.662745098, 1));
 +        final var colors = new ResourcePackStorage(List.of(pack(higher), pack(lower))).getTextFormatting().colors();
 +        assertEquals(0x3AA9FF, colors.get('9'));
 +        assertEquals(0x00FF00, colors.get('a'));
-+        assertEquals(0x801AFF, colors.get('b'));
++        assertEquals(0x7F19FF, colors.get('b'));
++        assertEquals(0xFF5454, TextUtil.stringToTextComponent("§cRed", colors).getStyle().getColor().getRgbValue());
 +        assertEquals(0x3AA9FF, TextUtil.stringToTextComponent("§9Blue", colors).getStyle().getColor().getRgbValue());
 +        assertEquals(0x5555FF, TextUtil.stringToTextComponent("§9Blue").getStyle().getColor().getRgbValue());
 +        assertTrue(TextUtil.stringToTextComponent("§l§9Blue", colors).getStyle().isBold());
@@ -1620,10 +1646,10 @@ index 00000000..6f0ed29b
 +        final var higher = new JsonObject();
 +        higher.add("$material_gold_color", rgb(0.541, 0.824, 0.173));
 +        final var colors = new ResourcePackStorage(List.of(pack(higher), pack(lower))).getTextFormatting().colors();
-+        assertEquals(0x8AD22C, colors.get('p'));
++        assertEquals(0x89D22C, colors.get('p'));
 +        assertEquals(0x0000FF, colors.get('q'));
-+        assertEquals(0x8AD22C, TextUtil.stringToTextComponent("§pMaterial", colors).getStyle().getColor().getRgbValue());
-+        assertEquals(0x8AD22C, TextUtil.stringToTextComponent("§PMaterial", colors).getStyle().getColor().getRgbValue());
++        assertEquals(0x89D22C, TextUtil.stringToTextComponent("§pMaterial", colors).getStyle().getColor().getRgbValue());
++        assertEquals(0x89D22C, TextUtil.stringToTextComponent("§PMaterial", colors).getStyle().getColor().getRgbValue());
 +        assertEquals(0xDEB12D, TextUtil.stringToTextComponent("§pMaterial").getStyle().getColor().getRgbValue());
 +    }
 +

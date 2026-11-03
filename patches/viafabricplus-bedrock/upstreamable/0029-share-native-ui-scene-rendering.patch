@@ -1,4 +1,4 @@
-From 4cd6d773025e44ce7880b029a34ce10ea8c9073a Mon Sep 17 00:00:00 2001
+From a3dbaeb43c0fb16b03744bd4d73edcd2395c545c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -852,6 +852,10 @@ endpoints leaves the screen interior transparent. Existing native captures
 paint that background black. Keep empty destinations and non-finite region
 rejection separate. A draw-boundary regression uses this native layout and
 also verifies that a zero-width destination emits no graphics calls.
+
+Snap selected TrueType label origins using the native font display multiplier carried by the shared scene, independently of authored font size and line admission. The 1.26.60.5 MinecraftTen controls distinguish three position remainders on its 1.5 grid; a constant shift cannot match them. The installed private STB prototype matches all nine selected TrueType crops through GUI scales1,2,3 and return1 with the corrected grid and native truncated palette. Production still uses its existing raster provider, so these controls do not establish general TrueType or complete screen parity.
+
+Original 1.26.60.5 origin instructions at 140e6ffd0..140e7001c multiply by the float pixel ratio, truncate toward zero, and multiply by its inverse. Execute them with the original scale lookup for 126 supplied render-context controls across UI scales1,2,3 and six font grids. Preserve this float operation order and negative-coordinate behavior instead of double floor arithmetic. The submitted-origin regression includes negative and near-zero positions; the existing bitmap controls remain covered.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -904,7 +908,7 @@ also verifies that a zero-width destination emits no graphics calls.
  .../bedrock/screen/ui/NativeUiDimension.java  |   93 ++
  .../bedrock/screen/ui/NativeUiFlipbook.java   |   47 +
  .../bedrock/screen/ui/NativeUiFocus.java      |  329 ++++++
- .../bedrock/screen/ui/NativeUiFont.java       |   66 ++
+ .../bedrock/screen/ui/NativeUiFont.java       |   80 ++
  .../bedrock/screen/ui/NativeUiGraphics.java   |   56 +
  .../screen/ui/NativeUiHurtPayload.java        |   22 +
  .../bedrock/screen/ui/NativeUiImageCache.java |  229 ++++
@@ -957,7 +961,7 @@ also verifies that a zero-width destination emits no graphics calls.
  .../ui/NativeUiCollectionWindowTest.java      |  144 +++
  .../screen/ui/NativeUiColorAnimationTest.java |  114 ++
  .../bedrock/screen/ui/NativeUiFocusTest.java  |  124 ++
- .../bedrock/screen/ui/NativeUiFontTest.java   |  148 +++
+ .../bedrock/screen/ui/NativeUiFontTest.java   |  149 +++
  .../screen/ui/NativeUiImageCacheTest.java     |  142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   |  217 ++++
  .../bedrock/screen/ui/NativeUiImagesTest.java |  166 +++
@@ -968,7 +972,7 @@ also verifies that a zero-width destination emits no graphics calls.
  .../screen/ui/NativeUiMultilineInputTest.java |  210 ++++
  .../screen/ui/NativeUiPlayerCameraTest.java   |  132 +++
  .../screen/ui/NativeUiPresentationTest.java   |  258 +++++
- .../screen/ui/NativeUiRendererTest.java       |  173 +++
+ .../screen/ui/NativeUiRendererTest.java       |  201 ++++
  .../NativeUiSceneScreenInteractionTest.java   |  359 ++++++
  .../bedrock/screen/ui/NativeUiSceneTest.java  |   40 +
  .../screen/ui/NativeUiScissorTest.java        |   69 ++
@@ -980,7 +984,7 @@ also verifies that a zero-width destination emits no graphics calls.
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
  .../native-scrollbar-visibility.json          |  162 +++
  .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
- 127 files changed, 14971 insertions(+), 37 deletions(-)
+ 127 files changed, 15014 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -5395,10 +5399,10 @@ index 0000000..0d64363
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
 new file mode 100644
-index 0000000..1960ce6
+index 0000000..6e767d7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,80 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5427,8 +5431,22 @@ index 0000000..1960ce6
 +        return new Origin(snap(x, fontScale, uiScale), snap(y + 1, fontScale, uiScale));
 +    }
 +
++    public static Origin origin(final NativeUiScene.Node node, final float x, final float y,
++                                final float fontScale, final int uiScale) {
++        final float displayScale = node.number("font_origin_scale", 1);
++        if (!Float.isFinite(displayScale) || displayScale <= 0) {
++            throw new IllegalArgumentException("Unsupported native font origin scale");
++        }
++        final float grid = fontScale * displayScale;
++        if (!Float.isFinite(grid) || grid <= 0) {
++            throw new IllegalArgumentException("Unsupported native font origin grid");
++        }
++        return origin(x, y, grid, uiScale);
++    }
++
 +    private static float snap(final float coordinate, final float fontScale, final int uiScale) {
-+        return (float) (Math.floor(coordinate * (double) uiScale / fontScale) * fontScale) / uiScale;
++        // Native converts scaled float coordinates to integers before multiplying by the inverse scale.
++        return (int) (coordinate * (uiScale / fontScale)) * (fontScale / uiScale);
 +    }
 +
 +    public record Origin(float x, float y) { }
@@ -7670,7 +7688,7 @@ index 0000000..99d79fd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 new file mode 100644
-index 0000000..476c650
+index 0000000..f64ab0d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
 @@ -0,0 +1,182 @@
@@ -7776,7 +7794,7 @@ index 0000000..476c650
 +        for (final var line : lines) {
 +            final int lineWidth = this.font.width(line);
 +            final int x = alignment.equals("center") ? (width - lineWidth) / 2 : alignment.equals("right") ? width - lineWidth : 0;
-+            final var origin = NativeUiFont.origin(box.bounds().x() + x * scale, y, scale, uiScale);
++            final var origin = NativeUiFont.origin(node, box.bounds().x() + x * scale, y, scale, uiScale);
 +            graphics.pose().pushMatrix();
 +            try {
 +                graphics.pose().translate(origin.x(), origin.y());
@@ -12423,10 +12441,10 @@ index 0000000..f022766
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
 new file mode 100644
-index 0000000..3f67a8f
+index 0000000..edbb2d8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFontTest.java
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,149 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonArray;
@@ -12468,6 +12486,7 @@ index 0000000..3f67a8f
 +        }
 +        assertEquals(new NativeUiFont.Origin(335.5F, 36.5F), NativeUiFont.origin(335.5F, 35.5F, .5F, 1));
 +        assertEquals(new NativeUiFont.Origin(480.5F, 36.5F), NativeUiFont.origin(480.75F, 35.75F, .5F, 1));
++        assertEquals(new NativeUiFont.Origin(45, 36.333336F), NativeUiFont.origin(45.25F, 35.5F, 1, 3));
 +    }
 +
 +    @Test
@@ -15174,10 +15193,10 @@ index 0000000..d8bc9ec
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
 new file mode 100644
-index 0000000..5bf1740
+index 0000000..36fc175
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,201 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15311,6 +15330,34 @@ index 0000000..5bf1740
 +            new NativeUiRenderer(font, mock(NativeUiImages.class)).label(
 +                graphics(font, new ArrayList<>(), positions), box(node, 34), 1);
 +            assertEquals(List.of(1F, 12.5F, 24.5F), positions);
++        }
++    }
++
++    @Test
++    void submitsSelectedTrueTypeLabelsOnTheirDisplayGrid() {
++        try (final var viewport = mockStatic(NativeUiViewport.class)) {
++            viewport.when(NativeUiViewport::current).thenReturn(new NativeUiViewport(640, 360, 2, 2));
++            final var font = drawingFont();
++            final var renderer = new NativeUiRenderer(font, mock(NativeUiImages.class));
++            final var origins = new ArrayList<NativeUiFont.Origin>();
++            final var graphics = mock(GuiGraphicsExtractor.class);
++            final var pose = new Matrix3x2fStack(16);
++            when(graphics.pose()).thenReturn(pose);
++            doAnswer(call -> {
++                origins.add(new NativeUiFont.Origin(pose.m20(), pose.m21()));
++                return null;
++            }).when(graphics).text(eq(font), any(FormattedCharSequence.class), eq(0), eq(0), anyInt(), eq(false));
++            for (final float[] sample : new float[][] {{10, 300}, {90, 300}, {170, 300}, {-10, -3}, {-.125F, -.125F}}) {
++                final var node = label("W");
++                node.properties().addProperty("font_origin_scale", 1.5F);
++                final var bounds = new NativeUiLayout.Rect(sample[0], sample[1], 70, 28);
++                final var box = new NativeUiLayout.Box(node, bounds, new NativeUiLayout.Rect(0, 0, 640, 360),
++                        new NativeUiLayout.Size(70, 28), bounds, 0, List.of());
++                renderer.label(graphics, box, 1);
++            }
++            assertEquals(List.of(new NativeUiFont.Origin(9.75F, 300.75F), new NativeUiFont.Origin(90, 300.75F),
++                    new NativeUiFont.Origin(169.5F, 300.75F), new NativeUiFont.Origin(-9.75F, -1.5F),
++                    new NativeUiFont.Origin(0, .75F)), origins);
 +        }
 +    }
 +
