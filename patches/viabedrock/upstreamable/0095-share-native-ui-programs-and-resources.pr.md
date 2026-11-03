@@ -74,6 +74,12 @@ Disabling coverage selection makes the binding-refresh regression fail.
 The target native font uses cmap format 4. Supplementary format-12 behavior has synthetic coverage and still needs matching native controls.
 Complete TrueType raster appearance and native font-type aliases remain open.
 
+Static instructions from Bedrock 1.26.60.5 scale TrueType outlines by the target render height divided by the hhea ascent/descent range.
+Java 26.3 rounds the FreeType EM pixel size after multiplying the provider size by its oversample value.
+For the matched MinecraftTen font and target height 64, native scaling corresponds to about 51.61 EM pixels; the current Java provider requests 77.
+Reducing oversampling alone would still round the requested size to 52, so this change cannot establish pixel parity.
+These results identify a sizing difference; they do not validate a replacement rasterizer.
+
 Dynamic domain text uses the same native palette as ordinary labels.
 Help regressions cover translated components and exported program round trips.
 
