@@ -4,7 +4,7 @@ Use this reference when changing ViaBedrock, the ViaFabricPlus Bedrock add-on, o
 
 ## Choose the protocol version first
 
-The current StackAnvil ViaBedrock checkout targets Bedrock **1.26.60**, network protocol **2225**. The [first upstreamable patch](../patches/viabedrock/upstreamable/0001-update-bedrock-to-1-26-60.patch) contains the update. Check `BEDROCK_VERSION_NAME` and `BEDROCK_PROTOCOL_VERSION` in `.worktrees/viabedrock` after syncing the stack.
+The current StackAnvil ViaBedrock checkout targets Bedrock **1.26.60**, network protocol **2225**. The [protocol compatibility patch](../patches/viabedrock/upstreamable/0001-update-bedrock-to-1-26-60.patch) contains the update. Check `BEDROCK_VERSION_NAME` and `BEDROCK_PROTOCOL_VERSION` in `.worktrees/viabedrock` after syncing the stack.
 
 [Mojang's 1.26.60 release metadata](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.60) identifies protocol 2225. Its schema version label is `1.26.60-beta.0`. Use the network protocol number to match evidence. A preview for another protocol provides leads but requires wire checks.
 

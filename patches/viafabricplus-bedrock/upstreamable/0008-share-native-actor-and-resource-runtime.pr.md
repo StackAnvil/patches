@@ -18,7 +18,7 @@ Prerequisites:
 
 - viabedrock/0099-bridge-native-actor-picking-hitboxes.patch: Publish the negotiated picking message used by the actor adapter.
 
-- cubeconverter/0002-preserve-actor-lighting-controls.patch: Publish ordered render-controller material and visibility declarations.
+- viabedrock/0000-update-cubeconverter.patch: Publish the merged CubeConverter ordered-material API through ViaBedrock.
 
 - viabedrock/0085-resolve-server-effects-relative-to-their-actor.patch: Publish native animation-controller command snapshots consumed by the shared graph runtime.
 
