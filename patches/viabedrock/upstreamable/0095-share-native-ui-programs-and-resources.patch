@@ -1,4 +1,4 @@
-From 1a91bd3056e5b8eeab17d84988dc219e63170c50 Mon Sep 17 00:00:00 2001
+From 2b4313d69074e2e1e33e466164f6815c17394e02 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -492,6 +492,13 @@ Use visible authored labels when available. For image-only actions,
 retain the translated source form caption at the original response index.
 Hidden actions remain omitted. A focused presentation regression covers
 image-only actions, resolved labels, and sparse response identities.
+
+Bound the public form projection before traversing captions. Client
+render-failure fallbacks also consume this API and can receive a scene
+that their renderer rejects. Preserve the shared 64-level and 8192-node
+scene limits so the client can retain the intact original form when
+projection metadata is invalid. A regression rejects an overdeep tree
+before caption traversal or fallback-field access.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   93 +
@@ -532,7 +539,7 @@ image-only actions, resolved labels, and sparse response identities.
  .../resourcepack/ui/NpcEditorBindings.java    |  329 ++++
  .../api/resourcepack/ui/NpcEditorState.java   |  322 +++
  .../api/resourcepack/ui/RecipeCollection.java |  266 +++
- .../api/resourcepack/ui/ServerFormUi.java     |  256 +++
+ .../api/resourcepack/ui/ServerFormUi.java     |  269 +++
  .../resourcepack/ui/UiAsepriteMetadata.java   |   95 +
  .../api/resourcepack/ui/UiBindings.java       |   79 +
  .../api/resourcepack/ui/UiBitmapFonts.java    |  282 +++
@@ -580,7 +587,7 @@ image-only actions, resolved labels, and sparse response identities.
  .../resourcepack/ui/RecipeCollectionTest.java |  227 +++
  .../ui/ServerCustomFormUiTest.java            |  146 ++
  .../ui/ServerFormUiSliderStateTest.java       |  126 ++
- .../api/resourcepack/ui/ServerFormUiTest.java |  445 +++++
+ .../api/resourcepack/ui/ServerFormUiTest.java |  467 +++++
  .../ui/UiAsepriteMetadataTest.java            |  112 ++
  .../resourcepack/ui/UiBitmapFontsTest.java    |  285 +++
  .../ui/UiCollectionWindowTest.java            |  131 ++
@@ -589,7 +596,7 @@ image-only actions, resolved labels, and sparse response identities.
  .../api/resourcepack/ui/UiTexturesTest.java   |  231 +++
  .../ui/native-inventory-item-filter.json      |  311 +++
  .../generator/SearchUnicodeDataGenerator.java |  126 ++
- 96 files changed, 14768 insertions(+), 60 deletions(-)
+ 96 files changed, 14803 insertions(+), 60 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
@@ -7367,10 +7374,10 @@ index 00000000..cb7249f2
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
 new file mode 100644
-index 00000000..232c8e76
+index 00000000..668d6c78
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,269 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7571,12 +7578,25 @@ index 00000000..232c8e76
 +    public static Presentation presentation(final JsonObject scene) {
 +        final Map<Integer, String> labels = new LinkedHashMap<>();
 +        final List<String> prose = new ArrayList<>();
-+        project(scene.getAsJsonObject("root"), labels, prose);
++        final JsonObject root = scene.getAsJsonObject("root");
++        validateProjection(root, 0, new int[1]);
++        project(root, labels, prose);
 +        final JsonArray buttons = scene.getAsJsonObject("fallback").getAsJsonArray("buttons");
 +        labels.replaceAll((index, caption) -> caption.isBlank() && index < buttons.size()
 +                ? string(buttons.get(index).getAsJsonObject(), "text") : caption);
 +        final String title = prose.isEmpty() ? string(scene.getAsJsonObject("fallback"), "title") : prose.removeFirst();
 +        return new Presentation(title, String.join("\n\n", prose), Collections.unmodifiableMap(labels));
++    }
++
++    private static void validateProjection(final JsonObject node, final int depth, final int[] count) {
++        if (depth > 64 || ++count[0] > JsonUiProgram.MAX_NODES) {
++            throw new IllegalArgumentException("Form projection exceeds scene limits");
++        }
++        if (node.has("children")) {
++            for (final JsonElement child : node.getAsJsonArray("children")) {
++                validateProjection(child.getAsJsonObject(), depth + 1, count);
++            }
++        }
 +    }
 +
 +    private static void project(final JsonObject node, final Map<Integer, String> labels, final List<String> prose) {
@@ -15000,10 +15020,10 @@ index 00000000..362380ae
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
 new file mode 100644
-index 00000000..6ec93f7f
+index 00000000..bc7a30e9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
-@@ -0,0 +1,445 @@
+@@ -0,0 +1,467 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -15167,6 +15187,28 @@ index 00000000..6ec93f7f
 +        java.util.Arrays.fill(many, "tile:One");
 +        assertNull(new ServerFormUi(List.of(definitions(UI))).resolve(form(many)));
 +        assertNull(new ServerFormUi(List.of(definitions(UI))).resolve(form("unused")));
++    }
++
++    @Test
++    void rejectsOverdeepSceneMetadataBeforeProjectingDialogControls() {
++        final JsonObject scene = new JsonObject(), fallback = new JsonObject();
++        fallback.addProperty("title", "Ordinary form");
++        fallback.add("buttons", new JsonArray());
++        scene.add("fallback", fallback);
++        JsonObject root = new JsonObject();
++        scene.add("root", root);
++        for (int depth = 0; depth < 64; depth++) {
++            final JsonObject child = new JsonObject();
++            final JsonArray children = new JsonArray();
++            children.add(child);
++            root.add("children", children);
++            root = child;
++        }
++        assertEquals("Ordinary form", ServerFormUi.presentation(scene).title());
++        final JsonArray beyondLimit = new JsonArray();
++        beyondLimit.add(new JsonObject());
++        root.add("children", beyondLimit);
++        assertThrows(IllegalArgumentException.class, () -> ServerFormUi.presentation(scene));
 +    }
 +
 +    @Test
