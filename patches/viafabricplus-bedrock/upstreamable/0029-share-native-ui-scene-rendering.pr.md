@@ -35,6 +35,9 @@ Other controls, world pixels, items, and frame timing remain outside that compar
 
 At 1280 × 720, all 16 current-font labels match native 26.60 at UI scales 1 and 2. All 16 legacy labels match at UI scale 2. Direct and ViaProxy controls pass Java GUI scale changes and resource reloads. The point-sampling GPU regression fails before the correction and passes on Intel and software rendering.
 
+The captured Lifeboat Navigator still has column alignment differences at 1280 × 720 with matched native UI scale.
+Column placement and glyph-edge coverage need further native comparisons before complete authored-screen parity can be established.
+
 Unanchored manual-grid cells use their grid origins.
 The regression uses the native four-row armor shape, which previously shifted down and overlapped the main inventory.
 Explicit anchors and full-parent percentage dimensions retain separate regression coverage.
