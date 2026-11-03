@@ -74,11 +74,18 @@ Disabling coverage selection makes the binding-refresh regression fail.
 The target native font uses cmap format 4. Supplementary format-12 behavior has synthetic coverage and still needs matching native controls.
 Complete TrueType raster appearance and native font-type aliases remain open.
 
-Static instructions from Bedrock 1.26.60.5 scale TrueType outlines by the target render height divided by the hhea ascent/descent range.
+Bedrock 1.26.60.5 derives the base TrueType scale from the target render height and hhea ascent/descent range.
+Its glyph cache doubles that scale for 2×2 oversampling and retains fractional packed metrics.
 Java 26.3 rounds the FreeType EM pixel size after multiplying the provider size by its oversample value.
-For the matched MinecraftTen font and target height 64, native scaling corresponds to about 51.61 EM pixels; the current Java provider requests 77.
-Reducing oversampling alone would still round the requested size to 52, so this change cannot establish pixel parity.
-These results identify a sizing difference; they do not validate a replacement rasterizer.
+For MinecraftTen at target height 64, the native base scale corresponds to about 51.61 EM pixels and the raster scale to 103.23.
+The current Java provider requests 77. Changing oversampling alone does not reproduce the native raster path.
+
+Original initializer, glyph lookup, outline, rectangle, raster, and filter instructions supply 36 CPU cache controls.
+All cache pixels and packed metrics match the installed LWJGL 3.4.3 STB rasterizer.
+The controls cover six glyphs at heights 32, 64, and 96 for MinecraftTen and an additional curved-outline font.
+The fixture supplies atlas placement and external allocation, memory, and rounding interfaces.
+It does not execute cache I/O, GPU upload, shaders, or complete native screens.
+A replacement provider still needs bounded font validation, resource lifecycle checks, and native GPU comparisons.
 
 Dynamic domain text uses the same native palette as ordinary labels.
 Help regressions cover translated components and exported program round trips.
