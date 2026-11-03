@@ -142,3 +142,7 @@ Complete screen pixels remain unverified.
 Broader modpack timing, the reported menu overlap, and shield presentation still need verification.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.
+
+Authored container draws use the [shared physical-pixel scissor path](0029-share-native-ui-scene-rendering.pr.md).
+This preserves fractional layout bounds for labels, items, portraits, and nested inputs.
+The selected native glyph comparisons cover static form controls. Complete container GPU parity remains open.

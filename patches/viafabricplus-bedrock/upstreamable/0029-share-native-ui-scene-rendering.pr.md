@@ -36,12 +36,20 @@ Other controls, world pixels, items, and frame timing remain outside that compar
 At 1280 × 720, all 16 current-font labels match native 26.60 at UI scales 1 and 2. All 16 legacy labels match at UI scale 2. Direct and ViaProxy controls pass Java GUI scale changes and resource reloads. The point-sampling GPU regression fails before the correction and passes on Intel and software rendering.
 
 Grouped scrollbar panels release their layout space when content fits, unless `scrollbar_always_visible` is set.
+The verified path requires named content, viewport, track, thumb, and panel controls.
+Forms that omit these names still need matched native controls to align layout and painting behavior.
 Twenty-four original-instruction controls from Bedrock 1.26.60.5 verify both orientations and the exact fit boundary, including the native visibility setter and dimension reset.
 The fixture supplies settled geometry, control storage, and event boundaries. Native construction, complete scheduling, input, and GPU parity remain outside that fixture.
 Regressions preserve declared dimensions across resize and keep identical panel names in separate scroll views independent.
 The rebuilt add-on passes an unchanged 240-second Navigator replay. Close sends the original response index 8 exactly once.
 At the matched 1280 × 720 viewport, selected left-label offsets fall from 7–8 pixels to 3–4, and right-label offsets fall from 11–12 pixels to 0–1.
-Column placement and glyph-edge coverage still need native comparisons before complete authored-screen parity can be established.
+Scissors retain floating parent intersections before truncating the scaled origin and extent.
+Each draw carries physical clip data through extraction and batching, with conservative Java GUI bounds for overlap checks.
+Native 1.26.60.5 controls cover fractional origins, all four edges, and nested parents.
+At 1280 × 720 and native UI scale 2, the installed add-on matches all 36 selected glyph masks at Java GUI scales 1, 2, and 3.
+Return to scale 1 retains those masks.
+A batch-boundary regression keeps distinct physical clips separate when their coarse GUI bounds match.
+Authored labels shorter than a text line still need native height admission. Backgrounds, action appearance, and complete column placement remain open.
 
 Unanchored manual-grid cells use their grid origins.
 The regression uses the native four-row armor shape, which previously shifted down and overlapped the main inventory.

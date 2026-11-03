@@ -1,4 +1,4 @@
-From afff750929f557c0414967054342c46ee6d02839 Mon Sep 17 00:00:00 2001
+From 69d6456e9fe03b3362b9f2c5a1e6463e625af71a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -794,6 +794,28 @@ work bound. Reject cyclic visibility states instead of returning stale
 geometry. Regressions cover native boundaries, resize restoration and
 identical panel names in independent views. Ordinary painting already hid
 these panels; retaining their width shifted the authored menu columns.
+
+Preserve native scissor rectangles through GUI extraction and batching.
+Bedrock 1.26.60.5 / protocol 2225 pixel controls distinguish intersecting
+floating rectangles before truncating their scaled origins and extents
+from independently rounding their right and bottom edges. Thirty-six
+static reference, left, right, top, bottom and nested-parent controls
+match that rule. The executable SHA-256 is
+988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a.
+
+Java's integer GUI scissors can remove a glyph column before scaling,
+and different physical clips can share the same coarse GUI rectangle.
+Carry immutable physical clip data on each draw's rectangle, retain
+conservative GUI bounds for overlap search, and compare physical pixels
+when grouping batches. Intersect native parent bounds before conversion;
+do not pass them through the integer scissor stack's intersection or
+mutate its shared empty rectangle. Vanilla GUI scissors keep their path.
+The metadata follows normal render-state lifetimes without a global map.
+
+Native glyph-mask fixtures and a batch-boundary regression cover the
+conversion. Short authored label heights suppress the native text in a
+separate control; that text-layout rule and complete screen appearance
+remain outside this scissor correction.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -801,6 +823,7 @@ these panels; retaining their width shifted the authored menu columns.
  .../appearance/BedrockGuiActorAppearance.java |   94 ++
  .../appearance/BedrockResourceLibrary.java    |   45 +-
  .../access/IBedrockGuiActorRenderer.java      |   12 +
+ .../injection/access/IBedrockGuiScissor.java  |   13 +
  .../features/input/MixinNativeUiInput.java    |   69 ++
  .../render/MixinAvatarAnimationRenderer.java  |    2 +
  .../render/MixinBedrockActorSubmission.java   |    6 +
@@ -812,6 +835,8 @@ these panels; retaining their width shifted the authored menu columns.
  .../render/MixinNativeHudOverlays.java        |   34 +
  .../render/MixinNativeUiExtraction.java       |   40 +
  .../render/MixinNativeUiPictures.java         |   72 ++
+ .../render/MixinNativeUiScissorArea.java      |   20 +
+ .../render/MixinNativeUiScissorRenderer.java  |   42 +
  .../render/MixinNativeUiViewport.java         |   25 +
  .../render/MixinPictureInPictureRenderer.java |   41 +
  .../BedrockActorMaterialDefinitions.java      |    4 +-
@@ -826,7 +851,7 @@ these panels; retaining their width shifted the authored menu columns.
  .../render/font/BedrockBitmapFont.java        |  251 +++++
  .../render/font/BedrockBitmapGlyph.java       |  105 ++
  .../render/font/BedrockBitmapPipeline.java    |   49 +
- .../bedrock/screen/ui/BedrockHudOverlays.java |  129 +++
+ .../bedrock/screen/ui/BedrockHudOverlays.java |  128 +++
  .../screen/ui/BedrockNativeUiHurt.java        |   67 ++
  .../screen/ui/NativeHudOverlayState.java      |   66 ++
  .../bedrock/screen/ui/NativeHudPayload.java   |   36 +
@@ -844,7 +869,7 @@ these panels; retaining their width shifted the authored menu columns.
  .../bedrock/screen/ui/NativeUiFlipbook.java   |   47 +
  .../bedrock/screen/ui/NativeUiFocus.java      |  329 ++++++
  .../bedrock/screen/ui/NativeUiFont.java       |   58 +
- .../bedrock/screen/ui/NativeUiGraphics.java   |   47 +
+ .../bedrock/screen/ui/NativeUiGraphics.java   |   56 +
  .../screen/ui/NativeUiHurtPayload.java        |   22 +
  .../bedrock/screen/ui/NativeUiImageCache.java |  229 ++++
  .../screen/ui/NativeUiImageRegions.java       |  132 +++
@@ -858,7 +883,8 @@ these panels; retaining their width shifted the authored menu columns.
  .../screen/ui/NativeUiPresentation.java       |  162 +++
  .../bedrock/screen/ui/NativeUiRenderer.java   |  157 +++
  .../bedrock/screen/ui/NativeUiScene.java      |  107 ++
- .../screen/ui/NativeUiSceneScreen.java        |  823 ++++++++++++++
+ .../screen/ui/NativeUiSceneScreen.java        |  822 ++++++++++++++
+ .../bedrock/screen/ui/NativeUiScissor.java    |   73 ++
  .../bedrock/screen/ui/NativeUiScreen.java     |   13 +
  .../bedrock/screen/ui/NativeUiScroll.java     |   69 ++
  .../bedrock/screen/ui/NativeUiSlider.java     |  123 ++
@@ -871,8 +897,8 @@ these panels; retaining their width shifted the authored menu columns.
  .../shaders/core/bedrock_actor.fsh            |    8 +
  .../shaders/core/bedrock_bitmap_font.fsh      |   26 +
  .../shaders/core/bedrock_bitmap_font.vsh      |   29 +
- .../viafabricplus-bedrock.accesswidener       |    1 +
- .../viafabricplus-bedrock.mixins.json         |   11 +-
+ .../viafabricplus-bedrock.accesswidener       |    4 +
+ .../viafabricplus-bedrock.mixins.json         |   13 +-
  .../BedrockBitmapFontResourcesTest.java       |   67 ++
  .../BedrockGuiActorAppearanceTest.java        |   92 ++
  .../BedrockGuiActorContextTest.java           |  140 +++
@@ -909,6 +935,7 @@ these panels; retaining their width shifted the authored menu columns.
  .../screen/ui/NativeUiRendererTest.java       |   85 ++
  .../NativeUiSceneScreenInteractionTest.java   |  359 ++++++
  .../bedrock/screen/ui/NativeUiSceneTest.java  |   40 +
+ .../screen/ui/NativeUiScissorTest.java        |   69 ++
  .../ui/NativeUiScrollbarLayoutTest.java       |  107 ++
  .../bedrock/screen/ui/NativeUiSliderTest.java |  120 ++
  .../bedrock/screen/ui/NativeUiTextTest.java   |   56 +
@@ -916,9 +943,11 @@ these panels; retaining their width shifted the authored menu columns.
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
  .../screen/ui/NativeUiViewportTest.java       |   95 ++
  .../native-scrollbar-visibility.json          |  162 +++
- 121 files changed, 13875 insertions(+), 37 deletions(-)
+ .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
+ 127 files changed, 14726 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapFont.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapGlyphRenderState.java
@@ -926,6 +955,8 @@ these panels; retaining their width shifted the authored menu columns.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeHudOverlays.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiExtraction.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiPictures.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiScissorArea.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiScissorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiViewport.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPictureInPictureRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedEntityState.java
@@ -967,6 +998,7 @@ these panels; retaining their width shifted the authored menu columns.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScene.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScissor.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScroll.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSlider.java
@@ -1008,6 +1040,7 @@ these panels; retaining their width shifted the authored menu columns.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiRendererTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScissorTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScrollbarLayoutTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSliderTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiTextTest.java
@@ -1015,6 +1048,7 @@ these panels; retaining their width shifted the authored menu columns.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiToggleTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java
  create mode 100644 src/test/resources/native-scrollbar-visibility.json
+ create mode 100644 src/test/resources/native-ui/scissor-2225.json
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index e0cc7f9..f64ad7c 100644
@@ -1270,6 +1304,25 @@ index 0000000..cb64674
 +
 +public interface IBedrockGuiActorRenderer {
 +    BedrockGuiActorRenderer stackanvil$guiActorRenderer();
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
+new file mode 100644
+index 0000000..2ddf17c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
+@@ -0,0 +1,13 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.access;
++
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiScissor;
++
++public interface IBedrockGuiScissor {
++    NativeUiScissor stackanvil$scissor();
++    void stackanvil$scissor(NativeUiScissor scissor);
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
 new file mode 100644
@@ -1769,6 +1822,80 @@ index 0000000..068b992
 +        this.nativePictures.values().forEach(GuiEntityRenderer::close);
 +        this.nativePictures.clear();
 +        this.usedNativePictures.clear();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiScissorArea.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiScissorArea.java
+new file mode 100644
+index 0000000..43c6bd2
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiScissorArea.java
+@@ -0,0 +1,20 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockGuiScissor;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiScissor;
++import net.minecraft.client.gui.navigation.ScreenRectangle;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
++
++@Mixin(ScreenRectangle.class)
++public abstract class MixinNativeUiScissorArea implements IBedrockGuiScissor {
++    @Unique private NativeUiScissor nativeScissor;
++
++    @Override public NativeUiScissor stackanvil$scissor() { return this.nativeScissor; }
++    @Override public void stackanvil$scissor(final NativeUiScissor scissor) { this.nativeScissor = scissor; }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiScissorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiScissorRenderer.java
+new file mode 100644
+index 0000000..400a801
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiScissorRenderer.java
+@@ -0,0 +1,42 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.mojang.renderpearl.api.commands.RenderPass;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiScissor;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.navigation.ScreenRectangle;
++import net.minecraft.client.gui.render.GuiRenderer;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(GuiRenderer.class)
++public abstract class MixinNativeUiScissorRenderer {
++    @Inject(method = "scissorChanged", at = @At("HEAD"), cancellable = true)
++    private void nativeBatch(final ScreenRectangle first, final ScreenRectangle second,
++                             final CallbackInfoReturnable<Boolean> callback) {
++        final var a = NativeUiScissor.from(first);
++        final var b = NativeUiScissor.from(second);
++        if (a != null || b != null) callback.setReturnValue(!NativeUiScissor.samePixels(a, b));
++    }
++
++    @Inject(method = "enableScissor", at = @At("HEAD"), cancellable = true)
++    private void nativePixels(final ScreenRectangle rectangle, final RenderPass pass, final CallbackInfo callback) {
++        final var clip = NativeUiScissor.from(rectangle);
++        if (clip == null) return;
++        final var window = Minecraft.getInstance().gameRenderer.gameRenderState().windowRenderState;
++        final var pixels = clip.pixels();
++        final int left = Math.clamp(pixels.left(), 0, window.width);
++        final int top = Math.clamp(pixels.top(), 0, window.height);
++        final int right = Math.clamp(pixels.right(), left, window.width);
++        final int bottom = Math.clamp(pixels.bottom(), top, window.height);
++        pass.enableScissor(left, window.height - bottom, right - left, bottom - top);
++        callback.cancel();
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiViewport.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiViewport.java
@@ -3000,10 +3127,10 @@ index 0000000..299cd6d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java
 new file mode 100644
-index 0000000..04a8f13
+index 0000000..df6dfa1
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/BedrockHudOverlays.java
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,128 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3107,8 +3234,7 @@ index 0000000..04a8f13
 +                for (final var draw : draws) {
 +                    if (draw.alpha() <= 0 || draw.box().visibleBounds().width() <= 0 || draw.box().visibleBounds().height() <= 0) continue;
 +                    final var clip = draw.box().clip();
-+                    graphics.enableScissor(Math.round(clip.x()), Math.round(clip.y()),
-+                            Math.round(clip.x() + clip.width()), Math.round(clip.y() + clip.height()));
++                    NativeUiScissor.enable(graphics, clip);
 +                    try { renderer.draw(graphics, draw, state.animations()); }
 +                    finally { graphics.disableScissor(); }
 +                }
@@ -5297,10 +5423,10 @@ index 0000000..73691f2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiGraphics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiGraphics.java
 new file mode 100644
-index 0000000..bc30c34
+index 0000000..24ce149
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiGraphics.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,56 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5334,8 +5460,17 @@ index 0000000..bc30c34
 +    @Override public int guiHeight() { return this.viewport == null ? super.guiHeight() : this.viewport.height(); }
 +    @Override public void requestCursor(final CursorType cursor) { this.parent.requestCursor(cursor); }
 +
++    NativeUiViewport viewport() { return this.viewport; }
++
++    @Override
++    public void enableScissor(final int left, final int top, final int right, final int bottom) {
++        NativeUiScissor.enable(this, new NativeUiLayout.Rect(left, top, right - left, bottom - top));
++    }
++
 +    @Override
 +    public boolean containsPointInScissor(final int x, final int y) {
++        final var clip = NativeUiScissor.from(this.scissorStack.peek());
++        if (clip != null) return clip.pixels().containsPoint(x * this.viewport.scale(), y * this.viewport.scale());
 +        return super.containsPointInScissor(this.viewport.pixel(x), this.viewport.pixel(y));
 +    }
 +
@@ -7766,10 +7901,10 @@ index 0000000..e0ed675
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
 new file mode 100644
-index 0000000..2a38ec5
+index 0000000..20c0bd6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
-@@ -0,0 +1,823 @@
+@@ -0,0 +1,822 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7989,8 +8124,7 @@ index 0000000..2a38ec5
 +                    && box.node().string("renderer", "").equals("hover_text_renderer")
 +                    && !box.node().string("hover_text", "").isEmpty()) tooltip = box.node();
 +                if (draw.alpha() <= 0 || box.visibleBounds().width() <= 0 || box.visibleBounds().height() <= 0) continue;
-+                graphics.enableScissor(Math.round(clip.x()), Math.round(clip.y()),
-+                    Math.round(clip.x() + clip.width()), Math.round(clip.y() + clip.height()));
++                NativeUiScissor.enable(graphics, clip);
 +                try {
 +                    final var node = box.node();
 +                    this.renderer().draw(graphics, draw, this.animations);
@@ -8591,6 +8725,85 @@ index 0000000..2a38ec5
 +            }
 +            return node.name();
 +        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScissor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScissor.java
+new file mode 100644
+index 0000000..99a2446
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScissor.java
+@@ -0,0 +1,73 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.ui;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockGuiScissor;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.navigation.ScreenRectangle;
++
++/** Retains native clip precision independently of Java's integer GUI coordinate grid. */
++public final class NativeUiScissor {
++    private final NativeUiLayout.Rect bounds;
++    private final ScreenRectangle pixels;
++
++    public NativeUiScissor(final NativeUiLayout.Rect bounds) {
++        this.bounds = bounds;
++        // Native intersects floating rectangles before truncating the origin and extent.
++        this.pixels = new ScreenRectangle((int) bounds.x(), (int) bounds.y(),
++            Math.max(0, (int) bounds.width()), Math.max(0, (int) bounds.height()));
++    }
++
++    public static NativeUiScissor scaled(final NativeUiLayout.Rect bounds, final int scale) {
++        return new NativeUiScissor(new NativeUiLayout.Rect(bounds.x() * scale, bounds.y() * scale,
++            bounds.width() * scale, bounds.height() * scale));
++    }
++
++    public NativeUiScissor intersect(final NativeUiScissor other) {
++        return new NativeUiScissor(this.bounds.intersect(other.bounds));
++    }
++
++    public ScreenRectangle pixels() { return this.pixels; }
++
++    /** Conservative bounds for Java's overlap search; the render pass uses the exact pixels. */
++    public ScreenRectangle guiBounds(final int javaScale) {
++        final int left = Math.floorDiv(this.pixels.left(), javaScale);
++        final int top = Math.floorDiv(this.pixels.top(), javaScale);
++        return new ScreenRectangle(left, top, Math.ceilDiv(this.pixels.right(), javaScale) - left,
++            Math.ceilDiv(this.pixels.bottom(), javaScale) - top);
++    }
++
++    public static boolean samePixels(final NativeUiScissor first, final NativeUiScissor second) {
++        return first == second || first != null && second != null && first.pixels.equals(second.pixels);
++    }
++
++    public static NativeUiScissor from(final ScreenRectangle rectangle) {
++        return rectangle == null ? null : ((IBedrockGuiScissor) (Object) rectangle).stackanvil$scissor();
++    }
++
++    /** The supplied rectangle is in absolute native layout units, before the Java pose scale. */
++    public static void enable(final GuiGraphicsExtractor graphics, final NativeUiLayout.Rect bounds) {
++        final var window = Minecraft.getInstance().getWindow();
++        final int javaScale = window.getGuiScale();
++        final var viewport = graphics instanceof NativeUiGraphics nativeGraphics
++            ? nativeGraphics.viewport() : NativeUiViewport.current();
++        NativeUiScissor clip = scaled(bounds, viewport.scale());
++        final var stack = graphics.scissorStack;
++        final var parent = stack.peek();
++        if (parent != null) {
++            final var nativeParent = from(parent);
++            clip = clip.intersect(nativeParent != null ? nativeParent : scaled(new NativeUiLayout.Rect(
++                parent.left(), parent.top(), parent.width(), parent.height()), javaScale));
++        }
++        clip = clip.intersect(new NativeUiScissor(new NativeUiLayout.Rect(0, 0, window.getWidth(), window.getHeight())));
++        final var rectangle = clip.guiBounds(javaScale);
++        ((IBedrockGuiScissor) (Object) rectangle).stackanvil$scissor(clip);
++        // push() intersects integer GUI bounds. That can discard pixels before the native clip
++        // reaches the render pass, and its shared empty rectangle cannot carry per-draw state.
++        stack.stack.addLast(rectangle);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScreen.java
@@ -9202,16 +9415,19 @@ index 0000000..1564b4b
 +    glyphGuiY = Position.y;
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.accesswidener b/src/main/resources/viafabricplus-bedrock.accesswidener
-index 8e8672c..e52389d 100644
+index 8e8672c..288cc7a 100644
 --- a/src/main/resources/viafabricplus-bedrock.accesswidener
 +++ b/src/main/resources/viafabricplus-bedrock.accesswidener
-@@ -12,3 +12,4 @@ accessible method net/minecraft/client/renderer/rendertype/RenderType create (Lj
+@@ -12,3 +12,7 @@ accessible method net/minecraft/client/renderer/rendertype/RenderType create (Lj
  
  accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_NO_LIGHTMAP_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
  accessible field net/minecraft/client/renderer/RenderPipelines EYES_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible method net/minecraft/client/gui/GuiGraphicsExtractor innerBlit (Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;Lnet/minecraft/resources/Identifier;IIIIFFFFI)V
++accessible class net/minecraft/client/gui/GuiGraphicsExtractor$ScissorStack
++accessible field net/minecraft/client/gui/GuiGraphicsExtractor scissorStack Lnet/minecraft/client/gui/GuiGraphicsExtractor$ScissorStack;
++accessible field net/minecraft/client/gui/GuiGraphicsExtractor$ScissorStack stack Ljava/util/Deque;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 16d451d..fef5b3f 100644
+index 16d451d..b4c2ad2 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -150,6 +150,11 @@
@@ -9226,7 +9442,7 @@ index 16d451d..fef5b3f 100644
      "features.input.MixinKeyboardInput",
      "features.input.MixinLocalPlayerInput",
      "features.input.MixinClientInput",
-@@ -204,7 +209,11 @@
+@@ -204,7 +209,13 @@
      "features.render.MixinBedrockCameraFade",
      "features.entities.MixinClientEntityTracking",
      "features.entities.MixinMinecraftProjectileOwners",
@@ -9234,6 +9450,8 @@ index 16d451d..fef5b3f 100644
 +    "features.entities.MixinFishingHookOwner",
 +    "features.input.MixinNativeUiInput",
 +    "features.render.MixinNativeUiExtraction",
++    "features.render.MixinNativeUiScissorArea",
++    "features.render.MixinNativeUiScissorRenderer",
 +    "features.render.MixinNativeHudOverlays",
 +    "features.render.MixinNativeUiViewport"
    ],
@@ -15307,6 +15525,81 @@ index 0000000..c7b4bc4
 +        return new NativeUiScene.Node("", "button", JsonParser.parseString("{\"enabled\":" + encoded + "}").getAsJsonObject(), List.of(), Integer.MIN_VALUE);
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScissorTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScissorTest.java
+new file mode 100644
+index 0000000..bc6b806
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScissorTest.java
+@@ -0,0 +1,69 @@
++package com.viaversion.viafabricplus.bedrock.screen.ui;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonParser;
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.util.HexFormat;
++import java.util.TreeSet;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class NativeUiScissorTest {
++    @Test
++    void retainsNativeGlyphMasksAcrossEveryClipEdgeAndNestedParents() throws Exception {
++        try (final var input = getClass().getResourceAsStream("/native-ui/scissor-2225.json")) {
++            assertNotNull(input);
++            final var fixture = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
++            for (final var control : fixture.getAsJsonArray("controls")) {
++                final var sample = control.getAsJsonObject();
++                NativeUiScissor clip = NativeUiScissor.scaled(new NativeUiLayout.Rect(0, 0, 640, 360), 2);
++                for (final var rectangle : sample.getAsJsonArray("clips"))
++                    clip = clip.intersect(NativeUiScissor.scaled(rect(rectangle.getAsJsonArray()), 2));
++                final var origin = sample.getAsJsonArray("origin");
++                final var snapped = NativeUiFont.origin(origin.get(0).getAsFloat(), origin.get(1).getAsFloat(), 1, 2);
++                final var pixels = new TreeSet<Long>();
++                for (int index = 0; index < fixture.get("glyphCount").getAsInt(); index++) {
++                    for (int y = 0; y < fixture.getAsJsonArray("glyphRows").size(); y++) {
++                        final String row = fixture.getAsJsonArray("glyphRows").get(y).getAsString();
++                        for (int x = 0; x < row.length(); x++) {
++                            if (row.charAt(x) != '1') continue;
++                            for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
++                                final int px = (int) (snapped.x() * 2) + (index * fixture.get("glyphAdvance").getAsInt() + x) * 2 + dx;
++                                final int py = (int) (snapped.y() * 2) + y * 2 + dy;
++                                if (clip.pixels().containsPoint(px, py)) pixels.add((long) py << 32 | px & 0xFFFFFFFFL);
++                            }
++                        }
++                    }
++                }
++                final var mask = new StringBuilder();
++                for (final long pixel : pixels) mask.append((int) pixel).append(',').append(pixel >>> 32).append('\n');
++                assertEquals(sample.get("pixels").getAsInt(), pixels.size(), sample.get("name").getAsString());
++                assertEquals(sample.get("maskSha256").getAsString(), HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
++                    .digest(mask.toString().getBytes(StandardCharsets.UTF_8))), sample.get("name").getAsString());
++            }
++        }
++    }
++
++    @Test
++    void keepsDifferentPhysicalClipsOutOfTheSameBatchEvenWhenTheirGuiBoundsMatch() {
++        final var first = NativeUiScissor.scaled(new NativeUiLayout.Rect(340.5F, 50, 20, 10), 2);
++        final var second = NativeUiScissor.scaled(new NativeUiLayout.Rect(341, 50, 20, 10), 2);
++        assertEquals(first.guiBounds(3), second.guiBounds(3));
++        assertFalse(NativeUiScissor.samePixels(first, second));
++        assertFalse(NativeUiScissor.samePixels(first, null));
++        assertTrue(NativeUiScissor.samePixels(first, NativeUiScissor.scaled(new NativeUiLayout.Rect(340.5F, 50, 20, 10), 2)));
++        for (final int scale : new int[] {1, 2, 3, 4, 8}) {
++            final var coarse = first.guiBounds(scale);
++            assertTrue(coarse.left() * scale <= first.pixels().left());
++            assertTrue(coarse.right() * scale >= first.pixels().right());
++        }
++    }
++
++    private static NativeUiLayout.Rect rect(final JsonArray values) {
++        return new NativeUiLayout.Rect(values.get(0).getAsFloat(), values.get(1).getAsFloat(),
++            values.get(2).getAsFloat(), values.get(3).getAsFloat());
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScrollbarLayoutTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScrollbarLayoutTest.java
 new file mode 100644
 index 0000000..8f22cae
@@ -16080,6 +16373,634 @@ index 0000000..da3913b
 +        8.0,
 +        210.0
 +      ]
++    }
++  ]
++}
+diff --git a/src/test/resources/native-ui/scissor-2225.json b/src/test/resources/native-ui/scissor-2225.json
+new file mode 100644
+index 0000000..0d80438
+--- /dev/null
++++ b/src/test/resources/native-ui/scissor-2225.json
+@@ -0,0 +1,622 @@
++{
++  "source": "Official Bedrock 1.26.60.5, protocol 2225, 1280x720, native UI scale 2. Static authored labels and nested clipping parents. Expected hashes come from native white glyph pixels.",
++  "glyphRows": [
++    "10001",
++    "10001",
++    "10001",
++    "10001",
++    "10101",
++    "11011",
++    "10001"
++  ],
++  "glyphAdvance": 6,
++  "glyphCount": 8,
++  "controls": [
++    {
++      "name": "reference_0",
++      "origin": [
++        20,
++        20
++      ],
++      "clips": [],
++      "pixels": 544,
++      "maskSha256": "798930de50b046aee0bbd053901068457515649f391eac1db63f0c2d7639c9e9"
++    },
++    {
++      "name": "reference_1",
++      "origin": [
++        120.125,
++        20
++      ],
++      "clips": [],
++      "pixels": 544,
++      "maskSha256": "7c5b2b9f59ab69e73824674ee2feb79f05ab92a90933c7a9f0bd8426baefbf2f"
++    },
++    {
++      "name": "reference_2",
++      "origin": [
++        220.25,
++        20
++      ],
++      "clips": [],
++      "pixels": 544,
++      "maskSha256": "7686350218201f5db4825735f6cfc7913da1a7a49dda3acd2296755fd3009a03"
++    },
++    {
++      "name": "reference_3",
++      "origin": [
++        320.375,
++        20
++      ],
++      "clips": [],
++      "pixels": 544,
++      "maskSha256": "6404c25aaff9f5147290d2aae4832f8bbe6fa13655f5e2eb711ce027caa52792"
++    },
++    {
++      "name": "reference_4",
++      "origin": [
++        420.5,
++        20
++      ],
++      "clips": [],
++      "pixels": 544,
++      "maskSha256": "488580e2a46b04e4dcf448bfda99bde4405194df7e4322daa9cb69c8ab2ab639"
++    },
++    {
++      "name": "reference_5",
++      "origin": [
++        520.75,
++        20
++      ],
++      "clips": [],
++      "pixels": 544,
++      "maskSha256": "1e97b60e3749c89140aca23aa3d725b006a375bb4c0a3d37827f7fb6c8735352"
++    },
++    {
++      "name": "left_0",
++      "origin": [
++        18,
++        60
++      ],
++      "clips": [
++        [
++          20,
++          60,
++          70.25,
++          10
++        ]
++      ],
++      "pixels": 512,
++      "maskSha256": "b0a27457854512d6d84e8419a634e8c97025e88741e256b5697cd63f64ec774f"
++    },
++    {
++      "name": "left_1",
++      "origin": [
++        118.125,
++        60
++      ],
++      "clips": [
++        [
++          120.125,
++          60,
++          70.25,
++          10
++        ]
++      ],
++      "pixels": 512,
++      "maskSha256": "17a22353171bfcfd76b14fa85a03b1ea9fee71e1430ee247e4550e79027001df"
++    },
++    {
++      "name": "left_2",
++      "origin": [
++        218.25,
++        60
++      ],
++      "clips": [
++        [
++          220.25,
++          60,
++          70.25,
++          10
++        ]
++      ],
++      "pixels": 512,
++      "maskSha256": "c2d08a20457246b63272ae2da26fb13ca8298dfa712c0a5ed486ce8f620126e0"
++    },
++    {
++      "name": "left_3",
++      "origin": [
++        318.375,
++        60
++      ],
++      "clips": [
++        [
++          320.375,
++          60,
++          70.25,
++          10
++        ]
++      ],
++      "pixels": 512,
++      "maskSha256": "1a4f98dc905cac3bb6135926603935557a5b058af9f80dbe2f40a651a352a615"
++    },
++    {
++      "name": "left_4",
++      "origin": [
++        418.5,
++        60
++      ],
++      "clips": [
++        [
++          420.5,
++          60,
++          70.25,
++          10
++        ]
++      ],
++      "pixels": 512,
++      "maskSha256": "327c1356494dbe1ec9a5b9eead4439edfa6622e6031abeed7cf920626e296a7c"
++    },
++    {
++      "name": "left_5",
++      "origin": [
++        518.75,
++        60
++      ],
++      "clips": [
++        [
++          520.75,
++          60,
++          70.25,
++          10
++        ]
++      ],
++      "pixels": 512,
++      "maskSha256": "ecc77fe2b8066dbc40163c54b675644b5f367ca79d15dfb174e6d296833e4563"
++    },
++    {
++      "name": "right_0",
++      "origin": [
++        20,
++        110
++      ],
++      "clips": [
++        [
++          20,
++          110,
++          40.25,
++          10
++        ]
++      ],
++      "pixels": 448,
++      "maskSha256": "0609d8eb6f07fb5d049be4931785103dec57e0cd4ccb4ae10cc85b2e7e9c25ae"
++    },
++    {
++      "name": "right_1",
++      "origin": [
++        120.125,
++        110
++      ],
++      "clips": [
++        [
++          120.125,
++          110,
++          40.25,
++          10
++        ]
++      ],
++      "pixels": 448,
++      "maskSha256": "faea538e1058e602ea279dd158fe5bb615fddc358c3b5fb1f7f69218a38121ff"
++    },
++    {
++      "name": "right_2",
++      "origin": [
++        220.25,
++        110
++      ],
++      "clips": [
++        [
++          220.25,
++          110,
++          40.25,
++          10
++        ]
++      ],
++      "pixels": 448,
++      "maskSha256": "266028bebf322ffd5f891204aa373e0a7805070f9136cca9dc73527cea1f4c88"
++    },
++    {
++      "name": "right_3",
++      "origin": [
++        320.375,
++        110
++      ],
++      "clips": [
++        [
++          320.375,
++          110,
++          40.25,
++          10
++        ]
++      ],
++      "pixels": 448,
++      "maskSha256": "3858a533db07bcac636d73020e7ef1682092f2f002dbbcb7e1cdd4c909a0df4f"
++    },
++    {
++      "name": "right_4",
++      "origin": [
++        420.5,
++        110
++      ],
++      "clips": [
++        [
++          420.5,
++          110,
++          40.25,
++          10
++        ]
++      ],
++      "pixels": 448,
++      "maskSha256": "2787aa39af6ba70aad7886de469ba23da05d5cfbd2ebdeb475be4dbd74f41a6a"
++    },
++    {
++      "name": "right_5",
++      "origin": [
++        520.75,
++        110
++      ],
++      "clips": [
++        [
++          520.75,
++          110,
++          40.25,
++          10
++        ]
++      ],
++      "pixels": 448,
++      "maskSha256": "49981364a37f663aa02d1a3a20ed7726da87c0687247dddf11969c20deac251f"
++    },
++    {
++      "name": "top_0",
++      "origin": [
++        20,
++        157
++      ],
++      "clips": [
++        [
++          20,
++          160,
++          90,
++          6.25
++        ]
++      ],
++      "pixels": 416,
++      "maskSha256": "78241313eee2fa5a4d7e3a8d2cbbeb26ccb82bc9811897def8dac7dd221d470c"
++    },
++    {
++      "name": "top_1",
++      "origin": [
++        120.125,
++        157.125
++      ],
++      "clips": [
++        [
++          120.125,
++          160.125,
++          90,
++          6.25
++        ]
++      ],
++      "pixels": 416,
++      "maskSha256": "a566bbc1f4a91cf52c4bf7a4e1df1f08740979425d6c29ca67da9396623b0092"
++    },
++    {
++      "name": "top_2",
++      "origin": [
++        220.25,
++        157.25
++      ],
++      "clips": [
++        [
++          220.25,
++          160.25,
++          90,
++          6.25
++        ]
++      ],
++      "pixels": 416,
++      "maskSha256": "861755bca3407b0eed11988ad9a6824284f9dd91e8fc8c61400142f936160583"
++    },
++    {
++      "name": "top_3",
++      "origin": [
++        320.375,
++        157.375
++      ],
++      "clips": [
++        [
++          320.375,
++          160.375,
++          90,
++          6.25
++        ]
++      ],
++      "pixels": 416,
++      "maskSha256": "e4031f1b0c2d10e9296343bf50101b4b07f2a6280ca11f31e87ff02589d98896"
++    },
++    {
++      "name": "top_4",
++      "origin": [
++        420.5,
++        157.5
++      ],
++      "clips": [
++        [
++          420.5,
++          160.5,
++          90,
++          6.25
++        ]
++      ],
++      "pixels": 416,
++      "maskSha256": "3dbd04fbff30740a43334f67a349f67dae2596ac58fc598e75302d718f6d2083"
++    },
++    {
++      "name": "top_5",
++      "origin": [
++        520.75,
++        157.75
++      ],
++      "clips": [
++        [
++          520.75,
++          160.75,
++          90,
++          6.25
++        ]
++      ],
++      "pixels": 416,
++      "maskSha256": "1a533a0b11731c836f58a29fbab8d714e5ae1a7a133a40d935ca6234e227fb1e"
++    },
++    {
++      "name": "bottom_0",
++      "origin": [
++        20,
++        210
++      ],
++      "clips": [
++        [
++          20,
++          210,
++          90,
++          4.25
++        ]
++      ],
++      "pixels": 192,
++      "maskSha256": "ed027eac70ad4d8cc173595b64d19b8eae7b053aab8385c5adf2a2e7dd8fef57"
++    },
++    {
++      "name": "bottom_1",
++      "origin": [
++        120.125,
++        210.125
++      ],
++      "clips": [
++        [
++          120.125,
++          210.125,
++          90,
++          4.25
++        ]
++      ],
++      "pixels": 192,
++      "maskSha256": "a3d3285d3fc418821933708cf37148b860139e114fa9f3e470afc0073c5e315b"
++    },
++    {
++      "name": "bottom_2",
++      "origin": [
++        220.25,
++        210.25
++      ],
++      "clips": [
++        [
++          220.25,
++          210.25,
++          90,
++          4.25
++        ]
++      ],
++      "pixels": 192,
++      "maskSha256": "2dda09634543cb9a309112ae78180147c9a4e6557c276aef73e130576f1f5448"
++    },
++    {
++      "name": "bottom_3",
++      "origin": [
++        320.375,
++        210.375
++      ],
++      "clips": [
++        [
++          320.375,
++          210.375,
++          90,
++          4.25
++        ]
++      ],
++      "pixels": 192,
++      "maskSha256": "95539972ff5c95a0a85765b9a16d0e0789911f284bbdcb41554a4fb33740d402"
++    },
++    {
++      "name": "bottom_4",
++      "origin": [
++        420.5,
++        210.5
++      ],
++      "clips": [
++        [
++          420.5,
++          210.5,
++          90,
++          4.25
++        ]
++      ],
++      "pixels": 192,
++      "maskSha256": "7574d213f3de5382a25ca1fa388dad7466db1b5cd4c24a1c67296c12a24bb67e"
++    },
++    {
++      "name": "bottom_5",
++      "origin": [
++        520.75,
++        210.75
++      ],
++      "clips": [
++        [
++          520.75,
++          210.75,
++          90,
++          4.25
++        ]
++      ],
++      "pixels": 192,
++      "maskSha256": "6ab0f4240ca7ce221201143077824d5bc10e5f8b781f0976c1f4e008c01da9bb"
++    },
++    {
++      "name": "nested_0",
++      "origin": [
++        19.125,
++        258.125
++      ],
++      "clips": [
++        [
++          20,
++          260,
++          40.25,
++          4.25
++        ],
++        [
++          21.125,
++          261.125,
++          40.25,
++          6.25
++        ]
++      ],
++      "pixels": 184,
++      "maskSha256": "3991d31ff5c691e94e87dfd5936d2473465e4a219f23ce48cfea9fa678b0872f"
++    },
++    {
++      "name": "nested_1",
++      "origin": [
++        119.25,
++        258.25
++      ],
++      "clips": [
++        [
++          120.125,
++          260.125,
++          40.25,
++          4.25
++        ],
++        [
++          121.25,
++          261.25,
++          40.25,
++          6.25
++        ]
++      ],
++      "pixels": 184,
++      "maskSha256": "85f246b340317566494726abb360c2c65b9d5d6aeeb7ebf34bdf280d66cf269d"
++    },
++    {
++      "name": "nested_2",
++      "origin": [
++        219.375,
++        258.375
++      ],
++      "clips": [
++        [
++          220.25,
++          260.25,
++          40.25,
++          4.25
++        ],
++        [
++          221.375,
++          261.375,
++          40.25,
++          6.25
++        ]
++      ],
++      "pixels": 184,
++      "maskSha256": "30c70f731e079c3105a80212bd70c71b953a693737633aef1f74412f763b548a"
++    },
++    {
++      "name": "nested_3",
++      "origin": [
++        319.5,
++        258.5
++      ],
++      "clips": [
++        [
++          320.375,
++          260.375,
++          40.25,
++          4.25
++        ],
++        [
++          321.5,
++          261.5,
++          40.25,
++          6.25
++        ]
++      ],
++      "pixels": 184,
++      "maskSha256": "6c666abb2ee813eca5e1e37bc52adcf29ab7fa40300f43ce4b90411e93e9475a"
++    },
++    {
++      "name": "nested_4",
++      "origin": [
++        419.625,
++        258.625
++      ],
++      "clips": [
++        [
++          420.5,
++          260.5,
++          40.25,
++          4.25
++        ],
++        [
++          421.625,
++          261.625,
++          40.25,
++          6.25
++        ]
++      ],
++      "pixels": 184,
++      "maskSha256": "d3c869546f8eff3f7d83e7855ab41ed5c7f867da2588aedab23b9dcb01c74aa9"
++    },
++    {
++      "name": "nested_5",
++      "origin": [
++        519.875,
++        258.875
++      ],
++      "clips": [
++        [
++          520.75,
++          260.75,
++          40.25,
++          4.25
++        ],
++        [
++          521.875,
++          261.875,
++          40.25,
++          6.25
++        ]
++      ],
++      "pixels": 184,
++      "maskSha256": "0a1acf2dab9107b07d0025d2aadf35c78db1b85b15e5ba688aed6f083eeca1a8"
 +    }
 +  ]
 +}
