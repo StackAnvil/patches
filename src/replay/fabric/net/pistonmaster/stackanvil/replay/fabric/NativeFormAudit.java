@@ -17,7 +17,11 @@ import java.util.Map;
 
 /** Read-only, bounded form geometry observation on the client tick thread. */
 public final class NativeFormAudit {
-    private static final String SCREEN = "com.viaversion.viafabricplus.bedrock.screen.form.BedrockNativeFormScreen";
+    private static final String LEGACY_SCREEN = "com.viaversion.viafabricplus.bedrock.screen.form.BedrockNativeFormScreen";
+    private static final String SCENE_SCREEN = "com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen";
+    private static final String FORM_CONTROLLER = "com.viaversion.viafabricplus.bedrock.screen.form.BedrockFormController";
+    private static final String FALLBACK_SCREEN = "com.viaversion.viafabricplus.bedrock.screen.form.BedrockFallbackFormScreen";
+    private static final String JAVA_DIALOG = "net.minecraft.client.gui.screens.dialog.DialogScreen";
     private static final int MAX_NODES = 8192;
     private static final int MAX_ROWS = 512;
     private static final int MAX_SCREENS = 32;
@@ -35,20 +39,12 @@ public final class NativeFormAudit {
             Object gui = minecraft.getClass().getField("gui").get(minecraft);
             Object screen = call(gui, "screen");
             Object window = call(minecraft, "getWindow");
-            Map<String, Object> report = new LinkedHashMap<>();
-            report.put("screenClass", screen == null ? "none" : screen.getClass().getName());
-            report.put("nativeForm", screen != null && screen.getClass().getName().equals(SCREEN));
+            Map<String, Object> report = observe(screen);
             report.put("guiScale", finite(call(window, "getGuiScale")));
             report.put("pixelWidth", call(window, "getWidth"));
             report.put("pixelHeight", call(window, "getHeight"));
             report.put("guiWidth", call(window, "getGuiScaledWidth"));
             report.put("guiHeight", call(window, "getGuiScaledHeight"));
-            if (Boolean.TRUE.equals(report.get("nativeForm"))) {
-                report.put("formId", field(screen, "formId"));
-                report.put("pointer", List.of(finite(field(screen, "pointerX")), finite(field(screen, "pointerY"))));
-                Object root = field(screen, "root");
-                if (root != null) report.putAll(project(root));
-            }
             Path directory = Path.of(Files.readString(Path.of("stackanvil-replay-directory.txt")).trim());
             byte[] bytes = new Gson().toJson(report).getBytes(StandardCharsets.UTF_8);
             if (bytes.length > 1024 * 1024) throw new IllegalStateException("Form audit exceeds output limit");
@@ -66,6 +62,44 @@ public final class NativeFormAudit {
             // Do not export exception messages, which can contain authored text or resource locations.
             System.err.println("StackAnvil form observation disabled: " + error.getClass().getSimpleName());
         }
+    }
+
+    static Map<String, Object> observe(Object screen) throws ReflectiveOperationException {
+        Map<String, Object> report = new LinkedHashMap<>();
+        String screenClass = screen == null ? "none" : screen.getClass().getName();
+        report.put("screenClass", screenClass);
+        report.put("nativeForm", false);
+        report.put("nativeScene", false);
+        report.put("presentation", "other");
+        if (screenClass.equals(SCENE_SCREEN) || screenClass.equals(LEGACY_SCREEN)) {
+            boolean form = screenClass.equals(LEGACY_SCREEN);
+            if (!form) {
+                Object controller = field(screen, "controller");
+                String controllerClass = controller.getClass().getName();
+                report.put("controllerClass", controllerClass);
+                form = controllerClass.equals(FORM_CONTROLLER);
+                if (form) report.put("formId", field(controller, "formId"));
+            } else {
+                report.put("formId", field(screen, "formId"));
+            }
+            report.put("nativeForm", form);
+            report.put("nativeScene", true);
+            report.put("presentation", form ? "authored-form" : "authored-scene");
+            report.put("pointer", List.of(finite(field(screen, "pointerX")), finite(field(screen, "pointerY"))));
+            Object root = field(screen, "root");
+            if (root != null) report.putAll(project(root));
+        } else if (screenClass.equals(FALLBACK_SCREEN)) {
+            report.put("presentation", "addon-fallback-form");
+            report.put("formId", field(screen, "formId"));
+        } else if (screen != null) {
+            for (Class<?> type = screen.getClass(); type != null; type = type.getSuperclass()) {
+                if (type.getName().equals(JAVA_DIALOG)) {
+                    report.put("presentation", "java-dialog");
+                    break;
+                }
+            }
+        }
+        return report;
     }
 
     static Map<String, Object> project(Object root) throws ReflectiveOperationException {
@@ -116,17 +150,20 @@ public final class NativeFormAudit {
             Object properties = call(node, "properties");
             Object input = call(properties, "get", new Class<?>[] {String.class}, "input");
             if (input != null && input.toString().length() <= 4096) {
-                JsonObject values = JsonParser.parseString(input.toString()).getAsJsonObject();
-                Map<String, Object> metadata = new LinkedHashMap<>();
-                for (String key : List.of("index", "option")) {
-                    if (values.has(key) && values.get(key).isJsonPrimitive() && values.get(key).getAsJsonPrimitive().isNumber())
-                        metadata.put(key, values.get(key).getAsInt());
+                var parsed = JsonParser.parseString(input.toString());
+                if (parsed.isJsonObject()) {
+                    JsonObject values = parsed.getAsJsonObject();
+                    Map<String, Object> metadata = new LinkedHashMap<>();
+                    for (String key : List.of("index", "option")) {
+                        if (values.has(key) && values.get(key).isJsonPrimitive() && values.get(key).getAsJsonPrimitive().isNumber())
+                            metadata.put(key, values.get(key).getAsInt());
+                    }
+                    if (values.has("kind") && values.get("kind").isJsonPrimitive()) {
+                        String kind = values.get("kind").getAsString();
+                        if (List.of("toggle", "slider", "step_slider", "input", "dropdown", "multiselect", "submit").contains(kind)) metadata.put("kind", kind);
+                    }
+                    row.put("input", metadata);
                 }
-                if (values.has("kind") && values.get("kind").isJsonPrimitive()) {
-                    String kind = values.get("kind").getAsString();
-                    if (List.of("toggle", "slider", "step_slider", "input", "dropdown", "multiselect", "submit").contains(kind)) metadata.put("kind", kind);
-                }
-                row.put("input", metadata);
             }
             target.add(row);
         }
