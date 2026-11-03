@@ -85,7 +85,7 @@ All cache pixels and packed metrics match the installed LWJGL 3.4.3 STB rasteriz
 The controls cover six glyphs at heights 32, 64, and 96 for MinecraftTen and an additional curved-outline font.
 The fixture supplies atlas placement and external allocation, memory, and rounding interfaces.
 It does not execute cache I/O, GPU upload, shaders, or complete native screens.
-A replacement provider still needs bounded font validation, resource lifecycle checks, and native GPU comparisons.
+A replacement provider still needs bounded font validation, resource lifecycle checks, and matching native GPU output.
 
 Dynamic domain text uses the same native palette as ordinary labels.
 Help regressions cover translated components and exported program round trips.

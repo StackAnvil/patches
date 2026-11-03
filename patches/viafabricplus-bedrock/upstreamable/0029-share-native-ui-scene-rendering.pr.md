@@ -82,6 +82,13 @@ Java GUI scales 1, 2, 3, and return to 1 retain that match and all 63 selected b
 The background comparison excludes text bounds and the separate action button.
 The complete 180-second replay preserves the source scene payload and verifies the installed add-on bytes.
 
+An installed private STB prototype matches the verified cache raster but still differs after GPU rendering.
+At 1280 × 720 and native UI scale 2, seven settled sampler, shader, and placement controls retain all 63 selected bitmap masks.
+The best TrueType control matches three of nine label crops; other positions and styled labels still differ.
+An unsettled post-reload frame is excluded because its bitmap controls fail.
+These results do not justify a global placement adjustment or establish complete TrueType parity.
+Production font behavior remains unchanged. Native quad geometry, cursor advances, and texture addressing still need verification.
+
 Other TrueType families, glyph raster appearance, native font-type aliases, and complete screen appearance remain open.
 Other background layouts, action appearance, and complete column placement remain open.
 
