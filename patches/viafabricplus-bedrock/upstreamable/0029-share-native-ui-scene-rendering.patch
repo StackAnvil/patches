@@ -1,4 +1,4 @@
-From 9983bc5a0387c501aad9b45cd312e40209356ae3 Mon Sep 17 00:00:00 2001
+From 058f16e77f8092531a1d29231b6c35102a6d7406 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -877,6 +877,18 @@ cycles, owned font bytes, native metrics, close/reload, and pack ownership.
 The installed add-on matches all 72 selected label crops across Java GUI
 scales 1/2/3/1 and after resource reload, without an experimental font mod.
 Other fonts, native aliases, and complete screens retain their limits.
+
+Submit TrueType GUI vertices at native cache-space half precision before
+the separate 1.5 display transform. The shared 1.26.60.5 font mesh path
+stores half positions before projection. Display-space rounding loses
+that order and changes multi-glyph sampling. Keep world text on its
+existing vertex path and retain Java atlas allocation and retirement.
+
+Use exact texture bounds for owned native TrueType bitmaps. The original
+glyph producer submits the cache rectangle without Java's 0.01-texel
+inset. This correction and cache-space precision are both required by
+the current native label controls. The baked-glyph regression checks
+submitted vertices before the pose transform and preserves world text.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -891,6 +903,7 @@ Other fonts, native aliases, and complete screens retain their limits.
  .../render/MixinBedrockBitmapFont.java        |   40 +
  .../MixinBedrockBitmapGlyphRenderState.java   |   29 +
  .../MixinBedrockRenderingResources.java       |    2 +
+ .../render/MixinBedrockTrueTypeAtlas.java     |   23 +
  .../render/MixinBedrockTrueTypeFont.java      |   28 +
  .../render/MixinEntityRenderDispatcher.java   |   21 +-
  .../render/MixinGuiEntityRenderer.java        |   53 +
@@ -913,7 +926,7 @@ Other fonts, native aliases, and complete screens retain their limits.
  .../render/font/BedrockBitmapFont.java        |  251 +++++
  .../render/font/BedrockBitmapGlyph.java       |  105 ++
  .../render/font/BedrockBitmapPipeline.java    |   49 +
- .../render/font/BedrockTrueTypeFont.java      |  150 +++
+ .../render/font/BedrockTrueTypeFont.java      |  179 +++
  .../render/font/BedrockTrueTypeRaster.java    |  325 ++++++
  .../bedrock/screen/ui/BedrockHudOverlays.java |  128 +++
  .../screen/ui/BedrockNativeUiHurt.java        |   67 ++
@@ -963,7 +976,7 @@ Other fonts, native aliases, and complete screens retain their limits.
  .../shaders/core/bedrock_bitmap_font.vsh      |   29 +
  .../shaders/core/bedrock_truetype_font.fsh    |   10 +
  .../viafabricplus-bedrock.accesswidener       |    4 +
- .../viafabricplus-bedrock.mixins.json         |   14 +-
+ .../viafabricplus-bedrock.mixins.json         |   15 +-
  .../BedrockBitmapFontResourcesTest.java       |   67 ++
  .../BedrockGuiActorAppearanceTest.java        |   92 ++
  .../BedrockGuiActorContextTest.java           |  140 +++
@@ -974,7 +987,7 @@ Other fonts, native aliases, and complete screens retain their limits.
  .../render/font/BedrockBitmapFontTest.java    |  239 ++++
  .../render/font/BedrockBitmapGlyphTest.java   |   71 ++
  .../font/BedrockBitmapShaderGpuTest.java      |  291 +++++
- .../render/font/BedrockTrueTypeFontTest.java  |  171 +++
+ .../render/font/BedrockTrueTypeFontTest.java  |  203 ++++
  .../bedrock/screen/ui/AnimationPrograms.java  |   23 +
  .../screen/ui/BedrockNativeUiHurtTest.java    |   71 ++
  .../screen/ui/NativeHudOverlayStateTest.java  |  153 +++
@@ -1012,13 +1025,14 @@ Other fonts, native aliases, and complete screens retain their limits.
  .../resources/font/native-outline-fixture.txt |    4 +
  .../native-scrollbar-visibility.json          |  162 +++
  .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
- 134 files changed, 15705 insertions(+), 37 deletions(-)
+ 135 files changed, 15790 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapFont.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockBitmapGlyphRenderState.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockTrueTypeAtlas.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockTrueTypeFont.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiEntityRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeHudOverlays.java
@@ -1619,6 +1633,35 @@ index f70a0c9..f94612e 100644
          }
      }
  }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockTrueTypeAtlas.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockTrueTypeAtlas.java
+new file mode 100644
+index 0000000..25417b5
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockTrueTypeAtlas.java
+@@ -0,0 +1,23 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.mojang.blaze3d.font.GlyphBitmap;
++import com.mojang.blaze3d.font.GlyphInfo;
++import com.viaversion.viafabricplus.bedrock.render.font.BedrockTrueTypeFont;
++import net.minecraft.client.gui.font.FontTexture;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.Constant;
++import org.spongepowered.asm.mixin.injection.ModifyConstant;
++
++@Mixin(FontTexture.class)
++public abstract class MixinBedrockTrueTypeAtlas {
++    // Native glyph quads use exact cache boundaries before nearest sampling.
++    @ModifyConstant(method = "add", constant = @Constant(floatValue = 0.01F))
++    private float retainNativeTextureBounds(final float inset, final GlyphInfo info, final GlyphBitmap bitmap) {
++        return BedrockTrueTypeFont.usesNativeSampling(bitmap) ? 0 : inset;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockTrueTypeFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockTrueTypeFont.java
 new file mode 100644
 index 0000000..323d914
@@ -3238,10 +3281,10 @@ index 0000000..299cd6d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java
 new file mode 100644
-index 0000000..3a87824
+index 0000000..4fa6e5f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFont.java
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,179 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3329,20 +3372,7 @@ index 0000000..3a87824
 +        final BedrockTrueTypeRaster.Glyph glyph;
 +        try { glyph = this.raster.raster(codepoint); }
 +        catch (final IOException malformed) { return stitcher.getMissing(); }
-+        final BakedGlyph baked = stitcher.stitch(info, new GlyphBitmap() {
-+            @Override public int getPixelWidth() { return glyph.width(); }
-+            @Override public int getPixelHeight() { return glyph.height(); }
-+            @Override public float getOversample() { return glyph.oversample(); }
-+            @Override public float getBearingLeft() { return glyph.left(); }
-+            @Override public float getBearingTop() { return 7 - glyph.top(); }
-+            @Override public boolean isColored() { return false; }
-+            @Override public void upload(final int x, final int y, final GpuTexture texture) {
-+                try (var image = new NativeImage(NativeImage.Format.LUMINANCE, glyph.width(), glyph.height(), false)) {
-+                    image.getPixelBytes().put(glyph.pixels());
-+                    RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture, image, 0, 0, x, y);
-+                }
-+            }
-+        });
++        final BakedGlyph baked = stitcher.stitch(info, new Bitmap(glyph));
 +        return new BakedGlyph() {
 +            @Override public GlyphInfo info() { return baked.info(); }
 +            @Override public TextRenderable.Styled createGlyph(final float x, final float y, final int color, final int shadowColor,
@@ -3361,12 +3391,54 @@ index 0000000..3a87824
 +
 +    public static boolean usesNativeSampling(final TextRenderable renderable) { return renderable instanceof Instance; }
 +
++    public static boolean usesNativeSampling(final GlyphBitmap bitmap) { return bitmap instanceof Bitmap; }
++
++    private record Bitmap(BedrockTrueTypeRaster.Glyph glyph) implements GlyphBitmap {
++        @Override public int getPixelWidth() { return this.glyph.width(); }
++        @Override public int getPixelHeight() { return this.glyph.height(); }
++        @Override public float getOversample() { return this.glyph.oversample(); }
++        @Override public float getBearingLeft() { return this.glyph.left(); }
++        @Override public float getBearingTop() { return 7 - this.glyph.top(); }
++        @Override public boolean isColored() { return false; }
++        @Override public void upload(final int x, final int y, final GpuTexture texture) {
++            try (var image = new NativeImage(NativeImage.Format.LUMINANCE, this.glyph.width(), this.glyph.height(), false)) {
++                image.getPixelBytes().put(this.glyph.pixels());
++                RenderSystem.getDevice().createCommandEncoder().writeToTexture(texture, image, 0, 0, x, y);
++            }
++        }
++    }
++
++    /** Native stores cache-space vertices as half floats before the 1.5 display transform. */
++    private record CacheVertices(VertexConsumer target) implements VertexConsumer {
++        @Override public VertexConsumer addVertex(final float x, final float y, final float z) {
++            this.target.addVertex(x, y, z);
++            return this;
++        }
++        @Override public VertexConsumer addVertex(final Matrix4fc pose, final float x, final float y, final float z) {
++            this.target.addVertex(pose, cacheCoordinate(x), cacheCoordinate(y), z);
++            return this;
++        }
++        private static float cacheCoordinate(final float value) {
++            return Float.float16ToFloat(Float.floatToFloat16(value / 1.5F)) * 1.5F;
++        }
++        @Override public VertexConsumer setColor(final int r, final int g, final int b, final int a) { this.target.setColor(r, g, b, a); return this; }
++        @Override public VertexConsumer setColor(final int color) { this.target.setColor(color); return this; }
++        @Override public VertexConsumer setUv(final float u, final float v) { this.target.setUv(u, v); return this; }
++        @Override public VertexConsumer setUv1(final int u, final int v) { this.target.setUv1(u, v); return this; }
++        @Override public VertexConsumer setUv2(final int u, final int v) { this.target.setUv2(u, v); return this; }
++        @Override public VertexConsumer setUv3(final float u, final float v) { this.target.setUv3(u, v); return this; }
++        @Override public VertexConsumer setNormal(final float x, final float y, final float z) { this.target.setNormal(x, y, z); return this; }
++        @Override public VertexConsumer setLineWidth(final float width) { this.target.setLineWidth(width); return this; }
++    }
++
 +    private record Glyph(BedrockTrueTypeFont font, int codepoint, GlyphInfo info) implements UnbakedGlyph {
 +        @Override public BakedGlyph bake(final Stitcher stitcher) { return this.font.bake(stitcher, this.codepoint, this.info); }
 +    }
 +
 +    private record Instance(TextRenderable.Styled source) implements TextRenderable.Styled {
-+        @Override public void render(final Matrix4fc pose, final VertexConsumer vertices, final int light, final boolean shadow) { this.source.render(pose, vertices, light, shadow); }
++        @Override public void render(final Matrix4fc pose, final VertexConsumer vertices, final int light, final boolean inverseDepth) {
++            this.source.render(pose, inverseDepth ? new CacheVertices(vertices) : vertices, light, inverseDepth);
++        }
 +        @Override public RenderType renderType(final Font.DisplayMode mode) { return this.source.renderType(mode); }
 +        @Override public GpuTextureView textureView() { return this.source.textureView(); }
 +        @Override public RenderPipeline guiPipeline() { return Pipeline.GUI; }
@@ -10139,10 +10211,10 @@ index 8e8672c..288cc7a 100644
 +accessible field net/minecraft/client/gui/GuiGraphicsExtractor scissorStack Lnet/minecraft/client/gui/GuiGraphicsExtractor$ScissorStack;
 +accessible field net/minecraft/client/gui/GuiGraphicsExtractor$ScissorStack stack Ljava/util/Deque;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 16d451d..9fc3533 100644
+index 16d451d..0936821 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -150,6 +150,12 @@
+@@ -150,6 +150,13 @@
      "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",
@@ -10150,12 +10222,13 @@ index 16d451d..9fc3533 100644
 +    "features.render.MixinPictureInPictureRenderer",
 +    "features.render.MixinNativeUiPictures",
 +    "features.render.MixinBedrockBitmapFont",
++    "features.render.MixinBedrockTrueTypeAtlas",
 +    "features.render.MixinBedrockTrueTypeFont",
 +    "features.render.MixinBedrockBitmapGlyphRenderState",
      "features.input.MixinKeyboardInput",
      "features.input.MixinLocalPlayerInput",
      "features.input.MixinClientInput",
-@@ -204,7 +210,13 @@
+@@ -204,7 +211,13 @@
      "features.render.MixinBedrockCameraFade",
      "features.entities.MixinClientEntityTracking",
      "features.entities.MixinMinecraftProjectileOwners",
@@ -11291,10 +11364,10 @@ index 0000000..0e8ffc2
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java
 new file mode 100644
-index 0000000..b6a6f61
+index 0000000..4a3b84f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/font/BedrockTrueTypeFontTest.java
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,203 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11305,6 +11378,7 @@ index 0000000..b6a6f61
 +import com.mojang.blaze3d.font.GlyphBitmap;
 +import com.mojang.blaze3d.font.GlyphInfo;
 +import com.mojang.blaze3d.font.UnbakedGlyph;
++import com.mojang.blaze3d.vertex.VertexConsumer;
 +import java.io.ByteArrayInputStream;
 +import java.io.IOException;
 +import java.nio.ByteBuffer;
@@ -11313,6 +11387,11 @@ index 0000000..b6a6f61
 +import java.util.Arrays;
 +import java.nio.charset.StandardCharsets;
 +import net.minecraft.client.gui.font.glyphs.BakedGlyph;
++import net.minecraft.client.gui.font.glyphs.BakedSheetGlyph;
++import net.minecraft.network.chat.Style;
++import org.joml.Matrix4f;
++import org.mockito.Answers;
++import java.util.List;
 +import net.minecraft.resources.Identifier;
 +import net.minecraft.server.packs.PackResources;
 +import net.minecraft.server.packs.PackType;
@@ -11361,6 +11440,32 @@ index 0000000..b6a6f61
 +            assertArrayEquals(HexFormat.of().parseHex("0000000000000000000004222608002e8c9b3f022a6a753702"), curve.pixels());
 +            assertEquals(5, curve.width());
 +            assertEquals(5, curve.height());
++        }
++    }
++
++    @Test
++    void submitsCachePrecisionBeforeTheDisplayTransformAndPreservesWorldVertices() throws Exception {
++        try (var font = new BedrockTrueTypeFont(new BedrockTrueTypeRaster(fixture(), 32), "")) {
++            final var stitcher = mock(UnbakedGlyph.Stitcher.class);
++            when(stitcher.stitch(any(), any())).thenAnswer(call -> {
++                final GlyphInfo info = call.getArgument(0);
++                final GlyphBitmap bitmap = call.getArgument(1);
++                return new BakedSheetGlyph(info, null, null, 0, 1, 0, 1,
++                        bitmap.getLeft(), bitmap.getRight(), bitmap.getTop(), bitmap.getBottom());
++            });
++            final var glyph = font.getGlyph(65).bake(stitcher).createGlyph(28.325806F, 0, -1, 0, Style.EMPTY, 0, 0);
++            final var pose = new Matrix4f().scaling(2);
++            final var nativeVertices = mock(VertexConsumer.class, Answers.RETURNS_SELF);
++            glyph.render(pose, nativeVertices, 0, true);
++            final var nativeX = ArgumentCaptor.forClass(Float.class);
++            verify(nativeVertices, times(4)).addVertex(same(pose), nativeX.capture(), anyFloat(), anyFloat());
++            assertEquals(List.of(28.2421875F, 28.2421875F, 29.7421875F, 29.7421875F), nativeX.getAllValues());
++            final var worldVertices = mock(VertexConsumer.class, Answers.RETURNS_SELF);
++            glyph.render(pose, worldVertices, 0, false);
++            final var worldX = ArgumentCaptor.forClass(Float.class);
++            verify(worldVertices, times(4)).addVertex(same(pose), worldX.capture(), anyFloat(), anyFloat());
++            assertEquals(28.232056F, worldX.getAllValues().getFirst());
++            assertNotEquals(nativeX.getAllValues(), worldX.getAllValues());
 +        }
 +    }
 +

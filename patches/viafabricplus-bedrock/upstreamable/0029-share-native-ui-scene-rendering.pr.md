@@ -66,7 +66,7 @@ Java GUI scales 1, 2, 3, and return to 1 retain those masks.
 These controls cover short heights, scaled labels, explicit newlines, automatic wrapping, and overflow markers.
 
 At the same viewport and scale controls, all 24 installed MinecraftTen cases admit the native number of lines.
-Their glyph masks still differ. These controls establish line admission, not complete TrueType raster parity.
+These controls establish line admission. The current raster comparisons appear below.
 
 Labels preserve carriage-return glyphs during measurement and drawing, including before LF.
 NUL terminates label traversal across styled runs and excludes suffixes from measurement.
@@ -97,7 +97,12 @@ At 1280 × 720 and native UI scale 2, the shipping add-on matches all 72 tested 
 Java GUI scales 1, 2, 3, and return to 1 retain all 63 bitmap and nine TrueType matches.
 A completed resource reload retains all 72 matches. The full build and 180-second replay pass.
 
-Installed comparisons for other TrueType families, native font aliases, and complete screen appearance remain open.
+TrueType GUI vertices retain half precision in cache coordinates before the 1.5 display transform.
+The owned native bitmaps keep exact atlas bounds. A baked-glyph regression checks vertex submission before the pose and preserves world text.
+At 1280 × 720 and native UI scale 2, all 32 font-selection labels match native Bedrock 1.26.60.5.
+The controls include `AgW@éj`, formatted text, the primary MinecraftTenEmoticon alias, and explicit Unicode.
+Java GUI scales 1, 2, 3, return to 1, and a completed resource reload retain these matches.
+Other font families, mixed or scaled aliases, styled geometry, and complete screen appearance remain open.
 
 Other background layouts, action appearance, and complete column placement remain open.
 
@@ -118,7 +123,7 @@ Tests cover different durations, repeated requests, successor chains, missing co
 Native Bedrock 1.26.60.5 Escape frames retain the fade after the size track finishes.
 This mechanism does not establish exact native frame timing.
 These controls do not establish identical native pooling or frame timing.
-Broader viewports, complete inventory pixels, entrance timing, and TrueType comparisons remain open.
+Broader viewports, complete inventory pixels, entrance timing, and other TrueType families remain open.
 
 The shared hurt receiver binds queued events to the connection and local actor lifetime.
 It consumes pending events against the current scene and retains the counter across ordinary screen changes.

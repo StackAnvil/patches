@@ -96,8 +96,6 @@ Native font registrations survive downloaded font metadata. Unrestricted, unscal
 Explicit `unicode` labels select Unicode even for ASCII. Canonical font-file overrides remain unverified.
 Regressions cover these selection boundaries and cyclic alias rejection.
 Native Bedrock 1.26.60.5 controls cover server declarations, the built-in primary alias, and explicit Unicode.
-At 1280 × 720, 28 of 32 label crops match across Java GUI scales 1, 2, 3, and return to 1.
-Four MinecraftTen crops of `AgW@éj` still differ by 16–24 pixels. The `@` and `é` CPU rasters match native.
 
 UI labels and dynamic domain text use the fully merged globals, including the bundled default palette.
 Program transport retains these colors. Protocol text keeps server-only overrides.
