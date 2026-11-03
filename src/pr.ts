@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { getSeries, getTarget, root, type Target, type UpstreamablePatch } from "./model.ts";
 import { parsePatchMessage } from "./patch-message.ts";
 import { gh, git } from "./process.ts";
-import { prMode, sync } from "./stack.ts";
+import { assertPrProductionChanges, prMode, sync } from "./stack.ts";
 
 export interface ArtifactReference {
   runId?: string;
@@ -167,6 +167,8 @@ export function renderPrBody(
     "",
     provenance,
     "",
+    "Test sources, fixtures, and test-only build configuration stay in StackAnvil's local stack and are excluded from this PR.",
+    "",
     extraBody.trim(),
   ];
   if (artifact.runId || artifact.artifactId) {
@@ -224,6 +226,7 @@ export const syncPr = Effect.fn("syncPr")(function* (
   const count = yield* git(["rev-list", "--count", `${target.baseSha}..HEAD`], dir);
   if (count !== "1")
     return yield* Effect.fail(new Error(`Expected exactly one PR commit, found ${count}`));
+  yield* assertPrProductionChanges(dir, target.baseSha);
   const remote = `https://github.com/${target.fork}.git`;
   const head = prHead(patchFile);
   const remoteHead = yield* git(["ls-remote", remote, `refs/heads/${head}`], dir);

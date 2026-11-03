@@ -24,7 +24,12 @@ The [PaperSpigot 1.8.8 apply script](https://github.com/PaperMC/Paper-archive/bl
 | Patch notes in commit messages | Put the purpose and maintenance details in the commit body. They remain in the exported patch and become the PR change summary. `stack add` requires a body, and `stack rebuild` keeps the series title aligned with the commit subject. |
 | Independently test an upstreamable patch | `bun run pr check <project>` applies the first patch to clean upstream. Add `--patch <file>` to check another patch. |
 
-StackAnvil keeps `setup`, `upstreamable`, and `deferred` separate in `series.json`. Full builds apply them in that order. Setup prepares StackAnvil builds. Upstreamable patches can become focused PRs. Deferred patches track work that another contributor already owns upstream, with a reason and PR link for each entry. The PR checkout applies only the first upstreamable patch to the pinned upstream base. The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
+StackAnvil keeps `setup`, `upstreamable`, and `deferred` separate in `series.json`. Full builds apply them in that order. Setup prepares StackAnvil builds. Upstreamable patches can become focused PRs. Deferred patches track work that another contributor already owns upstream, with a reason and PR link for each entry. The PR checkout applies only the production changes from the first upstreamable patch to the pinned upstream base.
+PR preparation excludes test sources, fixtures, test dependencies, and test-only Gradle configuration.
+The saved patches and full-stack checkouts retain these local tests.
+After upstream merges the feature, remove its local tests when retiring the owning patch.
+Do not submit those tests as a separate upstream PR.
+The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
 
 Paper's per-file source and resource patches solve the problem of editing decompiled Minecraft code. Our four patch targets are existing Git repositories, so they do not need that layer. We also apply patches one at a time instead of building a large `git am` argument list. This keeps conflict recovery tied to one explicit `series.json` entry and avoids the older Windows command-length issue. We do not add Paper-specific source markers to upstream code.
 
@@ -49,7 +54,15 @@ bun run pr body viabedrock --patch 0085-resolve-server-effects-relative-to-their
 bun run pr sync viabedrock --patch 0085-resolve-server-effects-relative-to-their-actor.patch
 ```
 
-A successful `pr check` proves that the selected patch applies. Use `pr build` to compile it and run its tests. PR builds select the target JDK from `targets.json`, just like full builds. Set `STACKANVIL_JAVA_<version>` to select an installed JDK explicitly.
+A successful `pr check` proves that the filtered production patch applies.
+Use `pr build` to compile that patch with the upstream build configuration.
+It does not run the local regression tests excluded from the PR.
+Run those tests through the full stack separately, and identify that scope in the PR validation notes.
+PR builds select the target JDK from `targets.json`, just like full builds.
+Set `STACKANVIL_JAVA_<version>` to select an installed JDK explicitly.
+Preparation stops if filtering leaves no production changes.
+Conflict recovery and publication reject tests reintroduced into the PR checkout.
+If test exclusion removes all context from a production Gradle change, expand the patch context before PR preparation.
 
 If a patch requires an API from another unmerged patch, record that dependency in its `upstreamable` entry:
 
@@ -67,7 +80,11 @@ If a patch requires an API from another unmerged patch, record that dependency i
 }
 ```
 
-The prerequisite file must exist in the named project's upstreamable directory. Full builds still apply the complete local stacks. If the selected patch has recorded prerequisites, PR preparation stops before it resets a checkout.
+The prerequisite file must exist in the named project's upstreamable directory.
+Full builds still apply the complete local stacks.
+If the selected patch has production prerequisites, PR preparation stops before it resets a checkout.
+Set `testOnly: true` on a prerequisite that supplies only local test configuration.
+PR preparation excludes that configuration, so this prerequisite does not block the PR.
 
 After the required API reaches the pinned upstream base or dependency, remove the resolved prerequisite. Then run both `pr check` and `pr build`. A local build against StackAnvil artifacts does not establish standalone upstream compatibility.
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import {
   type UpstreamablePatch,
 } from "./model.ts";
 import { git } from "./process.ts";
+import { projectPrPatch } from "./pr-patch.ts";
 
 type Check = "passed" | "failed" | "not-run";
 
@@ -100,8 +101,11 @@ async function applies(directory: string, patch: string, reverse = false): Promi
 
 async function standaloneApply(directory: string, patch: string, base: string): Promise<Check> {
   try {
+    const projected = projectPrPatch(await readFile(patch, "utf8"));
+    const prPatch = join(directory, ".git", "stackanvil-pr.patch");
+    await writeFile(prPatch, projected.patch);
     // Match pr check's three-way application, with no setup or preceding patch in the source tree.
-    await runGit(["am", "--3way", "--committer-date-is-author-date", patch], directory);
+    await runGit(["am", "--3way", "--committer-date-is-author-date", prPatch], directory);
     return "passed";
   } catch {
     return "failed";
@@ -265,7 +269,7 @@ export async function patchHealth(
       const entries: Pick<UpstreamablePatch, "file" | "prerequisites">[] =
         group === "setup" ? stack.setup.map((file) => ({ file })) : stack[group];
       for (const entry of entries) {
-        const prerequisites = entry.prerequisites ?? [];
+        const prerequisites = entry.prerequisites?.filter(({ testOnly }) => !testOnly) ?? [];
         project.patches.push({
           file: entry.file,
           group,

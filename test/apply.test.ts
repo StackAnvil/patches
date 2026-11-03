@@ -61,14 +61,22 @@ test("an interrupted patch apply can continue or abort without losing the series
     deferred: [{ file: "0001-third.patch", reason: "Another contributor owns the upstream change." }],
   }));
   await writeFile(join(author, "note.txt"), "first\n");
-  await git(["add", "note.txt"], author);
+  await mkdir(join(author, "src", "test"), { recursive: true });
+  await writeFile(join(author, "src", "test", "local.txt"), "first regression\n");
+  await git(["add", "."], author);
   await git(["commit", "-m", "chore(test): first"], author);
   const firstPatch = join(project, "patches", "fixture", "setup", "0001-first.patch");
   const originalFirstPatch = await git(["format-patch", "--stdout", "-1"], author);
   await writeFile(firstPatch, originalFirstPatch);
   await git(["reset", "--hard", baseSha], author);
+  await mkdir(join(author, "src", "test"), { recursive: true });
+  await writeFile(join(author, "src", "test", "local.txt"), "first regression\n");
+  await git(["add", "."], author);
+  await git(["commit", "-m", "test: prepare local fixture"], author);
   await writeFile(join(author, "note.txt"), "second\n");
-  await git(["add", "note.txt"], author);
+  await mkdir(join(author, "src", "test"), { recursive: true });
+  await writeFile(join(author, "src", "test", "local.txt"), "second regression\n");
+  await git(["add", "."], author);
   await git(["commit", "-m", "feat(test): second", "-m", "Explain why the second patch changes this file."], author);
   const secondPatch = join(project, "patches", "fixture", "upstreamable", "0001-second.patch");
   const conflictingPatch = await git(["format-patch", "--stdout", "-1"], author);
@@ -93,6 +101,13 @@ test("an interrupted patch apply can continue or abort without losing the series
   expect(await git(["show", "-s", "--format=%ce", "HEAD"], prCheckout)).toBe("test@example.invalid");
   expect(await readFile(join(prCheckout, "note.txt"), "utf8")).toBe("second\n");
   await expect(readFile(join(prCheckout, "deferred.txt"), "utf8")).rejects.toThrow();
+  await expect(readFile(join(prCheckout, "src", "test", "local.txt"), "utf8")).rejects.toThrow();
+  expect(await readFile(secondPatch, "utf8")).toBe(conflictingPatch);
+  const selectedCheckout = join(project, ".worktrees", "fixture-pr-0001-second");
+  await git(["clone", upstream, selectedCheckout], fixture);
+  await run("bun", [cli, "pr", "check", "fixture", "--patch", "0001-second.patch"], project);
+  expect(await readFile(join(selectedCheckout, "note.txt"), "utf8")).toBe("second\n");
+  await expect(readFile(join(selectedCheckout, "src", "test", "local.txt"), "utf8")).rejects.toThrow();
   await run("bun", [cli, "stack", "sync", "fixture"], project, true);
   expect((await readFile(join(project, ".stackanvil", "fixture-full-apply.json"), "utf8")).length).toBeGreaterThan(0);
   await writeFile(join(checkout, "note.txt"), "resolved\n");
@@ -102,6 +117,7 @@ test("an interrupted patch apply can continue or abort without losing the series
   expect(await git(["show", "-s", "--format=%ce", "HEAD"], checkout)).toBe("test@example.invalid");
   expect(await readFile(join(checkout, "note.txt"), "utf8")).toBe("resolved\n");
   expect(await readFile(join(checkout, "deferred.txt"), "utf8")).toBe("third\n");
+  expect(await readFile(join(checkout, "src", "test", "local.txt"), "utf8")).toBe("second regression\n");
   await expect(readFile(join(project, ".stackanvil", "fixture-full-apply.json"), "utf8")).rejects.toThrow();
 
   const seriesFile = join(project, "patches", "fixture", "series.json");
@@ -114,6 +130,18 @@ test("an interrupted patch apply can continue or abort without losing the series
   expect(rebuilt).toBe(originalFirstPatch);
   await run("bun", [cli, "stack", "rebuild", "fixture"], project);
   expect(await readFile(firstPatch, "utf8")).toBe(rebuilt);
+
+  // The rebuilt production change now depends on setup and requires a PR conflict resolution.
+  await run("bun", [cli, "pr", "check", "fixture"], project, true);
+  await writeFile(join(prCheckout, "note.txt"), "resolved\n");
+  await mkdir(join(prCheckout, "src", "test"), { recursive: true });
+  await writeFile(join(prCheckout, "src", "test", "accidental.txt"), "local test\n");
+  await git(["add", "."], prCheckout);
+  expect(await run("bun", [cli, "stack", "continue", "fixture", "--pr"], project, true)).toContain("include local tests");
+  await git(["rm", "-f", "src/test/accidental.txt"], prCheckout);
+  await run("bun", [cli, "stack", "continue", "fixture", "--pr"], project);
+  expect(await git(["rev-list", "--count", `${baseSha}..HEAD`], prCheckout)).toBe("1");
+  expect(await readFile(join(prCheckout, "note.txt"), "utf8")).toBe("resolved\n");
 
   await writeFile(secondPatch, conflictingPatch);
   await run("bun", [cli, "stack", "sync", "fixture"], project, true);

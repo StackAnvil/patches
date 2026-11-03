@@ -12,6 +12,7 @@ import {
   type Target,
 } from "./model.ts";
 import { parsePatchMessage } from "./patch-message.ts";
+import { projectPrPatch } from "./pr-patch.ts";
 import { command, git } from "./process.ts";
 
 interface EditSession {
@@ -25,6 +26,7 @@ interface ApplySession {
   baseSha: string;
   patches: string[];
   nextIndex: number;
+  prPatch?: string;
 }
 
 export const workdir = (id: string, mode = "full") =>
@@ -88,7 +90,7 @@ const applyRemaining = Effect.fn("applyRemaining")(function* (
 ) {
   const recoveryCommand = `bun run stack continue ${id}${mode === "pr" ? " --pr" : ""}${patchFile ? ` --patch ${patchFile}` : ""}`;
   for (let index = session.nextIndex; index < session.patches.length; index++) {
-    const patch = session.patches[index]!;
+    const patch = session.prPatch ?? session.patches[index]!;
     yield* applyPatch(["am", "--3way", "--committer-date-is-author-date", patch], dir, patch).pipe(
       Effect.mapError(
         (cause) =>
@@ -182,6 +184,10 @@ export const sync = Effect.fn("sync")(function* (
       catch: (cause) => cause as Error,
     });
   }
+  const projected =
+    mode === "pr"
+      ? yield* Effect.tryPromise(() => readFile(patches[0]!, "utf8").then(projectPrPatch))
+      : undefined;
   const dir = yield* cloneIfMissing(id, target, modeKey);
   yield* resetToBase(dir, target, modeKey);
   if (patches.length === 0) {
@@ -189,7 +195,9 @@ export const sync = Effect.fn("sync")(function* (
     return dir;
   }
   yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
-  const session: ApplySession = { baseSha: target.baseSha, patches, nextIndex: 0 };
+  const prPatch = projected ? join(root, ".stackanvil", `${id}-${modeKey}.patch`) : undefined;
+  if (prPatch) yield* Effect.promise(() => writeFile(prPatch, projected!.patch));
+  const session: ApplySession = { baseSha: target.baseSha, patches, nextIndex: 0, prPatch };
   yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
   return yield* applyRemaining(id, dir, path, mode, modeKey, session, patchFile);
 });
@@ -218,6 +226,11 @@ export const continueApply = Effect.fn("continueApply")(function* (
     );
   }
   const dir = workdir(id, modeKey);
+  if (mode === "pr" && !session.prPatch) {
+    return yield* Effect.fail(
+      new Error("This PR apply predates test exclusion. Abort the apply, then run pr check again."),
+    );
+  }
   if (!existsSync(join(dir, ".git", "rebase-apply"))) {
     return yield* Effect.fail(
       new Error(`Git has no active am operation in ${dir}. Inspect it before removing ${path}.`),
@@ -231,10 +244,36 @@ export const continueApply = Effect.fn("continueApply")(function* (
       ),
     );
   }
-  yield* applyPatch(["am", "--continue"], dir, session.patches[session.nextIndex]!);
+  if (mode === "pr") yield* assertPrProductionChanges(dir, target.baseSha, true);
+  yield* applyPatch(
+    ["am", "--continue"],
+    dir,
+    session.prPatch ?? session.patches[session.nextIndex]!,
+  );
   session.nextIndex++;
   yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
   return yield* applyRemaining(id, dir, path, mode, modeKey, session, patchFile);
+});
+
+export const assertPrProductionChanges = Effect.fn("assertPrProductionChanges")(function* (
+  dir: string,
+  baseSha: string,
+  staged = false,
+) {
+  const diff = yield* git(
+    ["diff", "--binary", ...(staged ? ["--cached", baseSha] : [baseSha, "HEAD"])],
+    dir,
+  );
+  const projected = yield* Effect.try({
+    try: () => projectPrPatch(diff),
+    catch: (cause) => cause as Error,
+  });
+  if (projected.omittedTests)
+    return yield* Effect.fail(
+      new Error(
+        "PR changes include local tests or test configuration. Remove them from the PR checkout before continuing.",
+      ),
+    );
 });
 
 export const abortApply = Effect.fn("abortApply")(function* (

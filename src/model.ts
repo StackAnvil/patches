@@ -19,12 +19,13 @@ export interface Target {
 export interface UpstreamablePatch {
   file: string;
   title: string;
-  prerequisites?: { project: string; patch: string; reason: string }[];
+  prerequisites?: { project: string; patch: string; reason: string; testOnly?: boolean }[];
 }
 
 export function assertPrReady(patch: UpstreamablePatch): void {
-  if (!patch.prerequisites?.length) return;
-  const prerequisites = patch.prerequisites
+  const required = patch.prerequisites?.filter(({ testOnly }) => !testOnly) ?? [];
+  if (!required.length) return;
+  const prerequisites = required
     .map(({ project, patch: file, reason }) => `${project}/${file}: ${reason}`)
     .join("\n");
   throw new Error(
@@ -96,7 +97,8 @@ export async function getSeries(id: string, repository = root): Promise<Series> 
       if (
         !targets[prerequisite.project] ||
         !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.patch$/.test(prerequisite.patch) ||
-        !prerequisite.reason?.trim()
+        !prerequisite.reason?.trim() ||
+        (prerequisite.testOnly !== undefined && typeof prerequisite.testOnly !== "boolean")
       ) {
         throw new Error(`Invalid prerequisite for ${id}/${patch.file}`);
       }

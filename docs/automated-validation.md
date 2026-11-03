@@ -25,7 +25,7 @@ bun run stack health cubeconverter --upstream --output dist/cubeconverter-health
 The command clones each selected upstream into a temporary directory. It leaves generated editing checkouts and saved patches untouched.
 It performs these checks:
 
-1. Apply each upstreamable patch without recorded prerequisites to the pinned base, independently.
+1. Apply each [filtered PR patch](patch-workflow.md) without production prerequisites to the pinned base, independently.
 2. Replay the full stack against the pinned base.
 3. Identify equivalent upstream commits and verify that their patches reverse cleanly at the inspected tip.
 4. Apply independent candidates to the inspected upstream tip.
@@ -39,7 +39,7 @@ Missing PR context remains advisory until a maintainer prepares that PR.
 
 Git patch equivalence detects matching changes. It cannot recognize every upstream rewrite or prove semantic equivalence.
 Historical matches that no longer reverse cleanly remain advisory. The upstream rehearsal does not omit those patches.
-An existing prerequisite remains unresolved until a maintainer reviews and removes it.
+An existing production prerequisite remains unresolved until a maintainer reviews and removes it.
 
 The scheduled `patch-health.yml` workflow runs every Monday at 07:23 UTC.
 It also accepts manual dispatch. Each run uploads JSON and Markdown reports and adds the Markdown to its job summary.

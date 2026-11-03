@@ -13,6 +13,10 @@ This repository stores patch files and the tools that apply them. The generated 
 - Keep changes separate when they are independently reviewable, have different upstream owners, or need different prerequisites.
 - After folding a patch into an earlier one, remove its patch file and `series.json` entry. Replay and test the full stack.
 - Keep each upstreamable patch's purpose in its commit body. Before creating or updating its upstream PR, add a non-empty `.pr.md` file beside the patch with the same base filename for PR-specific context and testing.
+- Keep tests, fixtures, test dependencies, and test-only build configuration in the local patch stack. Exclude them from every upstream PR.
+- Use the filtered PR checkout for upstream builds and review. Run local regression tests through the full stack separately.
+- Mark prerequisites that supply only test configuration with `testOnly: true`. They must not block a production-only PR.
+- After upstream merges a feature, remove its local tests when retiring the owning patch. Do not submit a separate test PR.
 - Use `deferred` only when another upstream PR already covers the change. Record a non-empty reason with a link to that PR in `series.json`. Never include deferred patches in our upstream PR branches.
 - Explain non-obvious choices in the patch commit body. The commit body becomes part of the exported patch and helps reviewers maintain it later.
 - Do not change an existing patch filename just because its commit hash changes. Its place in `series.json` is the ordering source of truth.
