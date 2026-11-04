@@ -1,4 +1,4 @@
-From c2118b2d96da7c1906878eba61d978b78244ce4e Mon Sep 17 00:00:00 2001
+From cbc5634efe860719fba9a27110c5a85d40aea4f0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -792,6 +792,20 @@ the original request channel and never receive unsolicited ready messages.
 For acknowledgment-bound input, another request for the same pending
 opening reissues OpenInventory without allocating a new screen token.
 Keep legacy requests idempotent and publish readiness once per opening.
+
+Retain every nonempty dynamic bundle entry instead of truncating the Java
+component at the first empty slot. Bedrock 1.26.60.5/protocol2225 original
+layout/cache and cell-lookup controls retain sparse source indices and display
+later entries first. Java display indices must resolve through the same
+occupied-slot ordering before extraction or selection.
+
+Reorder merges across occupied physical slots, skip empty slots during
+extraction, and compact only when the physical last slot prevents appending.
+Keep stack network IDs and item quantities on the actual source slots, and
+retain the existing request/prediction/recovery boundary. Native controls
+establish filtering and source order; unit controls establish the new sparse
+request plans. Their exact packet sequence and installed native UI parity
+still need matching live controls.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
@@ -822,7 +836,7 @@ Keep legacy requests idempotent and publish readiness once per opening.
  .../container/block/SmithingContainer.java    |  223 +
  .../container/block/SmokerContainer.java      |   45 +
  .../container/block/StonecutterContainer.java |  247 +
- .../container/dynamic/BundleContainer.java    |  254 +-
+ .../container/dynamic/BundleContainer.java    |  286 +-
  .../container/player/ArmorContainer.java      |   47 +
  .../model/container/player/HudContainer.java  |   31 +-
  .../container/player/InventoryContainer.java  |   87 +-
@@ -853,7 +867,7 @@ Keep legacy requests idempotent and publish readiness once per opening.
  .../protocol/packet/MultiStatePackets.java    |   34 +-
  .../protocol/packet/WorldPackets.java         |   12 +
  .../protocol/rewriter/ItemRewriter.java       |  281 +-
- .../rewriter/item/BundleItemRewriter.java     |   58 +-
+ .../rewriter/item/BundleItemRewriter.java     |   65 +-
  .../storage/CraftedItemSynchronization.java   |  128 +
  .../protocol/storage/CraftingDataTracker.java |  206 +
  .../storage/InventoryRequestRecovery.java     |   80 +
@@ -911,9 +925,9 @@ Keep legacy requests idempotent and publish readiness once per opening.
  .../packet/Protocol2225InventoryTest.java     |  225 +
  .../protocol/packet/SpearJabTest.java         |    6 +-
  .../ItemRewriterBlockEntityItemTest.java      |   85 +
- .../rewriter/item/BundleItemRewriterTest.java |  279 +
+ .../rewriter/item/BundleItemRewriterTest.java |  296 +
  .../storage/BundleHolderPacketTest.java       |  450 ++
- .../storage/BundleInventoryActionTest.java    |  577 ++
+ .../storage/BundleInventoryActionTest.java    |  635 ++
  .../CraftedItemSynchronizationTest.java       |  287 +
  .../InventoryContainerGenerationTest.java     |  118 +
  .../storage/InventoryMergeActionTest.java     |  837 +++
@@ -932,7 +946,7 @@ Keep legacy requests idempotent and publish readiness once per opening.
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 139 files changed, 29037 insertions(+), 2043 deletions(-)
+ 139 files changed, 29145 insertions(+), 2049 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
@@ -5462,7 +5476,7 @@ index 00000000..753b6727
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
-index c5e11f4e..538ac91a 100644
+index c5e11f4e..0c3433d1 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
 @@ -21,25 +21,46 @@ import com.viaversion.nbt.tag.IntTag;
@@ -5547,7 +5561,7 @@ index c5e11f4e..538ac91a 100644
      }
  
      @Override
-@@ -95,10 +107,179 @@ public class BundleContainer extends Container {
+@@ -95,10 +107,211 @@ public class BundleContainer extends Container {
          return holdingContainer.key().javaContainerId();
      }
  
@@ -5578,16 +5592,15 @@ index c5e11f4e..538ac91a 100644
 +    }
 +
 +    public void toggleSelectedItem(final int index) {
-+        this.selectedItem = index == this.selectedItem || index < 0 || index >= this.contentsSize() ? -1 : index;
++        this.selectedItem = index == this.selectedItem || index < 0 || index >= this.occupiedSlots().size() ? -1 : index;
 +    }
 +
 +    public BedrockItem selectedItem(final boolean useSelection) {
-+        final int size = this.contentsSize();
-+        if (size == 0) {
++        final List<Integer> slots = this.occupiedSlots();
++        if (slots.isEmpty()) {
 +            return BedrockItem.empty();
 +        }
-+        final int index = useSelection && this.selectedItem >= 0 && this.selectedItem < size ? this.selectedItem : 0;
-+        return this.getItem(size - index - 1);
++        return this.getItem(this.selectedSlot(useSelection, slots));
 +    }
 +
 +    public List<ItemStackRequestAction> insert(final Container source, final int sourceSlot) {
@@ -5612,29 +5625,48 @@ index c5e11f4e..538ac91a 100644
 +        if (amount == 0) {
 +            return List.of();
 +        }
-+        final int size = this.contentsSize();
-+        int destinationSlot = size;
-+        for (int slot = size - 1; slot >= 0; slot--) {
-+            if (!this.getItem(slot).isDifferent(item)) {
-+                destinationSlot = slot;
++        final List<Integer> slots = this.occupiedSlots();
++        int mergeIndex = -1;
++        for (int index = slots.size() - 1; index >= 0; index--) {
++            if (!this.getItem(slots.get(index)).isDifferent(item)) {
++                mergeIndex = index;
 +                break;
 +            }
 +        }
-+        if (destinationSlot == this.size()) {
++        if (mergeIndex == -1 && slots.size() == this.size()) {
 +            return List.of();
 +        }
 +        final List<ItemStackRequestAction> actions = new ArrayList<>();
++        final int destinationSlot;
 +        // Java moves a merged stack to the front of its reversed bundle contents.
-+        if (destinationSlot < size) {
-+            for (int slot = destinationSlot; slot < size - 1; slot++) {
-+                final BedrockItem moving = this.getItem(slot);
-+                final BedrockItem next = this.getItem(slot + 1);
-+                actions.add(new ItemStackRequestAction.SwapAction(this.requestSlotInfo(slot, moving.netId()),
-+                        this.requestSlotInfo(slot + 1, next.netId())));
-+                this.setItem(slot, next.copy());
-+                this.setItem(slot + 1, moving.copy());
++        if (mergeIndex != -1) {
++            for (int index = mergeIndex; index < slots.size() - 1; index++) {
++                final int from = slots.get(index);
++                final int to = slots.get(index + 1);
++                final BedrockItem moving = this.getItem(from);
++                final BedrockItem next = this.getItem(to);
++                actions.add(new ItemStackRequestAction.SwapAction(this.requestSlotInfo(from, moving.netId()),
++                        this.requestSlotInfo(to, next.netId())));
++                this.setItem(from, next.copy());
++                this.setItem(to, moving.copy());
 +            }
-+            destinationSlot = size - 1;
++            destinationSlot = slots.getLast();
++        } else if (!slots.isEmpty() && slots.getLast() == this.size() - 1) {
++            // Reclaim holes only when appending would exceed the physical container.
++            for (int index = 0; index < slots.size(); index++) {
++                final int from = slots.get(index);
++                if (from == index) {
++                    continue;
++                }
++                final BedrockItem moving = this.getItem(from);
++                actions.add(new ItemStackRequestAction.PlaceAction(moving.amount(), this.requestSlotInfo(from, moving.netId()),
++                        this.requestSlotInfo(index, 0)));
++                this.setItem(index, moving.copy());
++                this.setItem(from, BedrockItem.empty());
++            }
++            destinationSlot = slots.size();
++        } else {
++            destinationSlot = slots.isEmpty() ? 0 : slots.getLast() + 1;
 +        }
 +        final BedrockItem previous = this.getItem(destinationSlot);
 +        final BedrockItem inserted = previous.isEmpty() ? item.copy() : previous.copy();
@@ -5652,35 +5684,49 @@ index c5e11f4e..538ac91a 100644
 +
 +    public List<ItemStackRequestAction> extract(final Container destination, final int destinationSlot,
 +                                                final boolean useSelection) {
-+        final BedrockItem extracted = this.selectedItem(useSelection);
++        final List<Integer> slots = this.occupiedSlots();
++        if (slots.isEmpty()) {
++            return List.of();
++        }
++        final int slot = this.selectedSlot(useSelection, slots);
++        final BedrockItem extracted = this.getItem(slot);
 +        if (extracted.isEmpty() || extracted.netId() == null || !destination.getItem(destinationSlot).isEmpty()) {
 +            return List.of();
 +        }
-+        final int size = this.contentsSize();
-+        final int index = useSelection && this.selectedItem >= 0 && this.selectedItem < size ? this.selectedItem : 0;
-+        final int slot = size - index - 1;
 +        final List<ItemStackRequestAction> actions = new ArrayList<>();
 +        actions.add(new ItemStackRequestAction.TakeAction(extracted.amount(), this.requestSlotInfo(slot, extracted.netId()),
 +                destination.requestSlotInfo(destinationSlot, 0)));
 +        destination.setItem(destinationSlot, extracted.copy());
 +        this.setItem(slot, BedrockItem.empty());
-+        for (int next = slot + 1; next < size; next++) {
++        int previous = slot;
++        for (final int next : slots) {
++            if (next <= slot) {
++                continue;
++            }
 +            final BedrockItem moving = this.getItem(next);
 +            actions.add(new ItemStackRequestAction.PlaceAction(moving.amount(), this.requestSlotInfo(next, moving.netId()),
-+                    this.requestSlotInfo(next - 1, 0)));
-+            this.setItem(next - 1, moving.copy());
++                    this.requestSlotInfo(previous, 0)));
++            this.setItem(previous, moving.copy());
 +            this.setItem(next, BedrockItem.empty());
++            previous = next;
 +        }
 +        this.selectedItem = -1;
 +        return actions;
 +    }
 +
-+    private int contentsSize() {
-+        int size = 0;
-+        while (size < this.size() && !this.getItem(size).isEmpty()) {
-+            size++;
++    private List<Integer> occupiedSlots() {
++        final List<Integer> slots = new ArrayList<>();
++        for (int slot = 0; slot < this.size(); slot++) {
++            if (!this.getItem(slot).isEmpty()) {
++                slots.add(slot);
++            }
 +        }
-+        return size;
++        return slots;
++    }
++
++    private int selectedSlot(final boolean useSelection, final List<Integer> slots) {
++        final int index = useSelection && this.selectedItem >= 0 && this.selectedItem < slots.size() ? this.selectedItem : 0;
++        return slots.get(slots.size() - index - 1);
 +    }
 +
 +    private Fraction weight(final Set<FullContainerName> visited) {
@@ -5727,7 +5773,7 @@ index c5e11f4e..538ac91a 100644
      private Pair<Container, Integer> findHoldingContainer() {
          final InventoryTracker inventoryTracker = this.user.get(InventoryTracker.class);
  
-@@ -135,27 +316,32 @@ public class BundleContainer extends Container {
+@@ -135,27 +348,32 @@ public class BundleContainer extends Container {
              return -1;
          }
  
@@ -12031,10 +12077,10 @@ index ef69ec10..464a3466 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriter.java
-index 2b7212e9..0b4f77db 100644
+index 2b7212e9..a34da403 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriter.java
-@@ -17,38 +17,44 @@
+@@ -17,45 +17,46 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter.item;
  
@@ -12080,15 +12126,23 @@ index 2b7212e9..0b4f77db 100644
              return;
          }
  
+-        Item[] javaItems = bundleContainer.getJavaBundleItems();
+-        for (int i = 0; i < javaItems.length; i++) {
+-            if (javaItems[i].isEmpty()) {
+-                javaItems = Arrays.copyOfRange(javaItems, 0, i);
+-                break;
+-            }
 +        if (nestedBundleCount(user, bundleContainer, new HashSet<>(), new HashMap<>()) == null) {
 +            ViaBedrock.getPlatform().getLogger().warning(
 +                    "Cannot represent cyclic or over-capacity nested bundle contents: " + containerName);
 +            return;
-+        }
-         Item[] javaItems = bundleContainer.getJavaBundleItems();
-         for (int i = 0; i < javaItems.length; i++) {
-             if (javaItems[i].isEmpty()) {
-@@ -64,4 +70,38 @@ public class BundleItemRewriter implements ItemRewriter.NbtRewriter {
+         }
++        final Item[] javaItems = Arrays.stream(bundleContainer.getJavaBundleItems())
++                .filter(item -> !item.isEmpty()).toArray(Item[]::new);
+         for (int i = 0; i < javaItems.length / 2; i++) {
+             final Item temp = javaItems[i];
+             javaItems[i] = javaItems[javaItems.length - i - 1];
+@@ -64,4 +65,38 @@ public class BundleItemRewriter implements ItemRewriter.NbtRewriter {
          javaItem.dataContainer().set(VersionedTypes.V26_3.structuredDataKeys().bundleContents, javaItems);
      }
  
@@ -36008,10 +36062,10 @@ index 00000000..9da6aff5
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriterTest.java
 new file mode 100644
-index 00000000..0c48844d
+index 00000000..2384641b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriterTest.java
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,296 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -36111,6 +36165,23 @@ index 00000000..0c48844d
 +        assertNull(fixture.translate(item));
 +        assertNull(fixture.translate(bundle(2)));
 +        assertEquals(0, fixture.translate(bundle(0)).length);
++    }
++
++    @Test
++    void sparseContentsRetainItemsAfterGapsInNewestFirstOrder() throws ReflectiveOperationException {
++        final Fixture fixture = new Fixture();
++        final BundleContainer contents = fixture.register(0);
++        contents.setItem(0, item(306, 4, 4));
++        contents.setItem(3, item(523, 3, 5));
++        contents.setItem(63, item(331, 2, 6));
++        final Item[] translated = fixture.translate(bundle(0));
++        assertEquals(3, translated.length);
++        assertEquals(331, translated[0].identifier());
++        assertEquals(2, translated[0].amount());
++        assertEquals(523, translated[1].identifier());
++        assertEquals(3, translated[1].amount());
++        assertEquals(306, translated[2].identifier());
++        assertEquals(4, translated[2].amount());
 +    }
 +
 +    @Test
@@ -36749,10 +36820,10 @@ index 00000000..27a645bc
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/BundleInventoryActionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/BundleInventoryActionTest.java
 new file mode 100644
-index 00000000..eefbbd0d
+index 00000000..ec51d335
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/BundleInventoryActionTest.java
-@@ -0,0 +1,577 @@
+@@ -0,0 +1,635 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -37060,6 +37131,64 @@ index 00000000..eefbbd0d
 +        assertEquals(306, bundle.getItem(0).identifier());
 +        assertTrue(bundle.getItem(1).isEmpty());
 +        assertEquals(306, bundle.selectedItem(true).identifier());
++    }
++
++    @Test
++    void sparseSelectionExtractsItsRealSourceAndMovesOnlyFollowingItems() throws Exception {
++        final Fixture f = new Fixture();
++        final BundleContainer bundle = f.bundle(0);
++        bundle.setItem(0, item(306, 4, 4));
++        bundle.setItem(3, item(523, 3, 5));
++        bundle.setItem(63, item(331, 2, 6));
++        f.screen.setItem(0, bundleItem(0));
++        f.screen.selectBundleItem((short) 0, 1);
++        assertEquals(523, bundle.selectedItem(true).identifier());
++        final List<ItemStackRequestAction> actions = f.pickup(0, 1);
++        assertEquals(List.of(new ItemStackRequestAction.TakeAction(3, bundle.requestSlotInfo(3, 5),
++                        f.inventory.getHudContainer().requestSlotInfo(0, 0)),
++                new ItemStackRequestAction.PlaceAction(2, bundle.requestSlotInfo(63, 6), bundle.requestSlotInfo(3, 0))), actions);
++        assertEquals(523, f.inventory.getHudContainer().getItem(0).identifier());
++        assertEquals(306, bundle.getItem(0).identifier());
++        assertEquals(331, bundle.getItem(3).identifier());
++        assertTrue(bundle.getItem(63).isEmpty());
++        assertEquals(331, bundle.selectedItem(true).identifier());
++    }
++
++    @Test
++    void sparseInsertionReclaimsGapsWhenTheLastSlotIsOccupied() throws Exception {
++        final Fixture f = new Fixture();
++        final BundleContainer bundle = f.bundle(0);
++        bundle.setItem(0, item(523, 3, 5));
++        bundle.setItem(63, item(331, 2, 6));
++        f.screen.setItem(0, bundleItem(0));
++        f.inventory.getHudContainer().setItem(0, item(306, 4, 4));
++        final List<ItemStackRequestAction> actions = f.pickup(0, 0);
++        assertEquals(List.of(new ItemStackRequestAction.PlaceAction(2, bundle.requestSlotInfo(63, 6), bundle.requestSlotInfo(1, 0)),
++                new ItemStackRequestAction.PlaceAction(4, f.inventory.getHudContainer().requestSlotInfo(0, 4), bundle.requestSlotInfo(2, 0))), actions);
++        assertEquals(523, bundle.getItem(0).identifier());
++        assertEquals(331, bundle.getItem(1).identifier());
++        assertEquals(306, bundle.getItem(2).identifier());
++        assertTrue(bundle.getItem(63).isEmpty());
++        assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
++    }
++
++    @Test
++    void sparseMergeMovesTheMatchedStackAcrossRealOccupiedSlots() throws Exception {
++        final Fixture f = new Fixture();
++        final BundleContainer bundle = f.bundle(0);
++        bundle.setItem(0, item(306, 4, 4));
++        bundle.setItem(63, item(523, 3, 5));
++        f.screen.setItem(0, bundleItem(0));
++        f.inventory.getHudContainer().setItem(0, item(306, 2, 6));
++        final List<ItemStackRequestAction> actions = f.pickup(0, 0);
++        assertEquals(List.of(new ItemStackRequestAction.SwapAction(bundle.requestSlotInfo(0, 4), bundle.requestSlotInfo(63, 5)),
++                new ItemStackRequestAction.PlaceAction(2, f.inventory.getHudContainer().requestSlotInfo(0, 6), bundle.requestSlotInfo(63, 4))), actions);
++        assertEquals(523, bundle.getItem(0).identifier());
++        assertEquals(306, bundle.getItem(63).identifier());
++        assertEquals(6, bundle.getItem(63).amount());
++        assertEquals(4, bundle.getItem(63).netId());
++        assertTrue(bundle.getItem(1).isEmpty());
++        assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
 +    }
 +
 +    @Test
