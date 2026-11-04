@@ -24,6 +24,15 @@ The original 1.26.60.5 producer executes 159 controls; 24 representative cases s
 The controls supply Item queries, typed NBT lookup, container/vector backing, and descriptor storage.
 Component defaults, tooltip selection, source timing, and complete installed pixels remain unverified.
 
+Storage weight, physical tooltip snapshots, and transfer planning share the native container-identity decoder.
+Original storage admission and child lookup controls execute the native CompoundTag presence and typed-int getters: a present string identity selects container zero, while an absent identity selects none.
+Local regressions cover zero-container weight, unknown contents, tooltip transport, and physical insertion.
+Full protocol tag construction and installed controller behavior remain outside these controls.
+
+`ItemStoragePolicy` retains typed slot limits, nesting flags, and immutable lowercase descriptor maps on each selected definition.
+Registry regressions cover packet mutation, numeric-ID collisions, absent updates, and malformed replacements without inventing unrestricted filters.
+Descriptor binding, its version context, and live request execution remain unfinished.
+
 Packet, menu-lifetime, and action tests cover supported adapters. Complete installed player/cooking controllers and live native parity remain unfinished.
 
 Action-form dialog labels use the accepted pack translator, as the title and body already do.
