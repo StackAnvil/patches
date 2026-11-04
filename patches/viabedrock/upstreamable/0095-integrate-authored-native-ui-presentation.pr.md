@@ -34,4 +34,4 @@ This verifies the generic fallback defect; the original Lifeboat dialog report s
 
 The [owning patch](0095-integrate-authored-native-ui-presentation.patch) retains implementation rationale and versioned evidence.
 
-Bundle items retain versioned physical-slot counts and the server component's viewable-slot limit. Original 1.26.60.5 fixtures cover sparse cell mapping, overflow-prefix counts, and wider layouts. This supplies tooltip data and layout; authored tooltip state, rendering, and input remain unfinished.
+Bundle items retain physical-slot counts, the server component's viewable-slot limit, native primary names, and localized empty descriptions. Original 1.26.60.5 fixtures cover sparse and overflow mapping, wider layouts, custom namespaces, and translation fallback. Authored tooltip state, rendering, and input remain unfinished.
