@@ -161,6 +161,9 @@ The [shared renderer notes](0029-share-native-ui-scene-rendering.pr.md) describe
 
 Unavailable recipes retain separate ingredient and output previews for the current opening.
 Real items and active drag previews take precedence over empty-slot previews.
-Focused core and client tests cover request rejection, search persistence, reopening, and item ownership.
+Core and client tests cover request rejection, search persistence, reopening, item ownership, pending publication, and count controls before item draws.
+Installed direct and ViaProxy controls show four-plank and four-stick outputs over empty real crafting slots without allocating inventory requests.
+Search edits and blank-slot focus preserve the previews. Reopening clears them and retains the query.
+With one log available, an ordinary recipe click places the real input and shows four output planks.
 Bedrock 1.26.60.5 provides the native selection and lifetime reference.
-Installed direct/proxy comparison of this preview change and complete native pixels remain unverified.
+Complete native pixels, fallback variant order, variant cycling, and broader recipe families remain unverified.

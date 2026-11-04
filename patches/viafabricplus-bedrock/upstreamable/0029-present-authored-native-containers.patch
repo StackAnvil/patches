@@ -1,4 +1,4 @@
-From 3dfa605f96569b52574aaa3fd121aa6cee8b9d26 Mon Sep 17 00:00:00 2001
+From dae7b4abdd6fc01d39ddced40c09423b3c40d406 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -774,6 +774,13 @@ with a log ghost and four-plank output, no inventory request, persistence
 through search and blank focus, and clearing after reopening. Focused
 presentation tests cover ownership, real-slot precedence and lifetime.
 These tests do not establish complete native GPU or variant parity.
+
+Resolve count and durability controls from the eligible crafting ghost
+when no item draw has populated the per-frame preview. Authored painter
+order must not decide the display stack. Share the same empty-slot and
+active-drag admission with item rendering, while retaining real stacks
+and vanilla draw overrides. A renderer-boundary test draws count first,
+then verifies real-item precedence and suppression during drag selection.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemStyle.java          |   14 +
@@ -787,7 +794,7 @@ These tests do not establish complete native GPU or variant parity.
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1398 ++++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1410 +++++++++++++++++
  .../container/BedrockNativeContainers.java    |  283 ++++
  .../container/BedrockNativeCooking.java       |  147 ++
  .../BedrockNativePlayerInventory.java         |  173 ++
@@ -846,7 +853,7 @@ These tests do not establish complete native GPU or variant parity.
  .../container/NativeCookingActionsTest.java   |  346 ++++
  ...tiveCookingPresentationControllerTest.java |  216 +++
  .../NativeCookingPresentationTest.java        |  144 ++
- .../container/NativeCookingScreenTest.java    | 1409 +++++++++++++++++
+ .../container/NativeCookingScreenTest.java    | 1409 ++++++++++++++++
  .../NativeFurnacePreferenceStateTest.java     |   45 +
  .../container/NativeInventoryFlightsTest.java |   70 +
  .../NativeInventoryItemPresentationTest.java  |  126 ++
@@ -855,10 +862,10 @@ These tests do not establish complete native GPU or variant parity.
  .../container/NativePlayerHelpTextTest.java   |   34 +
  .../NativePlayerInventoryLifetimeTest.java    |  142 ++
  .../NativePlayerPresentationTest.java         |  189 +++
- .../container/NativePlayerScreenTest.java     |  670 ++++++++
+ .../container/NativePlayerScreenTest.java     |  720 +++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 ++
  .../PlayerInventoryScreenLifecycleTest.java   |  139 ++
- 83 files changed, 11464 insertions(+), 62 deletions(-)
+ 83 files changed, 11526 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerScreenAdmission.java
@@ -1408,10 +1415,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..4d5b68b
+index 0000000..aaba67f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1398 @@
+@@ -0,0 +1,1410 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2195,8 +2202,8 @@ index 0000000..4d5b68b
 +            throw new IllegalArgumentException("Inventory item has no actual slot");
 +        final Slot slot =
 +                this.menu.slots.get(box.node().properties().get("inventory_slot").getAsInt());
-+        final var ghost = this.craftingPreview.get(slot.index);
-+        if (ghost != null && !slot.hasItem() && !(this.isQuickCrafting && this.quickCraftSlots.contains(slot))) {
++        final var ghost = this.craftingGhost(slot);
++        if (!ghost.isEmpty()) {
 +            if (box.visibleBounds().contains(mouseX, mouseY)) NativeInventoryItemPresentation.requireTooltip(ghost);
 +            graphics.pose().pushMatrix();
 +            try {
@@ -2233,9 +2240,23 @@ index 0000000..4d5b68b
 +        } else super.extractTooltip(graphics, mouseX, mouseY);
 +    }
 +
++    private ItemStack craftingGhost(final Slot slot) {
++        final var ghost = this.craftingPreview.get(slot.index);
++        return ghost != null && !slot.hasItem() && !(this.isQuickCrafting && this.quickCraftSlots.contains(slot))
++                ? ghost : ItemStack.EMPTY;
++    }
++
++    private Preview displayPreview(final int index) {
++        final var rendered = this.previews.get(index);
++        if (rendered != null) return rendered;
++        final var slot = this.menu.slots.get(index);
++        final var ghost = this.craftingGhost(slot);
++        return new Preview(ghost.isEmpty() ? slot.getItem() : ghost, null);
++    }
++
 +    private void count(final GuiGraphicsExtractor graphics, final NativeUiLayout.Box box, final float alpha) {
 +        final int slot = box.node().properties().get("inventory_slot").getAsInt();
-+        final var preview = this.previews.getOrDefault(slot, new Preview(this.menu.slots.get(slot).getItem(), null));
++        final var preview = this.displayPreview(slot);
 +        final String count = NativeInventoryItemPresentation.countText(preview.stack.getCount(), preview.count);
 +        if (count.isEmpty()) return;
 +        this.renderer.label(graphics, box, alpha, this.renderer.styled(box.node(), Component.literal(count)));
@@ -2247,19 +2268,17 @@ index 0000000..4d5b68b
 +        if (bag != null && bag.has("is_durability") && bag.get("is_durability").getAsBoolean()
 +            && box.node().properties().has("inventory_slot")) {
 +            final var preview =
-+                    this.previews.get(box.node().properties().get("inventory_slot").getAsInt());
-+            if (preview != null) {
-+                final var props = box.node().properties().deepCopy();
-+                props.addProperty(
-+                        "touch_progress_bar_visible",
-+                        preview.stack.isDamageableItem() && preview.stack.isDamaged());
-+                props.addProperty("progress_bar_total_amount", preview.stack.getMaxDamage());
-+                props.addProperty(
-+                        "progress_bar_current_amount",
-+                        preview.stack.getMaxDamage() - preview.stack.getDamageValue());
-+                final var node = new NativeUiScene.Node(box.node().name(), box.node().type(), props, box.node().children(), box.node().action());
-+                progress = new NativeUiLayout.Box(node, box.bounds(), box.clip(), box.content(), box.scrollViewport(), box.layer(), box.children());
-+            }
++                    this.displayPreview(box.node().properties().get("inventory_slot").getAsInt());
++            final var props = box.node().properties().deepCopy();
++            props.addProperty(
++                    "touch_progress_bar_visible",
++                    preview.stack.isDamageableItem() && preview.stack.isDamaged());
++            props.addProperty("progress_bar_total_amount", preview.stack.getMaxDamage());
++            props.addProperty(
++                    "progress_bar_current_amount",
++                    preview.stack.getMaxDamage() - preview.stack.getDamageValue());
++            final var node = new NativeUiScene.Node(box.node().name(), box.node().type(), props, box.node().children(), box.node().action());
++            progress = new NativeUiLayout.Box(node, box.bounds(), box.clip(), box.content(), box.scrollViewport(), box.layer(), box.children());
 +        }
 +        for (final var quad : NativeInventoryProgress.quads(progress, alpha, (float) this.minecraft.getWindow().getGuiScale())) {
 +            graphics.pose().pushMatrix();
@@ -12045,10 +12064,10 @@ index 0000000..f2916dd
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
 new file mode 100644
-index 0000000..8e80ac5
+index 0000000..968ec9d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
-@@ -0,0 +1,670 @@
+@@ -0,0 +1,720 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12057,8 +12076,11 @@ index 0000000..8e80ac5
 +package com.viaversion.viafabricplus.bedrock.screen.container;
 +
 +import com.mojang.blaze3d.platform.InputConstants;
++import com.google.gson.JsonObject;
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiPresentation;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiRenderer;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiScene;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiLayout;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiFocus;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiCollectionWindow;
@@ -12067,6 +12089,7 @@ index 0000000..8e80ac5
 +import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
 +import com.viaversion.viaversion.api.minecraft.item.Item;
 +import java.util.List;
++import java.util.Set;
 +import java.util.Arrays;
 +import java.util.stream.Collectors;
 +import java.util.stream.IntStream;
@@ -12082,6 +12105,7 @@ index 0000000..8e80ac5
 +import net.minecraft.client.Options;
 +import net.minecraft.client.StringSplitter;
 +import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
 +import net.minecraft.client.gui.Gui;
 +import net.minecraft.client.gui.screens.Screen;
 +import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -12100,6 +12124,7 @@ index 0000000..8e80ac5
 +import net.minecraft.world.entity.player.Inventory;
 +import net.minecraft.world.entity.player.Player;
 +import net.minecraft.world.inventory.InventoryMenu;
++import net.minecraft.world.inventory.Slot;
 +import net.minecraft.world.inventory.ContainerInput;
 +import net.minecraft.world.item.ItemStack;
 +import net.minecraft.world.item.Items;
@@ -12124,6 +12149,50 @@ index 0000000..8e80ac5
 +    @BeforeAll
 +    static void bootstrap() throws Exception {
 +        NativePlayerPresentationTest.bootstrap();
++    }
++
++    @Test
++    @SuppressWarnings("unchecked")
++    void countControlsReadGhostsBeforeTheItemDrawWhileRealItemsAndDraggingKeepPrecedence() throws Exception {
++        final var game = mock(Minecraft.class);
++        final var player = mock(LocalPlayer.class);
++        final var inventory = new Inventory(player, new EntityEquipment());
++        final var menu = new InventoryMenu(inventory, true, player);
++        final var ordinary = mock(AbstractContainerScreen.class);
++        when(ordinary.getMenu()).thenReturn(menu);
++        try (final var singleton = mockStatic(Minecraft.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            final var screen = new BedrockNativeContainerScreen(mock(ClientPacketListener.class), ordinary, inventory,
++                    Component.empty(), mock(NativePlayerPresentation.class), false, 1, () -> 0, () -> true);
++            final var ghost = new ItemStack(Items.IRON_INGOT, 4);
++            set(BedrockNativeContainerScreen.class, screen, "craftingPreview", Map.of(0, ghost));
++            final var renderer = mock(NativeUiRenderer.class);
++            when(renderer.styled(any(), any(Component.class))).thenAnswer(call -> call.getArgument(1));
++            set(BedrockNativeContainerScreen.class, screen, "renderer", renderer);
++            final var properties = new JsonObject();
++            properties.addProperty("inventory_slot", 0);
++            final var node = new NativeUiScene.Node("count", "label", properties, List.of(), Integer.MIN_VALUE);
++            final var bounds = new NativeUiLayout.Rect(0, 0, 16, 16);
++            final var box = new NativeUiLayout.Box(node, bounds, bounds, new NativeUiLayout.Size(16, 16), bounds, 0, List.of());
++            final var graphics = mock(GuiGraphicsExtractor.class);
++            final var count = BedrockNativeContainerScreen.class.getDeclaredMethod("count", GuiGraphicsExtractor.class, NativeUiLayout.Box.class, float.class);
++            count.setAccessible(true);
++            count.invoke(screen, graphics, box, 1F);
++            verify(renderer).label(eq(graphics), eq(box), eq(1F), argThat(text -> text.getString().equals("4")));
++            menu.getSlot(0).set(new ItemStack(Items.IRON_INGOT, 2));
++            count.invoke(screen, graphics, box, 1F);
++            verify(renderer).label(eq(graphics), eq(box), eq(1F), argThat(text -> text.getString().equals("2")));
++            menu.getSlot(0).set(ItemStack.EMPTY);
++            set(AbstractContainerScreen.class, screen, "isQuickCrafting", true);
++            final var quickCraftSlots = AbstractContainerScreen.class.getDeclaredField("quickCraftSlots");
++            quickCraftSlots.setAccessible(true);
++            ((Set<Slot>) quickCraftSlots.get(screen)).add(menu.getSlot(0));
++            clearInvocations(renderer);
++            count.invoke(screen, graphics, box, 1F);
++            verifyNoInteractions(renderer);
++            assertEquals(4, ghost.getCount());
++            assertTrue(menu.getSlot(0).getItem().isEmpty());
++        }
 +    }
 +
 +    private static IntStream catalogButtons() {

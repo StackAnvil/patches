@@ -1,4 +1,4 @@
-From 6f308a51dbc732c9812ea1cecb56e9faf9c02502 Mon Sep 17 00:00:00 2001
+From 87780334745a8b05155dab9657d066e253946407 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -410,18 +410,29 @@ no unlocked oak-planks recipes exposed the previous extra filter.
 The boundary regression searches a locked recipe with an empty inventory,
 publishes its ghosts, and verifies that neither a request ID nor an item
 request is allocated. It also retains search/reopening and replay guards.
+
+Keep optional crafting previews out of generation-zero publications. Pass
+the exact generation captured by publish into snapshot construction so a
+retiring or pending opening cannot invalidate the complete message. Skip
+unrepresentable preview slots and omit a preview whose output is missing.
+Retain recipe rows and search while unsupported display items remain absent.
+
+Ignore placeholder candidates without any nonempty ingredient before
+counting. Tests preserve later candidates and the no-selection result,
+and cover generation-zero snapshots, unmapped preview inputs/output,
+search persistence, reopening and no request allocation.
 ---
  .../model/NativePlayerInventoryAction.java    |  94 +++
  .../model/NativePlayerInventoryMessage.java   | 334 +++++++++
  .../model/NativePlayerInventoryResult.java    |  47 ++
- .../model/container/NativeRecipeCounter.java  | 109 +++
+ .../model/container/NativeRecipeCounter.java  | 119 +++
  .../model/container/NativeRecipeCrafting.java | 286 ++++++++
  .../container/NativeRecipeDescriptor.java     |  44 ++
  .../block/CraftingTableContainer.java         |   2 +-
- .../resourcepack/ui/PlayerInventoryUi.java    | 397 +++++++++++
+ .../resourcepack/ui/PlayerInventoryUi.java    | 397 ++++++++++
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/model/CreativeCatalog.java       | 266 +++++++
- .../model/CreativeInventoryModel.java         | 198 ++++++
+ .../model/CreativeInventoryModel.java         | 198 +++++
  .../protocol/model/PlayerRecipeContext.java   |  96 +++
  .../protocol/model/PlayerRecipeModel.java     | 125 ++++
  .../protocol/packet/InventoryPackets.java     | 213 ++++--
@@ -430,16 +441,16 @@ request is allocated. It also retains search/reopening and replay guards.
  .../protocol/storage/CraftingDataTracker.java | 217 +++++-
  .../storage/InventoryRequestTracker.java      |  24 +
  .../protocol/storage/InventoryTracker.java    |  21 +
- .../storage/NativePlayerRecipeState.java      | 672 ++++++++++++++++++
+ .../storage/NativePlayerRecipeState.java      | 675 ++++++++++++++++++
  .../storage/PlayerInventoryScreenTracker.java |  40 +-
  .../NativePlayerInventoryMessageTest.java     | 197 +++++
- .../container/NativeRecipeCounterTest.java    |  76 ++
+ .../container/NativeRecipeCounterTest.java    |  84 +++
  .../container/NativeRecipeDescriptorTest.java |  24 +
  .../container/NativeRecipeQuantityTest.java   |  61 ++
  .../ui/PlayerInventoryUiTest.java             | 126 ++++
  .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++
  .../protocol/packet/InventoryPacketsTest.java | 266 +++++--
- .../rewriter/PlayerRecipeModelTest.java       | 601 ++++++++++++++++
+ .../rewriter/PlayerRecipeModelTest.java       | 611 ++++++++++++++++
  ...egisteredPlayerRecipeAvailabilityTest.java |   5 +-
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 262 +++++++
@@ -447,7 +458,7 @@ request is allocated. It also retains search/reopening and replay guards.
  .../NativePlayerCreativeAuxiliaryTest.java    | 333 +++++++++
  .../storage/NativePlayerCreativePickTest.java | 138 ++++
  .../storage/NativeRecipeCraftingTest.java     | 500 +++++++++++++
- 36 files changed, 6170 insertions(+), 169 deletions(-)
+ 36 files changed, 6201 insertions(+), 169 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -962,10 +973,10 @@ index 00000000..e69bf410
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java
-index fe874172..aaad2173 100644
+index fe874172..96547dc6 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java
-@@ -150,6 +150,111 @@ public final class NativeRecipeCounter {
+@@ -150,6 +150,121 @@ public final class NativeRecipeCounter {
          return partial || selectedOutput.getAsBoolean() ? 2 : 3;
      }
  
@@ -979,6 +990,16 @@ index fe874172..aaad2173 100644
 +        for (int index = 0; index < candidates.size(); index++) {
 +            final var candidate = candidates.get(index);
 +            if (candidate.requiresCraftingTable && !workbench) {
++                continue;
++            }
++            boolean hasIngredient = false;
++            for (int position = 0; position < candidate.recipe.ingredientCount(); position++) {
++                if (!candidate.recipe.emptyIngredient(position)) {
++                    hasIngredient = true;
++                    break;
++                }
++            }
++            if (!hasIngredient) {
 +                continue;
 +            }
 +            final var round = count(candidate.recipe, sources, descriptorHash).rounds.getFirst();
@@ -1077,7 +1098,7 @@ index fe874172..aaad2173 100644
      /** Output lookup owns candidate admission, concrete grid requirements and priority. */
      public record Candidate(int priority, boolean requiresCraftingTable, Recipe recipe) {
          public Candidate {
-@@ -164,6 +269,10 @@ public final class NativeRecipeCounter {
+@@ -164,6 +279,10 @@ public final class NativeRecipeCounter {
          boolean emptyIngredient(int index);
  
          boolean matchesIngredient(int index, BedrockItem item);
@@ -3462,10 +3483,10 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..73c55e2d
+index 00000000..e31190d4
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
-@@ -0,0 +1,672 @@
+@@ -0,0 +1,675 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3666,7 +3687,7 @@ index 00000000..73c55e2d
 +            return;
 +        }
 +        try {
-+            final var snapshot = this.snapshot();
++            final var snapshot = this.snapshot(generation);
 +            final int menuId = this.context.workbench() ? Byte.toUnsignedInt(inventory.getCurrentContainer().javaContainerId()) : 0;
 +            final String exported = program == this.publishedProgram && this.publication != null
 +                    ? this.publication.program() : new PlayerInventoryUi(program).exportProgram(this.context.workbench()).toString();
@@ -4008,7 +4029,7 @@ index 00000000..73c55e2d
 +        return true;
 +    }
 +
-+    private Presentation snapshot() {
++    private Presentation snapshot(final long generation) {
 +        final var items = this.user().get(ItemRewriter.class);
 +        final var recipes = this.user().get(CraftingDataTracker.class);
 +        final var resources = this.user().get(ResourcePackStorage.class);
@@ -4099,14 +4120,17 @@ index 00000000..73c55e2d
 +                tab, this.preferences.rightTab(), filtering, NbtUtf8.decode(this.model.query()),
 +                key.isEmpty() ? "" : resources.getTexts().translate(key), resources.getTexts().translate(label), counts, cells, "", -1);
 +        final Map<Integer, Item> crafting = new HashMap<>();
-+        if (!creative && this.craftingPreview != null) {
++        if (!creative && generation != 0 && this.craftingPreview != null) {
 +            this.craftingPreview.slots().forEach((slot, item) -> {
 +                final var translated = items.javaItem(item);
 +                if (translated.isEmpty()) {
-+                    throw new IllegalArgumentException("Unrepresentable crafting preview");
++                    return;
 +                }
 +                crafting.put(slot, translated);
 +            });
++            if (!crafting.containsKey(0)) {
++                crafting.clear();
++            }
 +        }
 +        return new Presentation(state, previews, crafting);
 +    }
@@ -4454,10 +4478,10 @@ index 00000000..819952fc
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounterTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounterTest.java
-index 56088325..98becfeb 100644
+index 56088325..f655dd19 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounterTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounterTest.java
-@@ -16,6 +16,55 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
+@@ -16,6 +16,63 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  
  class NativeRecipeCounterTest {
  
@@ -4510,10 +4534,18 @@ index 56088325..98becfeb 100644
 +        assertEquals(6, sources.getFirst().items().getFirst().amount());
 +    }
 +
++    @Test
++    void selectionSkipsPlaceholderRecipesWithoutNonemptyIngredients() {
++        final var placeholder = new NativeRecipeCounter.Candidate(0, false, recipe(2, true));
++        final var valid = new NativeRecipeCounter.Candidate(0, false, recipe(1, false));
++        assertEquals(1, NativeRecipeCounter.select(List.of(placeholder, valid), false, List.of(), BedrockItem::identifier));
++        assertEquals(-1, NativeRecipeCounter.select(List.of(placeholder), false, List.of(), BedrockItem::identifier));
++    }
++
      @Test
      void sharesOneDescriptorAcrossIngredientsAndRetainsTheFinalPartialRound() {
          final var recipe = recipe(3, false);
-@@ -44,6 +93,33 @@ class NativeRecipeCounterTest {
+@@ -44,6 +101,33 @@ class NativeRecipeCounterTest {
          assertThrows(IllegalArgumentException.class, () -> NativeRecipeCounter.count(recipe(2, true), List.of(), ignored -> 0));
      }
  
@@ -5513,10 +5545,10 @@ index 1cfb02f6..d8eb367f 100644
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
 new file mode 100644
-index 00000000..cf5a1930
+index 00000000..d0df158e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
-@@ -0,0 +1,601 @@
+@@ -0,0 +1,611 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5601,8 +5633,12 @@ index 00000000..cf5a1930
 +            result.setAmount(((BedrockItem) call.getArgument(0)).amount());
 +            return result;
 +        }).when(f.context.items).javaItem(any(BedrockItem.class));
-+        doAnswer(call -> new BedrockItem(IDENTIFIER, (short) 0, (byte) (int) call.getArgument(1)))
++        doAnswer(call -> new BedrockItem(IDENTIFIER + 1, (short) 0, (byte) (int) call.getArgument(1)))
 +                .when(f.context.items).createRecipePreview(any(), anyInt());
++        user.get(CraftingDataTracker.class).updateCraftingDataList(List.of(new CraftingDataStorage(RecipeType.SHAPED, 1,
++                new ShapedRecipe("a", new UUID(0, 1), "crafting_table", 0, 1, 1,
++                        List.of(new ItemDescriptor.ItemNameDescriptor("test:ordinary_1", 0, 1)),
++                        List.of(new BedrockItem(IDENTIFIER, (short) 0, (byte) 4)), false), false)), true);
 +        f.context.inventory.inventory().getInventoryContainer().setItem(9, BedrockItem.empty());
 +        user.get(CraftingDataTracker.class).updateUnlockedRecipes(4, List.of());
 +        f.screens.request(new PlayerInventoryScreenRequest(1, true));
@@ -5632,14 +5668,20 @@ index 00000000..cf5a1930
 +        final var select = new NativePlayerInventoryAction(0, 1, generation, 1, 1,
 +                NativePlayerInventoryAction.Kind.PRIMARY, 0, "", null);
 +        assertTrue(state.handleAction(select));
-+        assertEquals(Set.of(0, 1), craftingPreview(state).keySet());
++        assertEquals(Set.of(0, 1), craftingPreview(state, generation).keySet());
++        assertTrue(craftingPreview(state, 0).isEmpty());
++        assertEquals(4, craftingPreview(state, generation).get(0).amount());
 +        assertEquals(before, f.context.inventory.inventory().playerCraftingSources(true));
 +        Mockito.verify(requests, never()).addRequest(any());
 +        Mockito.verify(requests, never()).nextRequestId();
 +        assertFalse(state.handleAction(select));
 +        assertTrue(state.handleAction(new NativePlayerInventoryAction(0, 1, generation, 1, 2,
 +                NativePlayerInventoryAction.Kind.SEARCH, -1, "no results", null)));
-+        assertEquals(Set.of(0, 1), craftingPreview(state).keySet());
++        assertEquals(Set.of(0, 1), craftingPreview(state, generation).keySet());
++        doReturn(StructuredItem.empty()).when(f.context.items).javaItem(argThat((BedrockItem item) -> item.identifier() == IDENTIFIER + 1));
++        assertEquals(Set.of(0), craftingPreview(state, generation).keySet());
++        doReturn(StructuredItem.empty()).when(f.context.items).javaItem(argThat((BedrockItem item) -> item.identifier() == IDENTIFIER && item.amount() == 4));
++        assertTrue(craftingPreview(state, generation).isEmpty());
 +        f.screens.request(new PlayerInventoryScreenRequest(1, false));
 +        f.screens.request(new PlayerInventoryScreenRequest(2, true));
 +        doCallRealMethod().when(state).tick();
@@ -5647,15 +5689,15 @@ index 00000000..cf5a1930
 +        for (int tick = 0; tick < 20; tick++) {
 +            state.tick();
 +        }
-+        assertTrue(craftingPreview(state).isEmpty());
++        assertTrue(craftingPreview(state, generation).isEmpty());
 +        assertArrayEquals(NbtUtf8.encode("no results"), state.model().query());
 +    }
 +
 +    @SuppressWarnings("unchecked")
-+    private static Map<Integer, Item> craftingPreview(final NativePlayerRecipeState state) throws Exception {
-+        final var snapshot = NativePlayerRecipeState.class.getDeclaredMethod("snapshot");
++    private static Map<Integer, Item> craftingPreview(final NativePlayerRecipeState state, final long generation) throws Exception {
++        final var snapshot = NativePlayerRecipeState.class.getDeclaredMethod("snapshot", long.class);
 +        snapshot.setAccessible(true);
-+        final var value = snapshot.invoke(state);
++        final var value = snapshot.invoke(state, generation);
 +        final var previews = value.getClass().getDeclaredMethod("craftingPreview");
 +        previews.setAccessible(true);
 +        return (Map<Integer, Item>) previews.invoke(value);
@@ -5705,9 +5747,9 @@ index 00000000..cf5a1930
 +        for (int tick = 0; tick < 20; tick++) {
 +            f.state.tick();
 +        }
-+        final var snapshot = NativePlayerRecipeState.class.getDeclaredMethod("snapshot");
++        final var snapshot = NativePlayerRecipeState.class.getDeclaredMethod("snapshot", long.class);
 +        snapshot.setAccessible(true);
-+        final var presentation = snapshot.invoke(f.state);
++        final var presentation = snapshot.invoke(f.state, 0L);
 +        final var state = presentation.getClass().getDeclaredMethod("state");
 +        state.setAccessible(true);
 +        final var creative = (PlayerInventoryUi.State) state.invoke(presentation);
@@ -5717,7 +5759,7 @@ index 00000000..cf5a1930
 +                .get("#container_item_background_texture").getAsString());
 +        when(player.gameType()).thenReturn(GameType.Survival);
 +        f.state.tick();
-+        final var survival = (PlayerInventoryUi.State) state.invoke(snapshot.invoke(f.state));
++        final var survival = (PlayerInventoryUi.State) state.invoke(snapshot.invoke(f.state, 0L));
 +        assertTrue(survival.cells().stream().allMatch(PlayerInventoryUi.Cell::disabled));
 +        assertEquals(creative.cells().getFirst().availability(), survival.cells().getFirst().availability());
 +    }
