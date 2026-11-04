@@ -1,4 +1,4 @@
-From cbc5634efe860719fba9a27110c5a85d40aea4f0 Mon Sep 17 00:00:00 2001
+From 2f24466f4b74978ef82f933e1168add8137bf01c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -806,6 +806,8 @@ retain the existing request/prediction/recovery boundary. Native controls
 establish filtering and source order; unit controls establish the new sparse
 request plans. Their exact packet sequence and installed native UI parity
 still need matching live controls.
+
+Validate every network ID needed by bundle swaps and compaction before changing predicted items. Reject incomplete requests atomically, preserving contents, source, destination, and selection. Unmoved entries do not need a network ID.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
@@ -836,7 +838,7 @@ still need matching live controls.
  .../container/block/SmithingContainer.java    |  223 +
  .../container/block/SmokerContainer.java      |   45 +
  .../container/block/StonecutterContainer.java |  247 +
- .../container/dynamic/BundleContainer.java    |  286 +-
+ .../container/dynamic/BundleContainer.java    |  306 +-
  .../container/player/ArmorContainer.java      |   47 +
  .../model/container/player/HudContainer.java  |   31 +-
  .../container/player/InventoryContainer.java  |   87 +-
@@ -927,7 +929,7 @@ still need matching live controls.
  .../ItemRewriterBlockEntityItemTest.java      |   85 +
  .../rewriter/item/BundleItemRewriterTest.java |  296 +
  .../storage/BundleHolderPacketTest.java       |  450 ++
- .../storage/BundleInventoryActionTest.java    |  635 ++
+ .../storage/BundleInventoryActionTest.java    |  673 ++
  .../CraftedItemSynchronizationTest.java       |  287 +
  .../InventoryContainerGenerationTest.java     |  118 +
  .../storage/InventoryMergeActionTest.java     |  837 +++
@@ -946,7 +948,7 @@ still need matching live controls.
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 139 files changed, 29145 insertions(+), 2049 deletions(-)
+ 139 files changed, 29203 insertions(+), 2049 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
@@ -5476,7 +5478,7 @@ index 00000000..753b6727
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
-index c5e11f4e..0c3433d1 100644
+index c5e11f4e..dff59408 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
 @@ -21,25 +21,46 @@ import com.viaversion.nbt.tag.IntTag;
@@ -5561,7 +5563,7 @@ index c5e11f4e..0c3433d1 100644
      }
  
      @Override
-@@ -95,10 +107,211 @@ public class BundleContainer extends Container {
+@@ -95,10 +107,231 @@ public class BundleContainer extends Container {
          return holdingContainer.key().javaContainerId();
      }
  
@@ -5636,6 +5638,21 @@ index c5e11f4e..0c3433d1 100644
 +        if (mergeIndex == -1 && slots.size() == this.size()) {
 +            return List.of();
 +        }
++        // Validate the complete request before changing predicted contents.
++        if (mergeIndex != -1) {
++            for (int index = mergeIndex; index < slots.size(); index++) {
++                if (this.getItem(slots.get(index)).netId() == null) {
++                    return List.of();
++                }
++            }
++        } else if (!slots.isEmpty() && slots.getLast() == this.size() - 1) {
++            for (int index = 0; index < slots.size(); index++) {
++                final int from = slots.get(index);
++                if (from != index && this.getItem(from).netId() == null) {
++                    return List.of();
++                }
++            }
++        }
 +        final List<ItemStackRequestAction> actions = new ArrayList<>();
 +        final int destinationSlot;
 +        // Java moves a merged stack to the front of its reversed bundle contents.
@@ -5692,6 +5709,11 @@ index c5e11f4e..0c3433d1 100644
 +        final BedrockItem extracted = this.getItem(slot);
 +        if (extracted.isEmpty() || extracted.netId() == null || !destination.getItem(destinationSlot).isEmpty()) {
 +            return List.of();
++        }
++        for (final int next : slots) {
++            if (next > slot && this.getItem(next).netId() == null) {
++                return List.of();
++            }
 +        }
 +        final List<ItemStackRequestAction> actions = new ArrayList<>();
 +        actions.add(new ItemStackRequestAction.TakeAction(extracted.amount(), this.requestSlotInfo(slot, extracted.netId()),
@@ -5773,7 +5795,7 @@ index c5e11f4e..0c3433d1 100644
      private Pair<Container, Integer> findHoldingContainer() {
          final InventoryTracker inventoryTracker = this.user.get(InventoryTracker.class);
  
-@@ -135,27 +348,32 @@ public class BundleContainer extends Container {
+@@ -135,27 +368,32 @@ public class BundleContainer extends Container {
              return -1;
          }
  
@@ -36820,10 +36842,10 @@ index 00000000..27a645bc
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/BundleInventoryActionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/BundleInventoryActionTest.java
 new file mode 100644
-index 00000000..ec51d335
+index 00000000..bb1e3d35
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/BundleInventoryActionTest.java
-@@ -0,0 +1,635 @@
+@@ -0,0 +1,673 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -37189,6 +37211,44 @@ index 00000000..ec51d335
 +        assertEquals(4, bundle.getItem(63).netId());
 +        assertTrue(bundle.getItem(1).isEmpty());
 +        assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
++    }
++
++    @Test
++    void missingLaterNetworkIdRejectsExtractionWithoutChangingItemsOrSelection() throws Exception {
++        final Fixture f = new Fixture();
++        final BundleContainer bundle = f.bundle(0);
++        bundle.setItem(0, item(523, 3, 5));
++        bundle.setItem(3, item(306, 4, 4));
++        final BedrockItem unknown = item(331, 2, 6);
++        unknown.setNetId(null);
++        bundle.setItem(63, unknown);
++        bundle.toggleSelectedItem(2);
++        final BedrockItem[] before = bundle.copy().getItems();
++
++        assertTrue(bundle.extract(f.inventory.getHudContainer(), 0, true).isEmpty());
++        assertArrayEquals(before, bundle.getItems());
++        assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
++        assertEquals(523, bundle.selectedItem(true).identifier());
++    }
++
++    @Test
++    void missingLaterNetworkIdRejectsInsertionBeforeSwappingOrCompacting() throws Exception {
++        for (final boolean merge : List.of(false, true)) {
++            final Fixture f = new Fixture();
++            final BundleContainer bundle = f.bundle(0);
++            bundle.setItem(0, item(merge ? 306 : 523, 4, 4));
++            bundle.setItem(3, item(523, 3, 5));
++            final BedrockItem unknown = item(331, 2, 6);
++            unknown.setNetId(null);
++            bundle.setItem(63, unknown);
++            final BedrockItem incoming = item(306, 2, 7);
++            f.screen.setItem(1, incoming.copy());
++            final BedrockItem[] before = bundle.copy().getItems();
++
++            assertTrue(bundle.insert(f.screen, 1).isEmpty());
++            assertArrayEquals(before, bundle.getItems());
++            assertEquals(incoming, f.screen.getItem(1));
++        }
 +    }
 +
 +    @Test
