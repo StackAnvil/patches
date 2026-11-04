@@ -504,6 +504,58 @@ fn discovers_reparented_clients_and_delivers_their_focus_protocol_before_input()
 
 #[test]
 #[ignore = "requires Xvfb; run cargo test -- --include-ignored"]
+fn typing_in_the_focused_window_does_not_repeat_window_activation() {
+    let fixture = Fixture::new(24);
+    let protocols = fixture.atom(b"WM_PROTOCOLS");
+    let take_focus = fixture.atom(b"WM_TAKE_FOCUS");
+    fixture
+        .connection
+        .change_property32(
+            PropMode::REPLACE,
+            fixture.window,
+            protocols,
+            AtomEnum::ATOM,
+            &[take_focus],
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+    fixture
+        .connection
+        .change_window_attributes(
+            fixture.window,
+            &xproto::ChangeWindowAttributesAux::new().event_mask(
+                EventMask::KEY_PRESS | EventMask::KEY_RELEASE | EventMask::STRUCTURE_NOTIFY,
+            ),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+    let id = fixture.window.to_string();
+    fixture.success(&["focus", &id]);
+    fixture.events();
+
+    fixture.success(&["type", &id, "a"]);
+    let events = fixture.events();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::KeyPress(_)))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::KeyRelease(_)))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::ConfigureNotify(_) | Event::ClientMessage(_)))
+    );
+}
+
+#[test]
+#[ignore = "requires Xvfb; run cargo test -- --include-ignored"]
 fn emits_ordered_input_and_releases_it_on_interrupts_and_window_failure() {
     let fixture = Fixture::new(24);
     let id = fixture.window.to_string();
