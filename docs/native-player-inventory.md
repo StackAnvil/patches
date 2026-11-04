@@ -119,7 +119,10 @@ Retain the latest local search edit within its connection before waiting for a c
 Closing a screen retires its commands but preserves unsent text and explicit clearing.
 A replacement presentation submits that text with its own opening, generation, revision, and request sequence.
 Disconnect clears the client's retained edit.
-In Bedrock 1.26.60.5, Escape first removes search focus. The next Escape closes the inventory.
+In Bedrock 1.26.60.5, Escape first removes the search highlight. A second Escape closes the inventory.
+Typing after Escape or a blank-area click resumes editing. Selecting another recipe or inventory slot stops search input.
+Retain the editor and its selection through screen rebuilds, viewport changes, and GUI-scale changes.
+An inactive editor must stay inactive after opening or resizing.
 
 Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
 A normal recipe click fills the grid. Taking its output sends a separate craft request.

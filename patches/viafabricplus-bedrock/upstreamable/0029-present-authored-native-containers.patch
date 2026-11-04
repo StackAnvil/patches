@@ -1,4 +1,4 @@
-From e5d1f0fa52b98939e7fb49c94451bfa5875d145a Mon Sep 17 00:00:00 2001
+From be6b58cfbdf17ee129e39a0b885ee97c9331f4e0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -749,6 +749,19 @@ Use inherited scissors for admitted container labels, matching the shared
 scene renderer. The shared renderer limits complete text rows and fits the
 last-row marker. Native Bedrock 1.26.60.5 MinecraftTen glyphs can extend
 past a label's own height while retaining the parent clip.
+
+Preserve the player search editor, selection and active text admission
+through real Screen rebuilds. Register the retained widget after each
+rebuild and leave an inactive editor inactive on opening or resizing.
+Official Bedrock 1.26.60.5/protocol 2225 local-world controls retain active
+Creative and Survival input through viewport and GUI-scale changes.
+
+Keep text-input ownership separate from editor highlighting. Native typing
+resumes after Escape or a blank-area click, but selecting another recipe
+or slot retires that admission. Respect authored handle_select and
+handle_deselect flags, and release SDL input when the editor disappears
+or its screen exits. Full Screen lifecycle regressions retain Ctrl+A
+selection and exercise blur, re-entry, another control and closing.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemStyle.java          |   14 +
@@ -762,7 +775,7 @@ past a label's own height while retaining the parent clip.
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1330 ++++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1374 ++++++++++++++++
  .../container/BedrockNativeContainers.java    |  283 ++++
  .../container/BedrockNativeCooking.java       |  147 ++
  .../BedrockNativePlayerInventory.java         |  171 ++
@@ -830,10 +843,10 @@ past a label's own height while retaining the parent clip.
  .../container/NativePlayerHelpTextTest.java   |   34 +
  .../NativePlayerInventoryLifetimeTest.java    |  142 ++
  .../NativePlayerPresentationTest.java         |  153 ++
- .../container/NativePlayerScreenTest.java     |  576 +++++++
+ .../container/NativePlayerScreenTest.java     |  670 ++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 ++
  .../PlayerInventoryScreenLifecycleTest.java   |  139 ++
- 83 files changed, 11235 insertions(+), 62 deletions(-)
+ 83 files changed, 11373 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerScreenAdmission.java
@@ -1383,10 +1396,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..dbee3db
+index 0000000..725f185
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1330 @@
+@@ -0,0 +1,1374 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1397,6 +1410,7 @@ index 0000000..dbee3db
 +import com.mojang.blaze3d.platform.InputConstants;
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockGuiItemStyle;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiFocus;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiAnimationLifecycle;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiCollectionWindow;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiImages;
@@ -1526,6 +1540,7 @@ index 0000000..dbee3db
 +    private final Set<NativeUiScene.Node> vanillaCursor = Collections.newSetFromMap(new IdentityHashMap<>());
 +    private Slot drawingSlot;
 +    private EditBox search;
++    private boolean searchInput;
 +    private NativeUiLayout.Box searchBox;
 +    private boolean synchronizingSearch;
 +    private long imageRevision;
@@ -1595,6 +1610,35 @@ index 0000000..dbee3db
 +        if (this.renderer != null) this.renderer.close();
 +        this.renderer = new NativeUiRenderer(this.font, this.images);
 +        this.refresh();
++    }
++
++    @Override
++    protected void setInitialFocus() {
++        // Opening the inventory must not activate its search editor.
++        if (!(this.presentation instanceof NativePlayerPresentation)) super.setInitialFocus();
++    }
++
++    @Override
++    protected void repositionElements() {
++        final boolean focused = this.search != null && this.getFocused() == this.search;
++        super.repositionElements();
++        if (focused && this.searchInput && this.search.visible && this.search.active && this.current() && !this.closing())
++            this.focusSearch();
++    }
++
++    private void focusSearch() {
++        this.searchInput = true;
++        this.setFocused(this.search);
++        // Native text admission outlives the highlight after Escape or a blank-area click.
++        // Own SDL input separately so clearing widget focus does not stop character events.
++        this.minecraft.onTextInputFocusChange(this, true);
++    }
++
++    private void releaseSearch() {
++        if (!this.searchInput) return;
++        this.searchInput = false;
++        if (this.getFocused() == this.search) this.setFocused(null);
++        this.minecraft.onTextInputFocusChange(this, false);
 +    }
 +
 +    private boolean authoredController() {
@@ -1768,6 +1812,7 @@ index 0000000..dbee3db
 +            if (this.lifecycle != null && this.lifecycle.requestExit(this.animationTime())) {
 +                this.setDragging(false);
 +                this.scroll.release();
++                this.releaseSearch();
 +                this.setFocused(null);
 +                final var press = this.recipePress;
 +                this.recipePress = null;
@@ -1813,8 +1858,8 @@ index 0000000..dbee3db
 +                this.search.setResponder(value -> {
 +                    if (!this.synchronizingSearch) BedrockNativePlayerInventory.query(this.owner, this.menu, value);
 +                });
-+                this.addWidget(this.search);
 +            }
++            if (!this.children().contains(this.search)) this.addWidget(this.search);
 +            final var bounds = draw.box().bounds();
 +            this.search.setRectangle(Math.max(1, Math.round(bounds.width())), Math.max(1, Math.round(bounds.height())),
 +                    Math.round(bounds.x()), Math.round(bounds.y()));
@@ -1831,16 +1876,21 @@ index 0000000..dbee3db
 +                finally { this.synchronizingSearch = false; }
 +            }
 +        }
-+        if (this.search != null && this.searchBox == null) {
-+            this.search.visible = false;
-+            this.setFocused(null);
++        if (this.search != null && this.searchBox == null) this.search.visible = false;
++        if (this.searchInput) {
++            if (!this.search.visible || !this.search.active) this.releaseSearch();
++            else this.minecraft.onTextInputFocusChange(this, true);
 +        }
 +    }
 +
 +    @Override
 +    public boolean charTyped(final CharacterEvent event) {
 +        if (this.closing()) return true;
-+        if (this.current() && this.search != null && this.search.isFocused()) return this.search.charTyped(event);
++        if (!this.current()) return false;
++        if (this.searchInput) {
++            this.focusSearch();
++            return this.search.charTyped(event);
++        }
 +        return super.charTyped(event);
 +    }
 +
@@ -1894,8 +1944,8 @@ index 0000000..dbee3db
 +                handled = true;
 +            } else if (event.button() != null && event.button().pressed() && this.search != null
 +                    && event.node().type().equals("edit_box") && event.button().target() == NativeUiInput.symbol("button.search_bar_selected")) {
-+                this.search.setFocused(true);
-+                this.setFocused(this.search);
++                if (event.button().handleSelect()) this.focusSearch();
++                else if (event.button().handleDeselect()) this.setFocused(null);
 +                handled = true;
 +            }
 +        }
@@ -2266,9 +2316,11 @@ index 0000000..dbee3db
 +        this.consumedReleases.remove(event.button());
 +        if (this.search != null && this.search.visible && this.searchBox != null
 +                && this.searchBox.visibleBounds().contains(event.x(), event.y()) && this.search.mouseClicked(event, doubleClick)) {
-+            this.setFocused(this.search);
++            this.focusSearch();
 +            return true;
 +        }
++        if (this.searchInput && NativeUiFocus.targets(this.root, _ -> true).stream()
++                .anyMatch(target -> target.box().visibleBounds().contains(event.x(), event.y()))) this.releaseSearch();
 +        this.setFocused(null);
 +        final String componentSource = this.presentation instanceof NativePlayerPresentation && event.hasShiftDown()
 +                && (this.geometry.recipe(event.x(), event.y()) != null || this.geometry.hovered(event.x(), event.y()) >= 0)
@@ -2492,14 +2544,19 @@ index 0000000..dbee3db
 +    public boolean keyPressed(final KeyEvent event) {
 +        if (this.closing()) return true;
 +        if (!this.current()) return false;
++        if (this.searchInput) {
++            if (event.key() != InputConstants.KEY_ESCAPE) {
++                if (this.search.isFocused()) this.search.keyPressed(event);
++                return true;
++            }
++            if (this.getFocused() == this.search) {
++                this.setFocused(null);
++                return true;
++            }
++        }
 +        if (this.presentation instanceof NativePlayerPresentation && !this.helpView && this.geometry != null
 +                && this.geometry.recipe(this.pointerX, this.pointerY) != null && Minecraft.getInstance().options.keyDrop.matches(event)) {
 +            this.fallback(new IllegalArgumentException("Native recipe drop input is not supported"));
-+            return true;
-+        }
-+        if (this.search != null && this.search.isFocused()) {
-+            if (event.key() == InputConstants.KEY_ESCAPE) this.setFocused(null);
-+            else this.search.keyPressed(event);
 +            return true;
 +        }
 +        if (this.waitingForPreference()) {
@@ -2696,7 +2753,7 @@ index 0000000..dbee3db
 +        if (this.presentation instanceof NativePlayerPresentation player) BedrockNativePlayerInventory.retire(player);
 +    }
 +
-+    void discard() { if (this.renderer != null) this.renderer.close(); this.images.close(); }
++    void discard() { this.releaseSearch(); if (this.renderer != null) this.renderer.close(); this.images.close(); }
 +
 +    @Override
 +    public void removed() {
@@ -11885,10 +11942,10 @@ index 0000000..d3902fa
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
 new file mode 100644
-index 0000000..127e576
+index 0000000..d547656
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
-@@ -0,0 +1,576 @@
+@@ -0,0 +1,670 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11915,6 +11972,9 @@ index 0000000..127e576
 +import java.util.function.Predicate;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 +import net.minecraft.client.KeyMapping;
++import net.minecraft.client.InputType;
++import net.minecraft.client.GameNarrator;
++import net.minecraft.client.gui.components.EditBox;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.Options;
 +import net.minecraft.client.StringSplitter;
@@ -11967,8 +12027,87 @@ index 0000000..127e576
 +        return IntStream.of(InputConstants.MOUSE_BUTTON_LEFT, InputConstants.MOUSE_BUTTON_RIGHT);
 +    }
 +
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void searchKeepsSelectionAndInputAdmissionAcrossScreenRebuilds(final boolean creative) throws Exception {
++        final var game = mock(Minecraft.class);
++        final var player = mock(LocalPlayer.class);
++        final var inventory = new Inventory(player, new EntityEquipment());
++        final var menu = new InventoryMenu(inventory, true, player);
++        final var owner = mock(ClientPacketListener.class);
++        final var ordinary = mock(AbstractContainerScreen.class);
++        final var options = mock(Options.class);
++        final var font = mock(Font.class);
++        final var clock = new AtomicLong();
++        when(game.getLastInputType()).thenReturn(InputType.KEYBOARD_ARROW);
++        when(game.getNarrator()).thenReturn(mock(GameNarrator.class));
++        set(Minecraft.class, game, "gameMode", mock(MultiPlayerGameMode.class));
++        when(ordinary.getMenu()).thenReturn(menu);
++        when(owner.getConnection()).thenReturn(mock(Connection.class));
++        for (final String name : List.of("keyPickItem", "keyDrop", "keyInventory"))
++            set(Options.class, options, name, mock(KeyMapping.class));
++        set(Minecraft.class, game, "options", options);
++        set(Minecraft.class, game, "gui", mock(Gui.class));
++        when(options.keyInventory.matches(any(KeyEvent.class))).thenAnswer(call -> ((KeyEvent) call.getArgument(0)).key() == InputConstants.KEY_E);
++        when(font.getSplitter()).thenReturn(new StringSplitter((c, style) -> 6));
++        when(font.plainSubstrByWidth(anyString(), anyInt())).thenAnswer(call -> call.getArgument(0));
++        when(font.plainSubstrByWidth(anyString(), anyInt(), anyBoolean())).thenAnswer(call -> call.getArgument(0));
++        when(font.width(anyString())).thenAnswer(call -> ((String) call.getArgument(0)).length() * 6);
++        try (final var singleton = mockStatic(Minecraft.class);
++             final var network = mockStatic(BedrockNativePlayerInventory.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            network.when(() -> BedrockNativePlayerInventory.action(any(), any(), anyInt(), any())).thenReturn(true);
++            final var ui = new PlayerInventoryUi(new ResourcePackStorage(List.of()).getJsonUiProgram());
++            final var cell = new PlayerInventoryUi.Cell(0, 10, -1, 0, 0, 1, false, false, "", Map.of());
++            final var state = new PlayerInventoryUi.State(false, creative, 2, 2, 5, 2, false, "", "All", "Crafting",
++                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
++            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
++                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), clock::get);
++            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
++                    false, 1, clock::get, () -> true);
++            set(Screen.class, screen, "minecraft", game);
++            set(Screen.class, screen, "font", font);
++            network.when(() -> BedrockNativePlayerInventory.query(eq(owner), eq(menu), anyString())).thenAnswer(call -> {
++                presentation.query(call.getArgument(2), _ -> {});
++                return null;
++            });
++            try {
++                screen.init(640, 360);
++                clock.set(1_000_000_000);
++                screen.resize(640, 360);
++                assertNull(screen.getFocused());
++                assertFalse(screen.charTyped(new CharacterEvent('z')));
++                final var click = pointer(screen, draw -> draw.box().node().type().equals("edit_box"));
++                assertTrue(screen.mouseClicked(click, false));
++                screen.mouseReleased(click);
++                final var editor = assertInstanceOf(EditBox.class, screen.getFocused());
++                assertTrue(screen.charTyped(new CharacterEvent('a')));
++                assertTrue(screen.charTyped(new CharacterEvent('b')));
++                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_A, 'a', InputConstants.MOD_CONTROL)));
++                screen.resize(512, 384);
++                screen.resize(512, 300);
++                assertSame(editor, screen.getFocused());
++                assertEquals(1, screen.children().stream().filter(child -> child == editor).count());
++                assertTrue(screen.charTyped(new CharacterEvent('r')));
++                network.verify(() -> BedrockNativePlayerInventory.query(owner, menu, "r"));
++                assertEquals("r", editor.getValue());
++                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0)));
++                assertNull(screen.getFocused());
++                screen.resize(640, 360);
++                assertNull(screen.getFocused());
++                assertFalse(screen.closing());
++                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0)));
++                assertTrue(screen.closing());
++                network.clearInvocations();
++                assertTrue(screen.charTyped(new CharacterEvent('z')));
++                network.verifyNoInteractions();
++            } finally { screen.discard(); }
++        }
++    }
++
 +    @Test
-+    void searchAcceptsTextAgainAfterClickingARecipeWithoutClosingTheInventory() throws Exception {
++    void searchResumesAfterBlurButStopsAtAnotherControlAndAtClose() throws Exception {
 +        final var game = mock(Minecraft.class);
 +        final var player = mock(LocalPlayer.class);
 +        final var inventory = new Inventory(player, new EntityEquipment());
@@ -12014,15 +12153,27 @@ index 0000000..127e576
 +                screen.mouseReleased(search);
 +                assertTrue(screen.charTyped(new CharacterEvent('a')));
 +                network.verify(() -> BedrockNativePlayerInventory.query(owner, menu, "a"));
++                final var blank = new MouseButtonEvent(0, 0, new MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, 0));
++                screen.mouseClicked(blank, false);
++                screen.mouseReleased(blank);
++                assertNull(screen.getFocused());
++                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_E, 'e', 0)));
++                assertTrue(screen.charTyped(new CharacterEvent('e')));
++                network.verify(() -> BedrockNativePlayerInventory.query(owner, menu, "ae"));
++                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 27, 0)));
++                assertNull(screen.getFocused());
++                assertTrue(screen.charTyped(new CharacterEvent('x')));
++                network.verify(() -> BedrockNativePlayerInventory.query(owner, menu, "aex"));
 +                final var recipe = pointer(screen, draw -> draw.box().node().properties().has("recipe_actions"));
 +                assertTrue(screen.mouseClicked(recipe, false));
 +                assertTrue(screen.mouseReleased(recipe));
++                assertFalse(screen.charTyped(new CharacterEvent('z')));
 +                search = pointer(screen, draw -> draw.box().node().type().equals("edit_box"));
 +                assertTrue(screen.mouseClicked(search, false));
 +                screen.mouseReleased(search);
 +                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_E, 0, 0)));
 +                assertTrue(screen.charTyped(new CharacterEvent('e')));
-+                network.verify(() -> BedrockNativePlayerInventory.query(owner, menu, "ae"));
++                network.verify(() -> BedrockNativePlayerInventory.query(owner, menu, "aexe"));
 +                assertFalse(screen.closing());
 +                verifyNoInteractions(game.gameMode);
 +                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_ESCAPE, 0, 0)));
