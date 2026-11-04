@@ -28,7 +28,7 @@ Client-predicted damage and the live producer for event 81 remain unverified.
 
 Grid factories populate each collection once and respect the bound maximum item count. Relative cell templates use the defining namespace.
 The captured Lifeboat Navigator now resolves eight main cells, matching native Bedrock 1.26.60.5, instead of 46 duplicated cells.
-Reduced regressions cover factory ownership, template lookup, and item limits.
+Reduced regressions cover factory ownership, template lookup, and item limits. Event-driven factories accept immutable creation snapshots, keep event properties and control bindings local, and retain creation IDs across refreshes. Tests cover dormant factories, per-event control IDs, exact-name exclusivity, late retirement, and program transport. Native 1.26.60.5 controls verify strict boolean exclusivity and complete runtime-name matching; full factory construction and pixels remain outside those controls.
 The rebuilt add-on shows two columns and four rows during a live join.
 World Games, Mini Games, and SkyWars open through their authored controls. Selecting Solo reaches the waiting lobby.
 The recorded replies retain the original button indices. Complete native appearance remains unverified.

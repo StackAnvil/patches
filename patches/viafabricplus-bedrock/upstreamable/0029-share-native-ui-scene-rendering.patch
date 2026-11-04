@@ -1,4 +1,4 @@
-From 788927fc6a73f2bfdd34472cb25a41bc99d0d85a Mon Sep 17 00:00:00 2001
+From 00f166135e78a6a7debd8aa462e4091147242d2d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -942,6 +942,10 @@ local offsets. The executable SHA-256 is
 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a.
 Callers supply resolved anchors; source admission, drag handling and live
 pixel parity remain separate requirements.
+
+Retain factory creation identity in animation reconciliation so same-named replacements start fresh clocks throughout their child trees. Queue completed factory roots for hosts to retire after animation traversal. Keep destruction separate from opacity.
+
+Pinned Bedrock 1.26.60.5/protocol2225 execution of original141c64b70 with real virtual completion141c5e040 verifies exact current-control/ancestor name lookup, expired-parent termination and incomplete-animation gating in ten controls. Remove the broader descendant and qualified-suffix searches. A selected_item_details target does not match popup_tip_text after the separately verified factory rename; retain such unmatched faded creations until exclusive replacement. Hierarchy removal and native pixels remain outside these instruction controls.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -988,7 +992,7 @@ pixel parity remain separate requirements.
  .../bedrock/screen/ui/NativeHudResources.java |   21 +
  .../screen/ui/NativeUiActorCamera.java        |   60 +
  .../screen/ui/NativeUiActorPortraits.java     |  258 +++++
- .../screen/ui/NativeUiAnimationLifecycle.java |  165 +++
+ .../screen/ui/NativeUiAnimationLifecycle.java |  162 +++
  .../bedrock/screen/ui/NativeUiAnimations.java |  455 ++++++++
  .../bedrock/screen/ui/NativeUiAseprite.java   |   54 +
  .../bedrock/screen/ui/NativeUiButton.java     |  167 +++
@@ -1047,7 +1051,7 @@ pixel parity remain separate requirements.
  .../screen/ui/NativeHudOverlayStateTest.java  |  153 +++
  .../screen/ui/NativeUiActorCameraTest.java    |  102 ++
  .../screen/ui/NativeUiActorPortraitsTest.java |  164 +++
- .../ui/NativeUiAnimationLifecycleTest.java    |  222 ++++
+ .../ui/NativeUiAnimationLifecycleTest.java    |  271 +++++
  .../screen/ui/NativeUiAnimationsTest.java     |  301 +++++
  .../screen/ui/NativeUiAsepriteTest.java       |  108 ++
  .../bedrock/screen/ui/NativeUiButtonTest.java |  127 +++
@@ -1081,7 +1085,7 @@ pixel parity remain separate requirements.
  .../native-scrollbar-visibility.json          |  162 +++
  .../native-ui/cursor-placement-2225.json      |   27 +
  .../resources/native-ui/scissor-2225.json     |  622 ++++++++++
- 138 files changed, 16294 insertions(+), 37 deletions(-)
+ 138 files changed, 16340 insertions(+), 37 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -4640,10 +4644,10 @@ index 0000000..286546d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycle.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycle.java
 new file mode 100644
-index 0000000..2a1c763
+index 0000000..c0b255c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycle.java
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,162 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4669,6 +4673,7 @@ index 0000000..2a1c763
 +    private Map<NativeUiScene.Node, Set<Integer>> pendingExit = new IdentityHashMap<>();
 +    private final Map<NativeUiScene.Node, List<NativeUiScene.Node>> paths = new IdentityHashMap<>();
 +    private final Set<NativeUiScene.Node> destroyed = Collections.newSetFromMap(new IdentityHashMap<>());
++    private final Set<NativeUiScene.Node> retiredFactories = Collections.newSetFromMap(new IdentityHashMap<>());
 +
 +    public NativeUiAnimationLifecycle(final NativeUiScene.Node root) {
 +        this.root = root;
@@ -4677,7 +4682,7 @@ index 0000000..2a1c763
 +            final var control = target(this.paths.get(node), name);
 +            if (control == null) return false;
 +            control.properties().addProperty("ignored", true);
-+            this.destroyed.add(control);
++            if (this.destroyed.add(control)) this.retireFactories(control);
 +            return true;
 +        }, completion -> {
 +            if (!this.exiting || !completion.event().equals("screen.exit_end")) return;
@@ -4694,6 +4699,18 @@ index 0000000..2a1c763
 +    }
 +
 +    public NativeUiAnimations animations() { return this.animations; }
++
++    /** Hosts retire only these completed creations, after animation traversal has finished. */
++    public List<NativeUiScene.Node> drainRetiredFactories() {
++        final var retired = List.copyOf(this.retiredFactories);
++        this.retiredFactories.clear();
++        return retired;
++    }
++
++    private void retireFactories(final NativeUiScene.Node node) {
++        if (node.properties().has("factory_instance_id")) this.retiredFactories.add(node);
++        for (final var child : node.children()) this.retireFactories(child);
++    }
 +
 +    /** Returns whether an authored pop exit must finish before its host removes the scene. */
 +    public boolean requestExit(final long elapsedNanos) {
@@ -4760,10 +4777,11 @@ index 0000000..2a1c763
 +
 +    private static Identity identity(final NativeUiScene.Node node, final int occurrence) {
 +        return new Identity(node.name(), node.type(), String.valueOf(node.properties().get("inventory_slot")),
-+            String.valueOf(node.properties().get("collection")), String.valueOf(node.properties().get("collection_index")), occurrence);
++            String.valueOf(node.properties().get("collection")), String.valueOf(node.properties().get("collection_index")),
++            String.valueOf(node.properties().get("factory_instance_id")), occurrence);
 +    }
 +
-+    private record Identity(String name, String type, String slot, String collection, String index, int occurrence) {}
++    private record Identity(String name, String type, String slot, String collection, String index, String factoryInstance, int occurrence) {}
 +
 +    boolean active() { return active(this.root); }
 +
@@ -4787,26 +4805,9 @@ index 0000000..2a1c763
 +    private static NativeUiScene.Node target(final List<NativeUiScene.Node> path, final String name) {
 +        for (int i = path.size() - 1; i >= 0; i--) {
 +            final var node = path.get(i);
-+            if (matches(node, name)) return node;
-+        }
-+        for (int i = path.size() - 1; i >= 0; i--) {
-+            final var found = descendant(path.get(i), name);
-+            if (found != null) return found;
++            if (node.name().equals(name)) return node;
 +        }
 +        return null;
-+    }
-+
-+    private static NativeUiScene.Node descendant(final NativeUiScene.Node node, final String name) {
-+        if (matches(node, name)) return node;
-+        for (final var child : node.children()) {
-+            final var found = descendant(child, name);
-+            if (found != null) return found;
-+        }
-+        return null;
-+    }
-+
-+    private static boolean matches(final NativeUiScene.Node node, final String name) {
-+        return node.name().equals(name) || node.name().endsWith("." + name);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimations.java
@@ -12517,10 +12518,10 @@ index 0000000..835f559
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycleTest.java
 new file mode 100644
-index 0000000..55565c7
+index 0000000..041e620
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiAnimationLifecycleTest.java
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,271 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12550,7 +12551,7 @@ index 0000000..55565c7
 +        track.addProperty("destroy_at_end", name);
 +        sequence.add(track);
 +        AnimationPrograms.attach(text.properties(), sequence, false);
-+        final var first = node("hud." + name, List.of(text));
++        final var first = node(name, List.of(text));
 +        final var second = node(name, List.of());
 +        final var factory = node(UUID.randomUUID().toString(), List.of(first, second));
 +        factory.properties().addProperty("factory_name", UUID.randomUUID().toString());
@@ -12563,6 +12564,26 @@ index 0000000..55565c7
 +        assertTrue(lifecycle.active());
 +        second.properties().addProperty("ignored", true);
 +        assertFalse(lifecycle.active());
++    }
++
++    @Test
++    void completedAnimationDoesNotDestroyASuffixedAncestorOrAMatchingSibling() {
++        // Original Bedrock 1.26.60.5 141c64b70/141c5e040 compare exact runtime names, then follow parents only.
++        for (final String parent : List.of("hud.selected_item_details", "panel")) {
++            final var label = animatedSlot(0);
++            label.properties().remove("inventory_slot");
++            label.properties().getAsJsonObject("animation_program").getAsJsonArray("tracks").get(0)
++                .getAsJsonObject().addProperty("destroy_at_end", "selected_item_details");
++            final var sibling = node("selected_item_details", List.of());
++            sibling.properties().addProperty("factory_instance_id", 2);
++            final var panel = node(parent, List.of(label, sibling));
++            panel.properties().addProperty("factory_instance_id", 1);
++            final var lifecycle = new NativeUiAnimationLifecycle(node("root", List.of(panel)));
++            lifecycle.advance(1_000_000_000);
++            assertFalse(panel.flag("ignored", false));
++            assertFalse(sibling.flag("ignored", false));
++            assertTrue(lifecycle.drainRetiredFactories().isEmpty());
++        }
 +    }
 +
 +    @Test
@@ -12648,6 +12669,35 @@ index 0000000..55565c7
 +        lifecycle.advance(500_000_000);
 +        assertEquals(.5F, lifecycle.animations().opacityAt(rebound, 500_000_000).current());
 +        assertEquals(.25F, lifecycle.animations().opacityAt(inserted, 500_000_000).current());
++    }
++
++    @Test
++    void replacingTheSameNamedFactoryPopupRestartsItsChildrenAndReportsOnlyCompletedCreations() {
++        final var firstText = animatedSlot(0);
++        firstText.properties().remove("inventory_slot");
++        firstText.properties().getAsJsonObject("animation_program").getAsJsonArray("tracks").get(0)
++            .getAsJsonObject().addProperty("destroy_at_end", "popup_tip_text");
++        final var first = node("popup_tip_text", List.of(firstText));
++        first.properties().addProperty("factory_instance_id", 1);
++        final var lifecycle = new NativeUiAnimationLifecycle(node("factory", List.of(first)));
++        lifecycle.advance(500_000_000);
++        final var secondText = new NativeUiScene.Node(firstText.name(), firstText.type(), firstText.properties().deepCopy(), List.of(), firstText.action());
++        final var second = node("popup_tip_text", List.of(secondText));
++        second.properties().addProperty("factory_instance_id", 2);
++        lifecycle.replaceRoot(node("factory", List.of(second)), 500_000_000);
++        assertEquals(0, lifecycle.animations().opacityAt(secondText, 500_000_000).current());
++        lifecycle.advance(1_000_000_000);
++        assertFalse(second.flag("ignored", false));
++        assertTrue(lifecycle.drainRetiredFactories().isEmpty());
++        assertEquals(.5F, lifecycle.animations().opacityAt(secondText, 1_000_000_000).current());
++        lifecycle.advance(1_500_000_000);
++        assertEquals(List.of(second), lifecycle.drainRetiredFactories());
++        assertTrue(lifecycle.drainRetiredFactories().isEmpty());
++        final var replacement = node("popup_tip_text", List.of(animatedSlot(0)));
++        replacement.properties().addProperty("factory_instance_id", 3);
++        lifecycle.replaceRoot(node("factory", List.of(replacement)), 1_750_000_000);
++        assertFalse(replacement.flag("ignored", false));
++        assertEquals(0, lifecycle.animations().opacityAt(replacement.children().getFirst(), 1_750_000_000).current());
 +    }
 +
 +    @Test

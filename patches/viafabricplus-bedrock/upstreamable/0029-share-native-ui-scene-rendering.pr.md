@@ -173,3 +173,5 @@ An installed-client GPU control renders the captured bundle banner with identica
 The full four-project build passes. These controls do not establish complete native screen appearance or frame timing.
 
 Cursor placement uses the resolved native anchor after grid layout and scrolling. Seventeen original Bedrock 1.26.60.5 controls establish local offsets, centering precedence, edge flips and zero-size hiding. Layout regressions cover actual grid-parent bounds, viewport clipping and unchanged authored offsets. Active tooltip sources, input actions and live pixels remain open.
+
+Factory creation IDs separate replacement clocks from binding refreshes. Completed named destruction queues the affected factory roots for host retirement. Ten original 1.26.60.5 instruction controls establish exact current-control and ancestor target lookup, expired-parent termination, and completion gating. Regressions cover replacement clocks, late retirement, and unrelated sibling preservation. These controls stop before native hierarchy removal and do not establish rendered parity.
