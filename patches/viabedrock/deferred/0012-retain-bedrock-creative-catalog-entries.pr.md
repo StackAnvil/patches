@@ -169,3 +169,7 @@ The native inventory graph references these controller variables in forced toggl
 Missing variables resolve to null and make category clicks request index zero.
 Screen regressions click category and layout controls through exported programs in both inventory layouts.
 These authored control indices remain independent of the selected profile values.
+
+Storage filter bindings belong to the retained item definition. Name and item-tag filters use the existing descriptor matcher, with banned matches taking precedence. The version-matched native map controls establish `tags`, `name`, then `item_tag` precedence and deferred auxiliary handling. Expression bindings require an explicit supported language context; the live caller does not infer that context from raw component data. Unsupported predicates leave the complete binding unavailable.
+
+Ordinary Java bundle insertion applies available filters and nesting rules before prediction. Regressions cover both insertion directions, accepted and rejected items, descriptor auxiliary values, and retained definitions sharing a numeric ID. The full stack and both Checkstyle tasks pass. Native physical-slot request execution and installed controller validation remain unfinished.
