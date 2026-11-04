@@ -139,3 +139,5 @@ A client-facing projection regression accepts the scene depth boundary and rejec
 A rebuilt Java dialog shows the captured Navigator labels and sends response 8 when the source Close action is clicked.
 The local diagnostic control disables authored-form capability without changing the recorded scene packets.
 The original reported dialog remains unmatched.
+
+Collection-details bindings now populate each control event bag without requiring binding_name. Named lookups, zero fallback, prefixes and unnamed scope maps match fifteen original Bedrock 1.26.60.5 execution controls; eight parser controls establish the binding type. Local regressions cover evaluated property replacement, control-local bags and export/import. Full controller input and installed parity remain separate gates.
