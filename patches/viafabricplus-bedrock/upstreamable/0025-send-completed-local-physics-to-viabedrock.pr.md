@@ -26,6 +26,8 @@ A controlled protocol-2225 replay uses the existing official 1.26.60.5-derived b
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
+Fresh Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover walking and falling through Survival, Spectator, and return transitions. Native keeps larger downward motion on Spectator entry and applies flight drag; the small grounded residue clears. Java 26.3's local player-list callback instead zeros vertical motion, producing a pause on both Java routes before correction. Suppress that callback's motion write for Bedrock and keep the native boundary in `BedrockPlayerModes`. Installed direct and proxy controls check retained fall motion, the grounded boundary, and eventual landing. Both native and Java receive corrections in these controls. Packet delivery, input, camera angle, and tick phases differ, so exact trajectories and transition timing remain unverified.
+
 Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover pearl-only, wind-only, and two pearl/wind angles.
 Both current Java routes produce the expected projectiles and settle after landing.
 Selected native, direct, and ViaProxy combinations also settle with 300 ms of incoming delivery delay, including combinations with held movement input.
