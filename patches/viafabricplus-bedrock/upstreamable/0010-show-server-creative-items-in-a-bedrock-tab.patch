@@ -1,4 +1,4 @@
-From 0c21eb2fadd7dddc75e18b04be262fbde10c9fdb Mon Sep 17 00:00:00 2001
+From 7f2490372e92e4c42dbe21e5e982d49f1e7a4764 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(bedrock): show server creative items in a Bedrock tab
@@ -6,8 +6,16 @@ Subject: [PATCH] feat(bedrock): show server creative items in a Bedrock tab
 Build the Bedrock tab from the connected server catalog and hide unavailable item types in vanilla category tabs. Carry catalog entry identity and converted item model data through the Java creative UI so duplicate fallback items select the intended Bedrock stack. Minecraft keeps the display-items callback protected, so a small package bridge registers the tab without reflection.
 
 Retain the exact native catalog entry and complete item snapshot through Java creative tabs. Match recipe-book tab entries by item definition before component parsing changes equality; derive group representatives without inventing variants. Respect the native maximum creative stack and avoid ambiguous same-Java-item transfer fallbacks. Catalog tests cover representative selection, exact identity and variant ambiguity.
+
+Preserve stack quantities in the shared wire-to-Minecraft conversion.
+Apply the one-item Creative tab display policy only to CreativeCatalog.Entry
+conversion. Native player and cooking previews use the shared codec and
+must retain their published output quantities. The installed 1.26.60.5
+Oak Planks control publishes four in core, while the former generic clamp
+rendered one. The codec regression retains the wire count alongside
+complete potion components and creative identity without mutating input.
 ---
- .../creative/BedrockCreativeCatalog.java      |  82 +++++++++
+ .../creative/BedrockCreativeCatalog.java      |  84 +++++++++
  .../MixinCreativeModeInventoryScreen.java     |  26 +++
  ...xinCreativeModeTab_ItemDisplayBuilder.java |  74 ++++++++
  .../creative/MixinCreativeModeTabs.java       |  60 +++++++
@@ -15,7 +23,7 @@ Retain the exact native catalog entry and complete item snapshot through Java cr
  .../viafabricplus-bedrock/lang/en_us.json     |   2 +
  .../viafabricplus-bedrock.mixins.json         |   3 +
  .../creative/BedrockCreativeCatalogTest.java  | 170 ++++++++++++++++++
- 8 files changed, 472 insertions(+)
+ 8 files changed, 474 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalog.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeInventoryScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/creative/MixinCreativeModeTab_ItemDisplayBuilder.java
@@ -25,10 +33,10 @@ Retain the exact native catalog entry and complete item snapshot through Java cr
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalog.java
 new file mode 100644
-index 0000000..c50c8b4
+index 0000000..190e86b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalog.java
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,84 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -43,6 +51,7 @@ index 0000000..c50c8b4
 +
 +import com.viaversion.viafabricplus.ViaFabricPlus;
 +import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.item.Item;
 +import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 +import io.netty.buffer.Unpooled;
 +import net.minecraft.client.Minecraft;
@@ -89,10 +98,12 @@ index 0000000..c50c8b4
 +        if (connection == null) {
 +            return ItemStack.EMPTY;
 +        }
-+        return toNative(entry.javaItem(), connection.registryAccess());
++        final ItemStack result = toNative(entry.javaItem(), connection.registryAccess());
++        result.setCount(1);
++        return result;
 +    }
 +
-+    public static ItemStack toNative(final com.viaversion.viaversion.api.minecraft.item.Item item,
++    public static ItemStack toNative(final Item item,
 +                                     final RegistryAccess registries) {
 +        final var buffer = new RegistryFriendlyByteBuf(Unpooled.buffer(), registries);
 +        try {
@@ -102,7 +113,6 @@ index 0000000..c50c8b4
 +            if (buffer.isReadable()) {
 +                throw new IllegalArgumentException("Trailing creative item data");
 +            }
-+            result.setCount(1);
 +            return result;
 +        } catch (final Exception exception) {
 +            throw new IllegalArgumentException("Cannot decode creative item data", exception);
@@ -379,7 +389,7 @@ index e10a7c1..8563627 100644
      "features.misc.MixinInventoryScreen",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalogTest.java
 new file mode 100644
-index 0000000..852bf81
+index 0000000..cf0ba2c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/creative/BedrockCreativeCatalogTest.java
 @@ -0,0 +1,170 @@
@@ -440,7 +450,7 @@ index 0000000..852bf81
 +    }
 +
 +    @Test
-+    void convertsCompletePotionAndCreativeIdentityUsingMinecraftWireCodec() throws Exception {
++    void preservesPreviewCountAndCompleteComponentsUsingMinecraftWireCodec() throws Exception {
 +        final var registries = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
 +        final var custom = new CompoundTag();
 +        custom.putInt("viabedrock:creative_entry", 72);
@@ -456,7 +466,7 @@ index 0000000..852bf81
 +        final var result = BedrockCreativeCatalog.toNative(input,
 +                registries);
 +        assertSame(Items.LINGERING_POTION, result.getItem());
-+        assertEquals(1, result.getCount());
++        assertEquals(64, result.getCount());
 +        assertEquals(1, result.getMaxStackSize());
 +        assertEquals(0x23AABC, result.get(DataComponents.POTION_CONTENTS).customColor().orElseThrow());
 +        assertEquals("test", result.get(DataComponents.POTION_CONTENTS).customName().orElseThrow());
