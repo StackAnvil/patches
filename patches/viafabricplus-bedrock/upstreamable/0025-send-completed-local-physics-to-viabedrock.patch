@@ -1,4 +1,4 @@
-From 314153e0af766210ce5a61c7054acfcb13882e81 Mon Sep 17 00:00:00 2001
+From 63789630ff0e78752d6bd2a9c9573c29591ad771 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -677,6 +677,24 @@ this hotbar change and consumes the new instant food. It sends no release
 transaction for that change. Preserve Java's local stop path without an
 extra release packet. Tests cover distinct definitions sharing a carrier,
 same-definition updates and absent-metadata Java identity fallback.
+
+Restore historical mode queries on the local player entity as well as the
+movement controller. Java 26.3 Player.isSpectator and isCreative call
+AbstractClientPlayer.gameMode; reading the current profile there leaks
+today's mode into retained physical frames. A bounded installed query
+control reproduces the split with protocol-2225 mode transitions. Keep
+remote entities on their own live profiles and release the override with
+the replay context. This control does not establish native trajectories.
+
+Preserve native vertical motion when a player-list mode update reaches
+LocalPlayer.onGameModeChanged. Java26.3 clears Y unconditionally on
+Spectator entry. Official Bedrock1.26.60.5 retains a larger falling Y and
+applies flight drag; only its small negative ground residue is clamped.
+A live BDS1.26.60.6 fall control reproduces an artificial pause and later
+correction on both Java routes. An observation-only diagnostic traces the
+zero write to that Java callback. Keep native mode side effects in
+BedrockPlayerModes and suppress only the Java callback's motion write,
+without changing ordinary Java sessions or unrelated mode handling.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  14 +
@@ -688,6 +706,7 @@ same-definition updates and absent-metadata Java identity fallback.
  .../movement/MixinBoatPhysicsState.java       |  79 +++
  .../MixinClientInputPhysicsState.java         |  26 +
  .../MixinClientLevelPhysicsReplay.java        |  36 ++
+ ...ixinClientPlayerGameModePhysicsReplay.java |  21 +
  .../MixinConnectionPhysicsReplay.java         |  24 +
  .../movement/MixinElytraPhysicsState.java     |  36 ++
  .../mixin/features/movement/MixinEntity.java  |  25 +-
@@ -703,7 +722,7 @@ same-definition updates and absent-metadata Java identity fallback.
  .../movement/MixinLevelPhysicsReplay.java     |  25 +
  .../features/movement/MixinLivingEntity.java  | 150 +++++
  .../movement/MixinLivingPhysicsState.java     | 145 +++++
- .../features/movement/MixinLocalPlayer.java   | 378 ++++++++++++-
+ .../features/movement/MixinLocalPlayer.java   | 384 ++++++++++++-
  .../movement/MixinMobEffectPhysicsState.java  |  18 +
  .../movement/MixinParticlePhysicsReplay.java  |  24 +
  .../movement/MixinPassengerPhysicsReplay.java |  39 ++
@@ -750,15 +769,15 @@ same-definition updates and absent-metadata Java identity fallback.
  .../movement/replay/PhysicalInput.java        |  20 +
  .../movement/replay/PhysicalItemUse.java      |  21 +
  .../replay/PhysicalMovementCorrection.java    |  35 ++
- .../replay/PhysicalReplayContext.java         | 248 ++++++++
+ .../replay/PhysicalReplayContext.java         | 255 +++++++++
  .../replay/PhysicalReplayHistory.java         | 190 +++++++
  .../movement/replay/PhysicalState.java        | 140 +++++
  .../movement/replay/PhysicalStateAccess.java  |  43 ++
  .../bedrock/render/BedrockActorState.java     |  39 +-
  .../viafabricplus-bedrock.accesswidener       |   5 +
- .../viafabricplus-bedrock.mixins.json         |  25 +
+ .../viafabricplus-bedrock.mixins.json         |  26 +
  .../BedrockPhysicalMotionLifecycleTest.java   | 190 +++++++
- .../bedrock/input/BedrockPlayerModesTest.java | 168 ++++++
+ .../bedrock/input/BedrockPlayerModesTest.java | 194 +++++++
  .../bedrock/input/BedrockUsedItemTest.java    |  66 +++
  .../input/BedrockVehiclePredictionsTest.java  | 155 +++++
  .../input/VehiclePredictionPayloadTest.java   |  75 +++
@@ -783,7 +802,7 @@ same-definition updates and absent-metadata Java identity fallback.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 105 files changed, 8373 insertions(+), 74 deletions(-)
+ 106 files changed, 8434 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -792,6 +811,7 @@ same-definition updates and absent-metadata Java identity fallback.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinBoatPhysicsState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinClientInputPhysicsState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinClientLevelPhysicsReplay.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinClientPlayerGameModePhysicsReplay.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinConnectionPhysicsReplay.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinElytraPhysicsState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java
@@ -1235,6 +1255,33 @@ index 0000000..44c191c
 +    @WrapMethod(method = "tickPassenger")
 +    private void recordPassenger(final Entity vehicle, final Entity passenger, final Operation<Void> original) {
 +        BedrockPhysicalReplay.passengerTick((ClientLevel) (Object) this, vehicle, passenger, () -> original.call(vehicle, passenger));
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinClientPlayerGameModePhysicsReplay.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinClientPlayerGameModePhysicsReplay.java
+new file mode 100644
+index 0000000..05aa22e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinClientPlayerGameModePhysicsReplay.java
+@@ -0,0 +1,21 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalReplayContext;
++import net.minecraft.client.player.AbstractClientPlayer;
++import net.minecraft.world.level.GameType;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(AbstractClientPlayer.class)
++public abstract class MixinClientPlayerGameModePhysicsReplay {
++    @ModifyReturnValue(method = "gameMode", at = @At("RETURN"))
++    private GameType useRecordedPlayerMode(final GameType live) {
++        return PhysicalReplayContext.gameMode((AbstractClientPlayer) (Object) this, live);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinConnectionPhysicsReplay.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinConnectionPhysicsReplay.java
@@ -2369,10 +2416,10 @@ index 0000000..3cad3f3
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index 0e466e5..4ead330 100644
+index 0e466e5..59c993f 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,396 @@
+@@ -21,22 +21,402 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2610,6 +2657,12 @@ index 0e466e5..4ead330 100644
 +    @WrapWithCondition(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V"))
 +    private boolean replaceJavaVerticalFlightInput(final LocalPlayer player, final Vec3 motion) {
 +        return !BedrockFlightPhysics.applies(player);
++    }
++
++    @WrapWithCondition(method = "onGameModeChanged", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V"))
++    private boolean resetMotionOnlyForJavaGameModes(final LocalPlayer player, final Vec3 motion) {
++        // Native mode events apply their own downward-motion boundary after the profile update.
++        return !BedrockInputPermissions.isBedrockConnection();
 +    }
 +
 +    @Inject(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/AbstractClientPlayer;aiStep()V"))
@@ -6118,10 +6171,10 @@ index 0000000..79ccffe
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java
 new file mode 100644
-index 0000000..2943d50
+index 0000000..cd6b4f9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,255 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6134,6 +6187,8 @@ index 0000000..2943d50
 +import net.minecraft.world.entity.LivingEntity;
 +import net.minecraft.world.item.ItemStack;
 +import net.minecraft.network.Connection;
++import net.minecraft.client.Minecraft;
++import net.minecraft.world.entity.player.Player;
 +import net.minecraft.world.level.GameType;
 +import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
 +import net.raphimc.viabedrock.api.model.PlayerModeMessage;
@@ -6191,6 +6246,11 @@ index 0000000..2943d50
 +    public static GameType gameMode(final GameType live) {
 +        final State state = CURRENT.get();
 +        return state != null && state.gameMode != null ? state.gameMode : live;
++    }
++
++    public static GameType gameMode(final Player player, final GameType live) {
++        final State state = CURRENT.get();
++        return state != null && state.gameMode != null && player == Minecraft.getInstance().player ? state.gameMode : live;
 +    }
 +
 +    public static void restoreGameMode(final GameType value) {
@@ -6851,10 +6911,10 @@ index f42de8f..8e8672c 100644
  
  accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 605b96f..cfc79f2 100644
+index 605b96f..fab28a7 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -155,12 +155,37 @@
+@@ -155,12 +155,38 @@
      "features.input.MixinMouseHandler",
      "features.input.MixinInputPermissionConnection",
      "features.input.MixinMinecraftInputPermissions",
@@ -6877,6 +6937,7 @@ index 605b96f..cfc79f2 100644
 +    "features.movement.MixinPassengerPhysicsReplay",
 +    "features.movement.MixinLevelPhysicsReplay",
 +    "features.movement.MixinGameModePhysicsReplay",
++    "features.movement.MixinClientPlayerGameModePhysicsReplay",
 +    "features.movement.MixinConnectionPhysicsReplay",
 +    "features.movement.MixinSoundPhysicsReplay",
 +    "features.movement.MixinParticlePhysicsReplay",
@@ -7090,10 +7151,10 @@ index 0000000..586a485
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerModesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerModesTest.java
 new file mode 100644
-index 0000000..e925d06
+index 0000000..eb32b98
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerModesTest.java
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,194 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7110,6 +7171,8 @@ index 0000000..e925d06
 +import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.server.Bootstrap;
 +import net.minecraft.world.entity.player.Abilities;
++import net.minecraft.world.entity.player.Player;
++import net.minecraft.world.level.GameType;
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.model.PlayerModeMessage;
 +import net.raphimc.viabedrock.api.model.PlayerModeTiming;
@@ -7130,6 +7193,30 @@ index 0000000..e925d06
 +    static void initializeGame() {
 +        SharedConstants.tryDetectVersion();
 +        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void historicalLocalModesDoNotChangeRemoteQueriesOrEscapeTheReplayScope() {
++        final var local = mock(LocalPlayer.class);
++        final var remote = mock(Player.class);
++        final var client = mock(Minecraft.class);
++        client.player = local;
++        try (var game = mockStatic(Minecraft.class)) {
++            game.when(Minecraft::getInstance).thenReturn(client);
++            assertEquals(GameType.CREATIVE, PhysicalReplayContext.gameMode(local, GameType.CREATIVE));
++            try (var ignored = PhysicalReplayContext.enter(null, null, Set.of(local, remote))) {
++                assertEquals(GameType.CREATIVE, PhysicalReplayContext.gameMode(local, GameType.CREATIVE));
++                for (final var historical : GameType.values()) {
++                    PhysicalReplayContext.restoreGameMode(historical);
++                    assertEquals(historical, PhysicalReplayContext.gameMode(local, GameType.CREATIVE));
++                    assertEquals(historical, PhysicalReplayContext.gameMode(GameType.CREATIVE));
++                    assertEquals(GameType.ADVENTURE, PhysicalReplayContext.gameMode(remote, GameType.ADVENTURE));
++                }
++            }
++            assertEquals(GameType.CREATIVE, PhysicalReplayContext.gameMode(local, GameType.CREATIVE));
++            assertEquals(GameType.ADVENTURE, PhysicalReplayContext.gameMode(remote, GameType.ADVENTURE));
++            assertFalse(PhysicalReplayContext.replaying());
++        }
 +    }
 +
 +    @Test

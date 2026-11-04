@@ -49,6 +49,7 @@ The owning patch notes describe their specific validation and limits:
 
 - [Complete skin transport](../patches/viabedrock/upstreamable/0047-encode-current-bedrock-skin-packets.pr.md).
 - [Native player rendering](../patches/viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md).
+- [Shared animation and wardrobe masking](../patches/viafabricplus-bedrock/upstreamable/0008-share-native-actor-and-resource-runtime.pr.md).
 - [Account and wardrobe state](../patches/viafabricplus-bedrock/upstreamable/0009-manage-character-creator-accounts-and-wardrobes.pr.md).
 - [Server costumes](../patches/viafabricplus-bedrock/upstreamable/0016-render-server-player-costumes.pr.md).
 - [Equipped models](../patches/viafabricplus-bedrock/upstreamable/0017-render-equipped-native-pack-models.pr.md).

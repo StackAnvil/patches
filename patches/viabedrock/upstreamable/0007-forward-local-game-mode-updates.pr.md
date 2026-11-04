@@ -12,25 +12,19 @@ Removal clears state even when the list entry is absent.
 
 The existing local unique-ID lookup still accepts updates before a player-list entry exists.
 Local profile updates and game-mode events keep their separate path.
+List refreshes take the local profile mode from the authoritative local actor, including before an explicit mode event. The remote cache fallback applies only to remote profiles.
 Java's existing `Undefined` fallback stays unchanged.
 This fallback does not establish the native spectator predicate used by aim assistance.
 
 ## Evidence and tests
 
-The target is Bedrock 1.26.51.1, protocol 2193.
+Current tests target Bedrock 1.26.60, protocol 2225.
 [Mojang's packet description](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/update-player-game-type-packet/) identifies the update as a cache refresh for all clients.
 The [default-mode packet](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/set-default-game-type-packet/) changes the shared default.
 These references support packet purpose, without supplying new enum values.
 
-Six focused tests cover translated player updates, default transitions, Java packet fields, local events, and cache identity changes.
-The previous packet handlers fail both remote-update regressions.
-The corrected handlers pass all six tests after replay of the full 104-patch core stack.
+Packet tests cover remote updates, inherited defaults, local events, cache identity changes, and repeated local profile refreshes in Creative, Spectator, and Survival. The refresh regression fails with the previous handler because it writes Survival for the local Creative profile. Remote Adventure state remains unchanged.
 
-The four-project build reports 2,941 passed tests, 312 optional skips, and no failures or errors.
-Both core Checkstyle tasks pass.
-All six new mode tests pass without skips.
-The packaged client classes, core and converter dependencies, and four source snapshots match the tested outputs.
-Optional native-reference and GPU controls from earlier rendering milestones are outside this build run.
+A controlled protocol-2225 replay preserves captured official Bedrock 1.26.60.5 skin and profile payloads, then adds declared mode transitions and a repeated captured list packet. Read-only installed-client observations compare the player entity, current profile, and movement controller. The add-on's [player profile refresh](../../viafabricplus-bedrock/upstreamable/0002-native-entities-and-skins.pr.md) handles Java's separate stale-profile cache.
 
-These controls verify Java translation and cache behavior.
-They do not establish native aim inputs, graphical equality, or complete remote skin parity.
+The complete core build and both Checkstyle tasks pass. Direct and proxy replays check the selected mode/profile transitions and complete transport. These controls do not establish complete movement, aim, graphics, or remote skin parity.

@@ -8,6 +8,8 @@ Import native Bedrock entity and skin rendering from viafabricplus-bedrock PR #9
 
 Keep per-player appearance and animation state separate from server costumes and equipment. Preserve native geometry, UVs, materials, animated surfaces, and connection-owned resources.
 
+Native player entities resolve the current connection's profile after list replacements. Java 26.3 otherwise retains the old `PlayerInfo` object, leaving entity predicates in an earlier mode while the movement controller has changed. Ordinary Java connections retain their existing profile cache.
+
 World player surfaces use separate cached materials for native near-camera fading. Shared hands, unrelated actors, and GUI portraits retain their own materials.
 The native and Iris programs use the same ordered coverage function. Surviving pixels retain the material depth policy.
 
@@ -19,6 +21,8 @@ Prerequisites:
 ## Validation and remaining limits
 
 Regression coverage includes `BedrockAcceptedResourcesTest`, `BedrockActorDepthGpuTest`, `BedrockActorGlintFramesTest`, `BedrockShaderAlphaTest`, and `BedrockPlayerFadeGpuTest`.
+
+A controlled protocol-2225 replay uses captured official 1.26.60.5 skin/profile bytes with declared Creative, Spectator, Survival, and return transitions plus a repeated profile list. The previous client keeps an old Creative profile after the current profile and controller enter Spectator. Read-only installed-client observations verify agreement after the fix on direct and proxy routes. The [core mode patch](../../viabedrock/upstreamable/0007-forward-local-game-mode-updates.pr.md) separately preserves the local mode when recreating the profile. These controls verify state ownership, without establishing complete native trajectories or visual parity.
 
 Official Bedrock 1.26.60.5 (protocol 2225) GPU draws establish the player fade across zero to one block of signed view depth.
 The native near-player draws remain two-sided. A matching Java replay initially obscures the lobby with an opaque player head.
