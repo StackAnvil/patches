@@ -77,6 +77,7 @@ Server responses confirm placement of the retained eight-log cursor stack.
 Inactive recipe icons carry separate lighting and opacity through extraction, cached atlas entries, and oversized item submission.
 Regressions retain a real unavailable recipe and restore both properties after nested extraction failures.
 Closed storage-item previews and bars read the core's native weight snapshot.
+Physical bundle preview tables decode into owned Minecraft stacks and explicit tooltip views without using Java bundle compaction. Identity and counts must match the retained source snapshot. Storage, cooking, player, and workbench presentations accept these views. The decoder requires the core preview API; source lifetime, renderer admission, placement, and physical-slot input remain unfinished.
 The default-screen regression retains an empty bundle alongside an inactive recipe.
 Installed direct and ViaProxy controls retain a server-issued empty bundle in Survival after reopening.
 Unknown snapshots restore ordinary controls. Hovering or carrying storage items also restores ordinary controls until native tooltip rendering and selection are complete.
