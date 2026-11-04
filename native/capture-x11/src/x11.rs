@@ -334,6 +334,10 @@ impl Display {
 
     fn focus(&self, window: Window) -> Result<()> {
         self.geometry(window)?;
+        if self.connection.get_input_focus()?.reply()?.focus == window {
+            // Repeated activation can make SDL rebuild a focused text editor.
+            return Ok(());
+        }
         let time = self.server_time()?;
         self.connection
             .configure_window(

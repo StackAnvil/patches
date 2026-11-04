@@ -233,8 +233,11 @@ Unchanged Java Creative slot echoes preserve the existing native stack and netwo
 Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
 
 Recipe families beyond the captured plank, cake, and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
-Local Bedrock 1.26.60.5 controls retain Creative search through Overworld/Nether transitions and clear it after world exit and re-entry.
-Multiplayer reconnects, server transfers, other world changes, and matching Java runtime comparisons remain unverified.
+Bedrock 1.26.60.5 controls retain Creative search through Overworld/Nether transitions in local worlds and on an owned BDS 1.26.60.6 server.
+Installed direct and ViaProxy controls match this multiplayer retention.
+Native and both Java routes clear search after disconnecting and reconnecting in the same game process. Local Bedrock also clears it after world exit and re-entry.
+The native multiplayer control uses a transport/authentication relay with blob caching disabled. Inventory and movement packets remain unchanged. The proxy control enters its query through normal UI paste.
+Server transfers, other world changes, and complete search input parity remain unverified.
 Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls delay the initial open acknowledgment by four seconds on protocol 2225.
 They establish visible admission, repeated input, movement, and cancellation through Escape or chat.
 Rebuilt direct and ViaProxy controls retain the world during that same delay in Survival, Creative, and workbench openings.
