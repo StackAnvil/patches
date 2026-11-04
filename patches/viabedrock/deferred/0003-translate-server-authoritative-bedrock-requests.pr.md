@@ -46,4 +46,11 @@ Scoped manual crafting batches reuse ordered prediction and response reconciliat
 Installed direct and ViaProxy checks accept bundle insertion, extraction, and reinsertion requests and retain the contents after reopening.
 See the [inventory reference](../../../docs/native-player-inventory.md) for the control path and remaining native comparison limit.
 
+Sparse bundles retain every nonempty entry in newest-first Java display order.
+Selection and requests map back to occupied physical slots. Extraction skips holes; insertion reclaims them when the last slot is occupied.
+Bedrock 1.26.60.5 layout and cell-lookup controls establish filtering and source order.
+Regressions cover translation, selection, extraction, full-span insertion, and merging across gaps.
+Transfers reject missing network IDs before changing predicted items or selection, including IDs needed by later swaps and compaction moves.
+The new sparse request sequences still need installed server controls and a matching native capture.
+
 The [owning patch](0003-translate-server-authoritative-bedrock-requests.patch) retains implementation rationale and versioned evidence.
