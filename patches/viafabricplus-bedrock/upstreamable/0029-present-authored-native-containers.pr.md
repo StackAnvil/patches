@@ -158,3 +158,9 @@ The selected native glyph comparisons cover static form controls. Complete conta
 
 Container labels share the renderer's height admission and retain inherited parent scissors.
 The [shared renderer notes](0029-share-native-ui-scene-rendering.pr.md) describe the native controls and remaining font limits.
+
+Unavailable recipes retain separate ingredient and output previews for the current opening.
+Real items and active drag previews take precedence over empty-slot previews.
+Focused core and client tests cover request rejection, search persistence, reopening, and item ownership.
+Bedrock 1.26.60.5 provides the native selection and lifetime reference.
+Installed direct/proxy comparison of this preview change and complete native pixels remain unverified.

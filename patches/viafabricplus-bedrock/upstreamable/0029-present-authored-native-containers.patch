@@ -1,4 +1,4 @@
-From be6b58cfbdf17ee129e39a0b885ee97c9331f4e0 Mon Sep 17 00:00:00 2001
+From 3dfa605f96569b52574aaa3fd121aa6cee8b9d26 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -762,6 +762,18 @@ or slot retires that admission. Respect authored handle_select and
 handle_deselect flags, and release SDL input when the editor disappears
 or its screen exits. Full Screen lifecycle regressions retain Ctrl+A
 selection and exercise blur, re-entry, another control and closing.
+
+Render opening-scoped crafting previews independently of recipe cells and
+actual menu contents. Use the authored unavailable-item background, counts
+and hover tooltips only over empty slots. Real items and active drag
+previews retain precedence. Preserve previews through search and retire
+them when the player inventory opening changes.
+
+Official Bedrock 1.26.60.5 controls show an unavailable oak-planks recipe
+with a log ghost and four-plank output, no inventory request, persistence
+through search and blank focus, and clearing after reopening. Focused
+presentation tests cover ownership, real-slot precedence and lifetime.
+These tests do not establish complete native GPU or variant parity.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../access/IBedrockGuiItemStyle.java          |   14 +
@@ -775,10 +787,10 @@ selection and exercise blur, re-entry, another control and closing.
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1374 ++++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1398 ++++++++++++++++
  .../container/BedrockNativeContainers.java    |  283 ++++
  .../container/BedrockNativeCooking.java       |  147 ++
- .../BedrockNativePlayerInventory.java         |  171 ++
+ .../BedrockNativePlayerInventory.java         |  173 ++
  .../container/BedrockPlayerInventory.java     |  144 ++
  .../NativeContainerActionPayload.java         |   30 +
  .../NativeContainerCurrentPayload.java        |   30 +
@@ -809,13 +821,13 @@ selection and exercise blur, re-entry, another control and closing.
  .../container/NativeInventoryFlights.java     |   65 +
  .../NativeInventoryItemPresentation.java      |  154 ++
  .../container/NativeInventoryItemStyle.java   |   55 +
- .../NativeInventoryPresentation.java          |   36 +
+ .../NativeInventoryPresentation.java          |   45 +
  .../container/NativeInventoryProgress.java    |   70 +
  .../container/NativePlayerHelpText.java       |   64 +
  .../NativePlayerInventoryActionPayload.java   |   23 +
  .../NativePlayerInventoryPayload.java         |   22 +
  .../NativePlayerInventoryResultPayload.java   |   22 +
- .../container/NativePlayerPresentation.java   |  195 +++
+ .../container/NativePlayerPresentation.java   |  215 +++
  .../PlayerInventoryScreenClosePayload.java    |   22 +
  .../PlayerInventoryScreenLifecycle.java       |   98 ++
  .../PlayerInventoryScreenReadyPayload.java    |   22 +
@@ -842,11 +854,11 @@ selection and exercise blur, re-entry, another control and closing.
  .../NativeInventoryProgressTest.java          |   83 +
  .../container/NativePlayerHelpTextTest.java   |   34 +
  .../NativePlayerInventoryLifetimeTest.java    |  142 ++
- .../NativePlayerPresentationTest.java         |  153 ++
+ .../NativePlayerPresentationTest.java         |  189 +++
  .../container/NativePlayerScreenTest.java     |  670 ++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 ++
  .../PlayerInventoryScreenLifecycleTest.java   |  139 ++
- 83 files changed, 11373 insertions(+), 62 deletions(-)
+ 83 files changed, 11464 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerScreenAdmission.java
@@ -1396,10 +1408,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..725f185
+index 0000000..4d5b68b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1374 @@
+@@ -0,0 +1,1398 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1509,6 +1521,7 @@ index 0000000..725f185
 +    private final NativeContainerDraws presentationDraws = new NativeContainerDraws();
 +    private long previousPresentationRevision = -1;
 +    private Map<Integer, ItemStack> recipePreviews = Map.of();
++    private Map<Integer, ItemStack> craftingPreview = Map.of();
 +    private Map<Integer, Set<String>> recipeActions = Map.of();
 +    private final Map<Integer, String> pointerSources = new HashMap<>();
 +    private long cookingUpdate = -1;
@@ -1707,6 +1720,7 @@ index 0000000..725f185
 +                NativeInventoryItemPresentation.values(this.menu.getCarried(), true, this.showTags), this.showTags);
 +        final var resolved = frame.scene();
 +        this.recipePreviews = frame.recipes();
++        this.craftingPreview = frame.craftingPreview();
 +        this.recipeActions = frame.recipeActions();
 +        this.cookingUpdate = this.presentation instanceof NativeCookingPresentation cooking ? cooking.message().updateSequence() : -1;
 +        this.actionScope =
@@ -2181,6 +2195,19 @@ index 0000000..725f185
 +            throw new IllegalArgumentException("Inventory item has no actual slot");
 +        final Slot slot =
 +                this.menu.slots.get(box.node().properties().get("inventory_slot").getAsInt());
++        final var ghost = this.craftingPreview.get(slot.index);
++        if (ghost != null && !slot.hasItem() && !(this.isQuickCrafting && this.quickCraftSlots.contains(slot))) {
++            if (box.visibleBounds().contains(mouseX, mouseY)) NativeInventoryItemPresentation.requireTooltip(ghost);
++            graphics.pose().pushMatrix();
++            try {
++                graphics.pose().translate(box.bounds().x(), box.bounds().y());
++                graphics.pose().scale(box.bounds().width() / 16, box.bounds().height() / 16);
++                NativeInventoryItemStyle.extract((IBedrockGuiItemStyle) graphics, NativeInventoryItemStyle.from(box.node(), alpha),
++                        () -> graphics.item(ghost, 0, 0));
++                this.previews.put(slot.index, new Preview(ghost.copy(), null));
++            } finally { graphics.pose().popMatrix(); }
++            return;
++        }
 +        this.drawingSlot = slot;
 +        graphics.pose().pushMatrix();
 +        try {
@@ -2195,6 +2222,15 @@ index 0000000..725f185
 +    /** Called only from the scoped vanilla decoration hook, preserving its computed quickcraft stack/count. */
 +    public void nativeDecorations(final ItemStack stack, final String count) {
 +        if (this.drawingSlot != null) this.previews.put(this.drawingSlot.index, new Preview(stack.copy(), count));
++    }
++
++    @Override
++    protected void extractTooltip(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY) {
++        final var ghost = this.hoveredSlot == null || this.hoveredSlot.hasItem() ? null : this.craftingPreview.get(this.hoveredSlot.index);
++        if (ghost != null && !this.isQuickCrafting && !this.closing()) {
++            NativeInventoryItemPresentation.requireTooltip(ghost);
++            graphics.setTooltipForNextFrame(this.font, ghost, mouseX, mouseY);
++        } else super.extractTooltip(graphics, mouseX, mouseY);
 +    }
 +
 +    private void count(final GuiGraphicsExtractor graphics, final NativeUiLayout.Box box, final float alpha) {
@@ -3218,10 +3254,10 @@ index 0000000..3e78d4d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativePlayerInventory.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativePlayerInventory.java
 new file mode 100644
-index 0000000..6f46cb7
+index 0000000..3f1fe85
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativePlayerInventory.java
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,173 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3314,13 +3350,15 @@ index 0000000..6f46cb7
 +        try {
 +            final Map<Integer, ItemStack> previews = new HashMap<>();
 +            message.items().forEach((id, item) -> previews.put(id, BedrockCreativeCatalog.toNative(item, client.player.registryAccess())));
++            final Map<Integer, ItemStack> craftingPreview = new HashMap<>();
++            message.craftingPreview().forEach((slot, item) -> craftingPreview.put(slot, BedrockCreativeCatalog.toNative(item, client.player.registryAccess())));
 +            if (menu == expected && presentation != null && presentation.message().opening() == message.opening()
 +                    && (presentation.message().generation() == 0 || presentation.message().generation() == message.generation())) {
-+                presentation.update(message, previews);
++                presentation.update(message, previews, craftingPreview);
 +            } else {
 +                if (presentation != null) presentation.retire();
 +                menu = expected;
-+                presentation = new NativePlayerPresentation(message, previews, System::nanoTime);
++                presentation = new NativePlayerPresentation(message, previews, craftingPreview, System::nanoTime);
 +                if (retainedQuery != null) presentation.query(retainedQuery, BedrockNativePlayerInventory::send);
 +            }
 +        } catch (final RuntimeException unsupported) {
@@ -6084,10 +6122,10 @@ index 0000000..98ed38d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeInventoryPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeInventoryPresentation.java
 new file mode 100644
-index 0000000..4c791fc
+index 0000000..973ce0e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeInventoryPresentation.java
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,45 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6111,7 +6149,13 @@ index 0000000..4c791fc
 +
 +    long revision();
 +
-+    record Frame(JsonObject scene, int containerSlots, Map<Integer, ItemStack> recipes, Map<Integer, Set<String>> recipeActions) {
++    record Frame(JsonObject scene, int containerSlots, Map<Integer, ItemStack> recipes, Map<Integer, Set<String>> recipeActions,
++                 Map<Integer, ItemStack> craftingPreview) {
++        public Frame(final JsonObject scene, final int containerSlots, final Map<Integer, ItemStack> recipes,
++                     final Map<Integer, Set<String>> recipeActions) {
++            this(scene, containerSlots, recipes, recipeActions, Map.of());
++        }
++
 +        public Frame {
 +            if (scene == null || containerSlots < 0) throw new IllegalArgumentException("Invalid native inventory frame");
 +            final Map<Integer, ItemStack> stacks = new HashMap<>();
@@ -6121,6 +6165,9 @@ index 0000000..4c791fc
 +            final Map<Integer, Set<String>> actions = new HashMap<>();
 +            recipeActions.forEach((id, values) -> actions.put(id, Set.copyOf(values)));
 +            recipeActions = Map.copyOf(actions);
++            final Map<Integer, ItemStack> ghosts = new HashMap<>();
++            craftingPreview.forEach((slot, item) -> ghosts.put(slot, item.copy()));
++            craftingPreview = Map.copyOf(ghosts);
 +        }
 +    }
 +}
@@ -6357,10 +6404,10 @@ index 0000000..8482173
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java
 new file mode 100644
-index 0000000..c64ae5c
+index 0000000..0c4a0a5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,215 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6371,6 +6418,7 @@ index 0000000..c64ae5c
 +import com.viaversion.viaversion.libs.gson.JsonElement;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
 +import java.util.HashMap;
 +import java.util.HashSet;
 +import java.util.List;
@@ -6394,6 +6442,7 @@ index 0000000..c64ae5c
 +    private PlayerInventoryUi program;
 +    private PlayerInventoryUi.State state;
 +    private Map<Integer, ItemStack> previews;
++    private Map<Integer, ItemStack> craftingPreview;
 +    private Map<String, UiBindings.Window> windows = Map.of();
 +    private long revision;
 +    private long sequence;
@@ -6406,29 +6455,37 @@ index 0000000..c64ae5c
 +    private int helpTopic = -1;
 +    private boolean helpCreative;
 +
-+    NativePlayerPresentation(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews, final LongSupplier clock) {
++    NativePlayerPresentation(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews,
++                             final Map<Integer, ItemStack> craftingPreview, final LongSupplier clock) {
 +        this.clock = clock;
-+        this.replace(message, previews);
++        this.replace(message, previews, craftingPreview);
 +    }
 +
-+    private void replace(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews) {
++    private void replace(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews,
++                         final Map<Integer, ItemStack> craftingPreview) {
 +        if (!previews.keySet().equals(message.items().keySet()) || previews.values().stream().anyMatch(ItemStack::isEmpty))
 +            throw new IllegalArgumentException("Player previews differ from the retained collection");
 +        final Map<Integer, ItemStack> owned = new HashMap<>();
 +        previews.forEach((id, item) -> owned.put(id, item.copy()));
++        if (!craftingPreview.keySet().equals(message.craftingPreview().keySet()) || craftingPreview.values().stream().anyMatch(ItemStack::isEmpty))
++            throw new IllegalArgumentException("Crafting previews differ from the retained recipe");
++        final Map<Integer, ItemStack> ghosts = new HashMap<>();
++        craftingPreview.forEach((slot, item) -> ghosts.put(slot, item.copy()));
 +        this.program = PlayerInventoryUi.fromProgram(JsonParser.parseString(message.program()).getAsJsonObject());
 +        if (this.message != null && !this.message.state().cells().equals(message.state().cells())) this.select("", -1);
 +        this.message = message;
 +        this.state = message.state();
 +        this.previews = Map.copyOf(owned);
++        this.craftingPreview = Map.copyOf(ghosts);
 +        this.revision++;
 +    }
 +
-+    boolean update(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews) {
++    boolean update(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews,
++                   final Map<Integer, ItemStack> craftingPreview) {
 +        if (this.retired || message.menuId() != this.message.menuId() || message.opening() != this.message.opening()
 +                || message.state().workbench() != this.message.state().workbench() || message.revision() <= this.message.revision()
 +                || this.message.generation() != 0 && message.generation() != this.message.generation()) return false;
-+        this.replace(message, previews);
++        this.replace(message, previews, craftingPreview);
 +        return true;
 +    }
 +
@@ -6534,11 +6591,21 @@ index 0000000..c64ae5c
 +        }).toList();
 +        final var state = new PlayerInventoryUi.State(source.workbench(), source.creative(), source.inventoryLayout(), source.craftingLayout(), source.leftTab(), source.rightTab(),
 +                source.filtering(), this.query(), source.tabLabel(), source.craftingLabel(), source.categoryCounts(), cells, this.selectedCollection, this.selectedIndex);
-+        final var scene = this.program.resolve(new PlayerInventoryUi.MenuView(menuId, state, slots, cursor), this.windows);
++        final Map<Integer, ItemStack> ghosts = new HashMap<>();
++        final var displayedSlots = slots.stream().map(slot -> {
++            final var ghost = this.craftingPreview.get(slot.javaSlot());
++            if (ghost == null || slot.presentation().get("#inventory_stack_count").getAsInt() != 0) return slot;
++            final Map<String, JsonElement> values = new HashMap<>(slot.presentation());
++            values.putAll(NativeInventoryItemPresentation.values(ghost, false, showTags));
++            values.put("#container_item_background", new JsonPrimitive(3));
++            ghosts.put(slot.javaSlot(), ghost);
++            return new ContainerUi.Slot(slot.javaSlot(), values);
++        }).toList();
++        final var scene = this.program.resolve(new PlayerInventoryUi.MenuView(menuId, state, displayedSlots, cursor), this.windows);
 +        final Map<Integer, Set<String>> actions = new HashMap<>();
 +        final Map<Integer, ItemStack> visible = new HashMap<>();
 +        this.scope(scene.getAsJsonObject("root"), actions, visible);
-+        return new Frame(scene, 46, visible, actions);
++        return new Frame(scene, 46, visible, actions, ghosts);
 +    }
 +
 +    private void scope(final JsonObject node, final Map<Integer, Set<String>> actions, final Map<Integer, ItemStack> visible) {
@@ -11783,10 +11850,10 @@ index 0000000..3875605
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java
 new file mode 100644
-index 0000000..d3902fa
+index 0000000..f2916dd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,189 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11797,6 +11864,7 @@ index 0000000..d3902fa
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 +import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.minecraft.item.Item;
 +import com.viaversion.viaversion.libs.gson.JsonPrimitive;
 +import com.viaversion.viaversion.util.GsonUtil;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiImages;
@@ -11839,15 +11907,50 @@ index 0000000..d3902fa
 +    }
 +
 +    @Test
++    void craftingPreviewsStaySeparateFromRealSlotsAndSurviveSearchWithoutCrossingOpenings() {
++        final var source = message(false, 1, 8, 1, "plank", false);
++        final var wireGhosts = Map.<Integer, Item>of(
++                0, new StructuredItem(320, 4, new StructuredDataContainer()),
++                1, new StructuredItem(321, 1, new StructuredDataContainer()));
++        final var selected = new NativePlayerInventoryMessage(0, 1, 8, 2, source.program(), source.snapshot(), Map.of(), wireGhosts);
++        final var output = new ItemStack(Items.IRON_INGOT, 4);
++        final var ghosts = Map.of(0, output, 1, new ItemStack(Items.IRON_INGOT));
++        final var presentation = new NativePlayerPresentation(selected, Map.of(), ghosts, () -> 0);
++        output.setCount(64);
++        final var actual = new ArrayList<>(slots());
++        final var first = presentation.resolve(0, "", actual, Map.of(), false);
++        assertEquals(Set.of(0, 1), first.craftingPreview().keySet());
++        assertEquals(4, first.craftingPreview().get(0).getCount());
++        assertEquals(0, actual.get(1).presentation().get("#inventory_stack_count").getAsInt());
++        assertTrue(first.recipes().isEmpty());
++        actual.set(1, new ContainerUi.Slot(1, Map.of("#inventory_stack_count", new JsonPrimitive(3))));
++        assertEquals(Set.of(0), presentation.resolve(0, "", actual, Map.of(), false).craftingPreview().keySet());
++        final var searched = message(false, 1, 8, 3, "no results", false);
++        assertTrue(presentation.update(new NativePlayerInventoryMessage(0, 1, 8, 3, searched.program(), searched.snapshot(),
++                Map.of(), wireGhosts), Map.of(), Map.of(0, new ItemStack(Items.IRON_INGOT, 4), 1, new ItemStack(Items.IRON_INGOT))));
++        assertEquals(Set.of(0, 1), presentation.resolve(0, "", slots(), Map.of(), false).craftingPreview().keySet());
++        presentation.openHelp();
++        assertTrue(presentation.resolve(0, "", slots(), Map.of(), false).craftingPreview().isEmpty());
++        presentation.closeHelp();
++        assertEquals(Set.of(0, 1), presentation.resolve(0, "", slots(), Map.of(), false).craftingPreview().keySet());
++        final var reopened = message(false, 2, 8, 1, "no results", false);
++        assertFalse(presentation.update(reopened, Map.of(), Map.of()));
++        assertTrue(new NativePlayerPresentation(reopened, Map.of(), Map.of(), () -> 0)
++                .resolve(0, "", slots(), Map.of(), false).craftingPreview().isEmpty());
++        presentation.retire();
++        assertThrows(IllegalArgumentException.class, () -> presentation.resolve(0, "", slots(), Map.of(), false));
++    }
++
++    @Test
 +    void typingSurvivesPendingCommandsAndAcknowledgementWithoutTransferringToAReopenedInventory() {
 +        final var clock = new AtomicLong();
-+        final var presentation = new NativePlayerPresentation(message(false, 1, 0, 1, "", false), Map.of(), clock::get);
++        final var presentation = new NativePlayerPresentation(message(false, 1, 0, 1, "", false), Map.of(), Map.of(), clock::get);
 +        final List<NativePlayerInventoryAction> sent = new ArrayList<>();
 +        presentation.query("o", sent::add);
 +        presentation.query("oak", sent::add);
 +        assertEquals(1, sent.size());
 +        assertEquals("oak", presentation.query());
-+        assertTrue(presentation.update(message(false, 1, 8, 2, "o", false), Map.of()));
++        assertTrue(presentation.update(message(false, 1, 8, 2, "o", false), Map.of(), Map.of()));
 +        assertFalse(presentation.result(new NativePlayerInventoryResult(2, 0, 1, 2, true)));
 +        assertFalse(presentation.idle());
 +        assertTrue(presentation.result(new NativePlayerInventoryResult(1, 0, 1, 2, true)));
@@ -11856,8 +11959,8 @@ index 0000000..d3902fa
 +        assertEquals("oak", sent.getLast().query());
 +        assertEquals(8, sent.getLast().generation());
 +        assertEquals(2, sent.getLast().revision());
-+        assertFalse(presentation.update(message(false, 2, 8, 3, "", false), Map.of()));
-+        assertFalse(presentation.update(message(false, 1, 9, 3, "", false), Map.of()));
++        assertFalse(presentation.update(message(false, 2, 8, 3, "", false), Map.of(), Map.of()));
++        assertFalse(presentation.update(message(false, 1, 9, 3, "", false), Map.of(), Map.of()));
 +        clock.set(10_000_000_001L);
 +        assertTrue(presentation.expired());
 +        presentation.retire();
@@ -11868,7 +11971,7 @@ index 0000000..d3902fa
 +
 +    @Test
 +    void aStaleHoverExitCannotClearTheNewlySelectedSlot() {
-+        final var presentation = new NativePlayerPresentation(message(false, 1, 0, 1, "", false), Map.of(), () -> 0);
++        final var presentation = new NativePlayerPresentation(message(false, 1, 0, 1, "", false), Map.of(), Map.of(), () -> 0);
 +        presentation.select("recipe_book", 0);
 +        presentation.select("inventory_items", 2);
 +        final long revision = presentation.revision();
@@ -11881,7 +11984,7 @@ index 0000000..d3902fa
 +    void defaultPlayerAndWorkbenchScenesBindAllRealSlotsAndRouteTheAuthoredHelpControl() {
 +        for (final boolean table : new boolean[]{false, true}) {
 +            final var presentation = new NativePlayerPresentation(message(table, table ? 0 : 1, 8, 1, "oak", true),
-+                    Map.of(0, new ItemStack(Items.IRON_INGOT)), System::nanoTime);
++                    Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), System::nanoTime);
 +            final var slots = slots();
 +            final var frame = presentation.resolve(table ? 7 : 0, "", slots, Map.of(), false);
 +            assertEquals(Set.of(0), frame.recipes().keySet());
@@ -11906,15 +12009,15 @@ index 0000000..d3902fa
 +    @Test
 +    void helpRetainsTheOpeningAndPendingSearchWhileSourceSnapshotsAdvance() {
 +        final var source = message(false, 1, 8, 1, "", true);
-+        final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), () -> 0);
++        final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), () -> 0);
 +        final List<NativePlayerInventoryAction> sent = new ArrayList<>();
 +        presentation.query("oak", sent::add);
 +        presentation.openHelp();
 +        assertTrue(presentation.helping());
 +        final var guide = presentation.resolve(0, "", slots(), Map.of(), false);
-+        assertFalse(guide.scene().equals(new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), () -> 0)
++        assertFalse(guide.scene().equals(new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), () -> 0)
 +                .resolve(0, "", slots(), Map.of(), false).scene()));
-+        assertTrue(presentation.update(message(false, 1, 8, 2, "oak", true), Map.of(0, new ItemStack(Items.IRON_INGOT))));
++        assertTrue(presentation.update(message(false, 1, 8, 2, "oak", true), Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of()));
 +        assertTrue(presentation.result(new NativePlayerInventoryResult(1, 8, 1, 2, true)));
 +        assertTrue(presentation.helping());
 +        assertTrue(presentation.closeHelp());
@@ -11942,7 +12045,7 @@ index 0000000..d3902fa
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
 new file mode 100644
-index 0000000..d547656
+index 0000000..8e80ac5
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
 @@ -0,0 +1,670 @@
@@ -12063,7 +12166,7 @@ index 0000000..d547656
 +                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
 +            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
 +                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
-+            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), clock::get);
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), clock::get);
 +            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
 +                    false, 1, clock::get, () -> true);
 +            set(Screen.class, screen, "minecraft", game);
@@ -12139,7 +12242,7 @@ index 0000000..d547656
 +                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
 +            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
 +                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
-+            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), clock::get);
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), clock::get);
 +            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
 +                    false, 1, clock::get, () -> true);
 +            set(Screen.class, screen, "minecraft", game);
@@ -12214,7 +12317,7 @@ index 0000000..d547656
 +                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
 +            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
 +                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
-+            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), clock::get);
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), clock::get);
 +            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
 +                    false, 1, clock::get, () -> true);
 +            set(Screen.class, screen, "minecraft", game);
@@ -12270,7 +12373,7 @@ index 0000000..d547656
 +                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
 +            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
 +                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
-+            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), clock::get);
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), clock::get);
 +            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
 +                    false, 1, clock::get, () -> true);
 +            set(Screen.class, screen, "minecraft", game);
@@ -12326,7 +12429,7 @@ index 0000000..d547656
 +                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
 +            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
 +                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
-+            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), clock::get);
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), clock::get);
 +            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
 +                    false, 1, clock::get, () -> true);
 +            set(Screen.class, screen, "minecraft", game);
@@ -12375,7 +12478,7 @@ index 0000000..d547656
 +                List.of(0, 0, 0, 0), List.of(), "", -1);
 +        final var message = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
 +                GsonUtil.getGson().toJson(state), Map.of());
-+        final var presentation = new NativePlayerPresentation(message, Map.of(), () -> 0L);
++        final var presentation = new NativePlayerPresentation(message, Map.of(), Map.of(), () -> 0L);
 +        set(BedrockNativePlayerInventory.class, null, "owner", owner);
 +        set(BedrockNativePlayerInventory.class, null, "menu", menu);
 +        set(BedrockNativePlayerInventory.class, null, "presentation", presentation);
@@ -12440,7 +12543,7 @@ index 0000000..d547656
 +            storage.putInt("capacity", 64);
 +            data.put(NativeItemStorageData.TAG, storage);
 +            bundle.set(DataComponents.CUSTOM_DATA, CustomData.of(data));
-+            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT), 1, bundle), clock::get);
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT), 1, bundle), Map.of(), clock::get);
 +            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
 +                    false, 1, clock::get, () -> true);
 +            set(Screen.class, screen, "minecraft", game);
@@ -12529,7 +12632,7 @@ index 0000000..d547656
 +            final var previews = IntStream.range(0, 2000).boxed().collect(Collectors.toMap(id -> id, id -> new ItemStack(Items.IRON_INGOT)));
 +            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
 +                    GsonUtil.getGson().toJson(state), items);
-+            final var presentation = new NativePlayerPresentation(source, previews, clock::get);
++            final var presentation = new NativePlayerPresentation(source, previews, Map.of(), clock::get);
 +            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
 +                    false, 1, clock::get, () -> true);
 +            set(Screen.class, screen, "minecraft", game);

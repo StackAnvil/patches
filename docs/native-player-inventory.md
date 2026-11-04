@@ -126,6 +126,12 @@ An inactive editor must stay inactive after opening or resizing.
 
 Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
 A normal recipe click fills the grid. Taking its output sends a separate craft request.
+Selecting an unavailable recipe shows ingredient and output previews without moving items or sending an inventory request.
+The previews cover empty crafting slots. Real items and active drag previews take precedence.
+Search edits preserve the previews. Closing and reopening clears them.
+Candidate selection uses current ingredient allocations and the native priority order.
+Tagged ingredient previews prefer a wood family from the hotbar and inventory, with oak as the default.
+Exact fallback variant order and complete native pixels remain unverified.
 A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
 Core plans this request for shaped and shapeless recipes from their server-supplied results.
 The planner uses the first eligible ingredient allocation.
