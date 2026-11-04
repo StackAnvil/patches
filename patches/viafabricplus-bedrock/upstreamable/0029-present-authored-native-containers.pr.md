@@ -35,9 +35,18 @@ Buffered search edits survive an acknowledgment that advances the container gene
 The connection retains the latest local edit before command serialization, including an explicit clear.
 Closing retires pending commands. A replacement presentation sends retained text under its own opening and generation.
 Disconnect clears this client state; late replies cannot replace it.
-Search focus clears through the parent GUI owner when clicking elsewhere, hiding the editor, or exiting.
+Keep SDL text input separate from the editor highlight. Blank-area clicks and Escape remove the highlight but allow typing to resume.
+Another focused control, a hidden editor, or screen exit releases text input.
+Honor authored search selection and deselection flags instead of reactivating the field on a global deselection callback.
 Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls on protocol 2225 retain search text and explicit clearing after pointer close and reopening.
-The first Escape removes editor focus; the next closes the inventory.
+Official Bedrock 1.26.60.5 local-world controls retain active Creative and Survival editing through viewport changes.
+A Creative Ctrl+A selection survives a GUI-scale change. An inactive editor stays inactive through resizing.
+The first Escape removes the highlight; the next closes the inventory.
+Full Screen initialization and resize regressions preserve the same editor, registration, selection replacement, and inactive state.
+Installed direct and ViaProxy controls use ordinary typing and retain a Ctrl+A selection through an actual window resize.
+Both routes preserve inactive search, resume typing after Escape and blank clicks, and stop typing after recipe and slot selection.
+A read-only observer confirms one registered editor and SDL input ownership throughout these transitions.
+These controls do not establish complete keybinding, IME, controller, touch, or pixel parity.
 Controller regressions cover closing before a search reply, replacement commands, explicit clearing, late replies, and connection replacement.
 Rebuilt direct and ViaProxy controls delay search handling by four seconds, close with unsent edits, and retain the latest text and explicit clear after reopening.
 Both routes preserve the 32-log stack and the native two-step Escape behavior.
