@@ -20,6 +20,10 @@ Prerequisites:
 
 Regression coverage includes `BedrockPhysicalMotionLifecycleTest`, `BedrockPlayerModesTest`, `BedrockVehiclePredictionsTest`, `VehiclePredictionPayloadTest`.
 
+Historical mode queries use the local player's recorded mode on both the movement controller and the entity. Java 26.3 entity predicates otherwise keep reading the live profile during correction replay. Remote players retain their own profile modes, and closing the replay scope restores live queries.
+
+A controlled protocol-2225 replay uses the existing official 1.26.60.5-derived bootstrap with declared mode transitions. A bounded installed probe queries all four historical Java modes across five live phases on direct and proxy routes. The previous client disagrees in 15 of 20 cases. The corrected client keeps local mode, Creative/Spectator predicates, and pickability aligned with the historical mode, while remote predicates and live queries after each scope remain unchanged. `BedrockPlayerModesTest` checks local ownership, remote fallback, and scope lifetime separately. These controls establish query ownership, without proving native trajectories or correction timing.
+
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
 Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover pearl-only, wind-only, and two pearl/wind angles.
