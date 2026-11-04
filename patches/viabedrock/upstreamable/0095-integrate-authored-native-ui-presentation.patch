@@ -1,4 +1,4 @@
-From 58810577c996c288bec094699f3b9105efee762a Mon Sep 17 00:00:00 2001
+From 62b73e378c68a711721e508bf03f73d96313c70a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -727,6 +727,8 @@ table to 64 slots and 1 MiB; reject malformed, truncated and mismatched data
 without manufacturing an empty table. Only outer conversions carry a table,
 so nested render previews cannot recursively duplicate it. Missing or
 oversized preview data stays explicitly unavailable for native presentation.
+
+Carry live selected-item detail factory instances with the retained tooltip view for storage, cooking and player controllers. An empty instance list keeps the factory dormant instead of expanding a hidden static child. Popup lifetime is independent of bundle hover visibility. A transported controller regression creates, refreshes and retires an actual requested popup. Keep the native visibility source and active bundle renderer admission separate until verified.
 ---
  Data Asset Sources.md                         |    33 +
  build.gradle                                  |     1 +
@@ -747,8 +749,8 @@ oversized preview data stays explicitly unavailable for native presentation.
  .../container/dynamic/BundleContainer.java    |     2 +-
  .../definition/ItemDefinitions.java           |     5 -
  .../resourcepack/ui/BundleTooltipLayout.java  |    62 +
- .../api/resourcepack/ui/BundleTooltipUi.java  |   111 +
- .../api/resourcepack/ui/ContainerUi.java      |    25 +-
+ .../api/resourcepack/ui/BundleTooltipUi.java  |   122 +
+ .../api/resourcepack/ui/ContainerUi.java      |    32 +-
  .../api/resourcepack/ui/CookingUi.java        |     8 +-
  .../viabedrock/api/util/NativeStringMap.java  |    75 +
  .../viabedrock/protocol/BedrockProtocol.java  |     3 +
@@ -803,7 +805,7 @@ oversized preview data stays explicitly unavailable for native presentation.
  .../NativeContainerTransferTest.java          |   115 +
  .../container/NativeItemStackMatcherTest.java |   191 +
  .../ui/BundleTooltipLayoutTest.java           |    38 +
- .../resourcepack/ui/BundleTooltipUiTest.java  |   151 +
+ .../resourcepack/ui/BundleTooltipUiTest.java  |   177 +
  .../resourcepack/ui/HudActionbarUiTest.java   |   108 +
  .../api/resourcepack/ui/HudTitleUiTest.java   |   176 +
  .../protocol/model/BuiltinItemNameTest.java   |   159 +
@@ -823,7 +825,7 @@ oversized preview data stays explicitly unavailable for native presentation.
  .../native-bundle-tooltip-bindings.json       |   283 +
  .../native-bundle-tooltip-layout.json         |   266 +
  .../inventory/native-item-storage.json        |   568 +
- 95 files changed, 38007 insertions(+), 364 deletions(-)
+ 95 files changed, 38051 insertions(+), 364 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BuiltinBlockNames.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleTooltipData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleTooltipItems.java
@@ -2132,10 +2134,10 @@ index 00000000..966a11ab
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/BundleTooltipUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/BundleTooltipUi.java
 new file mode 100644
-index 00000000..1f22a92d
+index 00000000..fc6cfb67
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/BundleTooltipUi.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,122 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2223,9 +2225,16 @@ index 00000000..1f22a92d
 +
 +    /** Modes 1 and 2 activate the retained tooltip source. Selection is a grid cell. */
 +    public record View(int mode, int inputMode, boolean hidden, Integer selectedCell,
-+                       NativeBundleTooltipData contents, NativeItemStorageData storage, List<Item> items) {
++                       NativeBundleTooltipData contents, NativeItemStorageData storage, List<Item> items,
++                       List<UiFactoryInstances.Instance> details) {
++        public View(final int mode, final int inputMode, final boolean hidden, final Integer selectedCell,
++                    final NativeBundleTooltipData contents, final NativeItemStorageData storage, final List<Item> items) {
++            this(mode, inputMode, hidden, selectedCell, contents, storage, items, List.of());
++        }
++
 +        public View {
 +            items = List.copyOf(items);
++            details = List.copyOf(details);
 +            if (mode < 0 || mode > 2 || mode != 0 && (contents == null || contents.primaryName() == null
 +                    || contents.emptyDescription() == null || items.size() != contents.amounts().size())) {
 +                throw new IllegalArgumentException("Incomplete native bundle tooltip view");
@@ -2234,6 +2243,10 @@ index 00000000..1f22a92d
 +
 +        public static View inactive() {
 +            return new View(0, 1, false, null, null, null, List.of());
++        }
++
++        public View withDetails(final List<UiFactoryInstances.Instance> instances) {
++            return new View(this.mode, this.inputMode, this.hidden, this.selectedCell, this.contents, this.storage, this.items, instances);
 +        }
 +
 +        boolean active() {
@@ -2248,7 +2261,7 @@ index 00000000..1f22a92d
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java
-index 76e62199..fe1f231b 100644
+index 76e62199..dab82bcb 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java
 @@ -61,6 +61,7 @@ public final class ContainerUi {
@@ -2285,7 +2298,15 @@ index 76e62199..fe1f231b 100644
          final String host = menu.kind.host;
          final var resolved = this.program.resolve(host, controller);
          if (resolved.root() == null) {
-@@ -323,6 +333,7 @@ public final class ContainerUi {
+@@ -295,6 +305,7 @@ public final class ContainerUi {
+         private final boolean nativeActions;
+         protected final Map<String, Collection> collections = new HashMap<>();
+         protected final Map<String, JsonElement> globals = new HashMap<>();
++        private List<UiFactoryInstances.Instance> itemDetails = List.of();
+ 
+         private final Set<String> singletonCollections = new HashSet<>();
+         private final Map<Integer, Slot> slots = new HashMap<>();
+@@ -323,6 +334,7 @@ public final class ContainerUi {
              this.globals.put("$pocket_screen", new JsonPrimitive(false));
              this.globals.put("#is_using_gamepad", new JsonPrimitive(false));
              this.globals.put("#is_using_touch", new JsonPrimitive(false));
@@ -2293,11 +2314,12 @@ index 76e62199..fe1f231b 100644
              this.globals.put("#close_button_visible", new JsonPrimitive(true));
              this.globals.putAll(cursor);
              final JsonObject cursorReference = new JsonObject();
-@@ -330,6 +341,12 @@ public final class ContainerUi {
+@@ -330,6 +342,13 @@ public final class ContainerUi {
              this.globals.put("#inventory_selected_item", cursorReference);
          }
  
 +        final Controller bundle(final BundleTooltipUi.View tooltip, final String emptyDescription) {
++            this.itemDetails = tooltip.details();
 +            this.globals.putAll(BundleTooltipUi.bindings(tooltip, emptyDescription));
 +            this.collections.put("bundle_items", BundleTooltipUi.collection(tooltip));
 +            return this;
@@ -2306,7 +2328,7 @@ index 76e62199..fe1f231b 100644
          protected final void registerSingleton(final String name, final int slot, final String emptyBinding) {
              this.collections.put(name, singleton(this.slots, slot, emptyBinding));
              this.singletonCollections.add(name);
-@@ -401,6 +418,9 @@ public final class ContainerUi {
+@@ -401,6 +420,9 @@ public final class ContainerUi {
          public Map<String, JsonElement> bindings(final Scope scope) {
              final Map<String, JsonElement> values = new HashMap<>(this.globals);
              values.putAll(this.variables(scope));
@@ -2316,7 +2338,19 @@ index 76e62199..fe1f231b 100644
              if (scope != null && Set.of("brewing_result_items", "brewing_fuel_item").contains(scope.collection())) {
                  final JsonElement count = values.get("#inventory_stack_count");
                  if (count == null || !count.isJsonPrimitive() || !count.getAsJsonPrimitive().isNumber()) {
-@@ -428,6 +448,9 @@ public final class ContainerUi {
+@@ -417,6 +439,11 @@ public final class ContainerUi {
+             return "";
+         }
+ 
++        @Override
++        public List<UiFactoryInstances.Instance> factoryInstances(final String name, final Scope scope) {
++            return name.equals("selected_item_details_factory") ? this.itemDetails : null;
++        }
++
+         @Override
+         public void decorate(final JsonObject node, final JsonObject control, final Map<String, JsonElement> resolved, final Scope scope) {
+             if (this.nativeActions && "grid".equals(JsonUiProgram.string(node, "type"))
+@@ -428,6 +455,9 @@ public final class ContainerUi {
                  node.addProperty("collection_index", scope.index());
                  if (this.variables(scope).get("#item_renderer_data") instanceof JsonObject reference && reference.has("java_slot")) {
                      node.addProperty("inventory_slot", reference.get("java_slot").getAsInt());
@@ -36756,10 +36790,10 @@ index 00000000..da791492
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/BundleTooltipUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/BundleTooltipUiTest.java
 new file mode 100644
-index 00000000..2ced731a
+index 00000000..d324169f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/BundleTooltipUiTest.java
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,177 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -36894,6 +36928,32 @@ index 00000000..2ced731a
 +                assertEquals("", node(imported.resolve(menu, overflowSelected), "selected").get("text").getAsString());
 +            }
 +        }
++    }
++
++    @Test
++    void transportedItemDetailsFactoryCreatesOnlyRequestedPopupsAndRetainsTheirCreationIdentity() {
++        final String ui = """
++                {"namespace":"chest","small_chest_screen":{"type":"screen","controls":[
++                  {"selected_item_details_factory":{"type":"factory","control_name":"@chest.detail"}}]},
++                 "detail":{"type":"panel","controls":[{"caption":{"type":"label","text":"#selected_hover_text","localize":false}}]}}
++                """;
++        final var source = new ContainerUi(new JsonUiProgram(List.of(Map.of("ui/chest.json", ui.getBytes(StandardCharsets.UTF_8)))));
++        final var imported = ContainerUi.fromProgram(source.exportProgram(ContainerUi.Kind.CHEST_3_ROWS, new ContainerUi.Title("Chest", false)));
++        final var slots = IntStream.range(0, 63).mapToObj(slot -> new ContainerUi.Slot(slot, Map.of())).toList();
++        final var menu = new ContainerUi.MenuView(7, ContainerUi.Kind.CHEST_3_ROWS, "Chest", slots, Map.of(), List.of());
++        assertTrue(node(imported.resolve(menu), "selected_item_details_factory").getAsJsonArray("children").isEmpty());
++        final var factory = new UiFactoryInstances();
++        final var instance = factory.create(JsonParser.parseString("""
++                {"name":"popup_tip_text","#selected_hover_text":"Selected child","exclusive":true}
++                """).getAsJsonObject());
++        final var frame = BundleTooltipUi.View.inactive().withDetails(factory.instances());
++        final var first = imported.resolve(menu, frame);
++        assertEquals("Selected child", node(first, "caption").get("text").getAsString());
++        assertEquals(instance.id(), node(first, "popup_tip_text").get("factory_instance_id").getAsLong());
++        assertEquals(first, imported.resolve(menu, frame));
++        factory.retire(instance.id());
++        assertTrue(node(imported.resolve(menu, BundleTooltipUi.View.inactive().withDetails(factory.instances())),
++                "selected_item_details_factory").getAsJsonArray("children").isEmpty());
 +    }
 +
 +    private static JsonObject node(final JsonObject root, final String name) {
