@@ -168,3 +168,5 @@ Search edits and blank-slot focus preserve the previews. Reopening clears them a
 With one log available, an ordinary recipe click places the real input and shows four output planks.
 Bedrock 1.26.60.5 provides the native selection and lifetime reference.
 Complete native pixels, fallback variant order, variant cycling, and broader recipe families remain unverified.
+
+Container layout supplies the desktop UI pointer to shared cursor placement and invalidates active placement when the pointer moves. Existing bundle admission guards remain until source lifetime, physical-slot rendering and input actions are complete.
