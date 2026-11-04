@@ -29,6 +29,10 @@ Original storage admission and child lookup controls execute the native Compound
 Local regressions cover zero-container weight, unknown contents, tooltip transport, and physical insertion.
 Full protocol tag construction and installed controller behavior remain outside these controls.
 
+`ItemStoragePolicy` retains typed slot limits, nesting flags, and immutable lowercase descriptor maps on each selected definition.
+Registry regressions cover packet mutation, numeric-ID collisions, absent updates, and malformed replacements without inventing unrestricted filters.
+Descriptor binding, its version context, and live request execution remain unfinished.
+
 Packet, menu-lifetime, and action tests cover supported adapters. Complete installed player/cooking controllers and live native parity remain unfinished.
 
 Action-form dialog labels use the accepted pack translator, as the title and body already do.
