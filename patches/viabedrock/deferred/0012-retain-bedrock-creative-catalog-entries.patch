@@ -1,4 +1,4 @@
-From 0b4bbc45155f2fb1db6b0da4cc3921d59fcd0bed Mon Sep 17 00:00:00 2001
+From 6f308a51dbc732c9812ea1cecb56e9faf9c02502 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -398,6 +398,18 @@ request or change actual inventory slots, stack IDs or the cursor. Retire
 previews on opening/catalog replacement and keep them through query edits.
 Boundary regressions cover owned wire snapshots, stale commands, no source
 mutation/request, source-family choice and reopening.
+
+Select ghost candidates independently of recipe unlocks. The original
+1.26.60.5 candidate builder143a51800 enumerates output and station matches
+through143694600/143694360, and callback143a85280 appends each match without
+consulting the player unlock collection. Search exposes locked recipes.
+Keep availability and request admission separate from this read-only
+selection. An installed fresh Survival player with recipesUnlock=true and
+no unlocked oak-planks recipes exposed the previous extra filter.
+
+The boundary regression searches a locked recipe with an empty inventory,
+publishes its ghosts, and verifies that neither a request ID nor an item
+request is allocated. It also retains search/reopening and replay guards.
 ---
  .../model/NativePlayerInventoryAction.java    |  94 +++
  .../model/NativePlayerInventoryMessage.java   | 334 +++++++++
@@ -415,7 +427,7 @@ mutation/request, source-family choice and reopening.
  .../protocol/packet/InventoryPackets.java     | 213 ++++--
  .../protocol/packet/MultiStatePackets.java    |  22 +
  .../protocol/rewriter/ItemRewriter.java       |  74 +-
- .../protocol/storage/CraftingDataTracker.java | 219 +++++-
+ .../protocol/storage/CraftingDataTracker.java | 217 +++++-
  .../storage/InventoryRequestTracker.java      |  24 +
  .../protocol/storage/InventoryTracker.java    |  21 +
  .../storage/NativePlayerRecipeState.java      | 672 ++++++++++++++++++
@@ -427,7 +439,7 @@ mutation/request, source-family choice and reopening.
  .../ui/PlayerInventoryUiTest.java             | 126 ++++
  .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++
  .../protocol/packet/InventoryPacketsTest.java | 266 +++++--
- .../rewriter/PlayerRecipeModelTest.java       | 595 ++++++++++++++++
+ .../rewriter/PlayerRecipeModelTest.java       | 601 ++++++++++++++++
  ...egisteredPlayerRecipeAvailabilityTest.java |   5 +-
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/CreativeInventoryActionTest.java  | 262 +++++++
@@ -435,7 +447,7 @@ mutation/request, source-family choice and reopening.
  .../NativePlayerCreativeAuxiliaryTest.java    | 333 +++++++++
  .../storage/NativePlayerCreativePickTest.java | 138 ++++
  .../storage/NativeRecipeCraftingTest.java     | 500 +++++++++++++
- 36 files changed, 6166 insertions(+), 169 deletions(-)
+ 36 files changed, 6170 insertions(+), 169 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryResult.java
@@ -3037,7 +3049,7 @@ index 1165eb37..27d14c7d 100644
                      final ItemRecipeKey key = this.recipeKey(item);
                      return key != null ? key.descriptorHash() : 0;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
-index 1b68e72e..27fe9828 100644
+index 1b68e72e..22d95e55 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 @@ -25,16 +25,19 @@ import net.raphimc.viabedrock.api.model.container.NativeRecipeCounter;
@@ -3123,7 +3135,7 @@ index 1b68e72e..27fe9828 100644
      }
  
      private boolean requiresCraftingTable(final CraftingDataStorage data) {
-@@ -185,28 +206,144 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -185,28 +206,142 @@ public final class CraftingDataTracker extends StoredObject {
                  ? shaped.getWidth() >= 3 || shaped.getHeight() >= 3 : this.recipeIngredients(data).size() >= 5;
      }
  
@@ -3182,10 +3194,8 @@ index 1b68e72e..27fe9828 100644
 +    /** Select and snapshot a recipe without moving any source or granting it a request identity. */
 +    public RecipePreview playerRecipePreview(final BedrockItem output, final PlayerRecipeContext owner) {
 +        owner.requireCurrent();
-+        final var rules = this.user().get(GameRulesStorage.class);
 +        final var candidates = NativeSort.sorted(this.outputCandidates(output, owner.recipeTags(this)).stream()
 +                .filter(data -> data.recipe() instanceof ShapedRecipe || data.recipe() instanceof ShapelessRecipe)
-+                .filter(data -> rules == null || !Boolean.TRUE.equals(rules.getGameRule("recipesUnlock")) || this.isRecipeUnlocked(data))
 +                .toList(), Comparator.comparingInt(data -> data.recipe().getPriority()));
 +        final var items = this.user().get(ItemRewriter.class);
 +        final var sources = owner.sources(true);
@@ -3236,13 +3246,13 @@ index 1b68e72e..27fe9828 100644
 +                final var definition = items.definition(stack);
 +                if (stack.isEmpty() || definition == null) {
 +                    continue;
-+                }
+                 }
+-            }));
 +                final String prefix = NativeRecipeDescriptor.familyPrefix(definition.identifier());
 +                if (!prefix.isEmpty() && ("minecraft:bamboo_block".equals(items.associatedBlock(definition))
 +                        || items.tags(definition).stream().anyMatch(tags::contains))) {
 +                    prefixes.add(prefix);
-                 }
--            }));
++                }
 +            }
          }
 -        return List.copyOf(candidates);
@@ -3286,7 +3296,7 @@ index 1b68e72e..27fe9828 100644
      }
  
      private static BedrockItem firstOutput(final Recipe recipe) {
-@@ -864,6 +1001,11 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -864,6 +999,11 @@ public final class CraftingDataTracker extends StoredObject {
          /** Bind both real item producers; the search preserves their native short-circuit order. */
          public int availability(final BedrockItem output, final BedrockItem selectedOutput, final Container owner,
                                  final boolean filtering, final boolean includeCursor) {
@@ -3298,7 +3308,7 @@ index 1b68e72e..27fe9828 100644
              return this.availability(output, selectedOutput, owner, filtering, includeCursor,
                      () -> NbtUtf8.encode(CraftingDataTracker.this.user().get(ItemRewriter.class).itemSecondaryDescription(output)));
          }
-@@ -871,6 +1013,11 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -871,6 +1011,11 @@ public final class CraftingDataTracker extends StoredObject {
          /** Bind the connection's selected-definition name while leaving secondary description production lazy. */
          public int availability(final BedrockItem output, final BedrockItem selectedOutput, final Container owner,
                                  final boolean filtering, final boolean includeCursor, final Supplier<byte[]> secondaryDescription) {
@@ -3310,7 +3320,7 @@ index 1b68e72e..27fe9828 100644
              return this.availability(output, selectedOutput, owner, filtering, includeCursor,
                      () -> NbtUtf8.encode(CraftingDataTracker.this.user().get(ItemRewriter.class).itemPrimaryName(output)), secondaryDescription);
          }
-@@ -879,6 +1026,12 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -879,6 +1024,12 @@ public final class CraftingDataTracker extends StoredObject {
          public int availability(final BedrockItem output, final BedrockItem selectedOutput, final Container owner,
                                  final boolean filtering, final boolean includeCursor,
                                  final Supplier<byte[]> primaryName, final Supplier<byte[]> secondaryDescription) {
@@ -3323,7 +3333,7 @@ index 1b68e72e..27fe9828 100644
              if (!this.instabuild && !this.unlocked(output, owner)) {
                  final var rules = CraftingDataTracker.this.user().get(GameRulesStorage.class);
                  if (rules != null && Boolean.TRUE.equals(rules.getGameRule("recipesUnlock"))
-@@ -906,8 +1059,8 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -906,8 +1057,8 @@ public final class CraftingDataTracker extends StoredObject {
              return searchState == 0 || countState == 0 ? 0 : 1;
          }
  
@@ -3334,7 +3344,7 @@ index 1b68e72e..27fe9828 100644
          }
      }
  
-@@ -920,4 +1073,20 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -920,4 +1071,20 @@ public final class CraftingDataTracker extends StoredObject {
  
      public record RecipeMatch(CraftingDataStorage data, int[] amounts) { }
  
@@ -5503,10 +5513,10 @@ index 1cfb02f6..d8eb367f 100644
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
 new file mode 100644
-index 00000000..44c7a03a
+index 00000000..cf5a1930
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
-@@ -0,0 +1,595 @@
+@@ -0,0 +1,601 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5576,7 +5586,7 @@ index 00000000..44c7a03a
 +    private static final int IDENTIFIER = 30001;
 +
 +    @Test
-+    void unavailableSelectionPublishesOnlyGhostsAndKeepsThemThroughSearchUntilReopening() throws Exception {
++    void lockedUnavailableSelectionPublishesOnlyGhostsAndKeepsThemThroughSearchUntilReopening() throws Exception {
 +        final var f = installed(false, false);
 +        final var user = f.context.items.user();
 +        final var session = mock(GameSessionStorage.class);
@@ -5594,8 +5604,13 @@ index 00000000..44c7a03a
 +        doAnswer(call -> new BedrockItem(IDENTIFIER, (short) 0, (byte) (int) call.getArgument(1)))
 +                .when(f.context.items).createRecipePreview(any(), anyInt());
 +        f.context.inventory.inventory().getInventoryContainer().setItem(9, BedrockItem.empty());
++        user.get(CraftingDataTracker.class).updateUnlockedRecipes(4, List.of());
 +        f.screens.request(new PlayerInventoryScreenRequest(1, true));
 +        f.acknowledge();
++        for (int tick = 0; tick < 20; tick++) {
++            f.state.tick();
++        }
++        f.state.model().updateQuery("stone");
 +        for (int tick = 0; tick < 20; tick++) {
 +            f.state.tick();
 +        }
@@ -5607,7 +5622,7 @@ index 00000000..44c7a03a
 +        when(user.get(InventoryRequestTracker.class)).thenReturn(requests);
 +        when(requests.canStartRecipePlacement()).thenReturn(true);
 +        final var ui = new PlayerInventoryUi(new ResourcePackStorage(List.of()).getJsonUiProgram());
-+        final var source = new PlayerInventoryUi.State(false, false, 2, 2, 5, 2, false, "", "Recipes", "Crafting",
++        final var source = new PlayerInventoryUi.State(false, false, 2, 2, 5, 2, false, "stone", "Recipes", "Crafting",
 +                List.of(0, 0, 0, 0), List.of(new PlayerInventoryUi.Cell(0, 1, -1, 0, 2, 0, true, false, "", Map.of())), "", -1);
 +        final long generation = f.context.inventory.inventory().currentContainerGeneration();
 +        final var message = new NativePlayerInventoryMessage(0, 1, generation, 1, ui.exportProgram(false).toString(),
@@ -5620,6 +5635,7 @@ index 00000000..44c7a03a
 +        assertEquals(Set.of(0, 1), craftingPreview(state).keySet());
 +        assertEquals(before, f.context.inventory.inventory().playerCraftingSources(true));
 +        Mockito.verify(requests, never()).addRequest(any());
++        Mockito.verify(requests, never()).nextRequestId();
 +        assertFalse(state.handleAction(select));
 +        assertTrue(state.handleAction(new NativePlayerInventoryAction(0, 1, generation, 1, 2,
 +                NativePlayerInventoryAction.Kind.SEARCH, -1, "no results", null)));
