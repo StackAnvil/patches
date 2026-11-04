@@ -171,3 +171,5 @@ Tests compare decoded pixels with the previous PNG conversion, check replacement
 A private control checks all 126 matched JPEGs in the captured MegaSMP packs without a decoded pixel difference.
 An installed-client GPU control renders the captured bundle banner with identical pixels through the JPEG and previous PNG paths, including after resource reload.
 The full four-project build passes. These controls do not establish complete native screen appearance or frame timing.
+
+Cursor placement uses the resolved native anchor after grid layout and scrolling. Seventeen original Bedrock 1.26.60.5 controls establish local offsets, centering precedence, edge flips and zero-size hiding. Layout regressions cover actual grid-parent bounds, viewport clipping and unchanged authored offsets. Active tooltip sources, input actions and live pixels remain open.

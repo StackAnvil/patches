@@ -168,3 +168,7 @@ Search edits and blank-slot focus preserve the previews. Reopening clears them a
 With one log available, an ordinary recipe click places the real input and shows four output planks.
 Bedrock 1.26.60.5 provides the native selection and lifetime reference.
 Complete native pixels, fallback variant order, variant cycling, and broader recipe families remain unverified.
+
+Container layout supplies the desktop UI pointer to shared cursor placement and invalidates active placement when the pointer moves. Existing bundle admission guards remain until source lifetime, physical-slot rendering and input actions are complete.
+
+Tooltip sources retain primary, pending, secondary and hover contexts independently of recipe selection. Desktop hover resolves the retained bundle against actual menu slots and native collection aliases. Regressions cover restoration, carried-item priority, source replacement, touch retention, alias leave events and physical-cell selection. Thirteen original source controls and 22 cell-input controls establish the ported state boundaries. The full action graph, transfer quantity, physical renderer and selected-item factory lifecycle remain open; active tooltip admission stays guarded.
