@@ -179,4 +179,14 @@ Desktop player/workbench bundle inputs use the optional core transport and share
 
 The optional bundle-result channel plays a sound only for the matching pending bundle command. Duplicate, unrelated, retired, and wrong-kind replies cannot play it or release a different command. Playback uses current accepted Bedrock level-event resources, bank definitions, and captions. Original Bedrock 1.26.60.5 sound helper 144fe5060 and position helper 140ba2af0 select the actor AABB center with float arithmetic; 24 combined insertion-handler controls verify success and failure dispatch. Client regressions cover reply lifetime, resource selection, missing actors, and body-center coordinates. Installed direct and ViaProxy controls each observe seven level-event requests followed by decoded native PCM channel starts with the matching caption keys, including a full-bundle insertion failure. Ordinary pickups, placements, close, and reopen add no bundle sounds. Silent lab audio does not establish audible comparison or exact timing.
 
-Installed direct and ViaProxy controls each complete ten server-accepted requests, including five native bundle commands. Screen audits observe the shared sequence through both insertion/extraction directions and its reset under a new opening after reopening. The screens stay native throughout. Installed add-on hashes match the rebuilt artifact, and the proxy transport classes match the current core. Native wire grouping, live server rejection rollback, touch and retained-source gestures, full controller composition, and complete pixels remain unfinished.
+Installed direct and ViaProxy controls each complete ten server-accepted requests, including five native bundle commands. Screen audits observe the shared sequence through both insertion/extraction directions and its reset under a new opening after reopening. The screens stay native throughout. Installed add-on hashes match the rebuilt artifact, and the proxy transport classes match the current core.
+
+Source regressions restore bundle hover after temporary source removal and retain independent selection.
+Real screen regressions preserve hover while pending commands suppress duplicate actions.
+Original Bedrock 1.26.60.5 source getter and update blocks cover 72 availability updates across desktop, touch, and gamepad profiles.
+Storage admission and intervening controller work remain supplied probe boundaries.
+Installed direct and ViaProxy fault controls each cover seven item requests, including one BDS rejection of an ordinary filled-bundle pickup.
+The pointer stays still through predicted disappearance and tooltip restoration. The accepted retry, return, and extraction retain all five ingots and the bundle.
+These controls do not establish the official client's complete rejection path.
+Installed native-command rejection controls and their remaining limits are recorded in the [core inventory notes](../../viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.pr.md).
+Native wire grouping, larger rejected bundle plans, touch and retained detail gestures, full controller composition, and complete pixels remain unfinished.

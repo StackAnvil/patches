@@ -158,8 +158,9 @@ Keep this file private because its positions can reveal world activity.
 Use `server-replay record local --target 127.0.0.1:port --client proxy` for a local RakNet server.
 For an owned BDS with NetherNet, use `--target nethernet://127.0.0.1:port`.
 Named server recordings use their configured address and reject `--target`.
-The native recorder supports RakNet and owned BDS NetherNet targets.
-For NetherNet, it exposes a loopback RakNet endpoint to the native client and records the decoded backend packets.
+The native recorder accepts RakNet and NetherNet backend targets.
+It exposes a loopback NetherNet endpoint to the native client and records the decoded backend packets.
+Check the server's startup log before choosing a backend transport.
 It uses the recording account for the NetherNet session and keeps authentication data private.
 An account-free loopback recording uses one self-signed identity for HTTP signaling and game login.
 It preserves the native player's UUID from `leguuid`, or derives it from the native `xid` when that field is absent.

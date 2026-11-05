@@ -178,6 +178,9 @@ The `presentation` field identifies the path. `nativeForm` is true only for an a
 Shared scenes can belong to another domain. A Java dialog classification does not prove that Bedrock supplied it.
 The bounded geometry report excludes authored labels, URLs, and input text.
 Player and workbench screens also report the request sequence, pending command flags, opening, generation, and revision when those fields are available.
+The bundle report includes pointer coordinates, tooltip mode, and separate hovered and displayed source slots.
+It exports only known source categories and slot indices. Unknown authored collection names become `other`.
+Compare these fields across source updates to detect tooltip restoration without pointer input.
 Match sequence changes to input markers and Bedrock request responses to distinguish native presentation commands from ordinary Java clicks. The inventory report excludes query text and item data.
 
 Private `native-sound-audit.json` observations separate native level-event requests from decoded PCM channel starts.
