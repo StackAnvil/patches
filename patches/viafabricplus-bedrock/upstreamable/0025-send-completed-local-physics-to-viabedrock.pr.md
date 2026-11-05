@@ -55,4 +55,4 @@ Native completes consumption with that refresh. The previous Java client release
 Completion now uses the same native definition check as active use.
 Installed direct and ViaProxy controls observe consumption effects with distinct active and held stack objects, including the final item, and settle with authoritative hunger, an empty hand, and inactive use.
 The Java observer adds logging without gameplay writes. The duplicated packets are declared fixture inputs.
-Stale inventory that changes the selected item, late completion across a new use cycle, and the original intermittent no-feeding report remain open.
+The [food lifecycle controls](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) record remaining stalls when an inventory refresh suppresses completion or acknowledgments are omitted. Native local completion, late acknowledgment across a new cycle, and the original intermittent no-feeding report remain open.

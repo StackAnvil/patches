@@ -21,6 +21,18 @@ Matching held-item completions produce Java's `USE_ITEM_COMPLETE` event without 
 Replaced items and methods outside zero through sixteen cannot complete the current use.
 The patch body retains the versioned completion-handler evidence and current admission rationale.
 
+Local food completion still depends on Java receiving `USE_ITEM_COMPLETE`.
+Controlled 1.26.60.5/BDS 1.26.60.6 comparisons expose two remaining stalls: an empty inventory refresh immediately before completion, and deliberate omission of completion acknowledgments.
+Both installed Java routes consume one bread, then keep the local cycle active at zero ticks and hunger at fifteen until release. Native consumes both breads and reaches twenty under the same controls.
+Release and another press resume Java feeding.
+These declared relay mutations reproduce the failure state; they do not establish the cause of the original live report or ordinary transport loss.
+
+Current native handler inspection resolves packet 142 through dispatcher `0x1423a84a0`, slot `0x4f8`, to handler `0x146b9dcd0` in the verified 1.26.60.5 executable.
+It resolves the packet item through the registry, checks the method range, and emits an actor-use event independently of the selected inventory slot.
+Separate runtime traces resolve the event dispatcher and its four registered listeners in this fixture. The native omission control runs without a debugger attached.
+This establishes that the acknowledgment is unnecessary for the observed native continuation. The local completion trigger and its interaction with inventory updates still need tracing.
+Port that lifecycle before broadening Java completion forwarding; an old acknowledgment must not end a newer use cycle.
+
 ## Native evidence
 
 Official Bedrock 1.26.60.5 with BDS 1.26.60.6 uses protocol 2225.
