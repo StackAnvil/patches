@@ -49,3 +49,10 @@ Native 1.26.60.5 cancels a timed custom food cycle when the selected definition 
 Both definitions use the same Java paper carrier. Local use now checks the native definition before retaining or releasing the active stack.
 Count and unrelated component updates preserve the use cycle for the same definition.
 `BedrockUsedItemTest` covers these identity boundaries and Java fallback.
+
+A controlled protocol-2225 comparison duplicates the latest matching inventory content immediately before item-use completion on Bedrock 1.26.60.5 and BDS 1.26.60.6.
+Native completes consumption with that refresh. The previous Java client releases the cycle without consumption effects because the held stack is a different object.
+Completion now uses the same native definition check as active use.
+Installed direct and ViaProxy controls observe consumption effects with distinct active and held stack objects, including the final item, and settle with authoritative hunger, an empty hand, and inactive use.
+The Java observer adds logging without gameplay writes. The duplicated packets are declared fixture inputs.
+Stale inventory that changes the selected item, late completion across a new use cycle, and the original intermittent no-feeding report remain open.

@@ -17,7 +17,7 @@ Consume effects and canonical inventory counts remain server-owned.
 Admitted food sets `StartUsingItem` even without an optional food tag.
 
 `COMPLETED_USING_ITEM` supplies a signed item ID and a use method.
-Matching held-item completions produce Java's `USE_ITEM_COMPLETE` event without changing canonical inventory counts.
+Matching held-item completions produce Java's `USE_ITEM_COMPLETE` event without changing canonical inventory counts. The [client completion evidence](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md) covers matching inventory refreshes before that acknowledgment.
 Replaced items and methods outside zero through sixteen cannot complete the current use.
 The patch body retains the versioned completion-handler evidence and current admission rationale.
 
