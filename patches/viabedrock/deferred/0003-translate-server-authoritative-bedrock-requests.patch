@@ -1,4 +1,4 @@
-From d983e2b657e13603f4747ab1cb9c3632795d8198 Mon Sep 17 00:00:00 2001
+From 3d4d74b5f6e933e1a0f4f0525bfec56b8f199bd3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -808,6 +808,16 @@ request plans. Their exact packet sequence and installed native UI parity
 still need matching live controls.
 
 Validate every network ID needed by bundle swaps and compaction before changing predicted items. Reject incomplete requests atomically, preserving contents, source, destination, and selection. Unmoved entries do not need a network ID.
+
+Preserve failed transfer replies without inspecting optional container data.
+BDS 1.26.60.6/protocol 2225 returns status 49 with no container list. The
+codec represents that absence as null; buffering or filtering it as a
+successful slot delta disconnected clients during bundle rollback.
+
+Only successful replies capture container revisions and filter buffered
+slots. Error replies retain their status for ordered rollback. Batch
+regressions decode the real error shape and cover complete rejection,
+accepted predecessors, crafting, and newer authoritative contents.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
@@ -874,7 +884,7 @@ Validate every network ID needed by bundle swaps and compaction before changing 
  .../protocol/storage/CraftingDataTracker.java |  206 +
  .../storage/InventoryRequestRecovery.java     |   80 +
  .../storage/InventoryRequestStorage.java      |  232 +
- .../storage/InventoryRequestTracker.java      |  795 +++
+ .../storage/InventoryRequestTracker.java      |  801 +++
  .../protocol/storage/InventoryTracker.java    |  282 +-
  .../storage/PlayerInventoryScreenTracker.java |  254 +
  .../protocol/types/item/BedrockItemType.java  |   68 +-
@@ -937,7 +947,7 @@ Validate every network ID needed by bundle swaps and compaction before changing 
  .../InventoryRequestTrackerQueueTest.java     |  136 +
  .../storage/InventoryRequestTrackerTest.java  |  385 +
  .../storage/InventoryTrackerTest.java         |  124 +
- .../storage/InventoryTransferBatchTest.java   |  374 +
+ .../storage/InventoryTransferBatchTest.java   |  389 ++
  .../NativeAutoPlacementRecoveryTest.java      |  126 +
  .../NativeContainerActionBackendTest.java     |   95 +
  .../storage/NativeContainerResponseTest.java  |  287 +
@@ -948,7 +958,7 @@ Validate every network ID needed by bundle swaps and compaction before changing 
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 139 files changed, 29203 insertions(+), 2050 deletions(-)
+ 139 files changed, 29224 insertions(+), 2050 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
@@ -12875,10 +12885,10 @@ index 00000000..5fddc92e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 new file mode 100644
-index 00000000..2c792573
+index 00000000..8ae83ff7
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-@@ -0,0 +1,795 @@
+@@ -0,0 +1,801 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -13420,6 +13430,9 @@ index 00000000..2c792573
 +    }
 +
 +    private BufferedTransferResponse captureTransferResponse(final ItemStackResponseInfo response) {
++        if (response.result() != ItemStackNetResult.Success) {
++            return new BufferedTransferResponse(response, Map.of());
++        }
 +        final InventoryTracker inventory = this.user().get(InventoryTracker.class);
 +        final Map<Container, Long> revisions = new HashMap<>();
 +        for (final var info : response.containers()) {
@@ -13629,6 +13642,9 @@ index 00000000..2c792573
 +    private record BufferedTransferResponse(ItemStackResponseInfo response, Map<Container, Long> revisions) {
 +
 +        private ItemStackResponseInfo current(final InventoryTracker inventory) {
++            if (this.response.result() != ItemStackNetResult.Success) {
++                return this.response;
++            }
 +            final List<ItemStackResponseContainerInfo> containers = this.response.containers().stream().map(info ->
 +                    new ItemStackResponseContainerInfo(info.containerName(), info.slots().stream().filter(slot -> {
 +                        final var owner = inventory.getContainerFromName(info.containerName(), Byte.toUnsignedInt(slot.slot()));
@@ -39519,10 +39535,10 @@ index 00000000..9574382a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryTransferBatchTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryTransferBatchTest.java
 new file mode 100644
-index 00000000..b26a628e
+index 00000000..ca333a66
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryTransferBatchTest.java
-@@ -0,0 +1,374 @@
+@@ -0,0 +1,389 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -39531,6 +39547,7 @@ index 00000000..b26a628e
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.connection.UserConnection;
++import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.ViaBedrock;
 +import net.raphimc.viabedrock.api.model.container.Container;
 +import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
@@ -39547,6 +39564,8 @@ index 00000000..b26a628e
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseContainerInfo;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.inventory.ItemStackResponseType;
 +import org.junit.jupiter.api.Test;
 +import org.mockito.MockedStatic;
 +
@@ -39774,7 +39793,19 @@ index 00000000..b26a628e
 +    }
 +
 +    private static ItemStackResponseInfo rejected(final InventoryRequestStorage request) {
-+        return new ItemStackResponseInfo(ItemStackNetResult.Error, request.requestInfo().requestId(), List.of());
++        // BDS 1.26.60.6 returns status 49 without the optional container list.
++        final var wire = Unpooled.buffer();
++        try {
++            wire.writeByte(49);
++            BedrockTypes.VAR_INT.write(wire, request.requestInfo().requestId());
++            wire.writeBoolean(false);
++            final var response = new ItemStackResponseType().read(wire);
++            assertNull(response.containers());
++            assertFalse(wire.isReadable());
++            return response;
++        } finally {
++            wire.release();
++        }
 +    }
 +
 +    private static BedrockItem item(final int amount, final int id) {

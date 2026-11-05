@@ -41,7 +41,14 @@ Rebuilt direct and ViaProxy clients use the same delayed-acknowledgment relay fo
 Both routes remain closed after early input without queuing an open interaction.
 Fresh-input controls reopen normally, with the 32-log stack unchanged.
 
-Scoped manual crafting batches reuse ordered prediction and response reconciliation. Native-shaped regressions cover reordered responses, rejection of a later craft, whole-batch rejection, and refusal of unrelated operations. Complete native response-manager behavior, live transactions, and every container remain unfinished.
+Scoped manual crafting batches reuse ordered prediction and response reconciliation. Native-shaped regressions cover reordered responses, rejection of a later craft, whole-batch rejection, and refusal of unrelated operations. Native manual-crafting transactions, complete response-manager behavior, and every container remain unfinished.
+
+Failed batch replies retain their status without reading optional container data.
+BDS 1.26.60.6 sends status 49 without a container list on protocol 2225.
+Wire-decoded rejection fixtures cover rollback, accepted predecessors, crafting, and newer authoritative contents.
+Successful replies still filter slot updates against the retained container revision.
+Installed direct and ViaProxy fault controls reject native bundle insertion and extraction, then accept both retries without disconnecting or losing items.
+The [inventory reference](../../../docs/native-player-inventory.md) records the control scope and remaining native comparison limits.
 
 Installed direct and ViaProxy checks accept bundle insertion, extraction, and reinsertion requests and retain the contents after reopening.
 See the [inventory reference](../../../docs/native-player-inventory.md) for the control path and remaining native comparison limit.

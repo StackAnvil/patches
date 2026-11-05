@@ -188,4 +188,5 @@ Storage admission and intervening controller work remain supplied probe boundari
 Installed direct and ViaProxy fault controls each cover seven item requests, including one BDS rejection of an ordinary filled-bundle pickup.
 The pointer stays still through predicted disappearance and tooltip restoration. The accepted retry, return, and extraction retain all five ingots and the bundle.
 These controls do not establish the official client's complete rejection path.
-Native wire grouping, native bundle-command rejection, touch and retained detail gestures, full controller composition, and complete pixels remain unfinished.
+Installed native-command rejection controls and their remaining limits are recorded in the [core inventory notes](../../viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.pr.md).
+Native wire grouping, larger rejected bundle plans, touch and retained detail gestures, full controller composition, and complete pixels remain unfinished.
