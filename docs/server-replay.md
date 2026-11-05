@@ -180,6 +180,11 @@ The bounded geometry report excludes authored labels, URLs, and input text.
 Player and workbench screens also report the request sequence, pending command flags, opening, generation, and revision when those fields are available.
 Match sequence changes to input markers and Bedrock request responses to distinguish native presentation commands from ordinary Java clicks. The inventory report excludes query text and item data.
 
+Private `native-sound-audit.json` observations separate native level-event requests from decoded PCM channel starts.
+They retain up to 128 observations with timestamps, positions, selected samples, caption keys, pitch, volume, and PCM hashes.
+Match these rows to input markers when checking sound dispatch. A level request alone does not prove that a sample reached playback.
+The observer does not change playback or export PCM data. Silent lab audio does not establish what a listener would hear.
+
 Private `movement-audit.jsonl` observations record position, velocity, item use, held item, and selected hotbar slot at each observed movement phase.
 The `epochMillis` timestamp aligns those observations with external input markers.
 Use the item and slot fields to distinguish a changed selection from a missing movement impulse.

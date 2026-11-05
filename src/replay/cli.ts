@@ -258,6 +258,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
         "MixinReplayCamera",
         "MixinPlayerFrame",
         "MixinMovementAudit",
+        "MixinNativeSound",
         "MixinClientShutdown",
       ],
     }),
