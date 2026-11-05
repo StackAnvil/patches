@@ -31,7 +31,7 @@ Full protocol tag construction and installed controller behavior remain outside 
 
 `ItemStoragePolicy` retains typed slot limits, nesting flags, and immutable lowercase descriptor maps on each selected definition.
 Registry regressions cover packet mutation, numeric-ID collisions, absent updates, and malformed replacements without inventing unrestricted filters.
-Descriptor binding, its version context, and live request execution remain unfinished.
+The full stack supplies descriptor binding and request execution in [deferred patch 0012](../deferred/0012-retain-bedrock-creative-catalog-entries.patch). Effective expression version context and controller delivery remain unfinished.
 
 Packet, menu-lifetime, and action tests cover supported adapters. Complete installed player/cooking controllers and live native parity remain unfinished.
 
@@ -48,4 +48,4 @@ Bundle snapshots retain physical slots, view limits, native names, and localized
 `NativeBundleTransferPlan` retains physical child slots, native preparation order, and cleanup transfers after a rejected insertion.
 `NativeBundleTransferPlanTest` compares 47 original 1.26.60.5 mutation controls and checks owned item snapshots.
 The controls cover weights, filters, nesting, partial extraction, holes, and interleaved merges.
-Trusted source-policy bindings, request identities, reconciliation, and live controller calls remain unfinished.
+Desktop default extraction uses a separate single-Take path. Twelve original native helper controls and four generic-transfer controls establish last physical selection, partial merging, rejection, empty vectors, and zero-count retained definitions. Local regressions preserve this distinction from selected-cell extraction and its compaction. The full stack supplies trusted policy and request adapters in deferred patch 0012; live controller calls remain unfinished.
