@@ -1,4 +1,4 @@
-From 86c464e5216432fe19b04b51177f5c8d2778aa52 Mon Sep 17 00:00:00 2001
+From 8f76eb1a8a382f8ac874716f4f17ff8892230d92 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -888,6 +888,18 @@ once after the complete batch instead of once per request. Keep rollback
 refreshing the restored model. Player and workbench regressions retain
 linked request identities and require one Java refresh for a two-request
 Shift-click. The Bedrock request payload and admission remain unchanged.
+
+Admit only recipes with a nonempty ingredient before availability captures
+source collections. Registered placeholders otherwise throw and interrupt
+inventory population, or read sources from a retired owner unnecessarily.
+Preserve selected-output fallback and later valid candidates. Retain the
+admitted ingredient count for the raw counter so source capture does not
+re-read recipe shape. The raw counter continues to reject empty recipes.
+
+A registered-recipe regression fails before this admission guard. Existing
+original 1.26.51.1 availability fixtures retain their valid-recipe results.
+This is defensive Java handling of retained placeholders, not a claim of
+new native 1.26.60 availability or live screen parity.
 ---
  .../api/model/NativeFurnaceOptions.java       |  44 +
  .../container/CookingRecipeAvailability.java  |  30 +
@@ -898,7 +910,7 @@ Shift-click. The Bedrock request payload and admission remain unchanged.
  .../container/FurnaceRecipePlacement.java     | 221 +++++
  .../NativeCookingRecipeSelection.java         | 205 +++++
  .../model/container/NativeCraftingOutput.java | 272 ++++++
- .../model/container/NativeRecipeCounter.java  | 202 ++++
+ .../model/container/NativeRecipeCounter.java  | 219 +++++
  .../container/NativeRecipeDescriptor.java     |  60 +-
  .../block/CraftingTableContainer.java         | 116 +--
  .../container/block/FurnaceContainer.java     | 209 +++++
@@ -959,7 +971,7 @@ Shift-click. The Bedrock request payload and admission remain unchanged.
  .../NativeRecipeConcreteCounterTest.java      | 165 ++++
  .../rewriter/NativeRecipePaletteTest.java     | 203 +++++
  .../PlayerRecipeAvailabilityTest.java         | 296 ++++++
- ...egisteredPlayerRecipeAvailabilityTest.java | 372 ++++++++
+ ...egisteredPlayerRecipeAvailabilityTest.java | 389 ++++++++
  .../RegisteredPlayerRecipeSearchTest.java     | 268 ++++++
  .../ResolvedRecipeIngredientTest.java         | 283 ++++++
  .../storage/CookingRecipeBookTest.java        | 194 ++++
@@ -979,7 +991,7 @@ Shift-click. The Bedrock request payload and admission remain unchanged.
  .../types/model/FurnaceOptionsTypeTest.java   |  75 ++
  .../types/model/InventoryOptionsTypeTest.java |  46 +
  .../types/recipe/CraftingDataReaderTest.java  |  84 +-
- 90 files changed, 13031 insertions(+), 234 deletions(-)
+ 90 files changed, 13065 insertions(+), 234 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFurnaceOptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeAvailability.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/CookingRecipeCatalog.java
@@ -2327,10 +2339,10 @@ index 00000000..1e69ee4c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java
 new file mode 100644
-index 00000000..fe874172
+index 00000000..06746721
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeRecipeCounter.java
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,219 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2363,7 +2375,11 @@ index 00000000..fe874172
 +     */
 +    public static Result count(final Recipe recipe, final List<Source> sources,
 +                               final ToIntFunction<BedrockItem> descriptorHash) {
-+        final int ingredientCount = recipe.ingredientCount();
++        return count(recipe, recipe.ingredientCount(), sources, descriptorHash);
++    }
++
++    private static Result count(final Recipe recipe, final int ingredientCount, final List<Source> sources,
++                                final ToIntFunction<BedrockItem> descriptorHash) {
 +        final Map<Integer, Group> byHash = new HashMap<>();
 +        final List<Group> groups = new ArrayList<>();
 +        for (final Source source : sources) {
@@ -2468,7 +2484,11 @@ index 00000000..fe874172
 +            if (candidate.requiresCraftingTable && !workbench) {
 +                continue;
 +            }
-+            final Result result = count(candidate.recipe, sources.get(), descriptorHash);
++            final int ingredientCount = candidate.recipe.ingredientCount();
++            if (!hasIngredient(candidate.recipe, ingredientCount)) {
++                continue;
++            }
++            final Result result = count(candidate.recipe, ingredientCount, sources.get(), descriptorHash);
 +            if (result.count > 0) {
 +                return filtering ? 0 : 1;
 +            }
@@ -2481,6 +2501,15 @@ index 00000000..fe874172
 +            }
 +        }
 +        return partial || selectedOutput.getAsBoolean() ? 2 : 3;
++    }
++
++    private static boolean hasIngredient(final Recipe recipe, final int ingredientCount) {
++        for (int position = 0; position < ingredientCount; position++) {
++            if (!recipe.emptyIngredient(position)) {
++                return true;
++            }
++        }
++        return false;
 +    }
 +
 +    /** Output lookup owns candidate admission, concrete grid requirements and priority. */
@@ -10686,10 +10715,10 @@ index 00000000..ed9829fd
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java
 new file mode 100644
-index 00000000..de622a23
+index 00000000..7b1f3805
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/RegisteredPlayerRecipeAvailabilityTest.java
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,389 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -10744,6 +10773,23 @@ index 00000000..de622a23
 +class RegisteredPlayerRecipeAvailabilityTest {
 +
 +    private static final int IDENTIFIER_BASE = 30000;
++
++    @Test
++    void emptyRegisteredTemplatesDoNotAbortAvailabilityOrReadRetiredSources() throws Exception {
++        final var context = PlayerRecipeAvailabilityTest.context(false, IDENTIFIER_BASE);
++        final var tracker = new CraftingDataTracker(context.items().user());
++        final var output = item(1);
++        final var placeholders = List.of(recipe(RecipeType.SHAPELESS, 1, 0, 0, List.of()),
++                recipe(RecipeType.SHAPED, 2, 1, 1, List.of(new ItemDescriptor.InvalidDescriptor())));
++        tracker.updateCraftingDataList(placeholders, true);
++        assertEquals(3, tracker.playerRecipeAvailability(output, BedrockItem.empty(), context.owner(), false, true));
++        assertEquals(3, tracker.playerRecipeAvailability(output, BedrockItem.empty(), context.owner().copy(), false, true));
++        assertEquals(2, tracker.playerRecipeAvailability(output, output, context.owner().copy(), false, true));
++        tracker.updateCraftingDataList(List.of(recipe(RecipeType.SHAPED, 3, 1, 1, List.of(name(1, 1)))), false);
++        context.inventory().getInventoryContainer().setItem(9, output.copy());
++        assertEquals(1, tracker.playerRecipeAvailability(output, BedrockItem.empty(), context.owner(), false, true));
++        assertEquals(0, tracker.playerRecipeAvailability(output, BedrockItem.empty(), context.owner(), true, true));
++    }
 +
 +    @Test
 +    void retainedOwnersKeepFirstNameResolutionAndTagAdmission() throws Exception {
