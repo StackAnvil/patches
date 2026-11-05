@@ -214,13 +214,10 @@ Both routes return from Help with a carried stack and confirm its placement thro
 Inactive item icons use separate lighting and opacity. The default disabled light multiplier is 0.25.
 Typed overrides and RGB conversion match selected native instruction controls. Complete material and pixel parity remain unverified.
 Storage bars read a native weight snapshot independently of Java bundle contents.
-Installed direct and ViaProxy controls insert eight logs into a server-issued empty bundle, extract them, and insert them again.
-Both routes retain the filled bundle after reopening, with server responses that accept each request.
-These installed checks used ordinary Java 26.3 controls after the storage-tooltip fallback. Left-click inserted items; right-click extracted them.
-The first insertion request from the official Bedrock client remains unverified.
-Filled-bundle bars still need installed native comparison.
 Unknown storage snapshots restore ordinary controls.
-Player and workbench screens now route selected desktop bundle gestures through the native input transport. Local regressions cover insertion and default extraction with either cursor or clicked roots, refreshed hover views, stale snapshots, rejection rollback, and serialized search edits. Installed direct/proxy comparisons, sound effects, touch gestures, and complete bundle controller and rendering parity remain unfinished.
+Player and workbench screens route selected desktop bundle gestures through the native input transport. Local regressions cover insertion and default extraction with either cursor or clicked roots, filled hover views, moved sources, stale snapshots, rejection rollback, and serialized search edits.
+Installed direct and ViaProxy controls each complete ten server-accepted requests, including five native bundle commands. They insert and extract five iron ingots with the bundle in either the clicked slot or the cursor, then retain the filled bundle after reopening. Screen audits distinguish the native commands from ordinary Java pickup and placement through their request sequence.
+Native wire grouping, live rejection controls, sound effects, touch and retained detail gestures, and complete bundle controller and rendering parity remain unfinished.
 Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 The Creative catalog-only toolbar binds Shift-left-click and Shift-right-click to full-stack destruction.
 The action preserves the cursor, requires a current acknowledged opening, and leaves empty slots unchanged.
