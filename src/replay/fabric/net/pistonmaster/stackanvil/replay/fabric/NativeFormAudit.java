@@ -15,13 +15,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Read-only, bounded form geometry observation on the client tick thread. */
+/** Read-only, bounded screen geometry and inventory input observation on the client tick thread. */
 public final class NativeFormAudit {
     private static final String LEGACY_SCREEN = "com.viaversion.viafabricplus.bedrock.screen.form.BedrockNativeFormScreen";
     private static final String SCENE_SCREEN = "com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen";
     private static final String FORM_CONTROLLER = "com.viaversion.viafabricplus.bedrock.screen.form.BedrockFormController";
     private static final String FALLBACK_SCREEN = "com.viaversion.viafabricplus.bedrock.screen.form.BedrockFallbackFormScreen";
     private static final String JAVA_DIALOG = "net.minecraft.client.gui.screens.dialog.DialogScreen";
+    private static final String CONTAINER_SCREEN = "com.viaversion.viafabricplus.bedrock.screen.container.BedrockNativeContainerScreen";
+    private static final String PLAYER_PRESENTATION = "com.viaversion.viafabricplus.bedrock.screen.container.NativePlayerPresentation";
     private static final int MAX_NODES = 8192;
     private static final int MAX_ROWS = 512;
     private static final int MAX_SCREENS = 32;
@@ -88,6 +90,26 @@ public final class NativeFormAudit {
             report.put("pointer", List.of(finite(field(screen, "pointerX")), finite(field(screen, "pointerY"))));
             Object root = field(screen, "root");
             if (root != null) report.putAll(project(root));
+        } else if (screenClass.equals(CONTAINER_SCREEN)) {
+            Object presentation = field(screen, "presentation");
+            if (presentation.getClass().getName().equals(PLAYER_PRESENTATION)) {
+                report.put("nativeInventory", true);
+                report.put("presentation", "authored-player-inventory");
+                try {
+                    Object message = field(presentation, "message");
+                    Map<String, Object> input = new LinkedHashMap<>();
+                    input.put("inventoryRequestSequence", field(presentation, "sequence"));
+                    input.put("inventoryActionPending", field(presentation, "pending") != null);
+                    input.put("inventoryBundlePending", field(presentation, "pendingBundle") != null);
+                    input.put("inventoryOpening", call(message, "opening"));
+                    input.put("inventoryGeneration", call(message, "generation"));
+                    input.put("inventoryRevision", call(message, "revision"));
+                    report.putAll(input);
+                    report.put("inventoryInputAudit", "available");
+                } catch (NoSuchFieldException | NoSuchMethodException unsupported) {
+                    report.put("inventoryInputAudit", "unavailable");
+                }
+            }
         } else if (screenClass.equals(FALLBACK_SCREEN)) {
             report.put("presentation", "addon-fallback-form");
             report.put("formId", field(screen, "formId"));

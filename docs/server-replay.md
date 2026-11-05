@@ -177,6 +177,8 @@ For authored forms, the observer reads identity from the form controller and geo
 The `presentation` field identifies the path. `nativeForm` is true only for an authored form.
 Shared scenes can belong to another domain. A Java dialog classification does not prove that Bedrock supplied it.
 The bounded geometry report excludes authored labels, URLs, and input text.
+Player and workbench screens also report the request sequence, pending command flags, opening, generation, and revision when those fields are available.
+Match sequence changes to input markers and Bedrock request responses to distinguish native presentation commands from ordinary Java clicks. The inventory report excludes query text and item data.
 
 Private `movement-audit.jsonl` observations record position, velocity, item use, held item, and selected hotbar slot at each observed movement phase.
 The `epochMillis` timestamp aligns those observations with external input markers.
