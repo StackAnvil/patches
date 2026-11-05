@@ -5,6 +5,7 @@ import com.viaversion.viaversion.libs.gson.JsonParser;
 import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen;
 import com.viaversion.viafabricplus.bedrock.screen.form.BedrockFormController;
 import com.viaversion.viafabricplus.bedrock.screen.form.BedrockFallbackFormScreen;
+import com.viaversion.viafabricplus.bedrock.screen.container.BedrockNativeContainerScreen;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +68,25 @@ public final class NativeFormAuditSelfTest {
         require(fallback.get("formId").equals(37));
         require(NativeFormAudit.observe(new OrdinaryDialog()).get("presentation").equals("java-dialog"));
         require(NativeFormAudit.observe(null).get("presentation").equals("other"));
+
+        BedrockNativeContainerScreen inventory = new BedrockNativeContainerScreen();
+        inventory.tooltip(2, "hotbar_items", 2);
+        Map<String, Object> bundle = NativeFormAudit.observe(inventory);
+        require(bundle.get("nativeInventory").equals(true));
+        require(bundle.get("inventoryInputAudit").equals("available"));
+        require(bundle.get("inventoryBundleAudit").equals("available"));
+        require(bundle.get("inventoryBundleTooltipMode").equals(2));
+        require(bundle.get("inventoryBundleSource").equals(Map.of("collection", "hotbar_items", "index", 2)));
+        inventory.tooltip(0, "hotbar_items", 2);
+        Map<String, Object> missing = NativeFormAudit.observe(inventory);
+        require(missing.get("inventoryBundleTooltipMode").equals(0));
+        require(missing.get("inventoryBundleSource").equals(Map.of("collection", "", "index", -1)));
+        require(missing.get("inventoryBundleHover").equals(bundle.get("inventoryBundleHover")));
+        inventory.tooltip(2, "private source identifier", 2);
+        Map<String, Object> restored = NativeFormAudit.observe(inventory);
+        require(restored.get("inventoryBundleSource").equals(Map.of("collection", "other", "index", 2)));
+        require(!restored.toString().contains("private"));
+        require(inventory.mode() == 2);
 
         List<Box> many = new ArrayList<>();
         for (int index = 0; index < 600; index++) many.add(child);

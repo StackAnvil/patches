@@ -109,6 +109,17 @@ public final class NativeFormAudit {
                 } catch (NoSuchFieldException | NoSuchMethodException unsupported) {
                     report.put("inventoryInputAudit", "unavailable");
                 }
+                try {
+                    Object sources = field(screen, "tooltipSources");
+                    report.put("pointer", List.of(finite(field(screen, "pointerX")), finite(field(screen, "pointerY"))));
+                    report.put("inventoryBundleTooltipMode", field(sources, "mode"));
+                    report.put("inventoryBundleTooltipHidden", field(sources, "hidden"));
+                    report.put("inventoryBundleHover", inventorySource(field(sources, "hover")));
+                    report.put("inventoryBundleSource", inventorySource(field(sources, "bundle")));
+                    report.put("inventoryBundleAudit", "available");
+                } catch (NoSuchFieldException | NoSuchMethodException unsupported) {
+                    report.put("inventoryBundleAudit", "unavailable");
+                }
             }
         } else if (screenClass.equals(FALLBACK_SCREEN)) {
             report.put("presentation", "addon-fallback-form");
@@ -122,6 +133,14 @@ public final class NativeFormAudit {
             }
         }
         return report;
+    }
+
+    private static Map<String, Object> inventorySource(Object source) throws ReflectiveOperationException {
+        String collection = (String) call(source, "collection");
+        // Observe only protocol-owned source categories, never arbitrary authored identifiers.
+        if (!List.of("", "inventory_items", "hotbar_items", "combined_hotbar_and_inventory_items", "container_items",
+                "crafting_input_items", "armor_items", "offhand_items", "cursor_items").contains(collection)) collection = "other";
+        return Map.of("collection", collection, "index", call(source, "index"));
     }
 
     static Map<String, Object> project(Object root) throws ReflectiveOperationException {

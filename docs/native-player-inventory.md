@@ -217,7 +217,13 @@ Storage bars read a native weight snapshot independently of Java bundle contents
 Unknown storage snapshots restore ordinary controls.
 Player and workbench screens route selected desktop bundle gestures through the native input transport. Local regressions cover insertion and default extraction with either cursor or clicked roots, filled hover views, moved sources, stale snapshots, rejection rollback, and serialized search edits. Matching bundle replies route operation sounds through current native resources and captions. Stale commands and failed extraction stay silent.
 Installed direct and ViaProxy controls each complete fourteen server-accepted item requests. They insert and extract iron ingots with the bundle in either the clicked slot or the cursor, retain a filled bundle after reopening, and reject insertion into a full bundle without an item request. Screen audits distinguish native commands from ordinary Java clicks. Sound audits observe seven matching level events and decoded PCM channel starts on each route.
-Native wire grouping, live server rejection rollback, audible comparison, exact timing, touch and retained detail gestures, and complete bundle controller and rendering parity remain unfinished.
+Bundle hover survives temporary source removal and returns when the source becomes available, without another pointer event.
+Source regressions cover independent selection and touch behavior. Screen regressions retain hover while a pending command blocks duplicate actions.
+Installed direct and ViaProxy controls each reject one ordinary pickup of a filled bundle through a loopback fault relay.
+The tooltip returns with the cursor still. An accepted retry and extraction retain all five ingots and the bundle.
+The native reference covers source validation and retained-hover update blocks in Bedrock 1.26.60.5, rather than its complete rejection path.
+Native wire grouping, native bundle-command rejection, audible comparison, exact timing, touch and retained detail gestures remain unfinished.
+Complete bundle controller and rendering parity also remain unfinished.
 Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 The Creative catalog-only toolbar binds Shift-left-click and Shift-right-click to full-stack destruction.
 The action preserves the cursor, requires a current acknowledged opening, and leaves empty slots unchanged.
