@@ -1,4 +1,4 @@
-From e878d9968d04d39e09d6c3d2609280ca95c861ca Mon Sep 17 00:00:00 2001
+From 307da33ed56db6ef7c55d5cd6952fcceaf3ace5f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -683,6 +683,13 @@ Following snapshots, missing input bindings, pending events and unsigned
 clock admission have distinct behavior. Reserved vectors and an empty
 shared pointer owner isolate placement from allocation and reference counts.
 This comparison excludes physical snapshot consumption and world effects.
+
+Expose the native swim-speed multiplier from retained Dolphin Boost marker
+presence, including its zero-duration frame. Original Bedrock 1.26.60.5
+kernel 0x1484f88e0 tests the swimming flag and MovementEffects slot 1 kind
+against -1, then writes 2F or 1F. Six bounded original-instruction cases
+verify the swimming gate, absent entry and zero-duration marker. Keep the
+existing duration-active query for callers that need duration activity.
 ---
  build.gradle                                  |   29 +
  .../api/model/ActorMotionCommand.java         |   72 ++
@@ -697,7 +704,7 @@ This comparison excludes physical snapshot consumption and world effects.
  .../api/model/MovementCollisionWorld.java     |   74 ++
  .../api/model/MovementCorrectionTiming.java   |   56 +
  .../viabedrock/api/model/MovementEffect.java  |  100 ++
- .../api/model/MovementEffectTimeline.java     |  432 +++++++
+ .../api/model/MovementEffectTimeline.java     |  438 +++++++
  .../api/model/NativeActorStates.java          |   30 +
  .../api/model/NativeMovementSources.java      |  137 ++
  .../api/model/PlayerCorrection.java           |  138 ++
@@ -750,7 +757,7 @@ This comparison excludes physical snapshot consumption and world effects.
  .../model/MovementEffectPhysicsStateTest.java |   84 ++
  .../api/model/MovementEffectReplayTest.java   |  181 +++
  .../api/model/MovementEffectTest.java         |  127 ++
- .../api/model/MovementEffectTimelineTest.java |  253 ++++
+ .../api/model/MovementEffectTimelineTest.java |  273 ++++
  .../api/model/NativeMovementSourcesTest.java  |  126 ++
  .../api/model/PlayerCorrectionTest.java       |  101 ++
  .../api/model/PlayerModeMessageTest.java      |  113 ++
@@ -779,7 +786,7 @@ This comparison excludes physical snapshot consumption and world effects.
  .../packet/PlayerSpatialResetTest.java        |  147 +++
  .../packet/TickedMotionPacketTest.java        |  156 +++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 95 files changed, 9210 insertions(+), 77 deletions(-)
+ 95 files changed, 9236 insertions(+), 77 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
@@ -1954,10 +1961,10 @@ index 00000000..28720bcd
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
 new file mode 100644
-index 00000000..56b29385
+index 00000000..a47b0a2d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
-@@ -0,0 +1,432 @@
+@@ -0,0 +1,438 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2119,6 +2126,12 @@ index 00000000..56b29385
 +    public boolean hasDolphinBoost(final int entityId, final long completedFrame) {
 +        final EffectState state = this.effects.getOrDefault(entityId, Map.of()).get(MovementEffectType.DOLPHIN_BOOST);
 +        return state != null && state.activeAt(completedFrame);
++    }
++
++    /** Native SwimSpeedMultiplier uses marker presence, including the final zero-duration frame. */
++    public float swimSpeedMultiplier(final int entityId, final boolean swimming, final long completedFrame) {
++        final EffectState state = this.effects.getOrDefault(entityId, Map.of()).get(MovementEffectType.DOLPHIN_BOOST);
++        return swimming && state != null && state.presentAt(completedFrame) ? 2F : 1F;
 +    }
 +
 +    public boolean hasGeyserBoost(final int entityId) {
@@ -6933,10 +6946,10 @@ index 00000000..dffd3d95
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
 new file mode 100644
-index 00000000..04bfaf9b
+index 00000000..4ff00ed1
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,273 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7156,6 +7169,26 @@ index 00000000..04bfaf9b
 +        assertFalse(timeline.hasGlideBoost(1));
 +        timeline.accept(new MovementEffect(1, 0, -1, 102, -1, 0, -1, 0));
 +        assertTrue(timeline.hasGlideBoost(1));
++    }
++
++    @Test
++    void swimProjectionKeepsTheFinalMarkerFrameAcrossRestoredEffectValues() {
++        final MovementEffectTimeline timeline = new MovementEffectTimeline();
++        timeline.completeFrame();
++        timeline.accept(new MovementEffect(1, 1, 1, 0, 0, 0, -1, 0));
++        final var retained = timeline.captureValues(1);
++        assertEquals(2F, timeline.swimSpeedMultiplier(1, true, 0));
++        assertEquals(1F, timeline.swimSpeedMultiplier(1, false, 0));
++        assertEquals(1F, timeline.swimSpeedMultiplier(2, true, 0));
++        assertFalse(timeline.hasDolphinBoost(1, 1));
++        assertEquals(2F, timeline.swimSpeedMultiplier(1, true, 1));
++        assertEquals(1F, timeline.swimSpeedMultiplier(1, true, 2));
++        timeline.clear();
++        assertEquals(1F, timeline.swimSpeedMultiplier(1, true, 0));
++        timeline.restoreValues(1, retained);
++        assertEquals(2F, timeline.swimSpeedMultiplier(1, true, 1));
++        timeline.accept(new MovementEffect(2, 0, -1, 0, 0, 0, -1, 0));
++        assertEquals(1F, timeline.swimSpeedMultiplier(2, true, 0));
 +    }
 +
 +    @Test

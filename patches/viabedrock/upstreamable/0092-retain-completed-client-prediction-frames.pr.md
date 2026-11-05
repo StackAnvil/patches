@@ -18,4 +18,6 @@ Regression coverage includes `ActorMotionCommandTest`, `ActorSpatialCommandTest`
 
 History, clock, correction, and ordering regressions cover retained-frame behavior. Native world history, mixed mechanics, network conditions, and broader replay parity remain open.
 
+Original Bedrock 1.26.60.5 Dolphin Boost kernel controls establish that the swim multiplier uses effect-marker presence, including the final zero-duration frame. The shared timeline exposes that multiplier from retained values. A regression checks actor and effect-kind isolation, the swimming gate, expiry, and restoration after clearing state. Full world scheduling at the swim-expiry boundary remains unverified.
+
 The [owning patch](0092-retain-completed-client-prediction-frames.patch) retains implementation rationale and versioned evidence.
