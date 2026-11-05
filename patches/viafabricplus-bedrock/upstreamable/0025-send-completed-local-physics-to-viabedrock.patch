@@ -1,4 +1,4 @@
-From 63789630ff0e78752d6bd2a9c9573c29591ad771 Mon Sep 17 00:00:00 2001
+From e518b0163fff16a67057f77e809bf45af7b9849a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -695,6 +695,12 @@ correction on both Java routes. An observation-only diagnostic traces the
 zero write to that Java callback. Keep native mode side effects in
 BedrockPlayerModes and suppress only the Java callback's motion write,
 without changing ordinary Java sessions or unrelated mode handling.
+
+Share the native swim-speed multiplier between water physics and ordinary
+camera FOV. Bedrock 1.26.60.5 DolphinBoostSystem kernel 0x1484f88e0 checks
+the swimming flag and presence of MovementEffects slot 1, including its
+zero-duration marker. Query the existing retained timeline in the current
+physical replay scope; do not add an independent countdown.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  14 +
@@ -735,7 +741,7 @@ without changing ordinary Java sessions or unrelated mode handling.
  .../movement/MixinWalkPhysicsState.java       |  32 ++
  .../bedrock/input/ActorMotionPayload.java     |  22 +
  .../input/BedrockInputPermissions.java        |   4 +-
- .../bedrock/input/BedrockMovementEffects.java | 161 ++++++
+ .../bedrock/input/BedrockMovementEffects.java | 162 ++++++
  .../bedrock/input/BedrockPhysicalReplay.java  | 535 ++++++++++++++++++
  .../input/BedrockPlayerCorrections.java       |  64 +++
  .../bedrock/input/BedrockPlayerModes.java     | 176 ++++++
@@ -802,7 +808,7 @@ without changing ordinary Java sessions or unrelated mode handling.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 106 files changed, 8434 insertions(+), 74 deletions(-)
+ 106 files changed, 8435 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -2083,7 +2089,7 @@ index 0000000..b6ee81c
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index cb89991..afc332f 100644
+index cb89991..1e49806 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 @@ -21,27 +21,177 @@
@@ -2205,7 +2211,7 @@ index cb89991..afc332f 100644
 +        if (entity instanceof LocalPlayer player && BedrockInputPermissions.isBedrockConnection()) {
 +            final Float underwaterSpeed = BedrockMovementEffects.underwaterSpeed(player.getId());
 +            if (underwaterSpeed != null) {
-+                final boolean boosted = player.isSwimming() && BedrockMovementEffects.hasDolphinBoost(player.getId());
++                final boolean boosted = BedrockMovementEffects.swimSpeedMultiplier(player.getId(), player.isSwimming()) > 1F;
 +                original.call(entity, WaterMovement.acceleration(underwaterSpeed, player.getSpeed(), depthStriderLevel(player), player.onGround(), boosted), input);
 +                return;
 +            }
@@ -2217,7 +2223,7 @@ index cb89991..afc332f 100644
 +    private Vec3 applyNativeWaterDamping(final Vec3 motion, final double x, final double y, final double z, final Operation<Vec3> original) {
 +        if ((Object) this instanceof LocalPlayer player && BedrockInputPermissions.isBedrockConnection()
 +                && BedrockMovementEffects.underwaterSpeed(player.getId()) != null) {
-+            final boolean boosted = player.isSwimming() && BedrockMovementEffects.hasDolphinBoost(player.getId());
++            final boolean boosted = BedrockMovementEffects.swimSpeedMultiplier(player.getId(), player.isSwimming()) > 1F;
 +            final Position3f result = WaterMovement.damp(new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
 +                    depthStriderLevel(player), player.onGround(), player.isSprinting(), this.getWaterSlowDown(), boosted);
 +            return new Vec3(result.x(), result.y(), result.z());
@@ -3512,10 +3518,10 @@ index 7b0f846..1578a6e 100644
      }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
 new file mode 100644
-index 0000000..dfbab9f
+index 0000000..3f1420b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,162 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3657,8 +3663,9 @@ index 0000000..dfbab9f
 +        return TIMELINE.hasGlideBoost(entityId, PhysicalReplayContext.completedFrame(TIMELINE.frameId() - 1));
 +    }
 +
-+    public static boolean hasDolphinBoost(final int entityId) {
-+        return TIMELINE.hasDolphinBoost(entityId, PhysicalReplayContext.completedFrame(TIMELINE.frameId() - 1));
++    public static float swimSpeedMultiplier(final int entityId, final boolean swimming) {
++        return TIMELINE.swimSpeedMultiplier(entityId, swimming,
++                PhysicalReplayContext.completedFrame(TIMELINE.frameId() - 1));
 +    }
 +
 +    public static boolean hasGeyserBoost(final int entityId) {
