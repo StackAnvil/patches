@@ -1,4 +1,4 @@
-From 455632d9a1d43fd8905775eb6fc6c81df40464e8 Mon Sep 17 00:00:00 2001
+From 89dbbf8d733db412c0f6ef85a14ccb7870fc75a8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -774,6 +774,23 @@ map reader, four-entry vector conversion, and default Legacy construction.
 Raw policy retention does not resolve those descriptors or assume a Molang
 version context. Bind them in the runtime layer with the existing registry
 and descriptor contracts before enabling native transfer actions.
+
+Keep desktop default bundle extraction separate from selected-cell extraction.
+Original Bedrock 1.26.60.5 protocol 2225 helper 143a2bf10 scans backward for
+the last native-nonempty physical entry and submits one Take with all-quantity
+selection and flags 0/0. It returns that transfer result without compaction.
+Twelve original helper controls cover holes, trailing/empty vectors, rejection,
+matching destinations and zero-count retained definitions. A userdata pointer
+without a definition does not stop the backward empty-slot scan. Four complete
+original generic-transfer controls verify partial Take merging, full/incompatible
+destination rejection and zero-count source rejection with these flags.
+
+Do not skip a zero-count retained definition to expose an earlier entry.
+Accept zero-length physical vectors as a no-op. Local regressions verify last
+physical selection, Take identity, partial merging, rejection, empty containers
+and owned before/after contents. The native controls use explicit model/item,
+identity and publication boundaries; they do not establish controller delivery,
+wire grouping or installed parity.
 ---
  Data Asset Sources.md                         |    33 +
  build.gradle                                  |     1 +
@@ -784,7 +801,7 @@ and descriptor contracts before enabling native transfer actions.
  .../api/model/NativeItemStacking.java         |    85 +
  .../api/model/NativeItemStorageData.java      |   123 +
  .../api/model/container/ChestContainer.java   |     3 +-
- .../container/NativeBundleTransferPlan.java   |   289 +
+ .../container/NativeBundleTransferPlan.java   |   306 +
  .../container/NativeContainerActionSlots.java |    75 +
  .../NativeContainerLegacyActions.java         |   130 +
  .../container/NativeContainerTransfer.java    |    63 +
@@ -848,7 +865,7 @@ and descriptor contracts before enabling native transfer actions.
  .../api/model/NativeItemNamesTest.java        |    83 +
  .../api/model/NativeItemStackingTest.java     |   149 +
  .../api/model/NativeItemStorageDataTest.java  |   112 +
- .../NativeBundleTransferPlanTest.java         |   188 +
+ .../NativeBundleTransferPlanTest.java         |   257 +
  .../NativeContainerLegacyActionsTest.java     |   323 +
  .../NativeContainerTransferTest.java          |   115 +
  .../container/NativeItemStackMatcherTest.java |   191 +
@@ -875,7 +892,7 @@ and descriptor contracts before enabling native transfer actions.
  .../native-bundle-tooltip-layout.json         |   266 +
  .../inventory/native-bundle-transfers.json    |  1622 ++
  .../inventory/native-item-storage.json        |   568 +
- 100 files changed, 40355 insertions(+), 364 deletions(-)
+ 100 files changed, 40441 insertions(+), 364 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BuiltinBlockNames.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleTooltipData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleTooltipItems.java
@@ -1599,10 +1616,10 @@ index a37f1b07..913255f8 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeBundleTransferPlan.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeBundleTransferPlan.java
 new file mode 100644
-index 00000000..fb69ab1a
+index 00000000..dbb2797c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeBundleTransferPlan.java
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,306 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1623,6 +1640,23 @@ index 00000000..fb69ab1a
 +public final class NativeBundleTransferPlan {
 +
 +    private NativeBundleTransferPlan() { }
++
++    /** Desktop default extraction uses one Take and returns its admission result. */
++    public static Result extractLast(final BedrockItem bundle, final BedrockItem[] contents,
++                                     final BedrockItem destination, final int destinationSlot, final Source source) {
++        final var state = new State(contents, destination, destinationSlot, source);
++        if (NativeItemStorageData.containerIdentity(bundle) == null) {
++            return state.result(false);
++        }
++        for (int slot = state.items.length - 1; slot >= 0; slot--) {
++            final var item = state.items[slot];
++            // A defined zero-count stack is not the native empty singleton. It must not expose an earlier item.
++            if (item.amount() != 0 || item.definition() != null || item.identifier() != 0 && item.identifier() != -1) {
++                return state.result(state.transfer(Kind.TAKE, Slot.bundle(slot), state.external, item.amount(), false));
++            }
++        }
++        return state.result(false);
++    }
 +
 +    public static Result extract(final BedrockItem bundle, final BedrockItem[] contents,
 +                                 final BedrockItem destination, final int destinationSlot,
@@ -1768,7 +1802,7 @@ index 00000000..fb69ab1a
 +
 +        private State(final BedrockItem[] contents, final BedrockItem outside,
 +                      final int externalSlot, final Source source) {
-+            if (contents.length == 0 || contents.length > 256) {
++            if (contents.length > 256) {
 +                throw new IllegalArgumentException("Unsupported native dynamic container size");
 +            }
 +            this.items = Arrays.stream(contents).map(BedrockItem::copy).toArray(BedrockItem[]::new);
@@ -36571,10 +36605,10 @@ index 00000000..0332336d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/NativeBundleTransferPlanTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeBundleTransferPlanTest.java
 new file mode 100644
-index 00000000..23d4e9bb
+index 00000000..72802600
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/NativeBundleTransferPlanTest.java
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,257 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -36598,6 +36632,75 @@ index 00000000..23d4e9bb
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class NativeBundleTransferPlanTest {
++
++    @Test
++    void defaultExtractionTakesTheLastPhysicalEntryAndKeepsTakeWhenMerging() {
++        final var bundle = item(1001, 1, 99);
++        bundle.setTag(new CompoundTag());
++        bundle.tag().putInt("bundle_id", 42);
++        final var contents = new BedrockItem[]{item(31, 2, 100), BedrockItem.empty(), item(44, 5, 102), BedrockItem.empty()};
++        for (final int held : new int[]{0, 62}) {
++            final var result = NativeBundleTransferPlan.extractLast(bundle, contents, item(44, held, held == 0 ? 0 : 200), 5,
++                    new FixtureSource(new JsonObject()));
++            assertTrue(result.successful());
++            assertEquals(1, result.transfers().size());
++            final var transfer = result.transfers().getFirst();
++            assertEquals(NativeBundleTransferPlan.Kind.TAKE, transfer.kind());
++            assertEquals(new NativeBundleTransferPlan.Slot(true, 2), transfer.source());
++            assertEquals(new NativeBundleTransferPlan.Slot(false, 5), transfer.destination());
++            assertEquals(held == 0 ? 5 : 2, transfer.count());
++            assertEquals(contents[0], result.contents().getFirst());
++            assertTrue(result.contents().get(1).isEmpty());
++            assertEquals(5, contents[2].amount());
++        }
++    }
++
++    @Test
++    void defaultExtractionReturnsFailureWhenTheDestinationCannotAcceptItsLastEntry() {
++        final var bundle = item(1001, 1, 99);
++        bundle.setTag(new CompoundTag());
++        bundle.tag().putInt("bundle_id", 42);
++        final var contents = new BedrockItem[]{item(31, 2, 100), item(44, 5, 101)};
++        for (final var destination : List.of(item(44, 64, 200), item(55, 1, 201))) {
++            final var result = NativeBundleTransferPlan.extractLast(bundle, contents, destination, 5, new FixtureSource(new JsonObject()));
++            assertFalse(result.successful());
++            assertTrue(result.transfers().isEmpty());
++            assertEquals(List.of(contents), result.contents());
++            assertEquals(destination, result.external());
++        }
++    }
++
++    @Test
++    void defaultExtractionDistinguishesZeroCountDefinitionsFromUserdataOnlyEmptySlots() {
++        final var bundle = item(1001, 1, 99);
++        bundle.setTag(new CompoundTag());
++        bundle.tag().putInt("bundle_id", 42);
++        final var zero = new BedrockItem(44, (short) 0, (byte) 0);
++        final var contents = new BedrockItem[]{item(31, 2, 100), zero, BedrockItem.empty()};
++        final var result = NativeBundleTransferPlan.extractLast(bundle, contents, BedrockItem.empty(), 5, new FixtureSource(new JsonObject()));
++        assertFalse(result.successful());
++        assertTrue(result.transfers().isEmpty());
++        assertEquals(List.of(contents), result.contents());
++        final var userdataOnly = BedrockItem.empty();
++        userdataOnly.setTag(new CompoundTag());
++        contents[1] = userdataOnly;
++        final var withoutDefinition = NativeBundleTransferPlan.extractLast(bundle, contents, BedrockItem.empty(), 5, new FixtureSource(new JsonObject()));
++        assertTrue(withoutDefinition.successful());
++        assertEquals(new NativeBundleTransferPlan.Slot(true, 0), withoutDefinition.transfers().getFirst().source());
++        assertEquals(2, withoutDefinition.external().amount());
++    }
++
++    @Test
++    void emptyPhysicalContainersHaveNoDefaultTransfer() {
++        final var bundle = item(1001, 1, 99);
++        bundle.setTag(new CompoundTag());
++        bundle.tag().putInt("bundle_id", 42);
++        for (final var contents : List.of(new BedrockItem[0], new BedrockItem[]{BedrockItem.empty(), BedrockItem.empty()})) {
++            final var result = NativeBundleTransferPlan.extractLast(bundle, contents, BedrockItem.empty(), 5, new FixtureSource(new JsonObject()));
++            assertFalse(result.successful());
++            assertTrue(result.transfers().isEmpty());
++        }
++    }
 +
 +    @Test
 +    void presentNonIntegerBundleIdentityCanInsertIntoItsZeroContainer() {
