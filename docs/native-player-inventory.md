@@ -216,11 +216,11 @@ Typed overrides and RGB conversion match selected native instruction controls. C
 Storage bars read a native weight snapshot independently of Java bundle contents.
 Installed direct and ViaProxy controls insert eight logs into a server-issued empty bundle, extract them, and insert them again.
 Both routes retain the filled bundle after reopening, with server responses that accept each request.
-These checks use ordinary Java 26.3 controls after the storage-tooltip fallback. Left-click inserts items; right-click extracts them.
+These installed checks used ordinary Java 26.3 controls after the storage-tooltip fallback. Left-click inserted items; right-click extracted them.
 The first insertion request from the official Bedrock client remains unverified.
 Filled-bundle bars still need installed native comparison.
 Unknown storage snapshots restore ordinary controls.
-Hovering or carrying storage items also restores ordinary controls until native tooltips and selection are complete.
+Player and workbench screens now route selected desktop bundle gestures through the native input transport. Local regressions cover insertion and default extraction with either cursor or clicked roots, refreshed hover views, stale snapshots, rejection rollback, and serialized search edits. Installed direct/proxy comparisons, sound effects, touch gestures, and complete bundle controller and rendering parity remain unfinished.
 Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
 The Creative catalog-only toolbar binds Shift-left-click and Shift-right-click to full-stack destruction.
 The action preserves the cursor, requires a current acknowledged opening, and leaves empty slots unchanged.
