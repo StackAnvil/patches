@@ -48,7 +48,7 @@ Retain these reports until a matching reproduction establishes the result:
 - The 0.4.3 bed-floor report matches a reproduced [MoreCulling interaction](../patches/viafabricplus-bedrock/upstreamable/0040-preserve-native-occlusion-with-moreculling.pr.md). Current direct and proxy controls preserve the floor. The affected player's mod list remains unknown.
 - An ender pearl followed by a wind charge can cause repeated rollbacks. Selected [current native and Java controls](../patches/viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md) settle, including walking projectile combinations with added incoming delay. Timing for short presses and the original persistent loop remain unverified.
 - Food can repeat its use animation without feeding the player.
-- The locator bar can be absent.
+- The locator bar can be absent. Current native, direct, and ViaProxy [player controls](../patches/viafabricplus-bedrock/upstreamable/0022-render-native-locator-groups.pr.md) display markers and remove or restore them after rule changes. The reported server remains unmatched.
 - A Realms disconnect report shows NetherNet connectivity loss and repeated STUN 401 responses. Current networking updates still need a matching reproduction.
 
 Release fixes and successful local controls do not close an unmatched report.

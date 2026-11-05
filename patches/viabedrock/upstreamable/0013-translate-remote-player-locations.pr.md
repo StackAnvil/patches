@@ -26,4 +26,5 @@ The latest full core build passes these tests.
 Tests remain in the local stack and are excluded from the upstream PR.
 
 These checks establish decoding and state transport.
-Native rendering, current-version live route comparisons, and complete locator HUD parity require separate validation.
+The [companion renderer controls](../../viafabricplus-bedrock/upstreamable/0022-render-native-locator-groups.pr.md) cover current native, direct, and ViaProxy player markers.
+Complete locator HUD parity remains unverified.
