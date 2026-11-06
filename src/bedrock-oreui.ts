@@ -19,6 +19,7 @@ export interface OreUiDescriptor {
   stylesheet: string;
   fonts: OreUiFont[];
   languages: string[];
+  images?: string[];
 }
 
 /** Read the declarations used by the acquired gameplay stylesheet, including Gameface's SDF opt-out. */
@@ -57,7 +58,7 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
     if (
       /[\\:\0]/.test(path) ||
       path.split("/").includes("..") ||
-      !/^(?:oreui\.json|NOTICE\.txt|hbui\/gameplay-[0-9a-f]+\.css|hbui\/fonts\/[^/]+\.(?:otf|ttf)|texts\/[a-z]{2}_[A-Z]{2}\.lang)$/.test(
+      !/^(?:oreui\.json|NOTICE\.txt|hbui\/gameplay-[0-9a-f]+\.css|hbui\/fonts\/[^/]+\.(?:otf|ttf)|hbui\/assets\/animation-[0-9a-f]+\.gif|texts\/[a-z]{2}_[A-Z]{2}\.lang)$/.test(
         path,
       )
     )
@@ -71,6 +72,19 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
       (contents.length < 12 || ![0x4f54544f, 0x00010000].includes(contents.readUInt32BE(0)))
     )
       throw new Error(`Invalid bundled OreUI font: ${path}`);
+  }
+  const images = [...entries.keys()].filter((path) => path.startsWith("hbui/assets/")).sort();
+  for (const path of images) {
+    const image = entries.get(path)!();
+    if (
+      image.length < 13 ||
+      !["GIF87a", "GIF89a"].includes(image.subarray(0, 6).toString("ascii")) ||
+      image.readUInt16LE(6) === 0 ||
+      image.readUInt16LE(8) === 0 ||
+      image.readUInt16LE(6) > 2048 ||
+      image.readUInt16LE(8) > 2048
+    )
+      throw new Error("Invalid bundled OreUI image");
   }
   const descriptor = JSON.parse(
     entries.get("oreui.json")?.().toString("utf8") ?? "null",
@@ -95,6 +109,11 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
     JSON.stringify(oreUiFonts(entries.get(descriptor.stylesheet)!().toString("utf8")))
   )
     throw new Error("Bundled OreUI font registrations do not match the stylesheet");
+  if (
+    !Array.isArray(descriptor.images ?? []) ||
+    JSON.stringify(descriptor.images ?? []) !== JSON.stringify(images)
+  )
+    throw new Error("Bundled OreUI images do not match the descriptor");
   for (const font of descriptor.fonts) {
     if (
       typeof font.family !== "string" ||

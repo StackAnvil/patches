@@ -30,6 +30,8 @@ async function fixture() {
   await mkdir(join(game, "data/resource_packs/vanilla_1.26.60"), { recursive: true });
   await writeFile(join(game, "data/resource_packs/vanilla_1.26.60/manifest.json"), '{"header":{"version":[1,26,60]}}');
   await mkdir(join(hbui, "fonts"), { recursive: true });
+  await mkdir(join(hbui, "assets"));
+  await writeFile(join(hbui, "assets/animation-ab.gif"), Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
   await mkdir(join(oreui, "__brarchive"), { recursive: true });
   await mkdir(join(oreui, "texts"));
   const font = Buffer.from([0x4f, 0x54, 0x54, 0x4f, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -52,6 +54,8 @@ test("acquires exact OreUI bytes, font variants and language precedence determin
     { family: "Minecraft Seven Pixel Perfect", file: "hbui/fonts/Ten-ab.otf", weight: 700, style: "italic", sdf: "off" },
   ]);
   expect(entries.get("hbui/fonts/Ten-ab.otf")!()).toEqual(font);
+  expect(descriptor.images).toEqual(["hbui/assets/animation-ab.gif"]);
+  expect(entries.get("hbui/assets/animation-ab.gif")!()).toEqual(await readFile(join(game, "data/gui/dist/hbui/assets/animation-ab.gif")));
   expect(entries.get("texts/en_US.lang")!().toString()).toBe("gameplay.DeathScreen.title=Loose title\n");
   expect(entries.get("texts/ja_JP.lang")!().toString()).toBe("gameplay.DeathScreen.title=死亡しました\n");
   await applyBedrockUi(plan);
@@ -80,7 +84,7 @@ test("rejects incomplete or mismatched resources even with a valid outer checksu
   const { game, output } = await fixture();
   const plan = await planBedrockOreUi(game, "1.26.60.5", output);
   const original = new Map([...zipEntries(plan.bytes)].map(([name, read]) => [name, read()]));
-  for (const missing of ["hbui/fonts/Ten-ab.otf", "hbui/gameplay-ab.css", "texts/en_US.lang", "NOTICE.txt"]) {
+  for (const missing of ["hbui/fonts/Ten-ab.otf", "hbui/gameplay-ab.css", "texts/en_US.lang", "NOTICE.txt", "hbui/assets/animation-ab.gif"]) {
     const entries = new Map(original); entries.delete(missing);
     expect(() => verifyBuiltinOreUiContents(assetZip(entries), "1.26.60.5")).toThrow();
   }
@@ -106,4 +110,18 @@ test("verifies the exact OreUI bundle in the addon distributable", async () => {
   await writeFile(artifact, assetZip(new Map([[builtinOreUiResource, Buffer.from("different")]])));
   await expect(verifyEmbeddedBuiltinOreUi(artifact, output, "1.26.60.5")).rejects.toThrow("did not embed");
   expect((await readFile(output)).equals(plan.bytes)).toBeTrue();
+});
+
+
+test("rejects unregistered images and invalid GIF dimensions inside a checksummed bundle", async () => {
+  const { game, output } = await fixture();
+  const plan = await planBedrockOreUi(game, "1.26.60.5", output);
+  const entries = new Map([...zipEntries(plan.bytes)].map(([name, read]) => [name, read()]));
+  const descriptor = JSON.parse(entries.get("oreui.json")!.toString());
+  descriptor.images = []; entries.set("oreui.json", Buffer.from(JSON.stringify(descriptor)));
+  expect(() => verifyBuiltinOreUiContents(assetZip(entries), "1.26.60.5")).toThrow("images do not match");
+  descriptor.images = ["hbui/assets/animation-ab.gif"]; entries.set("oreui.json", Buffer.from(JSON.stringify(descriptor)));
+  const image = Buffer.from(entries.get("hbui/assets/animation-ab.gif")!); image.writeUInt16LE(2049, 6);
+  entries.set("hbui/assets/animation-ab.gif", image);
+  expect(() => verifyBuiltinOreUiContents(assetZip(entries), "1.26.60.5")).toThrow("Invalid bundled OreUI image");
 });

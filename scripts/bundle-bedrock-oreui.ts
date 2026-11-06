@@ -53,6 +53,11 @@ export async function planBedrockOreUi(game: string, version: string, output: st
   for (const name of (await readdir(fontDirectory)).sort()) {
     if (/\.(otf|ttf)$/.test(name)) add(`hbui/fonts/${name}`, await read(join(fontDirectory, name)));
   }
+  const imageDirectory = join(hbui, "assets");
+  const images = (await readdir(imageDirectory))
+    .filter((name) => /^animation-[0-9a-f]+\.gif$/.test(name))
+    .sort();
+  for (const name of images) add(`hbui/assets/${name}`, await read(join(imageDirectory, name)));
   const textRoot = join(game, "data", "resource_packs", "oreui");
   const archive = join(textRoot, "__brarchive", "texts.brarchive");
   const original = `${archive}.bol-orig`;
@@ -78,6 +83,7 @@ export async function planBedrockOreUi(game: string, version: string, output: st
     version,
     stylesheet,
     fonts,
+    images: images.map((name) => `hbui/assets/${name}`),
     languages: [...files.keys()]
       .filter((name) => name.startsWith("texts/"))
       .map((name) => name.slice(6, -5))

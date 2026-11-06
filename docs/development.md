@@ -38,9 +38,10 @@ The stack build verifies its version, checksum, required templates, textures, an
 Missing or incomplete assets stop the build. Each finished JAR must contain the exact verified bundle before publication.
 
 The add-on also embeds `assets/viafabricplus-bedrock/builtin_oreui.zip` for the OreUI screen port.
-It contains the gameplay stylesheet, OpenType and TrueType faces, and OreUI translations from the same game version.
+It contains the gameplay stylesheet, OpenType and TrueType faces, animation images, and OreUI translations from the same game version.
 Its generated `oreui.json` records the stylesheet's font families, variants, and explicit `coh-font-sdf:off` declarations.
 Faces without that property retain `default` in the descriptor.
+The descriptor also lists the acquired GIF paths. Image access requires a registered path and returns a copy of its bytes.
 These resources remain separate from classic JSON UI font registrations and their display transform.
 The build verifies the bundle's checksum, referenced faces, and languages before and after packaging.
 See [compatibility status](bedrock-coverage.md) for rendering support.
@@ -63,7 +64,7 @@ After reviewing the output, replace both tracked files under `assets/bedrock/1.2
 Keep the native copyright notice in the ZIP. Commit both files with changes to the version pin.
 
 The OreUI extractor also reads `data/gui/dist/hbui/` and `data/resource_packs/oreui/`.
-It keeps the original font, stylesheet, and language bytes and prefers loose language files over archive entries.
+It keeps the original font, stylesheet, animation, and language bytes and prefers loose language files over archive entries.
 Review its preview and copy the ZIP and checksum manifest to `assets/bedrock/1.26.60.5/assets/viafabricplus-bedrock/`.
 It uses the same requirement for fresh output paths as the JSON UI extractor.
 

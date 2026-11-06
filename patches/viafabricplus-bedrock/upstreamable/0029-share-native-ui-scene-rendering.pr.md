@@ -23,7 +23,10 @@ Prepared runs retain vertical face metrics independently of the glyph cache size
 Native line boxes preserve negative leading and fractional content origins.
 Content boxes apply borders and padding before optional node-selected snapping.
 The Java content bounds match all 20 original native controls bit for bit. Six policy controls establish the supplied style/global flag combinations.
-The active native game flag and complete CSS cascade remain unobserved.
+The active native death view enables snapping for the title, reason, Respawn label, and Game menu label.
+The live paint wrapper centers each intrinsic text box before snapping its origin, then adds the cached baseline offset.
+At 1280 × 720, the button label boxes start 10 and 12 pixels below their respective button tops.
+Complete CSS cascade and other active view flags remain unverified.
 The Java calculation matches all 72 original native font-span and baseline controls bit for bit.
 Eight style-height controls and 14 rectangle/fragment controls establish separate height resolution and placement boundaries.
 Regressions cover explicit and normal line heights, negative half ties, real font metrics, atlas lifetimes, and Minecraft vertex emission.
@@ -36,7 +39,7 @@ Installed Ten advances match original controls for `fi`, `office`, and `Respawn`
 Ten selected draw regions retain identical pixels across measurement and mode return.
 The complete measurement wrapper/cache and automatic inline layout remain unverified.
 
-The full add-on build passes with 1,391 tests passing and 154 skipped, including software font GPU checks.
+The full add-on build passes with 1,396 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
 Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
@@ -46,7 +49,13 @@ All five regions remain unchanged after returning to the original mode. Installe
 The eight nearest-filtered label crops differ from the CPU raster reference by at most one color byte.
 Linear-filtered crops differ from that idealized reference by up to 13 color bytes. Exact native sampling remains unverified.
 The diagnostic supplies border boxes, insets, spacing, colors, font modes, and explicit snap choices.
-A fixed comparison with the saved native frame improves three label masks and worsens Respawn. Adding the required shadows changes their visible pixels but leaves those white glyph masks unchanged. Button layout and active native draw bindings remain unverified. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
+A fixed comparison with the saved native frame improves three label masks and worsens Respawn. Adding the required shadows changes their visible pixels but leaves those white glyph masks unchanged. Live text bounds establish the two button label origins. Complete button styling and active native draw bindings remain unverified. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
+
+The acquired OreUI bundle also registers the original loading GIF and retains all previous font, stylesheet, and translation bytes.
+The decoder preserves frame durations, transparency, and disposal within a 16 MiB decoded-frame limit.
+Five regressions cover image ownership, invalid registrations, decoded limits, frame disposal, and the acquired spinner.
+The original spinner has ten 28 × 28 frames at 100ms each. Independent ImageIO and Pillow decodes agree on all ten frames.
+These checks establish software decoding. Installed animation sampling and the complete death-screen consumer remain unfinished.
 
 Prerequisites:
 
