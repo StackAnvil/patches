@@ -46,7 +46,9 @@ Both current Java routes produce the expected projectiles and settle after landi
 Selected native, direct, and ViaProxy combinations also settle with 300 ms of incoming delivery delay, including combinations with held movement input.
 Native packets contain movement corrections after wind impulses, so correction counts alone do not identify the reported rollback loop.
 The selected moving controls place four server ticks between native uses, two on direct Java, and three through ViaProxy.
-Short native input attempts do not consistently produce both throws. These controls do not establish equal trajectories or timing for individual presses.
+Short native input attempts do not consistently produce both throws.
+Native local-world and callback controls establish a [projectile air-admission gap](0038-predict-held-trapdoor-placement.pr.md#remaining-limits) in the current Java input owner.
+These controls do not establish equal trajectories or complete timing for individual presses.
 Read-only server controls identify wind-charge projectiles as targets in selected pearl entity impacts.
 An ordered outgoing packet burst admits both uses in the same server tick while both projectiles hit blocks and settle; matching server tick spacing does not establish the earlier origin-height collision path.
 Direct and ViaProxy controls also settle after ordered pauses of 600 ms, 2 s, and 4 s in incoming packets.

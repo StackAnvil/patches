@@ -92,7 +92,23 @@ After a preceding successful hold, both can instead place a neighbor and consume
 ## Remaining limits
 
 Live build-height limits, moving placement, and air/entity target dispatch need more native comparisons.
-Other initial use families, mixed-use state, and complete input phases also remain open.
+
+Projectile air admission has a confirmed gap.
+Native 1.26.60.5 projectile controls set the same strict 200 ms air deadline as food.
+A traced fresh wind press before that deadline sends no air use. The rejected hold does not resume air use after expiry.
+The traced later press and uninterrupted hold admit wind after the deadline.
+
+The current Java state bypasses deadline recording for an initial non-food, non-block use.
+A probe against the compiled state admits another projectile or food use at 100 ms after that use, including after release.
+Projectile admission, rejected holds, and initial result ownership need correction together in this owner.
+
+The new native controls use an owned local world with an embedded observer, separate from the existing BDS recordings.
+Controls without a debugger confirm the rejected hold, an admitted uninterrupted hold, and a widely separated pair.
+The shorter separate-press controls do not consistently admit both projectiles, including a press scheduled after the deadline.
+Debugger traces establish the admitted and rejected callback paths, without proving complete physical input timing.
+No current native network comparison is claimed from failed NetherNet joins.
+
+Other initial use families, mixed-use state, and complete input phases remain open.
 An unchanged stack does not prove repeat-timing parity.
 Frame cadence changes retry and instant-food counts, so these controls do not establish equal coordinates or complete scheduling parity.
 A native fresh callback dispatches rejected block use about 27 ms before the air deadline, with no second air transaction.
