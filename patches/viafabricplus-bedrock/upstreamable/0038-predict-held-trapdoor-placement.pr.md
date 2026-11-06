@@ -21,6 +21,7 @@ Already admitted air use retains its route after hunger fills or the selected it
 Block continuation bypasses the air deadline and cannot fall through to eating.
 Offhand fallback cannot take over an owned hold.
 Release and screens retire the mode; the connection retains its air deadline until replacement.
+Use-key releases also stop the current local cycle through the ordinary game mode. Handle the key update before a repress can erase the release between game ticks. The frame refresh also checks the released state; an already stopped cycle sends no duplicate release.
 Missing optional block-use channels do not clear the air-use hold or deadline.
 
 Placement has a separate strict delay: 300 ms before a line is established and 200 ms afterward.
@@ -107,6 +108,10 @@ Installed direct and ViaProxy controls suppress an early fresh wind hold, admit 
 
 Consumption-report controls cover late acceptance under a declared incoming delay and final pearl/wind-charge removal. Held-item counts agree with BDS after settlement. The [air-use prediction owner](../../viabedrock/deferred/0016-synchronize-glide-rockets-with-auth-input.pr.md) records the native action boundary, exact installed artifact scope, older-client quantity fallback, build results, and remaining limits.
 
+A native bread control releases after half a second and represses after 20 ms. It cancels the first cycle and restarts at the full duration. Earlier Java frame observations saw both key states in one game tick, retained 22 use ticks, and consumed one bread. The configured-key release correction stops that cycle before a repress.
+
+Current direct and ViaProxy clients each complete six food controls in a 120-second recording. Short holds, split holds, rapid pulses, and repressing after a completion match the selected native bread counts and hunger endpoints. Local callback observations verify one ordinary release per active key-up and no consumption during that release. Long controls retain normal consumption. The full add-on build passes 1,416 tests, with 154 skipped, including five software font GPU checks. The complete 44-patch replay matches the build.
+
 ## Remaining limits
 
 Live build-height limits, moving placement, and air/entity target dispatch need more native comparisons.
@@ -126,5 +131,5 @@ Frame cadence changes retry and instant-food counts, so these controls do not es
 A native fresh callback dispatches rejected block use about 27 ms before the air deadline, with no second air transaction.
 Short native input spans still miss some physical edges and do not establish full edge parity.
 Dynamic capability changes and legacy fallback need broader installed controls.
-Short food presses while Java still owns an active use cycle need separate native comparisons.
+The native 80 ms control has no start/stop callback, so matching endpoints do not establish its initial admission. Exact edge timing and other active-use families still need comparisons.
 The original intermittent animation-without-feeding report remains open.

@@ -75,7 +75,7 @@ Other initial use families and live entity transitions still need native compari
 Presence of `StartUsingItem` is verified; exact packet phase counts and complete cycle timing remain open.
 
 Competing non-food use handlers, other consumable animations and effects, ability exceptions, and all inventory authority modes need further comparison.
-The selected one-second late acknowledgment control passes on both integrated Java routes. Broader consumable timing still needs comparison.
+The selected one-second late acknowledgment control passes on both integrated Java routes. The [client input evidence](../../viafabricplus-bedrock/upstreamable/0038-predict-held-trapdoor-placement.pr.md) also covers short release/repress controls and the correction for a release missed between game ticks. Broader consumable timing still needs comparison.
 The original intermittent animation-without-feeding report remains open.
 
 This patch remains deferred behind [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
