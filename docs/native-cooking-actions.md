@@ -52,6 +52,11 @@ Shared naming and recipe APIs belong in core rather than screen-specific copies.
 
 Keep cooking progress and preferences independent of recipe requests.
 Use authored component flags for visibility, focus, input, and toggle behavior.
+Layout increment and decrement use the current native layout transition.
+Forced recipe-book layouts consume these actions without changing preferences.
+Layout changes retain the carried stack and wait for a matching profile snapshot.
+The current profile tab is separate from the controller's retained Inventory tab.
+
 The available bindings do not establish complete support for the default authored cooking program.
 Preserve ordinary controls when required native controls are unavailable.
 

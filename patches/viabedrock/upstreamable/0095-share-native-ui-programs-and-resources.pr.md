@@ -150,3 +150,7 @@ Native 1.26.60.5 property-value controls preserve hash-prefixed names in propert
 Regressions cover direct and variable-supplied property bags, explicit binding updates, and exported cooking editors for all three station families.
 Cooking clear-button visibility follows raw search text, including whitespace.
 These controls do not establish complete loader or cooking-screen parity.
+
+Current 1.26.60.5 original-instruction controls cover both layout callbacks across 384 supplied controller states, including forced layouts and inline or heap hover text.
+Leaving Inventory with retention enabled saves Inventory tab 5 independently of the selected recipe category.
+The downstream settings refresh is an observed boundary. These controls do not establish physical input or full cooking-screen parity.

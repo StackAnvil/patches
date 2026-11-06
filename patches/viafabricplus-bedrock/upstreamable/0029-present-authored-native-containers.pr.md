@@ -227,4 +227,7 @@ Official Bedrock 1.26.60.5 desktop controls retain furnace search after reopenin
 Screen regressions use the exported 1.26.60.5 editor and its embedded X.
 They cover active clearing during a pending query, continued typing, the first Escape, whitespace, and inactive retained text after resize.
 Geometry regressions reject an unowned clear control and preserve front-to-back slot protection.
-The matching native desktop controls establish these input lifetimes; complete default cooking screen admission and installed direct/proxy comparisons remain unfinished.
+The matching native desktop controls establish these editor input lifetimes.
+Current native registration tables and callback controls also establish layout increment/decrement transitions.
+Screen regressions cover screen, panel, global-panel, and pointer-button dispatch, retained carried items, held input, matching snapshots, and forced-layout suppression.
+Complete default cooking screen admission and installed direct/proxy comparisons remain unfinished.
