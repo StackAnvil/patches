@@ -1,4 +1,4 @@
-From 6d846b51134fa351693bda52cc8a71b596d1f043 Mon Sep 17 00:00:00 2001
+From eb104625c760d7181d524bac4e90a2e31affdc2e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 03:36:18 +0100
 Subject: [PATCH] feat(interaction): preserve native held item use
@@ -186,23 +186,38 @@ food admission snapshot when Java completes zero-duration food inside
 its callback. Older proxy cores without the field retain the previous
 input fallback. Full physical timing, real projectile cooldowns, Education
 predicates and matching installed direct/proxy controls remain open.
+
+Capture actual local stack consumption before ordinary item use and send
+its result after prediction, before the concluding Java packet. Match
+the prediction sequence in core. Cooldown refusal still sends air use
+but must not invent a legacy inventory debit. Compare native definition
+identity as well as quantity, and retain the existing core fallback when
+the optional consumption channel is absent.
+
+Original Bedrock 1.26.60.5 client callbacks record one pearl debit for a
+successful use and no inventory action for a cooldown-refused use. Java
+also sends a packet when its local cooldown skips item use. Reporting
+its actual stack change lets core reproduce the native action envelope
+and receive authority for late server acceptance. Keep this separate
+from result-independent air-route ownership and the strict 200 ms clock.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../features/block/MixinTrapDoorBlock.java    |  18 +-
- .../features/input/MixinItemUseControl.java   | 111 +++++++
+ .../features/input/MixinItemUseControl.java   | 112 +++++++
  .../inventory/MixinHeldBlockPlacement.java    |  32 ++
- .../features/inventory/MixinHeldBlockUse.java |  61 ++++
- .../bedrock/input/BedrockItemUse.java         | 247 +++++++++++++++
+ .../features/inventory/MixinHeldBlockUse.java |  65 ++++
+ .../bedrock/input/BedrockItemUse.java         | 269 ++++++++++++++++
  .../bedrock/input/BlockPlacementPath.java     |  83 +++++
  .../bedrock/input/BlockUsePayload.java        |  24 ++
  .../input/BlockUsePredictionPayload.java      |  33 ++
+ .../input/ItemUsePredictionPayload.java       |  24 ++
  .../bedrock/input/ItemUseState.java           | 139 +++++++++
  .../bedrock/inventory/TrapdoorPlacement.java  |  55 ++++
  .../viafabricplus-bedrock.mixins.json         |   3 +
  .../bedrock/input/BlockPlacementPathTest.java | 128 ++++++++
  .../bedrock/input/ItemUseStateTest.java       | 286 ++++++++++++++++++
  .../inventory/TrapdoorPlacementTest.java      | 100 ++++++
- 15 files changed, 1318 insertions(+), 4 deletions(-)
+ 16 files changed, 1369 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
@@ -210,6 +225,7 @@ predicates and matching installed direct/proxy controls remain open.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockUsePredictionPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUsePredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java
@@ -288,10 +304,10 @@ index 82db187..eda72b3 100644
              return super.getOcclusionShape(state);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
 new file mode 100644
-index 0000000..ebe56bf
+index 0000000..17a29e8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,112 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -366,6 +382,7 @@ index 0000000..ebe56bf
 +        if (!BedrockItemUse.beginAirUse(hand, player.getItemInHand(hand))) {
 +            return InteractionResult.PASS;
 +        }
++        BedrockItemUse.beginItemPrediction(hand, player.getItemInHand(hand));
 +        final InteractionResult result = original.call(gameMode, player, hand);
 +        BedrockItemUse.airResult(hand);
 +        return result;
@@ -443,10 +460,10 @@ index 0000000..a54ba3a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
 new file mode 100644
-index 0000000..69387b7
+index 0000000..82b3509
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,65 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -464,6 +481,7 @@ index 0000000..69387b7
 +import net.minecraft.world.phys.BlockHitResult;
 +import net.minecraft.network.protocol.Packet;
 +import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
++import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 +import org.spongepowered.asm.mixin.injection.Inject;
 +import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 +import net.minecraft.client.player.LocalPlayer;
@@ -500,9 +518,12 @@ index 0000000..69387b7
 +
 +    @WrapOperation(method = "startPrediction", at = @At(value = "INVOKE",
 +        target = "Lnet/minecraft/client/multiplayer/ClientPacketListener;send(Lnet/minecraft/network/protocol/Packet;)V"))
-+    private void sendBlockUsePrediction(final ClientPacketListener connection, final Packet<?> packet, final Operation<Void> original) {
++    private void sendLocalItemPrediction(final ClientPacketListener connection, final Packet<?> packet, final Operation<Void> original) {
 +        if (packet instanceof ServerboundUseItemOnPacket use) {
 +            BedrockItemUse.sendPrediction(use.sequence());
++        } else if (packet instanceof ServerboundUseItemPacket use) {
++            // Local item prediction has finished; send its result before the concluding use packet.
++            BedrockItemUse.sendItemPrediction(use.sequence(), use.hand());
 +        }
 +        original.call(connection, packet);
 +    }
@@ -510,10 +531,10 @@ index 0000000..69387b7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
 new file mode 100644
-index 0000000..d514655
+index 0000000..4cad621
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,269 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -542,6 +563,7 @@ index 0000000..d514655
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +import net.raphimc.viabedrock.api.model.PlayerBlockUse;
++import net.raphimc.viabedrock.api.model.ItemUsePrediction;
 +
 +public final class BedrockItemUse {
 +    private static final TrapdoorPlacement PLACEMENT = new TrapdoorPlacement();
@@ -553,6 +575,7 @@ index 0000000..d514655
 +    private static Boolean pendingAirPredicate;
 +    private static boolean pendingAirItem;
 +    private static boolean pendingFoodUse;
++    private static ItemStack predictedItem = ItemStack.EMPTY;
 +    private static final ItemUseState INPUT = new ItemUseState();
 +    private static Position3f cursor;
 +    private static BlockUsePrediction.Result predictedResult = BlockUsePrediction.Result.FAILED;
@@ -561,6 +584,7 @@ index 0000000..d514655
 +
 +    public static void register() {
 +        PayloadTypeRegistry.serverboundPlay().register(BlockUsePayload.TYPE, BlockUsePayload.CODEC);
++        PayloadTypeRegistry.serverboundPlay().register(ItemUsePredictionPayload.TYPE, ItemUsePredictionPayload.CODEC);
 +        PayloadTypeRegistry.serverboundPlay().register(BlockUsePredictionPayload.TYPE, BlockUsePredictionPayload.CODEC);
 +        PayloadTypeRegistry.serverboundPlay().register(BlockUsePredictionPayload.AIR_TYPE, BlockUsePredictionPayload.AIR_CODEC);
 +        ClientTickEvents.START_CLIENT_TICK.register(client -> refresh());
@@ -597,11 +621,29 @@ index 0000000..d514655
 +        return admitted;
 +    }
 +
++    public static void beginItemPrediction(final InteractionHand hand, final ItemStack item) {
++        predictedItem = hand == InteractionHand.MAIN_HAND && bedrockConnection()
++            && ClientPlayNetworking.canSend(ItemUsePredictionPayload.TYPE) ? item.copy() : ItemStack.EMPTY;
++    }
++
++    public static void sendItemPrediction(final int sequence, final InteractionHand hand) {
++        final var player = Minecraft.getInstance().player;
++        if (!predictedItem.isEmpty() && hand == InteractionHand.MAIN_HAND && player != null && bedrockConnection()
++                && ClientPlayNetworking.canSend(ItemUsePredictionPayload.TYPE)) {
++            final ItemStack after = player.getItemInHand(hand);
++            final boolean consumed = after.getCount() < predictedItem.getCount()
++                && (after.isEmpty() || BedrockUsedItem.matches(after, predictedItem));
++            ClientPlayNetworking.send(new ItemUsePredictionPayload(new ItemUsePrediction(sequence, consumed)));
++        }
++        predictedItem = ItemStack.EMPTY;
++    }
++
 +    public static void airResult(final InteractionHand hand) {
 +        if (hand == InteractionHand.MAIN_HAND && pendingAirPredicate != null && bedrockConnection()) {
 +            INPUT.airResult(Minecraft.getInstance().player.isUsingItem() || pendingFoodUse, pendingAirItem, pendingAirPredicate);
 +        }
 +        pendingAirPredicate = null;
++        predictedItem = ItemStack.EMPTY;
 +    }
 +
 +    public static HitResult.Type hitType(final HitResult.Type target, final InteractionHand hand) {
@@ -759,6 +801,7 @@ index 0000000..d514655
 +        pendingAirPredicate = null;
 +        pendingAirItem = false;
 +        pendingFoodUse = false;
++        predictedItem = ItemStack.EMPTY;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java
@@ -917,6 +960,36 @@ index 0000000..3ee51e7
 +    @Override
 +    public Type<BlockUsePredictionPayload> type() {
 +        return this.withAirAdmission ? AIR_TYPE : TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUsePredictionPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUsePredictionPayload.java
+new file mode 100644
+index 0000000..4b4e787
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUsePredictionPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.ItemUsePrediction;
++
++public record ItemUsePredictionPayload(ItemUsePrediction prediction) implements CustomPacketPayload {
++    public static final Type<ItemUsePredictionPayload> TYPE = new Type<>(Identifier.parse(ItemUsePrediction.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, ItemUsePredictionPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> ItemUsePrediction.TYPE.write(buffer, payload.prediction),
++        buffer -> new ItemUsePredictionPayload(ItemUsePrediction.TYPE.read(buffer)));
++
++    @Override
++    public Type<ItemUsePredictionPayload> type() {
++        return TYPE;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java

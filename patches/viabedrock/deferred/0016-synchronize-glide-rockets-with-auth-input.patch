@@ -1,4 +1,4 @@
-From 5e5cdb56aa8ea4ae1637fd02942009a79f1ba9f8 Mon Sep 17 00:00:00 2001
+From 46e5d41e7ce4f26c7a717047cda1177c614444be Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(interaction): preserve native air-use prediction and
@@ -31,8 +31,8 @@ Allocate legacy even request IDs from the inventory owner shared with
 native block placement. Keep stack-request IDs independent and verify
 interleaved placement/rocket allocation without a second legacy counter.
 
-Extend the same legacy consumption envelope to pearl and wind-charge air
-use. Native Bedrock 1.26.60.5 protocol 2225 captures against local BDS 1.26.60.6
+Extend the same legacy consumption envelope to locally consumed pearl
+and wind-charge air use. Native Bedrock 1.26.60.5 protocol 2225 captures against local BDS 1.26.60.6
 carry a negative even request ID, inventory slot declaration and one-item
 debit for both. Held and action descriptors omit network IDs. Retain the
 Unknown trigger, Failure prediction and Off cooldown fields from native.
@@ -63,9 +63,28 @@ and the server accepted only two of three attempted throws. The packet-to-
 inventory regression now checks repeated debits, preserved local identity,
 final-stack removal and send-before-commit ordering.
 
+Accept a sequence-owned local stack-consumption report before ordinary
+Java item use. Emit a legacy debit only when local prediction consumed
+the item. Keep air use, omitted descriptor network IDs, and Off cooldown
+independent of that debit. An absent report preserves older client
+behavior. Reports for another sequence cannot select a later prediction.
+
+Original Bedrock 1.26.60.5 GameMode controls record four-to-three and
+three-to-two inventory actions on successful pearl use. Cooldown-refused
+calls still dispatch but record no action or legacy slot declaration.
+Java also sends its use packet while its local cooldown rejects the
+callback. An unconditional debit lets BDS accept a near-expiry request
+without an inventory response while Java retains its old count. Match
+the native local action boundary instead of predicting every attempt.
+
+The regression keeps a refused request unpredicted without advancing
+the legacy counter, then verifies the next successful native debit.
+It fails before the correction and retains the older-client fallback,
+flight ordering, descriptor identity and final-stack tests.
+
 Publish each immediate core-owned throwable debit to the Java inventory.
-Java 26.3 MultiPlayerGameMode emits its use packet before the local cooldown
-gate, so a sent request need not decrement the Java stack. BDS can accept
+Java 26.3 MultiPlayerGameMode sends its use packet even when the local
+cooldown gate skips item consumption. BDS can accept
 the native legacy prediction without returning another quantity packet.
 Updating only core then leaves Java's count stale until unrelated authority.
 
@@ -76,18 +95,22 @@ with that retained Java stack and fails before the publication fix. It
 also covers an exhausted final stack. Preserve transaction-before-debit
 ordering and original stack identity, and let later server updates replace
 predictions. Input continuation and native cooldown fields stay independent.
-Matching installed validation of this correction remains pending.
+
+Retain quantity publication for real debits and clients without the new
+local prediction report. A modern cooldown-refused report carries no
+action, so it must neither debit core nor publish a temporary lower Java
+quantity. The regression also guards this no-publication boundary.
 ---
  .../api/model/entity/ClientPlayerEntity.java  |   5 +
  .../protocol/packet/ClientPlayerPackets.java  |  21 +-
- .../protocol/packet/InteractionPackets.java   | 123 ++++++---
+ .../protocol/packet/InteractionPackets.java   | 135 +++++---
  .../InventoryTransactionRewriter.java         |  10 +-
- .../InventoryTransactionPacketType.java       |  50 ++--
- .../packet/ClientPlayerPacketsTest.java       |  90 +++++++
- .../packet/InteractionPacketsTest.java        | 255 ++++++++++++++++++
- .../packet/ThrowablePredictionPacketTest.java | 100 +++++++
- .../InventoryTransactionPacketTypeTest.java   | 143 ++++++++++
- 9 files changed, 742 insertions(+), 55 deletions(-)
+ .../InventoryTransactionPacketType.java       |  50 +--
+ .../packet/ClientPlayerPacketsTest.java       |  90 ++++++
+ .../packet/InteractionPacketsTest.java        | 287 ++++++++++++++++++
+ .../packet/ThrowablePredictionPacketTest.java | 100 ++++++
+ .../InventoryTransactionPacketTypeTest.java   | 143 +++++++++
+ 9 files changed, 785 insertions(+), 56 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ThrowablePredictionPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/InventoryTransactionPacketTypeTest.java
 
@@ -168,10 +191,10 @@ index 531a753c..eed50df5 100644
          protocol.registerServerbound(ServerboundPackets26_3.PLAYER_ABILITIES, null, wrapper -> {
              wrapper.cancel();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index a1d9558a..e679d598 100644
+index a1d9558a..9b4b804a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-@@ -21,7 +21,9 @@ import com.viaversion.viaversion.api.minecraft.BlockFace;
+@@ -21,11 +21,15 @@ import com.viaversion.viaversion.api.minecraft.BlockFace;
  import com.viaversion.viaversion.api.minecraft.BlockPosition;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -181,7 +204,13 @@ index a1d9558a..e679d598 100644
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
  import net.raphimc.viabedrock.ViaBedrock;
-@@ -71,6 +73,9 @@ public final class InteractionPackets {
+ import net.raphimc.viabedrock.api.model.BlockUsePrediction;
++import net.raphimc.viabedrock.api.model.ItemUsePrediction;
++import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
+ import net.raphimc.viabedrock.api.model.container.Container;
+ import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+@@ -71,6 +75,9 @@ public final class InteractionPackets {
  
      private static final String ITEM_USE_STOP_CHANNEL = "viabedrock:item_use_stop";
  
@@ -191,7 +220,17 @@ index a1d9558a..e679d598 100644
      private static final Set<String> CONTINUOUS_USE_ITEMS = Set.of(
              "minecraft:bow", "minecraft:crossbow", "minecraft:trident",
              "minecraft:potion", "minecraft:milk_bucket", "minecraft:ominous_bottle",
-@@ -297,7 +302,8 @@ public final class InteractionPackets {
+@@ -267,7 +274,8 @@ public final class InteractionPackets {
+             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
+ 
+             final int javaHand = wrapper.read(Types.VAR_INT); // hand
+-            wrapper.read(Types.VAR_INT); // sequence
++            final int sequence = wrapper.read(Types.VAR_INT); // sequence
++            final ItemUsePrediction prediction = wrapper.user().get(PlayerInputStorage.class).takeItemUsePrediction(sequence);
+             wrapper.read(Types.FLOAT); // yaw
+             wrapper.read(Types.FLOAT); // pitch
+ 
+@@ -297,9 +305,10 @@ public final class InteractionPackets {
                      ? canStartFoodUse(clientPlayer, food, wrapper.user().get(GameSessionStorage.class))
                      : isContinuousUseItem(itemIdentifier, itemIdentifier == null ? Set.of()
                              : BedrockProtocol.MAPPINGS.getBedrockItemTags().getOrDefault(itemIdentifier, Set.of()));
@@ -199,9 +238,12 @@ index a1d9558a..e679d598 100644
 +            final BedrockInventoryTransaction transaction = beginItemUse(clientPlayer,
 +                    wrapper.user().get(InventoryTracker.class), hand,
                      inventoryContainer.getSelectedHotbarSlot(), usedItem, itemIdentifier,
-                     startUsingItem);
+-                    startUsingItem);
++                    startUsingItem, prediction);
              if (transaction == null) {
-@@ -307,7 +313,7 @@ public final class InteractionPackets {
+                 wrapper.cancel();
+                 if (hand == InteractionHand.OFF_HAND && !"minecraft:shield".equals(itemIdentifier)) {
+@@ -307,7 +316,7 @@ public final class InteractionPackets {
                  }
                  return;
              }
@@ -210,7 +252,7 @@ index a1d9558a..e679d598 100644
          });
  
          protocol.registerServerbound(ServerboundPackets26_3.USE_ITEM_ON, null, wrapper -> {
-@@ -331,22 +337,20 @@ public final class InteractionPackets {
+@@ -331,22 +340,20 @@ public final class InteractionPackets {
                  PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
                  return;
              }
@@ -236,7 +278,7 @@ index a1d9558a..e679d598 100644
              final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
              final BedrockItem usedItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
              if (usedItem.hasBlockState()) {
-@@ -435,31 +439,30 @@ public final class InteractionPackets {
+@@ -435,32 +442,37 @@ public final class InteractionPackets {
          return hunger == null || food.allowsUse(hunger.computeClampedValue(), hunger.computeMaxValue(), ignoresHunger);
      }
  
@@ -250,16 +292,6 @@ index a1d9558a..e679d598 100644
 -                    source.user());
 -            writeJavaPassengers(passengersPacket, entityTracker, vehicle);
 -            passengersPacket.send(BedrockProtocol.class);
--        }
--    }
--
--    private static void writeJavaPassengers(final PacketWrapper wrapper,
--                                            final EntityTracker entityTracker, final Entity vehicle) {
--        final List<Entity> passengers = entityTracker.getTrackedPassengers(vehicle);
--        wrapper.write(Types.VAR_INT, vehicle.javaId()); // vehicle
--        wrapper.write(Types.VAR_INT, passengers.size()); // number of passengers
--        for (Entity passenger : passengers) {
--            wrapper.write(Types.VAR_INT, passenger.javaId()); // passenger id
 +    static void writeItemUse(final PacketWrapper wrapper, final Type<BedrockInventoryTransaction> transactionType,
 +                             final BedrockInventoryTransaction transaction, final InventoryContainer inventory) {
 +        wrapper.write(transactionType, transaction);
@@ -282,25 +314,42 @@ index a1d9558a..e679d598 100644
 +        quantity.send(BedrockProtocol.class);
      }
  
+-    private static void writeJavaPassengers(final PacketWrapper wrapper,
+-                                            final EntityTracker entityTracker, final Entity vehicle) {
+-        final List<Entity> passengers = entityTracker.getTrackedPassengers(vehicle);
+-        wrapper.write(Types.VAR_INT, vehicle.javaId()); // vehicle
+-        wrapper.write(Types.VAR_INT, passengers.size()); // number of passengers
+-        for (Entity passenger : passengers) {
+-            wrapper.write(Types.VAR_INT, passenger.javaId()); // passenger id
+-        }
++    static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
++            final InventoryTracker inventory, final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
++            final String identifier, final boolean startUsingItem) {
++        return beginItemUse(player, inventory, hand, hotbarSlot, item, identifier, startUsingItem, null);
+     }
+ 
      static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
 -            final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
+-            final String identifier, final boolean startUsingItem) {
 +            final InventoryTracker inventory, final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
-             final String identifier, final boolean startUsingItem) {
++            final String identifier, final boolean startUsingItem, final ItemUsePrediction prediction) {
          if (item.isEmpty()) {
              return null;
-@@ -475,13 +478,67 @@ public final class InteractionPackets {
+         }
+@@ -475,13 +487,68 @@ public final class InteractionPackets {
          if (startUsingItem) {
              player.addAuthInputData(PlayerAuthInputData.StartUsingItem);
          }
 -        return new BedrockInventoryTransaction(
 -                0, null, null, ComplexInventoryTransaction_Type.ItemUseTransaction,
 +        final boolean flightRocket = isFlightRocket(identifier, player.isGliding());
-+        final boolean predictsConsumption = flightRocket || (identifier != null && CONSUMING_AIR_USE_ITEMS.contains(identifier));
++        final boolean consumingAirUse = flightRocket || (identifier != null && CONSUMING_AIR_USE_ITEMS.contains(identifier));
++        final boolean predictsConsumption = consumingAirUse && (prediction == null || prediction.consumed());
 +        int legacyRequestId = 0;
 +        List<LegacySetItemSlotData> legacySlots = null;
 +        List<InventoryActionData> actions = null;
 +        final BedrockItem heldItem = item.copy();
-+        if (predictsConsumption) {
++        if (consumingAirUse) {
 +            heldItem.setNetId(null);
 +        }
 +        if (predictsConsumption && player.javaGameMode() != GameMode.CREATIVE) {
@@ -674,10 +723,10 @@ index 28f67a41..cde0169a 100644
 +
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
-index 0bf1b705..71c69c2f 100644
+index 0bf1b705..2ae204e0 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
-@@ -9,12 +9,47 @@
+@@ -9,15 +9,82 @@
   */
  package net.raphimc.viabedrock.protocol.packet;
  
@@ -708,6 +757,7 @@ index 0bf1b705..71c69c2f 100644
 +import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
 +import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
 +import net.raphimc.viabedrock.api.model.BlockUsePrediction;
++import net.raphimc.viabedrock.api.model.ItemUsePrediction;
  import org.junit.jupiter.api.Test;
  
 +import java.lang.reflect.Proxy;
@@ -725,7 +775,41 @@ index 0bf1b705..71c69c2f 100644
  
  class InteractionPacketsTest {
  
-@@ -28,4 +63,224 @@ class InteractionPacketsTest {
++    @Test
++    void refusedLocalPredictionSendsAirUseWithoutDebitingOrAllocatingLegacyIds() {
++        final ClientPlayerEntity player = player();
++        final InventoryTracker inventory = new InventoryTracker(user());
++        final BedrockItem item = new BedrockItem(1);
++        item.setAmount(4);
++        item.setNetId(27);
++        final var refused = InteractionPackets.beginItemUse(player, inventory, InteractionHand.MAIN_HAND,
++                0, item, "minecraft:ender_pearl", false, new ItemUsePrediction(7, false));
++        assertEquals(0, refused.legacyRequestId());
++        assertNull(refused.actions());
++        assertNull(refused.legacySlots());
++        final var held = (InventoryTransactionData.UseItemTransactionData) refused.transactionData();
++        assertEquals(4, held.itemInHand().amount());
++        assertNull(held.itemInHand().netId());
++        assertEquals(4, item.amount());
++        assertEquals(27, item.netId());
++        final PacketWrapper nativePacket = mock(PacketWrapper.class);
++        try (var javaPackets = mockStatic(PacketWrapper.class)) {
++            InteractionPackets.writeItemUse(nativePacket, new InventoryTransactionPacketType(() -> null, null),
++                    refused, inventory.getInventoryContainer());
++            javaPackets.verifyNoInteractions();
++        }
++
++        final var accepted = InteractionPackets.beginItemUse(player, inventory, InteractionHand.MAIN_HAND,
++                0, item, "minecraft:ender_pearl", false, new ItemUsePrediction(8, true));
++        assertEquals(-4, accepted.legacyRequestId());
++        assertEquals(4, accepted.actions().getFirst().fromItem().amount());
++        assertEquals(3, accepted.actions().getFirst().toItem().amount());
++    }
++
+     @Test
+     void sustainedUseSignalsCoverFoodAndChargeItemsWithoutInstantRockets() {
+         assertTrue(InteractionPackets.isContinuousUseItem("minecraft:apple", Set.of("minecraft:is_food")));
+@@ -28,4 +95,224 @@ class InteractionPacketsTest {
          assertFalse(InteractionPackets.isContinuousUseItem(null, Set.of()));
      }
  

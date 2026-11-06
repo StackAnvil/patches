@@ -16,6 +16,8 @@ Start the native session when prediction succeeds. Release, cancellation, and ca
 A failed local prediction does not start a session or submit a placement delta.
 Clients without the channels keep independent block uses.
 
+Ordinary item use has a separate optional consumption report, paired with its concluding Java sequence. Core consumes each report once and clears it on a skipped sequence or capability withdrawal. Sequence numbering may restart in a new level. The [air-use prediction owner](../deferred/0016-synchronize-glide-rockets-with-auth-input.pr.md) records native cooldown-refusal evidence, inventory behavior, and installed validation.
+
 Native Survival predicts one consumed block for successful local placement.
 The first placement sends a use-in-air phase with the remaining stack only when the client admits that phase.
 A fresh block call can run before the strict 200 ms air deadline expires.
