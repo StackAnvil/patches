@@ -234,4 +234,9 @@ Shared component events route cursor-drop input to the ordinary inventory reques
 Screen regressions cover player pointer and keyboard delivery, held presses, empty and pending cursors, Help transitions, and admitted cooking pointer hosts.
 Official 1.26.60.5 player and furnace desktop controls retain nine carried ingots through a blank-panel click, drop one on secondary input, and drop the remainder on primary input. An 800-millisecond secondary hold acts once.
 Installed direct and ViaProxy [player controls](../../../docs/native-player-inventory.md#actions-and-presentation) each receive three successful matched replies and retain the screen, menu, presentation, and total item count. Empty-cursor input adds no requests.
+Official 1.26.60.5 furnace controls also establish temporary search-hover text admission and inventory-key exclusion over that field.
+Leaving before typing permits inventory-key closure. A first character starts editing that survives pointer departure and the first Escape.
+Screen regressions distinguish temporary hover from editing and preserve cursor items through authored exit actions.
+Installed direct and ViaProxy player controls admit physical text on hover, retain editing after Escape, and preserve the query after reopening.
+Both routes close through E outside inactive search and Escape over inactive search. Inventory and cursor counts stay unchanged without item requests.
 Complete default cooking host input, screen admission, and installed direct/proxy cooking comparisons remain unfinished.

@@ -45,6 +45,7 @@ Its embedded X follows raw text, including whitespace.
 During active editing, X clears the query and preserves typing, including after the first Escape.
 A reopened inactive editor retains its query when X is clicked.
 Only a clear button owned by the admitted editor can use this behavior.
+Search hover and exit use the shared [editor input lifetime](native-player-inventory.md#actions-and-presentation).
 Local text updates while an older edit waits for a reply; recipe authority remains tied to the server snapshot.
 Shared naming and recipe APIs belong in core rather than screen-specific copies.
 

@@ -123,6 +123,10 @@ In Bedrock 1.26.60.5, Escape first removes the search highlight. A second Escape
 Typing after Escape or a blank-area click resumes editing. Selecting another recipe or inventory slot stops search input.
 Retain the editor and its selection through screen rebuilds, viewport changes, and GUI-scale changes.
 An inactive editor must stay inactive after opening or resizing.
+An authored search hover temporarily admits text without selecting the editor.
+A first character starts editing. Leaving before typing retires the temporary text input.
+The inventory key enters text while search is hovered and closes the screen outside an inactive editor.
+Escape closes an inactive editor without starting a text session.
 
 Pointer cursor drops follow the authored host bindings.
 Primary input drops the carried stack. Secondary input drops one carried item per press.
