@@ -21,6 +21,8 @@ Active Bedrock 1.26.60.5 death labels confirm automatic mode and the 52-pixel CP
 Retained native records match Java bearings and image dimensions for all 76 compared glyph instances.
 Seventy-four positions match bit for bit. Two reason-glyph instances differ by one float rounding step.
 Five representative Seven-font distance images match the original native parser, rasterizer, and distance converter byte for byte.
+The acquired Noto Sans SC ideograph also matches original grayscale and 52-pixel CPU distance images byte for byte.
+This comparison covers glyph images, not complete CJK screen pixels.
 Three native redraws bind the glyph atlas to texture slot 2 of the Standard material.
 The retained resource is a 1024 × 1024 R8 texture. Its captured sampler translates to host filter key `0x15`, consistent with [linear filtering](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_filter).
 Actual atlas texels, addressing, and final GPU compositing remain unverified.
