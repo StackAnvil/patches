@@ -44,9 +44,10 @@ Completed vehicle frame IDs advance, and the same vehicle returns under a fresh 
 Horizontal client and server endpoints settle within 0.0001 blocks in the recorded quiet windows.
 These controls use server mounting. Trajectories from the native client, horses, other seats, and adverse networks remain unverified.
 
-Original 1.26.60.5 instructions establish stateful paddle strength, release decay, and a separate buoyancy calculation.
+Original 1.26.60.5 constructors zero paddle strength and timing state. The input callbacks retain strength and release decay.
+The [versioned boat definition](https://github.com/Mojang/bedrock-samples/blob/v1.26.60.5/behavior_pack/entities/boat.json) uses buoyancy 1.0 and wave movement.
 Selected native callbacks differ from Java 26.3's boat control method under supplied inputs.
-The add-on retains Java boat physics. Native paddle history, buoyancy integration, and matching trajectories remain open.
+The add-on retains Java boat physics. Native update order, paddle history, buoyancy integration, and matching trajectories remain open.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
