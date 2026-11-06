@@ -32,7 +32,9 @@ The regression fails before this change when a later correction matches the orig
 Installed-client controls send two declared protocol-2225 correction packets for the same input tick through core translation, Java payload/position pairing, and physical replay.
 On both direct and ViaProxy routes, the previous artifact leaves a four-block error; the fixed artifact restores the original position exactly.
 A read-only client observer checks the shared target frame and the second correction's match with the original prediction.
-The full add-on build passes 1,399 tests with 154 skipped. The wire controls use synthetic server corrections; native BDS admission and native trajectories remain unverified.
+Both routes also queue opposite corrections before one physics step, then receive a delayed correction for the preceding frame.
+Retained states show that the earlier correction applies and the later pair restores the original position. The final forty completed frames stay settled.
+The wire controls use synthetic server corrections; native BDS admission and native trajectories remain unverified.
 This retained-state fix does not establish the cause of the reported pearl/wind rollback loop.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
