@@ -19,6 +19,9 @@ Input-mode differences affect focus, selection, and held-item admission.
 Do not replace those rules with a universal click handler.
 
 Keep selection, ingredient placement, repeated placement, and ingredient return as separate operations.
+Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
+Pointer entry and exit cannot replace or erase the selected-source snapshot.
+Native layout and tab callbacks clear hover while core retains ownership of the selected source.
 Read transfer quantities from native descriptors and current stack identity.
 Respect item locks, source permissions, destination capacity, and carried stacks.
 Reconcile ordinary transfer batches and recipe requests with the authoritative response owner.

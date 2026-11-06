@@ -239,4 +239,10 @@ Leaving before typing permits inventory-key closure. A first character starts ed
 Screen regressions distinguish temporary hover from editing and preserve cursor items through authored exit actions.
 Installed direct and ViaProxy player controls admit physical text on hover, retain editing after Escape, and preserve the query after reopening.
 Both routes close through E outside inactive search and Escape over inactive search. Inventory and cursor counts stay unchanged without item requests.
-Complete default cooking host input, screen admission, and installed direct/proxy cooking comparisons remain unfinished.
+Cooking selected-source snapshots remain independent of hover. Original 1.26.60.5 getter controls distinguish the primary and hover contexts.
+Screen regressions preserve empty and selected snapshots through pointer entry, exit, and unchanged model refreshes.
+Layout changes clear the shared hover context and prevent a stale bundle tooltip from returning after source restoration.
+Installed direct and ViaProxy controls use an admitted authored furnace scene with the normal admission guards.
+Hover leaves the recipe unselected. A held recipe action retains selection after pointer exit, and release clears it.
+Both routes retain the same screen, menu, and presentation. Server replies confirm all nine cobblestone in the furnace input.
+Complete default cooking host input, screen admission, and native graphical parity remain unfinished.
