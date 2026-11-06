@@ -69,6 +69,14 @@ Releasing the controls restores the resting shield transform.
 These controls do not reproduce the reported extreme shield pose.
 Exact native movement and hit-animation timing, patterned shields, and third-party mod combinations remain open.
 
+Native Bedrock 1.26.60.5 clears current and previous actor angles before evaluating the hand graph.
+Fifteen original instruction controls establish that `query.head_x_rotation(0)` returns zero in that scope.
+The hand frame now clears inherited head pitch while preserving the camera-pitch variable and the world frame.
+The authored-arm regression fails before the correction with 37 degrees instead of zero.
+Installed direct and ViaProxy controls each retain the corrected query and camera variable across five view angles from -64 to 80 degrees.
+The full add-on build passes with 1,416 tests and 154 optional skips. A fresh saved-stack replay reproduces the tested tree.
+These controls cover the head-pitch binding. Other rotation queries, complete hand pixels, and the original shield/custom-skin reports remain open.
+
 Animation timelines retain the remaining animation when an individual Molang string has a syntax error.
 The failed script keeps a zero-valued entry at its authored time. Structural validation and resource limits still reject invalid input.
 A native Bedrock 1.26.60.5 local-world control places MegaSMP's captured invalid string between valid assignments.

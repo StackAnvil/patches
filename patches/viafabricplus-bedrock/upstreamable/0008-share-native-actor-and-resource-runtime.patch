@@ -1,4 +1,4 @@
-From 0c8f74cbda790b4f2d9a16a9e1ecab5cbc5c7e82 Mon Sep 17 00:00:00 2001
+From 91fe51104df00693467b67d2ad533ea9ed8e1dbd Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -480,6 +480,16 @@ Cache native air-continuation metadata with the existing immutable item
 context. Keep an absent field distinct from false so older proxy cores
 retain their prior input fallback. Replaced custom data selects a new
 snapshot without changing a previously cached predicate.
+
+Clear the inherited head-pitch query in the first-person hand frame.
+Bedrock 1.26.60.5 clears both actor angle samples at 0x14532bcb5 before
+hand-graph evaluation. Its query.head_x_rotation(0) callback at 0x142cb53a0
+reads those fields. Fifteen original instruction controls return zero in
+that scope while retaining distinct world pitch before the clear.
+Preserve the camera-pitch variable and the world frame. The authored arm
+regression observes 37 degrees before this correction instead of zero.
+These controls do not establish the cause of the reported shield or skin
+pose, complete hand pixels, or other rotation-query behavior.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -584,7 +594,7 @@ snapshot without changing a previously cached predicate.
  .../bedrock/render/BedrockBoneTransform.java  |   31 +
  .../render/BedrockFirstPersonActor.java       |   38 +
  .../render/BedrockFirstPersonCamera.java      |   61 +
- .../render/BedrockFirstPersonInput.java       |   41 +
+ .../render/BedrockFirstPersonInput.java       |   42 +
  .../BedrockFirstPersonItemRendering.java      |   27 +
  .../render/BedrockFirstPersonProjection.java  |   28 +
  .../bedrock/render/BedrockFluidRendering.java |   34 +
@@ -679,7 +689,7 @@ snapshot without changing a previously cached predicate.
  .../render/BedrockBoneTransformTest.java      |   69 ++
  .../render/BedrockFirstPersonActorTest.java   |  117 ++
  .../render/BedrockFirstPersonCameraTest.java  |   86 ++
- .../render/BedrockFirstPersonInputTest.java   |  135 ++
+ .../render/BedrockFirstPersonInputTest.java   |  151 +++
  .../BedrockFirstPersonItemRenderingTest.java  |   53 +
  .../BedrockFirstPersonProjectionTest.java     |   88 ++
  .../render/BedrockFluidRenderingTest.java     |   39 +
@@ -694,7 +704,7 @@ snapshot without changing a previously cached predicate.
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
  .../render/NativeActorColorPayloadTest.java   |   50 +
- 213 files changed, 25273 insertions(+), 16 deletions(-)
+ 213 files changed, 25290 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -13444,10 +13454,10 @@ index 0000000..32d6cd8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
 new file mode 100644
-index 0000000..fb3bd20
+index 0000000..27d46f4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,42 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -13479,6 +13489,7 @@ index 0000000..fb3bd20
 +        // Native clears actor, head, and body rotations while rendering hands. Camera pitch remains a variable.
 +        queries.put("target_x_rotation", 0F);
 +        queries.put("target_y_rotation", 0F);
++        queries.put("head_x_rotation", 0F);
 +        variables.put("player_arm_height", oldMainHeight + (mainHeight - oldMainHeight) * partialTick);
 +        context.put("player_offhand_arm_height", oldOffHeight + (offHeight - oldOffHeight) * partialTick);
 +        final var query = actor.queries().get("get_default_bone_pivot");
@@ -26248,10 +26259,10 @@ index 0000000..a820ceb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
 new file mode 100644
-index 0000000..2919aa9
+index 0000000..a594483
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,151 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -26303,6 +26314,22 @@ index 0000000..2919aa9
 +        assertFalse(actor.variables().containsKey("player_arm_height"));
 +        assertFalse(actor.context().containsKey("player_offhand_arm_height"));
 +        assertFalse(hands.variables().containsKey("player_offhand_arm_height"));
++    }
++
++    @Test
++    void handAnimationsUseClearedHeadPitchWhileRetainingCameraPitchAndTheWorldPose() throws Exception {
++        final var actor = new BedrockActorAnimation.Frame(
++                Map.of("head_x_rotation", 37F), Map.of("player_x_rotation", 37F));
++        final var animation = BedrockBoneAnimation.parse(json("""
++                {"loop":true,"bones":{"rightarm":{"rotation":["q.head_x_rotation(0)",0,0]}}}
++                """)).playback();
++        final var hands = BedrockFirstPersonInput.bind(actor, EMPTY_ITEMS, 1, 1, 1, 1, .5F);
++        final var handPose = animation.sample(0, hands.queries());
++        // Bedrock 1.26.60.5 clears both actor pitch samples before evaluating its hand graph.
++        assertEquals(0F, handPose.get("rightarm").rotation().x());
++        assertEquals(37F, hands.variables().get("player_x_rotation"));
++        final var worldPose = animation.sample(.05F, actor.queries());
++        assertEquals(37F, worldPose.get("rightarm").rotation().x());
 +    }
 +
 +    @Test
