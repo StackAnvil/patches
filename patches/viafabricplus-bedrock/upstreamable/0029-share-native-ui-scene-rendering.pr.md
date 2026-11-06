@@ -10,6 +10,10 @@ GUI camera overrides retain their existing yaw values. World player queries use 
 
 Share authored scene, layout, image, text, actor, and focus primitives. Preserve same-pack bitmap metadata, legacy layouts, native atlas sampling, and GUI raster coverage.
 
+Host pointer conversion uses the actual rounded Java GUI width and height separately from drawing scale. Click, release, movement, drag, scroll, and extraction retain the same native coordinate space. A real authored-action regression covers edge clicks on both rounded axes and a HiDPI host. Complete native input-device and viewport parity remains open.
+
+Installed direct and ViaProxy controls at 1276 × 720 and Java GUI scale 3 target the last inside column of the authored inventory close button. The baseline falls back to Java controls without closing; the corrected adapter closes the menu. These controls use the private native death-screen consumer and a declared server inventory-open acknowledgment. Their shared UI and container classes match the independently built tracked stack byte for byte. Native server admission and complete input parity remain unverified.
+
 OreUI text retains its own font engine, shaping size, cache images, distance fields, atlas, and float tint pipeline.
 It remains separate from classic JSON UI typography.
 Default preparation follows the target Windows host's ordinary outline-font settings: bitmap below 10 display pixels or for a face that opts out, otherwise the 52-pixel CPU distance cache.
@@ -75,7 +79,7 @@ These controls cover geometry. Measurement-cache ownership and fitting policy se
 Installed single-font paragraph ranges and placement match original native results at three supplied widths. Eleven selected draw regions remain unchanged across preparation modes and return.
 The complete measurement wrapper/cache, CSS text policies, bidi, ellipsis, parent CSS sizing, and complete mixed-font screen rendering remain unverified.
 
-The full add-on build passes with 1,406 tests passing and 154 skipped, including software font GPU checks.
+The full tracked add-on stack passes, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
 Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.

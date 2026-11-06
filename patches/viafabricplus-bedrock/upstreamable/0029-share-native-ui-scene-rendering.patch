@@ -1,4 +1,4 @@
-From 7b1f36f42c457c60b4d722c65ae60de028e83e1d Mon Sep 17 00:00:00 2001
+From 3c91c2244010c88ca177e93a54eb5a91e09f1f60 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -1195,6 +1195,26 @@ floating tolerance, empty input and mixed-font fragment preservation.
 The shared regression compares row and fragment geometry with that
 independent output. Full measurement-cache and fitting policy selection
 remain outside this port.
+
+Convert host pointer input independently from native drawing scale.
+Java26.3 GuiRenderer projects framebuffer dimensions divided by the
+integer GUI scale, but MouseHandler uses ceiling-sized GUI width and
+height. Retain each actual input axis factor in NativeUiViewport and
+apply it consistently to clicks, release, movement, drag deltas and
+scroll positions. Read the current unrounded pointer before native
+render extraction. Native GuiData layout and physical drawing remain
+unchanged. Explicit four-argument viewports retain uniform input units.
+
+A real authored-screen action regression routes MouseHandler coordinates
+through the production adapter. The old conversion moves an inside point
+past a button edge on each rounded axis, including a HiDPI host. Remove
+the old test that treated input as the inverse of rendering; that equality
+is false at ceiling-sized host dimensions. Existing versioned native
+viewport-scale controls retain their separate layout contract. This fixes
+host input ownership, not complete native screen/device parity.
+
+BREAKING CHANGE: Replace NativeUiViewport.pointer with pointerX or
+pointerY. Host input conversion is axis-specific.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -1214,7 +1234,7 @@ remain outside this port.
  .../render/MixinEntityRenderDispatcher.java   |   21 +-
  .../render/MixinGuiEntityRenderer.java        |   53 +
  .../render/MixinNativeHudOverlays.java        |   34 +
- .../render/MixinNativeUiExtraction.java       |   40 +
+ .../render/MixinNativeUiExtraction.java       |   43 +
  .../render/MixinNativeUiPictures.java         |   72 ++
  .../render/MixinNativeUiScissorArea.java      |   20 +
  .../render/MixinNativeUiScissorRenderer.java  |   42 +
@@ -1287,7 +1307,7 @@ remain outside this port.
  .../bedrock/screen/ui/NativeUiSlider.java     |  123 ++
  .../bedrock/screen/ui/NativeUiText.java       |  114 ++
  .../bedrock/screen/ui/NativeUiToggle.java     |   94 ++
- .../bedrock/screen/ui/NativeUiViewport.java   |   32 +
+ .../bedrock/screen/ui/NativeUiViewport.java   |   47 +
  .../bedrock/settings/base/NativeUiScale.java  |   27 +
  .../settings/impl/BedrockSettings.java        |    7 +
  .../viafabricplus-bedrock/lang/en_us.json     |    2 +
@@ -1346,7 +1366,7 @@ remain outside this port.
  .../screen/ui/NativeUiPlayerCameraTest.java   |  132 +++
  .../screen/ui/NativeUiPresentationTest.java   |  258 +++++
  .../screen/ui/NativeUiRendererTest.java       |  201 ++++
- .../NativeUiSceneScreenInteractionTest.java   |  359 ++++++
+ .../NativeUiSceneScreenInteractionTest.java   |  407 +++++++
  .../bedrock/screen/ui/NativeUiSceneTest.java  |   40 +
  .../screen/ui/NativeUiScissorTest.java        |   69 ++
  .../ui/NativeUiScrollbarLayoutTest.java       |  107 ++
@@ -1354,7 +1374,7 @@ remain outside this port.
  .../bedrock/screen/ui/NativeUiTextTest.java   |  100 ++
  .../ui/NativeUiTextureAnimationTest.java      |  108 ++
  .../bedrock/screen/ui/NativeUiToggleTest.java |   86 ++
- .../screen/ui/NativeUiViewportTest.java       |   95 ++
+ .../screen/ui/NativeUiViewportTest.java       |   84 ++
  .../resources/font/native-outline-fixture.ttf |  Bin 0 -> 480 bytes
  .../resources/font/native-outline-fixture.txt |    4 +
  .../native-scrollbar-visibility.json          |  162 +++
@@ -1373,7 +1393,7 @@ remain outside this port.
  .../oreui/native-trailing-reserve-2225.json   |    1 +
  src/test/resources/oreui/nominal-advances.ttf |  Bin 0 -> 548 bytes
  .../resources/oreui/ordinary-advances.ttf     |  Bin 0 -> 668 bytes
- 177 files changed, 19304 insertions(+), 39 deletions(-)
+ 177 files changed, 19359 insertions(+), 39 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -1805,7 +1825,7 @@ index 0000000..2ddf17c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
 new file mode 100644
-index 0000000..58fa5ef
+index 0000000..c11b01a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinNativeUiInput.java
 @@ -0,0 +1,69 @@
@@ -1830,7 +1850,7 @@ index 0000000..58fa5ef
 +    private static MouseButtonEvent nativeEvent(final Screen screen, final MouseButtonEvent event) {
 +        if (!(screen instanceof NativeUiScreen nativeScreen)) return event;
 +        final var viewport = nativeScreen.nativeViewport();
-+        return new MouseButtonEvent(viewport.pointer(event.x()), viewport.pointer(event.y()), event.buttonInfo());
++        return new MouseButtonEvent(viewport.pointerX(event.x()), viewport.pointerY(event.y()), event.buttonInfo());
 +    }
 +
 +    @WrapOperation(method = "onButton", at = @At(value = "INVOKE", target =
@@ -1852,7 +1872,7 @@ index 0000000..58fa5ef
 +    private void mouseMoved(final Screen screen, final double x, final double y, final Operation<Void> original) {
 +        if (screen instanceof NativeUiScreen nativeScreen) {
 +            final var viewport = nativeScreen.nativeViewport();
-+            original.call(screen, viewport.pointer(x), viewport.pointer(y));
++            original.call(screen, viewport.pointerX(x), viewport.pointerY(y));
 +        } else original.call(screen, x, y);
 +    }
 +
@@ -1862,7 +1882,7 @@ index 0000000..58fa5ef
 +                                 final Operation<Boolean> original) {
 +        if (screen instanceof NativeUiScreen nativeScreen) {
 +            final var viewport = nativeScreen.nativeViewport();
-+            return original.call(screen, nativeEvent(screen, event), viewport.pointer(x), viewport.pointer(y));
++            return original.call(screen, nativeEvent(screen, event), viewport.pointerX(x), viewport.pointerY(y));
 +        }
 +        return original.call(screen, event, x, y);
 +    }
@@ -1873,7 +1893,7 @@ index 0000000..58fa5ef
 +                                  final double vertical, final Operation<Boolean> original) {
 +        if (screen instanceof NativeUiScreen nativeScreen) {
 +            final var viewport = nativeScreen.nativeViewport();
-+            return original.call(screen, viewport.pointer(x), viewport.pointer(y), horizontal, vertical);
++            return original.call(screen, viewport.pointerX(x), viewport.pointerY(y), horizontal, vertical);
 +        }
 +        return original.call(screen, x, y, horizontal, vertical);
 +    }
@@ -2246,10 +2266,10 @@ index 0000000..e05bfae
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiExtraction.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiExtraction.java
 new file mode 100644
-index 0000000..8a6d214
+index 0000000..aa39057
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeUiExtraction.java
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,43 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2285,7 +2305,10 @@ index 0000000..8a6d214
 +            return;
 +        }
 +        final var viewport = nativeScreen.nativeViewport();
-+        final int nativeX = (int) viewport.pointer(x), nativeY = (int) viewport.pointer(y);
++        final var window = this.minecraft.getWindow();
++        // Preserve host pointer precision until conversion to native units.
++        final int nativeX = (int) viewport.pointerX(this.minecraft.mouseHandler.getScaledXPos(window));
++        final int nativeY = (int) viewport.pointerY(this.minecraft.mouseHandler.getScaledYPos(window));
 +        original.call(screen, new NativeUiGraphics(this.minecraft, this.guiRenderState, graphics, viewport, nativeX, nativeY),
 +            nativeX, nativeY, delta);
 +    }
@@ -12417,10 +12440,10 @@ index 0000000..e63749c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java
 new file mode 100644
-index 0000000..b1f6a30
+index 0000000..5567c1e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewport.java
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,47 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12432,25 +12455,40 @@ index 0000000..b1f6a30
 +import net.minecraft.client.Minecraft;
 +
 +/** Desktop GuiData units, independent of Java's HUD scale. */
-+public record NativeUiViewport(int width, int height, int scale, float renderScale) {
++public record NativeUiViewport(int width, int height, int scale, float renderScale,
++                               double inputScaleX, double inputScaleY) {
++    /** Explicit drawing-only viewports have uniform input units without host-window rounding. */
++    public NativeUiViewport(final int width, final int height, final int scale, final float renderScale) {
++        this(width, height, scale, renderScale, 1D / renderScale, 1D / renderScale);
++    }
++
 +    public static NativeUiViewport desktop(final int width, final int height, final int offset, final int javaScale) {
 +        if (width < 1 || height < 1 || javaScale < 1)
++            throw new IllegalArgumentException("Invalid native UI viewport");
++        return desktop(width, height, offset, javaScale, Math.ceilDiv(width, javaScale), Math.ceilDiv(height, javaScale));
++    }
++
++    private static NativeUiViewport desktop(final int width, final int height, final int offset, final int javaScale,
++                                            final int inputWidth, final int inputHeight) {
++        if (width < 1 || height < 1 || javaScale < 1 || inputWidth < 1 || inputHeight < 1)
 +            throw new IllegalArgumentException("Invalid native UI viewport");
 +        // Target AppPlatform desktop type 0: minimum viewport 376 x 250, scale table 1..8.
 +        final int maximum = Math.clamp(Math.min(width / 376, height / 250), 1, 8);
 +        final int minimum = (maximum + 1) / 2;
 +        final int scale = maximum + Math.clamp(offset, minimum - maximum, 0);
 +        return new NativeUiViewport(Math.ceilDiv(width, scale), Math.ceilDiv(height, scale), scale,
-+            (float) scale / javaScale);
++            (float) scale / javaScale, (double) width / inputWidth / scale, (double) height / inputHeight / scale);
 +    }
 +
 +    public static NativeUiViewport current() {
 +        final var window = Minecraft.getInstance().getWindow();
 +        return desktop(window.getWidth(), window.getHeight(),
-+            ViaFabricPlusBedrock.impl().settings().nativeUiScale().value().offset(), window.getGuiScale());
++            ViaFabricPlusBedrock.impl().settings().nativeUiScale().value().offset(), window.getGuiScale(),
++            window.getGuiScaledWidth(), window.getGuiScaledHeight());
 +    }
 +
-+    public double pointer(final double javaCoordinate) { return javaCoordinate / this.renderScale; }
++    public double pointerX(final double javaCoordinate) { return javaCoordinate * this.inputScaleX; }
++    public double pointerY(final double javaCoordinate) { return javaCoordinate * this.inputScaleY; }
 +    public int pixel(final float nativeCoordinate) { return Math.round(nativeCoordinate * this.renderScale); }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/NativeUiScale.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/NativeUiScale.java
@@ -20202,10 +20240,10 @@ index 0000000..36fc175
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
 new file mode 100644
-index 0000000..4a0423c
+index 0000000..668f63f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,407 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -20218,12 +20256,16 @@ index 0000000..4a0423c
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonPrimitive;
 +import com.mojang.blaze3d.platform.InputConstants;
++import com.mojang.blaze3d.platform.Window;
++import com.viaversion.viafabricplus.bedrock.injection.mixin.features.input.MixinNativeUiInput;
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.Set;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.client.MouseHandler;
++import net.minecraft.client.gui.screens.Screen;
 +import net.minecraft.client.StringSplitter;
 +import net.minecraft.client.gui.Font;
 +import net.minecraft.client.gui.navigation.FocusNavigationEvent;
@@ -20247,6 +20289,50 @@ index 0000000..4a0423c
 +    static void bootstrap() {
 +        SharedConstants.tryDetectVersion();
 +        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void hostPointerConversionKeepsAuthoredActionEdgesOnBothRoundedViewportAxes() throws Exception {
++        for (final int[] size : List.of(new int[]{1920, 1000, 960, 500}, new int[]{1000, 1920, 1000, 1920})) {
++            final var viewport = NativeUiViewport.desktop(size[0], size[1], 0, 3);
++            final boolean horizontal = size[0] < size[1];
++            final var root = control("panel", viewport.width(), viewport.height(), 0);
++            final var button = control("button", 20, 20, horizontal ? 10 : 220);
++            button.getAsJsonArray("offset").set(0, new JsonPrimitive(horizontal ? 430 : 10));
++            button.addProperty("action", 177);
++            final var children = new JsonArray();
++            children.add(button);
++            root.add("children", children);
++            final var envelope = new JsonObject();
++            envelope.addProperty("format", 1);
++            envelope.add("root", root);
++            final var controller = new Controller(NativeUiController.Activation.STAY,
++                    NativeUiScene.parse(envelope.toString(), Set.of()).root());
++            final var window = mock(Window.class);
++            when(window.getGuiScaledWidth()).thenReturn(Math.ceilDiv(size[0], 3));
++            when(window.getGuiScaledHeight()).thenReturn(Math.ceilDiv(size[1], 3));
++            when(window.getScreenWidth()).thenReturn(size[2]);
++            when(window.getScreenHeight()).thenReturn(size[3]);
++            // The last physical pixel inside the authored action, including a HiDPI host window.
++            final double physicalX = horizontal ? 899 : 42, physicalY = horizontal ? 22 : 959;
++            final var host = new MouseButtonEvent(MouseHandler.getScaledXPos(window, physicalX * size[2] / size[0]),
++                    MouseHandler.getScaledYPos(window, physicalY * size[3] / size[1]),
++                    new MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, 0));
++            try (final var current = mockStatic(NativeUiViewport.class)) {
++                current.when(NativeUiViewport::current).thenReturn(viewport);
++                withScreen(controller, (game, screen) -> {
++                    screen.width = viewport.width();
++                    screen.height = viewport.height();
++                    screen.init();
++                    final var conversion = MixinNativeUiInput.class.getDeclaredMethod("nativeEvent", Screen.class, MouseButtonEvent.class);
++                    conversion.setAccessible(true);
++                    final var nativeEvent = (MouseButtonEvent) conversion.invoke(null, screen, host);
++                    assertTrue(screen.mouseClicked(nativeEvent, false),
++                            "A physical point inside the authored action must remain inside after host input conversion: " + nativeEvent);
++                    assertEquals(List.of(177), controller.responses);
++                });
++            }
++        }
 +    }
 +
 +    @ParameterizedTest
@@ -21239,10 +21325,10 @@ index 0000000..de63cd3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java
 new file mode 100644
-index 0000000..e394a6f
+index 0000000..ceca6b2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiViewportTest.java
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,84 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.mojang.blaze3d.platform.Window;
@@ -21278,11 +21364,12 @@ index 0000000..e394a6f
 +                when(window.getHeight()).thenReturn(dimensions[1]);
 +                for (final int javaScale : new int[] {1, 2, 3, 4, 8}) {
 +                    when(window.getGuiScale()).thenReturn(javaScale);
++                    when(window.getGuiScaledWidth()).thenReturn(Math.ceilDiv(dimensions[0], javaScale));
++                    when(window.getGuiScaledHeight()).thenReturn(Math.ceilDiv(dimensions[1], javaScale));
 +                    for (final var value : NativeUiScale.values()) {
 +                        when(preference.value()).thenReturn(value);
 +                        final var current = NativeUiViewport.current();
 +                        assertEquals(NativeUiViewport.desktop(dimensions[0], dimensions[1], value.offset(), javaScale), current);
-+                        assertEquals(37.25, current.pointer(37.25 * current.renderScale()), .0001);
 +                        assertEquals(javaScale, window.getGuiScale());
 +                    }
 +                }
@@ -21325,18 +21412,6 @@ index 0000000..e394a6f
 +        }
 +    }
 +
-+    @Test
-+    void keepsNativeLayoutAndJavaRenderCoordinatesInvertibleAcrossGuiScales() {
-+        for (final int javaScale : new int[] {1, 2, 3, 4, 5, 8}) {
-+            final var viewport = NativeUiViewport.desktop(3840, 2134, 0, javaScale);
-+            assertEquals(480, viewport.width());
-+            assertEquals(267, viewport.height());
-+            for (final float coordinate : new float[] {-1, 0, 5, 30, 129.5F, 267, 480}) {
-+                assertEquals(coordinate, viewport.pointer(coordinate * viewport.renderScale()), .0001);
-+                assertEquals(coordinate, viewport.pointer(viewport.pixel(coordinate)), .5 / viewport.renderScale() + .0001);
-+            }
-+        }
-+    }
 +}
 diff --git a/src/test/resources/font/native-outline-fixture.ttf b/src/test/resources/font/native-outline-fixture.ttf
 new file mode 100644
