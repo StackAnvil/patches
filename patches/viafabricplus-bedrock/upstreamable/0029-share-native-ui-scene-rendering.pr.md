@@ -63,6 +63,9 @@ Twenty-two single-font construction/alignment controls and 37 mixed-font control
 One hundred additional mixed-font sequences and 100 retained single-font sequences match Java fragment records, row geometry, and extents bit for bit.
 The controls supply the font map, metrics, advances, and style flags; original layout helpers execute.
 Regressions retain 24 mixed-font boundary controls and connect packaged-engine fallback coverage and per-face metrics to line construction.
+Collapsed trailing whitespace can reserve row width before alignment without changing fragment advances.
+Twenty-six original adjustment controls establish full, partial and rejected reserves, first-row indentation, negative values, and the native float tolerance.
+These controls cover geometry. Measurement-cache ownership and fitting policy selection remain unverified.
 Installed single-font paragraph ranges and placement match original native results at three supplied widths. Eleven selected draw regions remain unchanged across preparation modes and return.
 The complete measurement wrapper/cache, CSS text policies, bidi, ellipsis, parent CSS sizing, and complete mixed-font screen rendering remain unverified.
 
