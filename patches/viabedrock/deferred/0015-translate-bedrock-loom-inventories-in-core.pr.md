@@ -31,3 +31,14 @@ A live Java client through ViaProxy confirmed screen opening, colored previews, 
 All four build targets passed before the loom mapping corrections. ViaBedrock and ViaProxy were rebuilt and tested after those corrections. Native comparison of the layer limit, legacy pattern-item variants, and ominous banner rendering remains pending. This patch does not complete the other workstation screens or broader inventory parity.
 
 This change extends the inventory implementation covered by [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
+
+## Shield appearance data
+
+The same item-data handler projects shield base colors and ordered pattern layers without changing the retained native stack.
+An owned BDS 1.26.60.6 fixture delivers a red base and white bottom stripe to native 1.26.60.5 and both Java routes.
+Installed component observations preserve the plain, patterned, and plain sequence.
+
+Current native decoding inspects six source patterns. Unknown names select the base pattern, and invalid byte colors select purple.
+A missing base selects black when patterns exist. The native -1 base sentinel selects white.
+Handler regressions cover these rules and preserve ordinary banner behavior.
+The [add-on equipment patch](../../viafabricplus-bedrock/upstreamable/0017-render-equipped-native-pack-models.pr.md) owns native atlas and material rendering.

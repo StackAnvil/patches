@@ -20,12 +20,21 @@ Glint changes over time on idle and blocking shields. Returning to a plain shiel
 
 Separate plain-shield controls vary world FOV through 60, 30, 110, and 60, with repeated idle and blocking samples. Empty-offhand references isolate the visible shield through the bottom of the screen. Across three image-difference thresholds, normalized bounds from median images differ from native by less than 1% of either viewport axis. These controls do not reproduce the reported oversized shield.
 
-A declared inventory fixture for Bedrock 1.26.60.5 sends a red shield with a white bottom stripe.
-Native renders the pattern while blocking and restores the plain appearance when the data is removed.
-Direct and ViaProxy receive the same item tags, but the Java stack has no base color and empty pattern layers.
-Both Java views remain plain. Core shield-pattern projection and native atlas/material support remain unfinished.
-These controls use different appearances and viewports. Exact pixels and poses remain unverified.
+A declared protocol-2225 inventory fixture delivers a red shield with a white bottom stripe.
+Official Bedrock 1.26.60.5 renders the patterned front while blocking and restores the wooden appearance when the tags disappear.
+Core now projects the base color and ordered patterns. The add-on uses a pack-owned atlas with the authored geometry and animation.
 
-The native and Java appearances were not matched. Outer bounds do not establish pixel parity. Exact lighting, glint phase, and the reported oversized shield and distorted custom-skin pose remain unverified. No renderer change follows from these controls.
+Installed direct and ViaProxy controls preserve the plain, patterned, and plain sequence with the same tested add-on and core classes.
+Both routes also prepare the native pattern inputs with Iris and Complementary Reimagined 5.9.3 active.
+Read-only observations establish atlas upload, draw preparation, and the native red and white tints.
+A separate mainhand control retains the pattern after a natural BDS Unbreaking I enchantment with Iris active.
+Shader-pack lighting is separate from native lighting parity.
+
+`BedrockShieldPatternsTest` covers native texture aliases, colors, source limits, snapshot replacement, and atlas edges.
+`BedrockEquipmentResourcesTest` keeps atlas dependencies and server image overrides in pack order.
+The shared material patch compares actual fragment pixels with 512 current native shader controls, including glint before fog.
+
+These controls use different appearances and viewports. Exact pixels, lighting, glint phase, and poses remain unverified.
+The reported oversized shield and distorted custom-skin pose remain unresolved.
 
 The [owning patch](0017-render-equipped-native-pack-models.patch) retains implementation rationale and versioned evidence.

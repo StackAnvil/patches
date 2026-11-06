@@ -13,6 +13,10 @@ Native player entities resolve the current connection's profile after list repla
 World player surfaces use separate cached materials for native near-camera fading. Shared hands, unrelated actors, and GUI portraits retain their own materials.
 The native and Iris programs use the same ordered coverage function. Surviving pixels retain the material depth policy.
 
+Pattern and pattern-glint materials retain ordered colors and atlas transforms for each prepared draw.
+Their native shader adds glint before fog. Ordinary entity glint keeps its separate order.
+Iris composes pattern layers before shader-pack shading and clears their inputs for ordinary Java draws.
+
 Prerequisites:
 
 - viabedrock/0064-evaluate-named-actor-properties.patch: Publish the versioned custom-actor sampler snapshot and immutable evaluated texture bindings.
@@ -21,6 +25,10 @@ Prerequisites:
 ## Validation and remaining limits
 
 Regression coverage includes `BedrockAcceptedResourcesTest`, `BedrockActorDepthGpuTest`, `BedrockActorGlintFramesTest`, `BedrockShaderAlphaTest`, and `BedrockPlayerFadeGpuTest`.
+
+`BedrockActorPatternGpuTest` compares 512 actual fragment outputs with current original 1.26.60.5 shader controls.
+Iris GPU tests cover ordered atlas layers through sampler helpers, texture overrides, and return to ordinary Java draws.
+[Installed shield controls](0017-render-equipped-native-pack-models.pr.md) exercise the shared material on both connection routes.
 
 A controlled protocol-2225 replay uses captured official 1.26.60.5 skin/profile bytes with declared Creative, Spectator, Survival, and return transitions plus a repeated profile list. The previous client keeps an old Creative profile after the current profile and controller enter Spectator. Read-only installed-client observations verify agreement after the fix on direct and proxy routes. The [core mode patch](../../viabedrock/upstreamable/0007-forward-local-game-mode-updates.pr.md) separately preserves the local mode when recreating the profile. These controls verify state ownership, without establishing complete native trajectories or visual parity.
 
