@@ -101,29 +101,24 @@ Native local-world controls distinguish cooldown retries from a failed initial s
 A pearl hold retains air use after selecting Stone. Release permits fresh Stone placement.
 A failed sword hold suppresses a newly selected pearl but permits later Stone placement.
 
-Direct and ViaProxy recordings before the quantity-publication correction each complete 300 seconds on software rendering with verified installed artifacts.
+Rebuilt direct and ViaProxy clients each complete thirteen installed controls in a 300-second recording against BDS 1.26.60.6.
 Both suppress an early fresh wind hold, admit an uninterrupted pearl-to-wind hold, and repeat pearl attempts through cooldown.
 Both retain 64 Stone during a pearl hold and throw no pearl after a failed sword hold.
 Fresh Stone placement, food-to-Stone, and block-to-food controls retain their independent routes.
-Nineteen of twenty selected endpoints agree on client and server item counts.
-The longer direct cooldown-release control exposes the inventory discrepancy below.
-The proxy control ends before another accepted throw and retains three pearls on both sides.
+Four cooldown-release durations and final pearl/wind-charge controls retain matching held-item counts after settlement.
+All twenty-six endpoints settle at the server position.
 
-The affected core build passes 2,154 tests with 176 skipped.
-The private add-on build passes 1,436 tests with 154 skipped, including five software font GPU checks.
-The private stack preserves the unfinished death-screen consumer. Its presence does not establish native UI parity.
-All 1,690 core class bytes match between the installed add-on and private diagnostic proxy.
-Both saved-stack replays reproduce their tested source trees.
+Installed artifact receipts identify the corrected add-on and full proxy build.
+All 1,690 core class bytes in the proxy match the tested core.
+Complete protocol-2225 journals retain the request and reconciliation boundaries.
+The [air-use prediction owner](../../viabedrock/deferred/0016-synchronize-glide-rockets-with-auth-input.pr.md) records the quantity-publication correction and its regression.
 
 ## Remaining limits
 
 Live build-height limits, moving placement, and air/entity target dispatch need more native comparisons.
 
-The direct cooldown-release control leaves two pearls on BDS while Java displays three after settlement.
-The [air-use prediction owner](../../viabedrock/deferred/0016-synchronize-glide-rockets-with-auth-input.pr.md) now publishes core's predicted quantity to Java, with a regression for the missing update and final-stack removal.
-Matching installed retests remain pending.
-The proxy partner does not reproduce it, and physical frame sampling changes the final accepted attempt.
-Exact release timing, conditional Education predicates, and the original persistent rollback remain unverified.
+Rejected cooldown retries briefly lower the Java count before authoritative restoration.
+Official-client rejection presentation, exact release timing, conditional Education predicates, and the original persistent rollback remain unverified.
 
 The native projectile controls use an owned local world with an embedded observer, separate from the existing BDS recordings.
 Controls without a debugger confirm the rejected hold, an admitted uninterrupted hold, and a widely separated pair.
