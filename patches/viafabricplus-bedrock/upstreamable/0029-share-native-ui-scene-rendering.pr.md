@@ -52,7 +52,10 @@ Ordinary font assignment fills unresolved scalar ranges in the caller's ordered 
 Eligible interior whitespace uses its neighbors' shared font while retaining its advance and omitting its draw glyph.
 Eighteen original constructor controls cover ownership and advances through the line-builder boundary, with supplied font interfaces.
 A separate target-native parser control and a packaged-engine regression cover the authored disjoint-coverage fallback face.
-CSS family selection, complex-script/bidi dispatch, and final multi-font drawing remain unverified.
+Regular gameplay faces follow the shipped locale-dependent fallback order after the caller's primary family.
+Thirteen selector, original font-parser, and assignment controls match packaged-engine glyph ownership while preserving primary Latin glyphs.
+The API accepts native-case locale identifiers and resolves registered 400-weight normal faces, including unavailable slots.
+Complete CSS family matching, weight/style substitution, complex-script/bidi dispatch, and final multi-font drawing remain unverified.
 Ordinary lines consume measured advances and preserve nonfinal tracking, whitespace ranges, explicit endings, soft wraps, and float alignment.
 Font identity separates fragments and can cause a wrap within a word. Alias slots that share an identity keep one fragment.
 Each fragment retains its own baseline. Row height uses the greatest fragment advance, including zero-width whitespace fragments.
@@ -63,7 +66,7 @@ Regressions retain 24 mixed-font boundary controls and connect packaged-engine f
 Installed single-font paragraph ranges and placement match original native results at three supplied widths. Eleven selected draw regions remain unchanged across preparation modes and return.
 The complete measurement wrapper/cache, CSS text policies, bidi, ellipsis, parent CSS sizing, and complete mixed-font screen rendering remain unverified.
 
-The full add-on build passes with 1,405 tests passing and 154 skipped, including software font GPU checks.
+The full add-on build passes with 1,406 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
 Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
