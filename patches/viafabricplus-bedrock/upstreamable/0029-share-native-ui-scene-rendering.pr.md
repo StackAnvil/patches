@@ -15,17 +15,21 @@ It remains separate from classic JSON UI typography.
 Original Bedrock 1.26.60.5 controls establish selected shaping, raster, distance, ordinary run coverage, and supplied-position arithmetic.
 Prepared runs retain vertical face metrics independently of the glyph cache size.
 Native line boxes preserve negative leading and fractional content origins.
+Content boxes apply borders and padding before optional node-selected snapping.
+The Java content bounds match all 20 original native controls bit for bit. Six policy controls establish the supplied style/global flag combinations.
+The active native game flag and complete CSS cascade remain unobserved.
 The Java calculation matches all 72 original native font-span and baseline controls bit for bit.
 Eight style-height controls and 14 rectangle/fragment controls establish separate height resolution and placement boundaries.
 Regressions cover explicit and normal line heights, negative half ties, real font metrics, atlas lifetimes, and Minecraft vertex emission.
 
-The full add-on build passes with 1,380 tests passing and 159 skipped.
+The full add-on build passes with 1,388 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Bitmap and distance-field modes each run with nearest and linear filters at 1280 × 720.
 All five regions remain unchanged after returning to the original mode. Installed artifact hashes match the tested build.
 The eight nearest-filtered label crops differ from the CPU raster reference by at most one color byte.
-Linear-filtered crops differ from that idealized reference by up to 13 color bytes. Exact native sampling remains unverified.
-The diagnostic supplies line origins, spacing, colors, and font modes. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
+Linear-filtered crops differ from that idealized reference by up to 12 color bytes. Exact native sampling remains unverified.
+The diagnostic supplies border boxes, insets, spacing, colors, font modes, and explicit snap choices.
+A fixed comparison with the saved native frame improves three label masks and worsens Respawn. Button layout remains unverified. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
 
 Prerequisites:
 
