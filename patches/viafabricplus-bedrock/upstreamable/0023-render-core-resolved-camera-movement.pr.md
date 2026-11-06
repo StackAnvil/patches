@@ -38,6 +38,10 @@ The four-project build passes 3,519 tests with 329 skipped and no failures or er
 
 The default death camera uses the native eight-block orbit and 60-to-84-degree projection. Original 1.26.60.5 instructions supply 54 death-projection cases, including disabled gameplay effects with retained modifier history. Nine native stills at slider values 60 and 30 match the profile-derived marker bounds within 1.1 pixels. Rebuilt direct and ViaProxy clients pass settled pose, FOV disable/restore, explicit server FOV, server-camera ownership, clear, and respawn controls. Auxiliary camera ticks leave the shared death counter unchanged. Complete protocol-2225 journals and installed artifact hashes identify both final builds.
 
+The native viewport FOV factor uses viewport-to-context size ratios. Twenty controls execute the original 1.26.60.5 setter, context getter, ratio getter, and FOV path together. Matching size pairs preserve FOV across the supplied landscape, square, and portrait cases. Eight separate controls execute the native aspect system.
+
+Twenty-one native matrix controls match JOML projection math in both Java depth ranges within 0.000002. The matrix controls supply `tanf` through libm. They do not establish official UCRT bits, viewport sizes during resize, installed rendering, or visible portrait parity.
+
 Exact death activation timing, varied angles, collision and postures, non-default death contexts, and native death-screen UI remain open. Other fluid effects, portrait scaling, input-frame expiry, complete transition timing, aim assistance, and visual composition remain partial. These controls do not establish complete camera or pixel parity.
 
 The [owning patch](0023-render-core-resolved-camera-movement.patch) retains implementation rationale and versioned evidence.
