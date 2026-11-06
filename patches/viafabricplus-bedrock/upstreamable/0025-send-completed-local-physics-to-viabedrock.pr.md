@@ -47,7 +47,7 @@ Selected native, direct, and ViaProxy combinations also settle with 300 ms of in
 Native packets contain movement corrections after wind impulses, so correction counts alone do not identify the reported rollback loop.
 The selected moving controls place four server ticks between native uses, two on direct Java, and three through ViaProxy.
 Short native input attempts do not consistently produce both throws.
-Native local-world and callback controls establish the admission and continuation rules for a [local projectile input correction](0038-predict-held-trapdoor-placement.pr.md#evidence-and-validation). Installed checks of that correction remain pending.
+Native local-world and callback controls establish the admission and continuation rules for a [local projectile input correction](0038-predict-held-trapdoor-placement.pr.md#evidence-and-validation). Installed direct and proxy controls cover its selected hold routes. A cooldown-release inventory discrepancy remains open in that owner.
 These controls do not establish equal trajectories or complete timing for individual presses.
 Read-only server controls identify wind-charge projectiles as targets in selected pearl entity impacts.
 An ordered outgoing packet burst admits both uses in the same server tick while both projectiles hit blocks and settle; matching server tick spacing does not establish the earlier origin-height collision path.

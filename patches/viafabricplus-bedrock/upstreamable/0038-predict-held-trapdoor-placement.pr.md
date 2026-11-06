@@ -9,7 +9,7 @@ Fresh entity admission still waits for that deadline.
 A consumed-click call resets the previous mode, path, and core session.
 Tick and frame continuation retain that ownership.
 Empty-hand rejection also continues from frames, including a fresh press after stack exhaustion.
-A suppressed initial food/block air phase keeps untimed block continuation until release.
+A suppressed initial air phase keeps untimed block continuation until release.
 Frame repeats run after camera input and require an already owned mode.
 The queued click establishes initial ownership, so a frame cannot preempt it.
 Select food from its transported component, including custom items carried as paper.
@@ -94,16 +94,35 @@ Earlier trapdoor fixtures cover camera and material changes, cancellation, recon
 Fresh native and proxy sessions match repeated rejection followed by rotation without consumption.
 After a preceding successful hold, both can instead place a neighbor and consume one item.
 
+Seventy scoped original admitted-air outcomes match the compiled Java state.
+The controls supply component lookup and callback boundaries for original Ender Pearl and ComponentItem predicates.
+A complete protocol-2225 journal checks seven registry definitions, including Snowball's constructor default and Wind Charge's network component.
+Native local-world controls distinguish cooldown retries from a failed initial sword use.
+A pearl hold retains air use after selecting Stone. Release permits fresh Stone placement.
+A failed sword hold suppresses a newly selected pearl but permits later Stone placement.
+
+Current direct and ViaProxy recordings each complete 300 seconds on software rendering with verified installed artifacts.
+Both suppress an early fresh wind hold, admit an uninterrupted pearl-to-wind hold, and repeat pearl attempts through cooldown.
+Both retain 64 Stone during a pearl hold and throw no pearl after a failed sword hold.
+Fresh Stone placement, food-to-Stone, and block-to-food controls retain their independent routes.
+Nineteen of twenty selected endpoints agree on client and server item counts.
+The longer direct cooldown-release control exposes the inventory discrepancy below.
+The proxy control ends before another accepted throw and retains three pearls on both sides.
+
+The affected core build passes 2,154 tests with 176 skipped.
+The private add-on build passes 1,436 tests with 154 skipped, including five software font GPU checks.
+The private stack preserves the unfinished death-screen consumer. Its presence does not establish native UI parity.
+All 1,690 core class bytes match between the installed add-on and private diagnostic proxy.
+Both saved-stack replays reproduce their tested source trees.
+
 ## Remaining limits
 
 Live build-height limits, moving placement, and air/entity target dispatch need more native comparisons.
 
-Seventy scoped original admitted-air outcomes match the compiled Java state.
-The controls include original Ender Pearl and ComponentItem predicates, with supplied component lookup and callback boundaries.
-A complete protocol-2225 journal checks seven registry definitions, including Snowball's constructor-installed component and Wind Charge's network component.
-Local regressions cover rejected fresh holds, projectile-to-block changes, deadline equality, active use, constructor replacement, retained metadata, and numeric definition ownership.
-These checks do not execute installed input hooks or establish physical input timing, real cooldown behavior, or network correction parity.
-Matching installed direct and ViaProxy controls, conditional Education predicates, and the original persistent rollback remain open.
+The direct cooldown-release control leaves two pearls on BDS while Java displays three after settlement.
+This remains an open inventory reconciliation case.
+The proxy partner does not reproduce it, and physical frame sampling changes the final accepted attempt.
+Exact release timing, conditional Education predicates, and the original persistent rollback remain unverified.
 
 The native projectile controls use an owned local world with an embedded observer, separate from the existing BDS recordings.
 Controls without a debugger confirm the rejected hold, an admitted uninterrupted hold, and a widely separated pair.
