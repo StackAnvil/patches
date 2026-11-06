@@ -21,6 +21,12 @@ Prerequisites:
 
 Regression coverage includes `BedrockNativeContainerScreenTest`, `NativeContainerButtonTest`, `NativeContainerGeometryTest`, `NativeContainerInputTest`, and `NativeContainerDrawsTest`.
 
+Three receiver regressions cover malformed replacements, unsupported preparation, and failure after replacement.
+Recovery restores the original ordinary screen with the same menu, carried stack, and slot contents.
+Installed direct and ViaProxy controls inject a supported legacy replacement and a render failure into a real chest.
+Both retain nine carried ingots and complete a server-accepted pickup and ordinary return.
+These controls do not reproduce the reported WildFFA background or menu overlap failures.
+
 An installed BDS control with Bedrock inventory screens disabled retains Java inventory, chest, furnace, and crafting screens.
 Pickup, return, and reopening preserve all 64 logs.
 BDS accepts both observed inventory requests without a synchronization timeout.
