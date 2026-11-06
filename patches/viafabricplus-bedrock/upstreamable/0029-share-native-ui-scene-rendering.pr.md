@@ -44,13 +44,18 @@ Original 1.26.60.5 dispatch, feature records, and FreeType/HarfBuzz controls est
 Authored regressions preserve per-scalar advances and drawing substitutions across measurement calls.
 Installed Ten advances match original controls for `fi`, `office`, and `Respawn`.
 Ten selected draw regions retain identical pixels across measurement and mode return.
+Ordinary font assignment fills unresolved scalar ranges in the caller's ordered face list and preserves their measurement context.
+Eligible interior whitespace uses its neighbors' shared font while retaining its advance and omitting its draw glyph.
+Eighteen original constructor controls cover ownership and advances through the line-builder boundary, with supplied font interfaces.
+A separate target-native parser control and a packaged-engine regression cover the authored disjoint-coverage fallback face.
+CSS family selection, complex-script/bidi dispatch, mixed-font line metrics, and final multi-font drawing remain unverified.
 Ordinary single-font lines consume measured advances and preserve nonfinal tracking, whitespace ranges, explicit endings, soft wraps, and float alignment.
 Twenty-two original construction/alignment controls and 100 additional sequence controls match the compared Java results exactly.
 The controls supply the font map, metrics, advances, and style flags; original layout helpers execute.
 Installed paragraph ranges and placement match original native results at three supplied widths. Eleven selected draw regions remain unchanged across preparation modes and return.
 The complete measurement wrapper/cache, CSS text policies, fallback/bidi, mixed-font fragments, ellipsis, and parent CSS sizing remain unverified.
 
-The full add-on build passes with 1,402 tests passing and 154 skipped, including software font GPU checks.
+The full add-on build passes with 1,404 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
 Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
