@@ -1,4 +1,4 @@
-From 25c6f9b72ae2d65914d190321845b8d30e60dc95 Mon Sep 17 00:00:00 2001
+From debe2ffe8b4ba34d814bcf55bae1fb15b40157c1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -917,6 +917,13 @@ before its next tick cleanup; rebuilding it must not escape through
 Screen.resize. Retain the connection and exact menu guard so fallback
 preserves the cursor and cannot restore a menu that has already changed.
 A full-screen resize regression covers both ownership outcomes.
+
+Keep recipe drop keys inside the authored inventory. Native Bedrock
+1.26.60.5 controls retain empty cursors and drop one carried item with Q
+or Shift+Q over recipe and Creative catalog rows. Ctrl+Q leaves the cursor
+unchanged there, while real inventory slots still support full-stack drops.
+Use the existing cursor click transport after the pending-command gate
+instead of retiring the presentation on these keys.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockInventorySounds.java    |   35 +
@@ -931,7 +938,7 @@ A full-screen resize regression covers both ownership outcomes.
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1565 +++++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1568 +++++++++++++++++
  .../container/BedrockNativeContainers.java    |  283 +++
  .../container/BedrockNativeCooking.java       |  147 ++
  .../BedrockNativePlayerInventory.java         |  191 ++
@@ -1004,10 +1011,10 @@ A full-screen resize regression covers both ownership outcomes.
  .../container/NativePlayerHelpTextTest.java   |   34 +
  .../NativePlayerInventoryLifetimeTest.java    |  142 ++
  .../NativePlayerPresentationTest.java         |  267 +++
- .../container/NativePlayerScreenTest.java     |  947 ++++++++++
+ .../container/NativePlayerScreenTest.java     | 1019 +++++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 ++
  .../PlayerInventoryScreenLifecycleTest.java   |  139 ++
- 89 files changed, 13114 insertions(+), 62 deletions(-)
+ 89 files changed, 13189 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockInventorySounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
@@ -1604,10 +1611,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..e192cc9
+index 0000000..aa66d54
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1565 @@
+@@ -0,0 +1,1568 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2949,11 +2956,6 @@ index 0000000..e192cc9
 +                return true;
 +            }
 +        }
-+        if (this.presentation instanceof NativePlayerPresentation && !this.helpView && this.geometry != null
-+                && this.geometry.recipe(this.pointerX, this.pointerY) != null && Minecraft.getInstance().options.keyDrop.matches(event)) {
-+            this.fallback(new IllegalArgumentException("Native recipe drop input is not supported"));
-+            return true;
-+        }
 +        if (this.waitingForPreference() || this.presentation instanceof NativePlayerPresentation player && !player.idle()) {
 +            if (event.key() == InputConstants.KEY_ESCAPE) this.onClose();
 +            else {
@@ -2961,6 +2963,14 @@ index 0000000..e192cc9
 +                if (source != null) this.nativeInput.button(source, true, 1, this.clock.getAsLong(), false);
 +                if (event.key() == InputConstants.KEY_RETURN || event.key() == InputConstants.KEY_SPACE) this.keyboardPressed = true;
 +            }
++            return true;
++        }
++        if (this.presentation instanceof NativePlayerPresentation && !this.helpView && this.geometry != null
++                && this.geometry.recipe(this.pointerX, this.pointerY) != null && Minecraft.getInstance().options.keyDrop.matches(event)) {
++            // Native recipe/catalog rows have no stack to drop. Plain Q still drops one carried item;
++            // Ctrl+Q applies only to real inventory slots and leaves the cursor unchanged here.
++            if (!event.hasControlDown() && !this.menu.getCarried().isEmpty())
++                this.slotClicked(null, -999, 1, ContainerInput.PICKUP);
 +            return true;
 +        }
 +        if (this.authoredController()) {
@@ -13609,10 +13619,10 @@ index 0000000..950b348
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
 new file mode 100644
-index 0000000..b337faa
+index 0000000..0fa8997
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
-@@ -0,0 +1,947 @@
+@@ -0,0 +1,1019 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14532,6 +14542,78 @@ index 0000000..b337faa
 +                    assertEquals(1, mockingDetails(logger).getInvocations().size());
 +                    verifyNoInteractions(game.gameMode);
 +                }
++            } finally { screen.discard(); }
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void recipeDropKeysRetainTheScreenAndOnlyDropOneCarriedItem(final boolean creative) throws Exception {
++        final var game = mock(Minecraft.class);
++        final var player = mock(LocalPlayer.class);
++        final var inventory = new Inventory(player, new EntityEquipment());
++        final var menu = new InventoryMenu(inventory, true, player);
++        final var owner = mock(ClientPacketListener.class);
++        final var ordinary = mock(AbstractContainerScreen.class);
++        final var options = mock(Options.class);
++        final var font = mock(Font.class);
++        final var clock = new AtomicLong();
++        final var impl = mock(ViaFabricPlusBedrock.class);
++        when(impl.logger()).thenReturn(mock(Logger.class));
++        game.player = player;
++        game.gameMode = mock(MultiPlayerGameMode.class);
++        player.containerMenu = menu;
++        when(ordinary.getMenu()).thenReturn(menu);
++        when(owner.getConnection()).thenReturn(mock(Connection.class));
++        for (final String name : List.of("keyPickItem", "keyDrop", "keyInventory"))
++            set(Options.class, options, name, mock(KeyMapping.class));
++        set(Minecraft.class, game, "options", options);
++        set(Minecraft.class, game, "gui", mock(Gui.class));
++        when(options.keyDrop.matches(any(KeyEvent.class))).thenAnswer(call -> ((KeyEvent) call.getArgument(0)).key() == InputConstants.KEY_Q);
++        try (final var singleton = mockStatic(Minecraft.class);
++             final var entrypoint = mockStatic(ViaFabricPlusBedrock.class);
++             final var network = mockStatic(BedrockNativePlayerInventory.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            entrypoint.when(ViaFabricPlusBedrock::impl).thenReturn(impl);
++            network.when(() -> BedrockNativePlayerInventory.retire(any())).thenCallRealMethod();
++            final var ui = new PlayerInventoryUi(new ResourcePackStorage(List.of()).getJsonUiProgram());
++            final var cell = new PlayerInventoryUi.Cell(0, 10, -1, 0, 0, 1, false, false, "", Map.of());
++            final var state = new PlayerInventoryUi.State(false, creative, creative ? 3 : 2, 2, 5, 2, false, "", "All", "Crafting",
++                    List.of(1, 0, 0, 0), List.of(cell), "", -1);
++            final var source = new NativePlayerInventoryMessage(0, 1, 8, 1, ui.exportProgram(false).toString(),
++                    GsonUtil.getGson().toJson(state), Map.of(0, new StructuredItem(320, 1, new StructuredDataContainer())));
++            final var presentation = new NativePlayerPresentation(source, Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), clock::get);
++            final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(), presentation,
++                    false, 1, clock::get, () -> true);
++            set(Screen.class, screen, "minecraft", game);
++            set(Screen.class, screen, "font", font);
++            try {
++                screen.prepare(font, 640, 360);
++                clock.set(1_000_000_000);
++                screen.prepare(font, 640, 360);
++                final var recipe = pointer(screen, draw -> draw.box().node().properties().has("recipe_actions"));
++                screen.mouseMoved(recipe.x(), recipe.y());
++                final var drop = new KeyEvent(InputConstants.KEY_Q, 0, 0);
++                final var dropAll = new KeyEvent(InputConstants.KEY_Q, 0, InputConstants.MOD_CONTROL);
++                assertTrue(screen.keyPressed(drop));
++                assertTrue(presentation.idle(), "An empty-cursor recipe drop must retain its presentation");
++                verifyNoInteractions(game.gameMode);
++                final var held = new ItemStack(Items.IRON_INGOT, 4);
++                menu.setCarried(held);
++                assertTrue(screen.keyPressed(dropAll));
++                assertTrue(presentation.idle());
++                verifyNoInteractions(game.gameMode);
++                assertTrue(screen.keyPressed(drop));
++                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_Q, 0, InputConstants.MOD_SHIFT)));
++                verify(game.gameMode, times(2)).handleContainerInput(0, -999, 1, ContainerInput.PICKUP, player);
++                verifyNoMoreInteractions(game.gameMode);
++                assertSame(held, menu.getCarried());
++                assertTrue(presentation.idle());
++                presentation.query("oak", _ -> {});
++                assertFalse(presentation.idle());
++                assertTrue(screen.keyPressed(drop));
++                verifyNoMoreInteractions(game.gameMode);
++                assertEquals(4, held.getCount());
 +            } finally { screen.discard(); }
 +        }
 +    }
