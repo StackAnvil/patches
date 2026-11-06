@@ -13,13 +13,19 @@ Share authored scene, layout, image, text, actor, and focus primitives. Preserve
 OreUI text retains its own font engine, shaping size, cache images, distance fields, atlas, and float tint pipeline.
 It remains separate from classic JSON UI typography.
 Original Bedrock 1.26.60.5 controls establish selected shaping, raster, distance, ordinary run coverage, and supplied-position arithmetic.
-Seven focused regressions pass through the owned font backend, atlas lifecycle, Minecraft vertex-buffer emission, and software shader checks.
-An installed software-rendered Minecraft 26.3 diagnostic submits four labels through the unchanged OreUI font engine, atlas uploads, GUI extraction, and shaders.
+Prepared runs retain vertical face metrics independently of the glyph cache size.
+Native line boxes preserve negative leading and fractional content origins.
+The Java calculation matches all 72 original native font-span and baseline controls bit for bit.
+Eight style-height controls and 14 rectangle/fragment controls establish separate height resolution and placement boundaries.
+Regressions cover explicit and normal line heights, negative half ties, real font metrics, atlas lifetimes, and Minecraft vertex emission.
+
+The full add-on build passes with 1,380 tests passing and 159 skipped.
+An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Bitmap and distance-field modes each run with nearest and linear filters at 1280 × 720.
-Returning to the original mode preserves all four text regions. Installed artifact hashes match the tested build.
-The eight nearest-filtered crops differ from the CPU raster reference by at most one color byte.
-Linear-filtered crops differ from that idealized reference by up to 14 color bytes. Exact native sampling remains unverified.
-The diagnostic supplies positions, spacing, colors, and font modes. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
+All five regions remain unchanged after returning to the original mode. Installed artifact hashes match the tested build.
+The eight nearest-filtered label crops differ from the CPU raster reference by at most one color byte.
+Linear-filtered crops differ from that idealized reference by up to 13 color bytes. Exact native sampling remains unverified.
+The diagnostic supplies line origins, spacing, colors, and font modes. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
 
 Prerequisites:
 
