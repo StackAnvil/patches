@@ -20,6 +20,12 @@ Glint changes over time on idle and blocking shields. Returning to a plain shiel
 
 Separate plain-shield controls vary world FOV through 60, 30, 110, and 60, with repeated idle and blocking samples. Empty-offhand references isolate the visible shield through the bottom of the screen. Across three image-difference thresholds, normalized bounds from median images differ from native by less than 1% of either viewport axis. These controls do not reproduce the reported oversized shield.
 
+A declared inventory fixture for Bedrock 1.26.60.5 sends a red shield with a white bottom stripe.
+Native renders the pattern while blocking and restores the plain appearance when the data is removed.
+Direct and ViaProxy receive the same item tags, but the Java stack has no base color and empty pattern layers.
+Both Java views remain plain. Core shield-pattern projection and native atlas/material support remain unfinished.
+These controls use different appearances and viewports. Exact pixels and poses remain unverified.
+
 The native and Java appearances were not matched. Outer bounds do not establish pixel parity. Exact lighting, glint phase, and the reported oversized shield and distorted custom-skin pose remain unverified. No renderer change follows from these controls.
 
 The [owning patch](0017-render-equipped-native-pack-models.patch) retains implementation rationale and versioned evidence.
