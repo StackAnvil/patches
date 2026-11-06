@@ -31,6 +31,13 @@ The Java calculation matches all 72 original native font-span and baseline contr
 Eight style-height controls and 14 rectangle/fragment controls establish separate height resolution and placement boundaries.
 Regressions cover explicit and normal line heights, negative half ties, real font metrics, atlas lifetimes, and Minecraft vertex emission.
 
+`OreUiCharacters` retains source UTF-16 offsets through native CR/LF policies and normal/nowrap whitespace collapse.
+It keeps nonbreaking Unicode spaces and preserves whitespace in preformatted modes.
+The trailing-space fitting reserve stays separate from displayed characters.
+Target-version native controls match scalar arrays, offsets, and float reserves in 195 cases.
+Regressions also map a wrapped line back to its original source. Java rejects unpaired UTF-16 surrogates before UTF-8 encoding.
+These controls supply the newline and CSS whitespace policies. They do not establish policy selection, invalid native UTF-8 handling, or complete screen integration.
+
 Ordinary text measurement keeps a separate native feature profile from drawing.
 It selects nominal advances, space-excluding legacy kerning, or GPOS from the face and character count.
 Original 1.26.60.5 dispatch, feature records, and FreeType/HarfBuzz controls establish the tested paths.
@@ -41,9 +48,9 @@ Ordinary single-font lines consume measured advances and preserve nonfinal track
 Twenty-two original construction/alignment controls and 100 additional sequence controls match the compared Java results exactly.
 The controls supply the font map, metrics, advances, and style flags; original layout helpers execute.
 Installed paragraph ranges and placement match original native results at three supplied widths. Eleven selected draw regions remain unchanged across preparation modes and return.
-The complete measurement wrapper/cache, preprocessing, fallback/bidi, mixed-font fragments, ellipsis, and parent CSS sizing remain unverified.
+The complete measurement wrapper/cache, CSS text policies, fallback/bidi, mixed-font fragments, ellipsis, and parent CSS sizing remain unverified.
 
-The full add-on build passes with 1,397 tests passing and 154 skipped, including software font GPU checks.
+The full add-on build passes with 1,402 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
 Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
