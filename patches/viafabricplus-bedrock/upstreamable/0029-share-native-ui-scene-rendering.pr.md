@@ -24,12 +24,15 @@ Regressions cover explicit and normal line heights, negative half ties, real fon
 
 The full add-on build passes with 1,388 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
+Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
+Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
+The diagnostic applies the shipped black shadows through the unchanged font backend. Colored and blurred shadows remain outside this comparison.
 Bitmap and distance-field modes each run with nearest and linear filters at 1280 × 720.
 All five regions remain unchanged after returning to the original mode. Installed artifact hashes match the tested build.
 The eight nearest-filtered label crops differ from the CPU raster reference by at most one color byte.
-Linear-filtered crops differ from that idealized reference by up to 12 color bytes. Exact native sampling remains unverified.
+Linear-filtered crops differ from that idealized reference by up to 13 color bytes. Exact native sampling remains unverified.
 The diagnostic supplies border boxes, insets, spacing, colors, font modes, and explicit snap choices.
-A fixed comparison with the saved native frame improves three label masks and worsens Respawn. Button layout remains unverified. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
+A fixed comparison with the saved native frame improves three label masks and worsens Respawn. Adding the required shadows changes their visible pixels but leaves those white glyph masks unchanged. Button layout and native font mode remain unverified. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
 
 Prerequisites:
 
