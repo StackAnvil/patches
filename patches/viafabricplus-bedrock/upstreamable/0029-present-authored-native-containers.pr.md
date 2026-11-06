@@ -135,6 +135,13 @@ Both installed add-ons and the running proxy match the rebuilt artifact hashes.
 Bulk Survival recipe actions remain unresolved.
 Complete cooking integration, live transfers, and filled-bundle pixels also remain unresolved.
 
+Player snapshot revisions retain the parsed UI while its program bytes are unchanged.
+The presentation consumer decodes each accepted snapshot once.
+Regression coverage retains search through changed resources and rejects malformed replacement bytes.
+Installed E-opened Creative controls complete 24 physical queries on each route with program reuse.
+JFR profiles no longer sample repeated program decoding in these controls.
+Overall frame-rate gains and the reported modpack regression remain unverified.
+
 Stable frames reuse the draw list, parsed hit regions, and input ancestor geometry.
 Changed pointer coordinates, component state, or animated opacity refresh the draw list.
 Toggle changes include keyboard tab selection.

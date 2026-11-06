@@ -1,4 +1,4 @@
-From fcd97b73ea52a447bdf5cdf0ef58ae7359752145 Mon Sep 17 00:00:00 2001
+From e016dcccc5d33b7f251bcdc0e0cfd2019d4315cb Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -969,6 +969,18 @@ Escape. A reopened inactive field keeps its retained text when X is
 clicked. Whitespace still shows X. Screen regressions use the exported
 native editor and cover these paths while a query is pending. Complete
 default cooking host bindings and installed-route parity remain open.
+
+Keep the parsed player inventory program for repeated snapshots whose complete
+authored bytes are unchanged. Snapshot revision and source data can change
+without replacing resources; reparsing the entire scene graph on each update
+adds avoidable client-thread allocation and decoding. Changed program bytes
+still replace the resolver, and the cache belongs only to one presentation.
+Retain search, collection and preview updates independently of this resource
+lifetime. Regression coverage keeps authored label replacement and malformed
+update rejection independent of retained query state.
+Decode the incoming snapshot once per accepted update and compare against the
+already retained state. Pass that state through replacement so family checks,
+selection retirement and publication cannot independently repeat JSON decoding.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockInventorySounds.java    |   35 +
@@ -1028,7 +1040,7 @@ default cooking host bindings and installed-route parity remain open.
  .../NativePlayerInventoryActionPayload.java   |   23 +
  .../NativePlayerInventoryPayload.java         |   22 +
  .../NativePlayerInventoryResultPayload.java   |   22 +
- .../container/NativePlayerPresentation.java   |  245 +++
+ .../container/NativePlayerPresentation.java   |  250 +++
  .../PlayerInventoryScreenClosePayload.java    |   22 +
  .../PlayerInventoryScreenLifecycle.java       |   98 +
  .../PlayerInventoryScreenReadyPayload.java    |   22 +
@@ -1057,11 +1069,11 @@ default cooking host bindings and installed-route parity remain open.
  .../NativeInventorySourceStateTest.java       |  222 +++
  .../container/NativePlayerHelpTextTest.java   |   34 +
  .../NativePlayerInventoryLifetimeTest.java    |  142 ++
- .../NativePlayerPresentationTest.java         |  267 +++
+ .../NativePlayerPresentationTest.java         |  302 +++
  .../container/NativePlayerScreenTest.java     | 1054 +++++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 ++
  .../PlayerInventoryScreenLifecycleTest.java   |  139 ++
- 91 files changed, 13998 insertions(+), 62 deletions(-)
+ 91 files changed, 14038 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockInventorySounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
@@ -7572,10 +7584,10 @@ index 0000000..8482173
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java
 new file mode 100644
-index 0000000..e7c0417
+index 0000000..779d78a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,250 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7630,10 +7642,11 @@ index 0000000..e7c0417
 +    NativePlayerPresentation(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews,
 +                             final Map<Integer, ItemStack> craftingPreview, final LongSupplier clock) {
 +        this.clock = clock;
-+        this.replace(message, previews, craftingPreview);
++        this.replace(message, message.state(), previews, craftingPreview);
 +    }
 +
-+    private void replace(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews,
++    private void replace(final NativePlayerInventoryMessage message, final PlayerInventoryUi.State state,
++                         final Map<Integer, ItemStack> previews,
 +                         final Map<Integer, ItemStack> craftingPreview) {
 +        if (!previews.keySet().equals(message.items().keySet()) || previews.values().stream().anyMatch(ItemStack::isEmpty))
 +            throw new IllegalArgumentException("Player previews differ from the retained collection");
@@ -7643,10 +7656,12 @@ index 0000000..e7c0417
 +            throw new IllegalArgumentException("Crafting previews differ from the retained recipe");
 +        final Map<Integer, ItemStack> ghosts = new HashMap<>();
 +        craftingPreview.forEach((slot, item) -> ghosts.put(slot, item.copy()));
-+        this.program = PlayerInventoryUi.fromProgram(JsonParser.parseString(message.program()).getAsJsonObject());
-+        if (this.message != null && !this.message.state().cells().equals(message.state().cells())) this.select("", -1);
++        // Snapshot revisions can retain the same immutable authored resources.
++        if (this.message == null || !this.message.program().equals(message.program()))
++            this.program = PlayerInventoryUi.fromProgram(JsonParser.parseString(message.program()).getAsJsonObject());
++        if (this.message != null && !this.state.cells().equals(state.cells())) this.select("", -1);
 +        this.message = message;
-+        this.state = message.state();
++        this.state = state;
 +        this.previews = Map.copyOf(owned);
 +        this.craftingPreview = Map.copyOf(ghosts);
 +        this.revision++;
@@ -7655,9 +7670,11 @@ index 0000000..e7c0417
 +    boolean update(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews,
 +                   final Map<Integer, ItemStack> craftingPreview) {
 +        if (this.retired || message.menuId() != this.message.menuId() || message.opening() != this.message.opening()
-+                || message.state().workbench() != this.message.state().workbench() || message.revision() <= this.message.revision()
++                || message.revision() <= this.message.revision()
 +                || this.message.generation() != 0 && message.generation() != this.message.generation()) return false;
-+        this.replace(message, previews, craftingPreview);
++        final var state = message.state();
++        if (state.workbench() != this.state.workbench()) return false;
++        this.replace(message, state, previews, craftingPreview);
 +        return true;
 +    }
 +
@@ -14181,10 +14198,10 @@ index 0000000..3875605
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java
 new file mode 100644
-index 0000000..950b348
+index 0000000..848df47
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,302 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14196,6 +14213,8 @@ index 0000000..950b348
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
 +import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
 +import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonParser;
 +import com.viaversion.viaversion.libs.gson.JsonPrimitive;
 +import com.viaversion.viaversion.util.GsonUtil;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiImages;
@@ -14237,6 +14256,39 @@ index 0000000..950b348
 +        if (!Items.IRON_INGOT.builtInRegistryHolder().areComponentsBound()) Items.IRON_INGOT.builtInRegistryHolder().bindComponents(DataComponentMap.EMPTY);
 +        if (!Items.BUNDLE.builtInRegistryHolder().areComponentsBound()) Items.BUNDLE.builtInRegistryHolder().bindComponents(DataComponentMap.EMPTY);
 +        Class.forName(StructuredDataKey.class.getName());
++    }
++
++    @Test
++    void snapshotUpdatesRetainSearchWhileChangedResourceBytesReplaceTheAuthoredLabel() {
++        final var source = message(false, 1, 8, 1, "", false);
++        final var authored = JsonParser.parseString(source.program()).getAsJsonObject();
++        final var host = authored.getAsJsonObject("definitions").getAsJsonObject("crafting.inventory_screen").getAsJsonObject("value");
++        if (!host.has("controls")) host.add("controls", new JsonArray());
++        final var extra = JsonParser.parseString("""
++                {"resource_label":{"type":"label","text":"First resource title","size":[120,20]}}
++                """).getAsJsonObject();
++        host.getAsJsonArray("controls").add(extra);
++        final String firstProgram = authored.toString();
++        final var first = new NativePlayerInventoryMessage(0, 1, 8, 1, firstProgram, source.snapshot(), Map.of());
++        final var presentation = new NativePlayerPresentation(first, Map.of(), Map.of(), () -> 0);
++        assertTrue(presentation.resolve(0, "", slots(), Map.of(), false).scene().toString().contains("First resource title"));
++        final var searched = message(false, 1, 8, 2, "oak", false);
++        assertTrue(presentation.update(new NativePlayerInventoryMessage(0, 1, 8, 2,
++                new String(firstProgram), searched.snapshot(), Map.of()), Map.of(), Map.of()));
++        assertEquals("oak", presentation.query());
++        assertTrue(presentation.resolve(0, "", slots(), Map.of(), false).scene().toString().contains("First resource title"));
++        extra.getAsJsonObject("resource_label").addProperty("text", "Replacement resource title");
++        assertTrue(presentation.update(new NativePlayerInventoryMessage(0, 1, 8, 3,
++                authored.toString(), searched.snapshot(), Map.of()), Map.of(), Map.of()));
++        final String replaced = presentation.resolve(0, "", slots(), Map.of(), false).scene().toString();
++        assertTrue(replaced.contains("Replacement resource title"));
++        assertFalse(replaced.contains("First resource title"));
++        assertEquals("oak", presentation.query());
++        assertThrows(RuntimeException.class, () -> presentation.update(new NativePlayerInventoryMessage(
++                0, 1, 8, 4, "{", searched.snapshot(), Map.of()), Map.of(), Map.of()));
++        assertEquals(3, presentation.message().revision());
++        assertEquals("oak", presentation.query());
++        assertTrue(presentation.resolve(0, "", slots(), Map.of(), false).scene().toString().contains("Replacement resource title"));
 +    }
 +
 +    @Test
