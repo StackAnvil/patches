@@ -12,6 +12,12 @@ Share authored scene, layout, image, text, actor, and focus primitives. Preserve
 
 OreUI text retains its own font engine, shaping size, cache images, distance fields, atlas, and float tint pipeline.
 It remains separate from classic JSON UI typography.
+Default preparation follows the target Windows host's ordinary outline-font settings: bitmap below 10 display pixels or for a face that opts out, otherwise the 52-pixel CPU distance cache.
+Sixteen original mode/size controls establish this selection. Eight executions of the shipped GUI-scale component establish five root pixels per scale unit.
+Body text therefore crosses the default threshold from 8 to 16 pixels at GUI scales 1 and 2.
+The image regression covers the threshold, face opt-out, independent shaping size, and distance-cache reuse.
+Installed automatic and explicitly resolved modes produce identical pixels in seven regions under both filters, including the 8- and 10-pixel probes.
+Native glyph-kind production, active view overrides, and final native draw bindings remain unverified.
 Original Bedrock 1.26.60.5 controls establish selected shaping, raster, distance, ordinary run coverage, and supplied-position arithmetic.
 Prepared runs retain vertical face metrics independently of the glyph cache size.
 Native line boxes preserve negative leading and fractional content origins.
@@ -22,7 +28,7 @@ The Java calculation matches all 72 original native font-span and baseline contr
 Eight style-height controls and 14 rectangle/fragment controls establish separate height resolution and placement boundaries.
 Regressions cover explicit and normal line heights, negative half ties, real font metrics, atlas lifetimes, and Minecraft vertex emission.
 
-The full add-on build passes with 1,388 tests passing and 154 skipped, including software font GPU checks.
+The full add-on build passes with 1,389 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
 Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
@@ -32,7 +38,7 @@ All five regions remain unchanged after returning to the original mode. Installe
 The eight nearest-filtered label crops differ from the CPU raster reference by at most one color byte.
 Linear-filtered crops differ from that idealized reference by up to 13 color bytes. Exact native sampling remains unverified.
 The diagnostic supplies border boxes, insets, spacing, colors, font modes, and explicit snap choices.
-A fixed comparison with the saved native frame improves three label masks and worsens Respawn. Adding the required shadows changes their visible pixels but leaves those white glyph masks unchanged. Button layout and native font mode remain unverified. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
+A fixed comparison with the saved native frame improves three label masks and worsens Respawn. Adding the required shadows changes their visible pixels but leaves those white glyph masks unchanged. Button layout and active native draw bindings remain unverified. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
 
 Prerequisites:
 
