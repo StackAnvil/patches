@@ -1,4 +1,4 @@
-From 55284d28a46df46100cd93fd6136691bf2a471a5 Mon Sep 17 00:00:00 2001
+From 23be68d736d7d50dd31ad205f00ac246c06d2944 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -729,6 +729,19 @@ while retaining the separately replayed ability bypass. Remove the hunger
 setter from physical capture so correction replay cannot discard later
 meals. The focused regression keeps two later hunger values intact across
 repeated historical sprint-eligibility queries.
+
+Retain native item use through the movement frame before ticking its
+countdown and local completion. Official 1.26.60.5/protocol 2225 passive
+traces show the movement countdown decrement on the first use frame,
+then completion at zero after that frame's slowed motion. Java ticks
+item use before LocalPlayer.aiStep and otherwise removes slowdown one
+frame early. Keep the early held-definition check and stack refresh,
+then tick the retained stack once after LivingEntity.tick movement.
+
+Do not equate packet 142 with server inventory Use transactions. Matching
+native omission controls retain queued completion when 142 is omitted,
+and remove it when the inventory transaction is omitted. Translation of
+that independent server callback remains a separate lifecycle boundary.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  14 +
@@ -755,7 +768,7 @@ repeated historical sprint-eligibility queries.
  .../movement/MixinGameModePhysicsReplay.java  |  29 +
  .../movement/MixinHorsePhysicsState.java      |  63 +++
  .../movement/MixinLevelPhysicsReplay.java     |  25 +
- .../features/movement/MixinLivingEntity.java  | 170 ++++++
+ .../features/movement/MixinLivingEntity.java  | 197 +++++++
  .../movement/MixinLivingPhysicsState.java     | 145 +++++
  .../features/movement/MixinLocalPlayer.java   | 413 +++++++++++++-
  .../movement/MixinMobEffectPhysicsState.java  |  18 +
@@ -837,7 +850,7 @@ repeated historical sprint-eligibility queries.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 107 files changed, 8581 insertions(+), 74 deletions(-)
+ 107 files changed, 8608 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -2166,10 +2179,10 @@ index 0000000..b6ee81c
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index cb89991..d76c770 100644
+index cb89991..744b49a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,197 @@
+@@ -21,27 +21,224 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2206,6 +2219,7 @@ index cb89991..d76c770 100644
 +import org.objectweb.asm.Opcodes;
  import org.spongepowered.asm.mixin.Mixin;
  import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
  import org.spongepowered.asm.mixin.injection.At;
 +import org.spongepowered.asm.mixin.injection.Constant;
  import org.spongepowered.asm.mixin.injection.Inject;
@@ -2219,6 +2233,12 @@ index cb89991..d76c770 100644
  
 +    @Shadow
 +    protected abstract void completeUsingItem();
++
++    @Shadow
++    protected abstract void updateUsingItem(ItemStack item);
++
++    @Unique
++    private ItemStack viaFabricPlusBedrock$pendingUseTick;
 +
 +    @ModifyReturnValue(method = "handleOnClimbable", at = @At("RETURN"))
 +    private Vec3 applyNativeClimbingBeforeMovement(final Vec3 javaMotion, final Vec3 requestedMotion) {
@@ -2341,6 +2361,26 @@ index cb89991..d76c770 100644
 +        return (Object) this instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()
 +                && active instanceof ItemStack activeItem && held instanceof ItemStack heldItem
 +                ? BedrockUsedItem.matches(heldItem, activeItem) : original.call(active, held);
++    }
++
++    @WrapOperation(method = "updatingUsingItem", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;updateUsingItem(Lnet/minecraft/world/item/ItemStack;)V"))
++    private void retainItemUseThroughMovement(final LivingEntity entity, final ItemStack item, final Operation<Void> original) {
++        if (entity instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()) {
++            // Identity checks still run now. Native movement uses the active state before countdown completion.
++            this.viaFabricPlusBedrock$pendingUseTick = item;
++        } else {
++            original.call(entity, item);
++        }
++    }
++
++    @Inject(method = "tick", at = @At("RETURN"))
++    private void tickNativeUseAfterMovement(final CallbackInfo ci) {
++        final ItemStack item = this.viaFabricPlusBedrock$pendingUseTick;
++        this.viaFabricPlusBedrock$pendingUseTick = null;
++        if (item != null && (Object) this instanceof LocalPlayer player
++                && player.isUsingItem() && player.getUseItem() == item) {
++            this.updateUsingItem(item);
++        }
 +    }
 +
 +    @WrapOperation(method = "updateUsingItem", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/LivingEntity;useItemRemaining:I", opcode = Opcodes.PUTFIELD))

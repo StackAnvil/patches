@@ -72,6 +72,13 @@ Native also receives corrections at use transitions, so correction counts alone 
 The installed Java controls preserve hunger, saturation, use state, countdown, and item counts across actual resimulation without repeating consumption callbacks.
 Correction counts and endpoint distances still differ between routes. These controls establish hunger ownership, not complete trajectory parity.
 
-The affected full-stack build passes 3,522 tests, with 332 skipped and no failures or errors.
+Native 1.26.60.5 traces place the countdown decrement and completion after the frame's slowed movement.
+Retain the early item-identity check and tick the active stack after movement.
+The recorded moving-food controls check the final slowed frame, local completion, and correction replay.
+Native also completes active use through a server inventory `Use` transaction.
+Selective omissions distinguish that callback from packet 142. Its Java translation remains open.
+
+The current core and local Linux add-on builds pass 3,529 tests, with 332 skipped and no failures or errors.
+Release packaging remains unverified because the other five native shaping libraries are unavailable locally.
 The broader animation, movement timing, consumable effects, and original intermittent no-feeding report remain open.
 See the [food admission evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) for core behavior and its limits.
