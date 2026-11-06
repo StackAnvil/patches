@@ -101,7 +101,7 @@ Native local-world controls distinguish cooldown retries from a failed initial s
 A pearl hold retains air use after selecting Stone. Release permits fresh Stone placement.
 A failed sword hold suppresses a newly selected pearl but permits later Stone placement.
 
-Current direct and ViaProxy recordings each complete 300 seconds on software rendering with verified installed artifacts.
+Direct and ViaProxy recordings before the quantity-publication correction each complete 300 seconds on software rendering with verified installed artifacts.
 Both suppress an early fresh wind hold, admit an uninterrupted pearl-to-wind hold, and repeat pearl attempts through cooldown.
 Both retain 64 Stone during a pearl hold and throw no pearl after a failed sword hold.
 Fresh Stone placement, food-to-Stone, and block-to-food controls retain their independent routes.
@@ -120,7 +120,8 @@ Both saved-stack replays reproduce their tested source trees.
 Live build-height limits, moving placement, and air/entity target dispatch need more native comparisons.
 
 The direct cooldown-release control leaves two pearls on BDS while Java displays three after settlement.
-This remains an open inventory reconciliation case.
+The [air-use prediction owner](../../viabedrock/deferred/0016-synchronize-glide-rockets-with-auth-input.pr.md) now publishes core's predicted quantity to Java, with a regression for the missing update and final-stack removal.
+Matching installed retests remain pending.
 The proxy partner does not reproduce it, and physical frame sampling changes the final accepted attempt.
 Exact release timing, conditional Education predicates, and the original persistent rollback remain unverified.
 
