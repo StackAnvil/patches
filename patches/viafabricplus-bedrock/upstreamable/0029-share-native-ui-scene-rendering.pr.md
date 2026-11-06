@@ -10,6 +10,12 @@ GUI camera overrides retain their existing yaw values. World player queries use 
 
 Share authored scene, layout, image, text, actor, and focus primitives. Preserve same-pack bitmap metadata, legacy layouts, native atlas sampling, and GUI raster coverage.
 
+OreUI text retains its own font engine, shaping size, cache images, distance fields, atlas, and float tint pipeline.
+It remains separate from classic JSON UI typography.
+Original Bedrock 1.26.60.5 controls establish selected shaping, raster, distance, ordinary run coverage, and supplied-position arithmetic.
+Seven focused regressions pass through the owned font backend, atlas lifecycle, Minecraft vertex-buffer emission, and software shader checks.
+Complete OreUI screen consumers, automatic layout and fallback, native texture sampling, reloads, input, and live frame comparisons remain unfinished.
+
 Prerequisites:
 
 - viabedrock/0095-share-native-ui-programs-and-resources.patch: Publish shared UI scene and program contracts before the client renderer.

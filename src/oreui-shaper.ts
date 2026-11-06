@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { zipEntries } from "./zip.ts";
 
 export const oreUiShaperResource = "assets/viafabricplus-bedrock/oreui-shaper";
 export const oreUiShaperPlatforms = [
@@ -97,6 +98,46 @@ export async function verifyOreUiShaper(
     )
   )
     throw new Error(`Missing or changed HarfBuzz license for ${target}`);
+}
+
+/** A distributable add-on must carry every supported engine, not just the build host's library. */
+export async function oreUiShaperArguments(
+  id: string,
+  directory: string,
+  sourceDirectory = join(repository, "native", "oreui-shaper"),
+): Promise<string[]> {
+  if (id !== "viafabricplus-bedrock") return [];
+  await Promise.all(
+    oreUiShaperPlatforms.map((target) => verifyOreUiShaper(directory, target, sourceDirectory)),
+  );
+  return [`-PbedrockOreUiShaper=${resolve(directory)}`];
+}
+
+/** Catch dropped resources or a stale Gradle output before publishing the JAR. */
+export async function verifyEmbeddedOreUiShaper(
+  artifact: string,
+  directory: string,
+  sourceDirectory = join(repository, "native", "oreui-shaper"),
+): Promise<void> {
+  await oreUiShaperArguments("viafabricplus-bedrock", directory, sourceDirectory);
+  const entries = zipEntries(await readFile(artifact));
+  const expected = new Set<string>();
+  for (const target of oreUiShaperPlatforms) {
+    const resource = `${oreUiShaperResource}/${target}`;
+    const manifest = JSON.parse(await readFile(join(directory, resource, "manifest.json"), "utf8"));
+    for (const file of ["manifest.json", "COPYING", manifest.library]) {
+      const name = `${resource}/${file}`;
+      expected.add(name);
+      const embedded = entries.get(name)?.();
+      if (!embedded || !embedded.equals(await readFile(join(directory, name))))
+        throw new Error(`Add-on did not embed the verified OreUI shaper resource: ${name}`);
+    }
+  }
+  for (const name of entries.keys()) {
+    if (!name.startsWith(`${oreUiShaperResource}/`)) continue;
+    if (name.endsWith("/") && entries.get(name)!().length === 0) continue;
+    if (!expected.has(name)) throw new Error(`Unexpected embedded OreUI shaper resource: ${name}`);
+  }
 }
 
 if (import.meta.main) {

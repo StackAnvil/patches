@@ -28,7 +28,18 @@ The verifier checks the source and patch identities, binary architecture, librar
 The authored tests exercise mark positioning and a constant variation delta through the public shaping API.
 They do not contain game fonts or captures.
 
-The engine build is a prerequisite for the OreUI renderer.
-The add-on does not load this library yet. Font fallback, layout, atlas upload, and screen integration remain unfinished.
+The normal stack build requires all six platform directories in `.stackanvil/tools/oreui-shaper-resources/`.
+The CI and release workflows build them through [the shared native workflow](../../.github/workflows/oreui-shaper.yml).
+For a local build, combine its six `oreui-shaper-*` artifacts into that directory, with each artifact's `assets/` tree at the root.
+Set `STACKANVIL_OREUI_SHAPER_RESOURCES` to use another directory.
+A single host installation contains only its own platform.
+Run `bun src/oreui-shaper.ts /path/to/combined-resources` to check all six installations.
+The stack build checks them again and compares every library, manifest, and license with the finished add-on JAR.
+For a direct add-on Gradle build, pass `-PbedrockOreUiShaper=/path/to/combined-resources`.
+
+The Java text backend loads and checks this library.
+Set `STACKANVIL_NATIVE_FONT_GPU_TESTS=1` to run the optional EGL font shader tests.
+The CI and release builds run these tests with Mesa software rendering.
+Complete font fallback, layout, sampling, and native screen integration remain unfinished.
 The selected native comparisons remain private under `.stackanvil/research/`.
 This helper uses the repository's GPL-3.0-or-later license. HarfBuzz retains its bundled [license](COPYING).
