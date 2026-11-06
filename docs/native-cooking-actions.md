@@ -30,6 +30,16 @@ Retain raw input independently of normalized search text.
 Search changes retire selection according to the native callback contract.
 Resolve names through the connection registry, language context, item definition, and component updates.
 Do not use Java display names as ingredient identity.
+
+Cooking search retains separate raw text for each station family within the connection.
+Closing and reopening a menu retains that text.
+Only the Search tab applies the query. Category tabs retain their own lists and counts.
+The optional search transport binds edits to the displayed opening and inventory snapshot.
+Search and recipe commands share request ordering. A changed query retires the old recipe-cell authority.
+The client queues the latest edit while an earlier edit or recipe gesture waits for completion.
+A late reply cannot erase newer text.
+The connection retains an unsent edit or explicit clear for the next opening. Disconnect clears this client state.
+An acknowledgment without a replacement snapshot still reaches the response timeout.
 Shared naming and recipe APIs belong in core rather than screen-specific copies.
 
 ## Progress and controls
@@ -46,6 +56,10 @@ Use real slot and cursor updates when testing a container adapter.
 Use [test packs](bedrock-test-packs.md) and the [capture lab](capture-lab.md) for physical input and live transfers.
 Record both direct and ViaProxy results where the changed behavior crosses that boundary.
 
+Official Bedrock 1.26.60.5 desktop controls establish search filtering, category transitions, clearing, and retention after reopening a furnace.
+Separate smoker text does not replace the furnace query.
+These private integrated-world controls do not establish controller input, exact timing, or retention across connections.
+
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.
 Keep binaries, native addresses, transcripts, and repeated probe results private.
@@ -54,5 +68,6 @@ The owning patch contains the durable rationale.
 ## Remaining limits
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
+Default hosts still need their input actions and editor property bindings. Search transport alone does not admit them.
 Native state registration and isolated callback execution do not establish live controller delivery.
 A local request test does not establish native graphical behavior or complete server transaction recovery.

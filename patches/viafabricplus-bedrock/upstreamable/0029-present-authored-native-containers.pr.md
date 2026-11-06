@@ -204,3 +204,11 @@ The pointer stays still through predicted disappearance and tooltip restoration.
 These controls do not establish the official client's complete rejection path.
 Installed native-command rejection controls and their remaining limits are recorded in the [core inventory notes](../../viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.pr.md).
 Native wire grouping, larger rejected bundle plans, touch and retained detail gestures, full controller composition, and complete pixels remain unfinished.
+
+Cooking search uses the optional core query transport and shares ordering, acknowledgments, timeouts, and retirement with recipe commands.
+The client queues the latest raw edit and preserves newer typing when an earlier reply arrives.
+Closing retains an unsent edit or explicit clear for the next opening. Disconnect clears this client state.
+A reply without the replacement snapshot still reaches the response timeout.
+Bound cooking editors use the shared search widget and retain ordinary controls when a required binding or capability is unavailable.
+Official Bedrock 1.26.60.5 desktop controls retain furnace search after reopening and keep smoker text independent.
+Default cooking screen admission and installed direct/proxy comparisons remain unfinished.

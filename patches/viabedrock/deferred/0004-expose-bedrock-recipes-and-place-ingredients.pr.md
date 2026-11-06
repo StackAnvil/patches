@@ -40,3 +40,9 @@ Ghidra connects these fields to their named NBT keys, controller reads, and pack
 Four original-instruction controls reproduce the writes and retain surrounding bytes.
 Java filter edits preserve the native tabs and automatic layouts.
 Later packets retain their explicit raw values.
+
+Cooking search retains raw text per station family and filters only the Search tab through native item names.
+Optional query messages share recipe request ordering and reject stale openings, snapshots, and withdrawn capabilities without transfers.
+Core regressions cover filtered publication, repeated edits, category lists, clearing, reopening, family independence, and old recipe authority.
+Official Bedrock 1.26.60.5 integrated-world desktop controls establish the observed search and retention behavior.
+Other input modes, cross-connection query lifetime, and complete installed cooking screens remain unverified.
