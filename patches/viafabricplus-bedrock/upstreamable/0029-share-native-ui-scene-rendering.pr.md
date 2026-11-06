@@ -28,7 +28,15 @@ The Java calculation matches all 72 original native font-span and baseline contr
 Eight style-height controls and 14 rectangle/fragment controls establish separate height resolution and placement boundaries.
 Regressions cover explicit and normal line heights, negative half ties, real font metrics, atlas lifetimes, and Minecraft vertex emission.
 
-The full add-on build passes with 1,389 tests passing and 154 skipped, including software font GPU checks.
+Ordinary text measurement keeps a separate native feature profile from drawing.
+It selects nominal advances, space-excluding legacy kerning, or GPOS from the face and character count.
+Original 1.26.60.5 dispatch, feature records, and FreeType/HarfBuzz controls establish the tested paths.
+Authored regressions preserve per-scalar advances and drawing substitutions across measurement calls.
+Installed Ten advances match original controls for `fi`, `office`, and `Respawn`.
+Ten selected draw regions retain identical pixels across measurement and mode return.
+The complete measurement wrapper/cache and automatic inline layout remain unverified.
+
+The full add-on build passes with 1,391 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
 Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
