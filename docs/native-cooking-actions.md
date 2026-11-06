@@ -40,6 +40,12 @@ The client queues the latest edit while an earlier edit or recipe gesture waits 
 A late reply cannot erase newer text.
 The connection retains an unsent edit or explicit clear for the next opening. Disconnect clears this client state.
 An acknowledgment without a replacement snapshot still reaches the response timeout.
+The native editor retains its property-field name separately from bound display text.
+Its embedded X follows raw text, including whitespace.
+During active editing, X clears the query and preserves typing, including after the first Escape.
+A reopened inactive editor retains its query when X is clicked.
+Only a clear button owned by the admitted editor can use this behavior.
+Local text updates while an older edit waits for a reply; recipe authority remains tied to the server snapshot.
 Shared naming and recipe APIs belong in core rather than screen-specific copies.
 
 ## Progress and controls
@@ -68,6 +74,6 @@ The owning patch contains the durable rationale.
 ## Remaining limits
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
-Default hosts still need their input actions and editor property bindings. Search transport alone does not admit them.
+Default hosts still need their remaining input actions. The editor binding alone does not admit them.
 Native state registration and isolated callback execution do not establish live controller delivery.
 A local request test does not establish native graphical behavior or complete server transaction recovery.

@@ -217,4 +217,7 @@ Closing retains an unsent edit or explicit clear for the next opening. Disconnec
 A reply without the replacement snapshot still reaches the response timeout.
 Bound cooking editors use the shared search widget and retain ordinary controls when a required binding or capability is unavailable.
 Official Bedrock 1.26.60.5 desktop controls retain furnace search after reopening and keep smoker text independent.
-Default cooking screen admission and installed direct/proxy comparisons remain unfinished.
+Screen regressions use the exported 1.26.60.5 editor and its embedded X.
+They cover active clearing during a pending query, continued typing, the first Escape, whitespace, and inactive retained text after resize.
+Geometry regressions reject an unowned clear control and preserve front-to-back slot protection.
+The matching native desktop controls establish these input lifetimes; complete default cooking screen admission and installed direct/proxy comparisons remain unfinished.

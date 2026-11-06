@@ -145,3 +145,8 @@ Collection-details bindings now populate each control event bag without requirin
 Optional cooking query contracts retain raw text and bind edits to the displayed opening, snapshot, and request sequence.
 Codec regressions retain Unicode and embedded NUL text and reject malformed source lengths, trailing fields, and invalid result flags.
 The backend owns filtering and execution. Complete default cooking screen admission remains unfinished.
+
+Native 1.26.60.5 property-value controls preserve hash-prefixed names in property data and expand dollar variables without converting the result into a binding lookup.
+Regressions cover direct and variable-supplied property bags, explicit binding updates, and exported cooking editors for all three station families.
+Cooking clear-button visibility follows raw search text, including whitespace.
+These controls do not establish complete loader or cooking-screen parity.
