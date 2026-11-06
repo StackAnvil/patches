@@ -12,6 +12,11 @@ Resolve native ingredient descriptors and connection-owned item definitions befo
 
 Regression coverage includes `NativeFurnaceOptionsTest`, `CookingRecipeAvailabilityTest`, `CookingRecipeInputsTest`, `CookingRecipeSourcesTest`, `CraftingCursorTest`, and `InventoryTransferBatchTest`.
 
+Registered zero-slot and all-empty recipe templates are excluded before availability reads source collections.
+They preserve selected-output fallback and later valid candidates without accessing retired inventory sources.
+The regression fails before the guard. Existing 1.26.51.1 executable availability fixtures retain their valid-recipe results.
+This defensive Java admission does not establish new 1.26.60 live availability or screen parity.
+
 Official Bedrock 1.26.60.5/BDS 1.26.60.6 captures establish manual output pickup and Shift-click behavior for planks, cake, and honey blocks.
 Manual requests keep CraftResults times one, select primary output before returned containers, and use Take for cursor output.
 Right-click crafts once. Shift-click fills inventory through linked stack-sized requests in one packet.

@@ -35,11 +35,20 @@ ViaProxy includes it through its core dependency. The Fabric add-on includes it 
 The stack build verifies its version, checksum, required templates, textures, and referenced font faces.
 Missing or incomplete assets stop the build. Each finished JAR must contain the exact verified bundle before publication.
 
+The add-on also embeds `assets/viafabricplus-bedrock/builtin_oreui.zip` for the OreUI screen port.
+It contains the gameplay stylesheet, OpenType and TrueType faces, and OreUI translations from the same game version.
+Its generated `oreui.json` records the stylesheet's font families, variants, and explicit `coh-font-sdf:off` declarations.
+Faces without that property retain `default` in the descriptor.
+These resources remain separate from classic JSON UI font registrations and their display transform.
+The build verifies the bundle's checksum, referenced faces, and languages before and after packaging.
+See [compatibility status](bedrock-coverage.md) for rendering support.
+
 To regenerate the bundle from a matching installed game, run:
 
 ```bash
 bun scripts/bundle-bedrock-assets.ts /path/to/bedrock-game 1.26.60.5
 bun scripts/bundle-bedrock-ui.ts /path/to/bedrock-game 1.26.60.5 .stackanvil/builtin_ui.zip
+bun scripts/bundle-bedrock-oreui.ts /path/to/bedrock-game 1.26.60.5 .stackanvil/builtin_oreui.zip
 ```
 
 The game directory must contain `data/resource_packs/`.
@@ -50,6 +59,11 @@ It uses original `.bol-orig` files when an installation keeps patched copies bes
 The UI extractor requires a fresh output path and writes a checksum manifest beside the ZIP.
 After reviewing the output, replace both tracked files under `assets/bedrock/1.26.60.5/assets/viabedrock/`.
 Keep the native copyright notice in the ZIP. Commit both files with changes to the version pin.
+
+The OreUI extractor also reads `data/gui/dist/hbui/` and `data/resource_packs/oreui/`.
+It keeps the original font, stylesheet, and language bytes and prefers loose language files over archive entries.
+Review its preview and copy the ZIP and checksum manifest to `assets/bedrock/1.26.60.5/assets/viafabricplus-bedrock/`.
+It uses the same requirement for fresh output paths as the JSON UI extractor.
 
 The normal stack build also derives an image-only bundle from the verified add-on archives.
 It writes `builtin_images.zip` under `.stackanvil/builtin-images/<version>/` and embeds it in the core.

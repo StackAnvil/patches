@@ -153,6 +153,8 @@ Native 1.26.60.5 and BDS 1.26.60.6 controls establish capacity admission before 
 With one free inventory item-space, native drops an incompatible or full held stack after partial placement and takes the remainder.
 Request/state regressions cover descriptors, changed-slot references, grid sources, capacity, cursor preservation, and rejection rollback.
 A placeholder-recipe regression retains the following valid plan and leaves the source inventory unchanged.
+Output quantity counting also skips zero-slot and all-empty placeholders, preserving later valid candidates instead of interrupting recipe-cell construction.
+The quantity regression fails with the previous unguarded counter call.
 Ordinary named ingredients retain resolved recipe metadata. Tag and Molang ingredients use the selected source descriptor.
 A real registry regression covers named wildcard logs and sticks alongside concrete tag-selected planks.
 Installed direct and ViaProxy controls each complete 11 server-accepted requests with matching normalized structures across routes.

@@ -1,0 +1,334 @@
+From 57a093dc5f31941bcec7ad0dfedffccc738cd578 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 20:20:15 +0100
+Subject: [PATCH] fix(hud): honor death message visibility
+
+Keep the translated death reason in session storage and apply
+showDeathMessages when sending the death screen. Share this policy between
+DeathInfo and actor-death handling so either packet order hides only the
+reason. Refresh a dead player when the rule changes, including restoring
+the retained reason when it is enabled again.
+
+Bedrock 1.26.60.5, protocol 2225, evaluates this rule in its active OreUI
+PlayerDeathInfoQuery as well as its classic death controller. Eight
+original-executable query controls select an empty string unless the world,
+player and enabled rule are all present. Executable SHA-256:
+988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a.
+
+Packet regressions cover both arrival orders, alive-player admission,
+retained text, live rule changes and repeated unchanged rules. This fixes
+reason projection; the OreUI screen layout and lifecycle remain separate
+work.
+---
+ .../viabedrock/api/util/PacketFactory.java    |  16 ++
+ .../protocol/packet/EntityPackets.java        |   8 +-
+ .../protocol/packet/HudPackets.java           |   8 +-
+ .../protocol/storage/GameRulesStorage.java    |   2 +
+ .../packet/DeathMessagePacketsTest.java       | 201 ++++++++++++++++++
+ 5 files changed, 222 insertions(+), 13 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
+index f67b7f7d..68fa4fac 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
++++ b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
+@@ -38,10 +38,26 @@ import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.CustomChatCompletionsAction;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.GameRulesStorage;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ public final class PacketFactory {
+ 
++    public static void sendJavaDeathMessage(final UserConnection user) {
++        final var player = user.get(EntityTracker.class).getClientPlayer();
++        final var message = user.get(GameSessionStorage.class).getDeathMessage();
++        if (!player.isDead() || message == null) {
++            return;
++        }
++        final boolean showReason = Boolean.TRUE.equals(user.get(GameRulesStorage.class).getGameRule("showDeathMessages"));
++        final PacketWrapper death = PacketWrapper.create(ClientboundPackets26_3.PLAYER_COMBAT_KILL, user);
++        death.write(Types.VAR_INT, player.javaId()); // entity id
++        death.write(Types.TAG, showReason ? TextUtil.textComponentToNbt(message) : TextUtil.stringToNbt("")); // message
++        death.send(BedrockProtocol.class);
++    }
++
+     public static void sendJavaBlockDestroyProgress(final UserConnection user, final int id, final BlockPosition position, final int stage) {
+         final PacketWrapper blockDestruction = PacketWrapper.create(ClientboundPackets26_3.BLOCK_DESTRUCTION, user);
+         blockDestruction.write(Types.VAR_INT, id); // id
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+index 39c8bf5f..63b06dce 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+@@ -45,7 +45,6 @@ import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
+ import net.raphimc.viabedrock.api.util.MathUtil;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.api.util.RegistryUtil;
+-import net.raphimc.viabedrock.api.util.TextUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+@@ -452,11 +451,8 @@ public final class EntityPackets {
+                         livingEntity.setHealth(0F);
+                         livingEntity.sendAttribute("minecraft:health");
+                     }
+-                    if (entity == entityTracker.getClientPlayer() && entityTracker.getClientPlayer().isDead() && gameSession.getDeathMessage() != null) {
+-                        final PacketWrapper playerCombatKill = PacketWrapper.create(ClientboundPackets26_3.PLAYER_COMBAT_KILL, wrapper.user());
+-                        playerCombatKill.write(Types.VAR_INT, entityTracker.getClientPlayer().javaId()); // entity id
+-                        playerCombatKill.write(Types.TAG, TextUtil.textComponentToNbt(gameSession.getDeathMessage())); // message
+-                        playerCombatKill.send(BedrockProtocol.class);
++                    if (entity == entityTracker.getClientPlayer()) {
++                        PacketFactory.sendJavaDeathMessage(wrapper.user());
+                     }
+                     if (entity != entityTracker.getClientPlayer()) {
+                         entity.playSound("death");
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index 1e094252..4b40f209 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -438,18 +438,12 @@ public final class HudPackets {
+         protocol.registerClientbound(ClientboundBedrockPackets.DEATH_INFO, null, wrapper -> {
+             wrapper.cancel();
+             final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
+-            final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+             final String message = wrapper.read(BedrockTypes.STRING); // death cause message
+             final String[] parameters = wrapper.read(BedrockTypes.STRING_ARRAY); // parameters
+ 
+             final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
+             gameSession.setDeathMessage(TextUtil.stringToTextComponent(BedrockTranslator.translate(message, translator, parameters)));
+-            if (entityTracker.getClientPlayer().isDead()) {
+-                final PacketWrapper playerCombatKill = PacketWrapper.create(ClientboundPackets26_3.PLAYER_COMBAT_KILL, wrapper.user());
+-                playerCombatKill.write(Types.VAR_INT, entityTracker.getClientPlayer().javaId()); // entity id
+-                playerCombatKill.write(Types.TAG, TextUtil.textComponentToNbt(gameSession.getDeathMessage())); // message
+-                playerCombatKill.send(BedrockProtocol.class);
+-            }
++            PacketFactory.sendJavaDeathMessage(wrapper.user());
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.GUI_DATA_PICK_ITEM, ClientboundPackets26_3.SYSTEM_CHAT, wrapper -> {
+             final String itemName = wrapper.read(BedrockTypes.STRING); // item name
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
+index 9dcfed5b..9d4df851 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
+@@ -61,6 +61,8 @@ public class GameRulesStorage extends StoredObject {
+                         PacketFactory.sendJavaEntityEvent(this.user(), clientPlayer, (boolean) gameRule.value() ? EntityEvent.FULL_DEBUG_INFO : EntityEvent.REDUCED_DEBUG_INFO);
+                     } else if (gameRule.name().equalsIgnoreCase("doImmediateRespawn")) {
+                         PacketFactory.sendJavaGameEvent(this.user(), GameEventType.IMMEDIATE_RESPAWN, (boolean) gameRule.value() ? 1F : 0F);
++                    } else if (gameRule.name().equalsIgnoreCase("showDeathMessages")) {
++                        PacketFactory.sendJavaDeathMessage(this.user());
+                     } else if (gameRule.name().equalsIgnoreCase("doLimitedCrafting")) {
+                         PacketFactory.sendJavaGameEvent(this.user(), GameEventType.LIMITED_CRAFTING, (boolean) gameRule.value() ? 1F : 0F);
+                     }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java
+new file mode 100644
+index 00000000..20c41ece
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java
+@@ -0,0 +1,201 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.packet.mapping.PacketMapping;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.lang.reflect.Field;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.function.Consumer;
++import java.util.function.Function;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorEvent;
++import net.raphimc.viabedrock.protocol.model.GameRule;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.GameRulesStorage;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.mockito.MockedStatic;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class DeathMessagePacketsTest {
++
++    @Test
++    void hidesTheReasonWithoutSuppressingTheDeathScreenInEitherPacketOrder() throws Exception {
++        for (final boolean infoFirst : List.of(false, true)) {
++            try (var fixture = new Fixture()) {
++                fixture.showReason(false);
++                if (infoFirst) {
++                    fixture.info();
++                }
++                fixture.death();
++                if (!infoFirst) {
++                    fixture.info();
++                }
++                assertEquals(List.of(""), fixture.messages);
++                assertEquals("Controlled death reason", fixture.session.getDeathMessage().asUnformattedString());
++            }
++        }
++    }
++
++    @Test
++    void usesTheCurrentRuleWhenCachedOrLateDeathInformationIsPresented() throws Exception {
++        try (var fixture = new Fixture()) {
++            fixture.info();
++            assertTrue(fixture.messages.isEmpty(), "An alive player must not receive a death screen");
++            fixture.showReason(false);
++            fixture.death();
++            assertEquals(List.of(""), fixture.messages);
++            fixture.showReason(true);
++            assertEquals(List.of("", "Controlled death reason"), fixture.messages);
++            fixture.showReason(false);
++            assertEquals(List.of("", "Controlled death reason", ""), fixture.messages);
++            fixture.showReason(false);
++            assertEquals(3, fixture.messages.size(), "An unchanged rule must not replace the screen");
++        }
++    }
++
++    private static GameRulesStorage rules(final UserConnection user) throws Exception {
++        final Field defaults = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("bedrockGameRules");
++        defaults.setAccessible(true);
++        final Object previous = defaults.get(BedrockProtocol.MAPPINGS);
++        try {
++            defaults.set(BedrockProtocol.MAPPINGS, Map.of("showdeathmessages", true));
++            return new GameRulesStorage(user, new GameRule[0]);
++        } finally {
++            defaults.set(BedrockProtocol.MAPPINGS, previous);
++        }
++    }
++
++    private static final class Fixture implements AutoCloseable {
++        private final UserConnection user = mock(UserConnection.class);
++        private final ClientPlayerEntity player = mock(ClientPlayerEntity.class);
++        private final GameSessionStorage session = mock(GameSessionStorage.class, CALLS_REAL_METHODS);
++        private final AtomicBoolean dead = new AtomicBoolean();
++        private GameRulesStorage rules;
++        private final List<String> messages = new ArrayList<>();
++        private final MockedStatic<PacketWrapper> packets = mockStatic(PacketWrapper.class);
++        private final TestProtocol protocol = new TestProtocol();
++
++        private Fixture() throws Exception {
++            final var entities = mock(EntityTracker.class);
++            final var info = mock(ProtocolInfo.class);
++            when(this.user.getProtocolInfo()).thenReturn(info);
++            when(info.getServerState()).thenReturn(State.PLAY);
++            this.rules = rules(this.user);
++            final var resources = mock(ResourcePackStorage.class);
++            final var texts = mock(TextDefinitions.class);
++            final Map<Class<?>, Object> storage = Map.of(EntityTracker.class, entities,
++                    GameSessionStorage.class, this.session, GameRulesStorage.class, this.rules,
++                    ResourcePackStorage.class, resources, ChannelStorage.class, new ChannelStorage());
++            when(this.user.get(any())).thenAnswer(call -> storage.get(call.getArgument(0)));
++            when(entities.getClientPlayer()).thenReturn(this.player);
++            when(entities.getEntityByRid(42L)).thenReturn(this.player);
++            when(this.player.javaId()).thenReturn(7);
++            when(this.player.isDead()).thenAnswer(call -> this.dead.get());
++            doAnswer(call -> {
++                this.dead.set((float) call.getArgument(0) <= 0);
++                return null;
++            })
++                    .when(this.player).setHealth(anyFloat());
++            when(resources.getTexts()).thenReturn(texts);
++            when(texts.lookup()).thenReturn(Function.identity());
++            this.packets.when(() -> PacketWrapper.create(ClientboundPackets26_3.PLAYER_COMBAT_KILL, this.user))
++                    .thenAnswer(call -> {
++                        final var output = spy(new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_COMBAT_KILL, null, this.user));
++                        doAnswer(send -> {
++                            final var buffer = Unpooled.buffer();
++                            try {
++                                output.writeToBuffer(buffer);
++                                assertEquals(ClientboundPackets26_3.PLAYER_COMBAT_KILL.getId(), Types.VAR_INT.readPrimitive(buffer));
++                                assertEquals(7, Types.VAR_INT.readPrimitive(buffer));
++                                final Tag reason = Types.TAG.read(buffer);
++                                this.messages.add(ProtocolConstants.JAVA_TEXT_COMPONENT_SERIALIZER
++                                        .deserializeNbtTree(reason).asUnformattedString());
++                                assertFalse(buffer.isReadable());
++                            } finally {
++                                buffer.release();
++                            }
++                            return null;
++                        }).when(output).send(BedrockProtocol.class);
++                        return output;
++                    });
++        }
++
++        private void showReason(final boolean show) {
++            this.rules.updateGameRules(new GameRule[]{new GameRule("showDeathMessages", false, show)});
++        }
++
++        private void info() throws Exception {
++            this.receive(ClientboundBedrockPackets.DEATH_INFO, buffer -> {
++                BedrockTypes.STRING.write(buffer, "Controlled death reason");
++                BedrockTypes.STRING_ARRAY.write(buffer, new String[0]);
++            });
++        }
++
++        private void death() throws Exception {
++            this.receive(ClientboundBedrockPackets.ENTITY_EVENT, buffer -> {
++                BedrockTypes.UNSIGNED_VAR_LONG.write(buffer, 42L);
++                Types.UNSIGNED_BYTE.write(buffer, (short) ActorEvent.DEATH.getValue());
++                BedrockTypes.VAR_INT.write(buffer, 0);
++                BedrockTypes.OPTIONAL_POSITION_3F.write(buffer, null);
++            });
++        }
++
++        private void receive(final ClientboundBedrockPackets type, final Consumer<ByteBuf> encode) throws Exception {
++            final var input = Unpooled.buffer();
++            try {
++                encode.accept(input);
++                final var packet = new PacketWrapperImpl(type, input, this.user);
++                final var mapping = this.protocol.mapping(packet);
++                mapping.applyType(packet);
++                mapping.handler().handle(packet);
++                assertTrue(packet.isCancelled());
++                assertFalse(input.isReadable());
++            } finally {
++                input.release();
++            }
++        }
++
++        @Override
++        public void close() {
++            this.packets.close();
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            HudPackets.register(this);
++            EntityPackets.register(this);
++        }
++
++        private PacketMapping mapping(final PacketWrapper packet) {
++            return this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++        }
++    }
++
++}
+-- 
+2.56.0
+

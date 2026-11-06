@@ -11,6 +11,11 @@ import { sync } from "./stack.ts";
 import { prepareViaFabricPlus } from "./viafabricplus.ts";
 import { verifyBuiltinUi, verifyEmbeddedBuiltinUi, builtinUiResource } from "./bedrock-ui.ts";
 import {
+  builtinOreUiResource,
+  verifyBuiltinOreUi,
+  verifyEmbeddedBuiltinOreUi,
+} from "./bedrock-oreui.ts";
+import {
   verifyBuiltinAssets,
   verifyEmbeddedBuiltinAssets,
   builtinAssetsResource,
@@ -46,6 +51,7 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     return [`-PbedrockBuiltinUi=${path}`, `-PbedrockBuiltinImages=${images}`];
   }
   await verifyBuiltinAssets(join(directory, builtinAssetsResource), version);
+  await verifyBuiltinOreUi(join(directory, builtinOreUiResource), version);
   return [`-PbedrockBuiltinAssets=${directory}`];
 }
 
@@ -152,6 +158,13 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
       ),
     );
     if (id === "viafabricplus-bedrock") {
+      yield* Effect.promise(() =>
+        verifyEmbeddedBuiltinOreUi(
+          artifact,
+          join(root, "assets", "bedrock", version, builtinOreUiResource),
+          version,
+        ),
+      );
       yield* Effect.promise(() =>
         verifyEmbeddedBuiltinAssets(
           artifact,
