@@ -17,21 +17,15 @@ Consume effects and canonical inventory counts remain server-owned.
 Admitted food sets `StartUsingItem` even without an optional food tag.
 
 `COMPLETED_USING_ITEM` supplies a signed item ID and a use method.
-Matching held-item completions produce Java's `USE_ITEM_COMPLETE` event without changing canonical inventory counts. The [client completion evidence](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md) covers matching inventory refreshes before that acknowledgment.
-Replaced items and methods outside zero through sixteen cannot complete the current use.
-The patch body retains the versioned completion-handler evidence and current admission rationale.
+Core forwards matching held-item notifications as Java's `USE_ITEM_COMPLETE` event without changing canonical inventory counts.
+It rejects replaced items and methods outside zero through sixteen.
+The integrated Bedrock client completes its local cycle independently and ignores that translated notification.
+The [client lifecycle evidence](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md) covers inventory refreshes, suppressed and late acknowledgments, release, and zero-duration food.
+The patch body retains the versioned handler evidence and admission rationale.
 
-Local food completion still depends on Java receiving `USE_ITEM_COMPLETE`.
-Controlled 1.26.60.5/BDS 1.26.60.6 comparisons expose two remaining stalls: an empty inventory refresh immediately before completion, and deliberate omission of completion acknowledgments.
-Both installed Java routes consume one bread, then keep the local cycle active at zero ticks and hunger at fifteen until release. Native consumes both breads and reaches twenty under the same controls.
-Release and another press resume Java feeding.
-These declared relay mutations reproduce the failure state; they do not establish the cause of the original live report or ordinary transport loss.
-
-Current native handler inspection resolves packet 142 through dispatcher `0x1423a84a0`, slot `0x4f8`, to handler `0x146b9dcd0` in the verified 1.26.60.5 executable.
-It resolves the packet item through the registry, checks the method range, and emits an actor-use event independently of the selected inventory slot.
-Separate runtime traces resolve the event dispatcher and its four registered listeners in this fixture. The native omission control runs without a debugger attached.
-This establishes that the acknowledgment is unnecessary for the observed native continuation. The local completion trigger and its interaction with inventory updates still need tracing.
-Port that lifecycle before broadening Java completion forwarding; an old acknowledgment must not end a newer use cycle.
+Native 1.26.60.5 consumes food without packet 142 and continues local use attempts while server authority is delayed.
+Its packet handler resolves the item registry and emits an actor-use notification independently of the selected inventory slot.
+These declared controls establish acknowledgment independence. They do not establish the cause of the original live report or ordinary transport loss.
 
 ## Native evidence
 
@@ -58,7 +52,6 @@ Native controls establish the combined behavior for these fixtures; they do not 
 
 Seventeen focused tests cover installed component retention, constructor-specific admission, Java component wire properties, difficulty changes, food-use flags, offhand resynchronization, and completion boundaries.
 Admission tests retain the held quantity and verify refused-use payloads with `StartUsingItem` clear.
-The full four-project build passes 3,299 tests, with 325 skipped and no failures or errors.
 
 Installed direct and ViaProxy controls cover eleven cases each.
 Both routes match the selected native admission, hunger, timed consumption, and zero-duration outcomes.
@@ -82,7 +75,7 @@ Other initial use families and live entity transitions still need native compari
 Presence of `StartUsingItem` is verified; exact packet phase counts and complete cycle timing remain open.
 
 Competing non-food use handlers, other consumable animations and effects, ability exceptions, and all inventory authority modes need further comparison.
-Late completion for a new use of the same item also needs verification.
+The selected one-second late acknowledgment control passes on both integrated Java routes. Broader consumable timing still needs comparison.
 The original intermittent animation-without-feeding report remains open.
 
 This patch remains deferred behind [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).

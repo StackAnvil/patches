@@ -50,9 +50,21 @@ Both definitions use the same Java paper carrier. Local use now checks the nativ
 Count and unrelated component updates preserve the use cycle for the same definition.
 `BedrockUsedItemTest` covers these identity boundaries and Java fallback.
 
-A controlled protocol-2225 comparison duplicates the latest matching inventory content immediately before item-use completion on Bedrock 1.26.60.5 and BDS 1.26.60.6.
-Native completes consumption with that refresh. The previous Java client releases the cycle without consumption effects because the held stack is a different object.
-Completion now uses the same native definition check as active use.
-Installed direct and ViaProxy controls observe consumption effects with distinct active and held stack objects, including the final item, and settle with authoritative hunger, an empty hand, and inactive use.
-The Java observer adds logging without gameplay writes. The duplicated packets are declared fixture inputs.
-The [food lifecycle controls](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) record remaining stalls when an inventory refresh suppresses completion or acknowledgments are omitted. Native local completion, late acknowledgment across a new cycle, and the original intermittent no-feeding report remain open.
+Local automatic use now completes when its countdown reaches zero.
+Bedrock 1.26.60.5 traces show local completion before server authority, plus a separate tick system that reconciles the using-item flag.
+The client applies both paths and keeps inventory counts and replacement items server-owned.
+Native predicts hunger during the local cycle. Server attributes later reconcile that prediction.
+Translated completion acknowledgments do not end the local cycle, so a late acknowledgment cannot finish a newer same-item use.
+Matching inventory refreshes retain the existing native definition check.
+
+Installed direct and ViaProxy controls consume two breads with an empty inventory refresh or suppressed completion acknowledgments.
+Both routes also consume two breads when acknowledgments arrive one second late, during the next use cycle.
+Early release consumes nothing. The final bread leaves an empty hand, and zero-duration custom food retains server-owned counts.
+A four-second pause of all server updates also preserves local hunger prediction and repeated use attempts before the inventory update arrives.
+Both routes settle at the server count and hunger after the flush.
+The observer records unchanged item counts across local completion. Completed physics samples contain no active zero-counter use.
+These controls use declared relay mutations and an observer that adds logging without gameplay writes.
+
+The affected full-stack build passes 3,521 tests, with 332 skipped and no failures or errors.
+The broader animation, movement timing, consumable effects, and original intermittent no-feeding report remain open.
+See the [food admission evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) for core behavior and its limits.
