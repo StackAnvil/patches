@@ -17,7 +17,11 @@ Sixteen original mode/size controls establish this selection. Eight executions o
 Body text therefore crosses the default threshold from 8 to 16 pixels at GUI scales 1 and 2.
 The image regression covers the threshold, face opt-out, independent shaping size, and distance-cache reuse.
 Installed automatic and explicitly resolved modes produce identical pixels in seven regions under both filters, including the 8- and 10-pixel probes.
-Native glyph-kind production, active view overrides, and final native draw bindings remain unverified.
+Active Bedrock 1.26.60.5 death labels confirm automatic mode and the 52-pixel CPU distance cache at display sizes 16, 20, and 32.
+Retained native records match Java bearings and image dimensions for all 76 compared glyph instances.
+Seventy-four positions match bit for bit. Two reason-glyph instances differ by one float rounding step.
+Five representative Seven-font distance images match the original native parser, rasterizer, and distance converter byte for byte.
+Actual atlas texels, sampler bindings, material attribution, and final compositing remain unverified.
 Original Bedrock 1.26.60.5 controls establish selected shaping, raster, distance, ordinary run coverage, and supplied-position arithmetic.
 Prepared runs retain vertical face metrics independently of the glyph cache size.
 Native line boxes preserve negative leading and fractional content origins.
