@@ -1,4 +1,4 @@
-From dea86a255af3756eab39e1ea04214ea333b4fd70 Mon Sep 17 00:00:00 2001
+From 0c8f74cbda790b4f2d9a16a9e1ecab5cbc5c7e82 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -475,6 +475,11 @@ Java's extra offset. A real-renderer regression reproduces that drop at
 non-unit scale and verifies native animated/visibility-only trees and
 fallback ownership. This establishes root anchoring, not complete body
 rotation, movement timing, or the original custom-skin report.
+
+Cache native air-continuation metadata with the existing immutable item
+context. Keep an absent field distinct from false so older proxy cores
+retain their prior input fallback. Replaced custom data selects a new
+snapshot without changing a previously cached predicate.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -493,7 +498,7 @@ rotation, movement timing, or the original custom-skin report.
  .../appearance/BedrockEmitterEvents.java      |   74 ++
  .../appearance/BedrockEmoteMessages.java      |  124 ++
  .../appearance/BedrockItemAnimation.java      |  193 +++
- .../appearance/BedrockItemMetadata.java       |   44 +
+ .../appearance/BedrockItemMetadata.java       |   45 +
  .../appearance/BedrockLevelSounds.java        |  164 +++
  .../bedrock/appearance/BedrockLimbSide.java   |   67 +
  .../appearance/BedrockMarketplaceAssets.java  |  330 +++++
@@ -624,7 +629,7 @@ rotation, movement timing, or the original custom-skin report.
  .../appearance/BedrockEmitterEventsTest.java  |  181 +++
  .../appearance/BedrockEmoteMessagesTest.java  |   94 ++
  .../appearance/BedrockItemAnimationTest.java  |  448 +++++++
- .../appearance/BedrockItemMetadataTest.java   |  102 ++
+ .../appearance/BedrockItemMetadataTest.java   |  107 ++
  .../appearance/BedrockLimbSideTest.java       |   89 ++
  .../appearance/BedrockMolangColorTest.java    |  110 ++
  .../bedrock/appearance/BedrockMolangTest.java |  231 ++++
@@ -689,7 +694,7 @@ rotation, movement timing, or the original custom-skin report.
  .../render/BedrockViewBobbingTest.java        |   93 ++
  .../render/BedrockWalkingAnimationTest.java   |   65 +
  .../render/NativeActorColorPayloadTest.java   |   50 +
- 213 files changed, 25267 insertions(+), 16 deletions(-)
+ 213 files changed, 25273 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -3858,10 +3863,10 @@ index 0000000..a6c7571
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadata.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadata.java
 new file mode 100644
-index 0000000..906372b
+index 0000000..35c9f1b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadata.java
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,45 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3876,8 +3881,8 @@ index 0000000..906372b
 +import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
 +
 +/** Decodes immutable native item components once, independently of live item use state. */
-+public record BedrockItemMetadata(String identifier, ItemAnimationData animation) {
-+    private static final BedrockItemMetadata EMPTY = new BedrockItemMetadata(null, ItemAnimationData.EMPTY);
++public record BedrockItemMetadata(String identifier, ItemAnimationData animation, Boolean retainsAirUse) {
++    private static final BedrockItemMetadata EMPTY = new BedrockItemMetadata(null, ItemAnimationData.EMPTY, null);
 +    // Weak keys use identity comparison and avoid hashing the full tag on every render query.
 +    // Values contain only immutable strings/numbers, never the component or its NBT tree.
 +    private static final Map<CustomData, BedrockItemMetadata> CACHE = new MapMaker().weakKeys().makeMap();
@@ -3899,7 +3904,8 @@ index 0000000..906372b
 +                new ItemAnimationData.KineticWeapon(value.getIntOr("delay", 0),
 +                        value.getIntOr("damage_duration", 0), value.getIntOr("knockback_duration", 0),
 +                        value.getIntOr("dismount_duration", 0))).orElse(null);
-+        return new BedrockItemMetadata(identifier, new ItemAnimationData(useDuration, tags, swingTicks, kinetic));
++        return new BedrockItemMetadata(identifier, new ItemAnimationData(useDuration, tags, swingTicks, kinetic),
++                tag.getBoolean(ItemDataRewriter.BEDROCK_AIR_USE_TAG).orElse(null));
 +    }
 +
 +    public static void clear() {
@@ -18447,10 +18453,10 @@ index 0000000..a2d8350
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadataTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadataTest.java
 new file mode 100644
-index 0000000..89c8429
+index 0000000..518132c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadataTest.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,107 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -18506,9 +18512,12 @@ index 0000000..89c8429
 +        final var replacement = data.update(tag -> {
 +            tag.putString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG, "fixture:replacement");
 +            tag.putInt(ItemDataRewriter.BEDROCK_USE_DURATION_TAG, 34);
++            tag.putBoolean(ItemDataRewriter.BEDROCK_AIR_USE_TAG, true);
 +        });
 +        assertEquals("fixture:replacement", BedrockItemMetadata.get(replacement).identifier());
 +        assertEquals(34, BedrockItemMetadata.get(replacement).animation().useDurationTicks());
++        assertEquals(Boolean.TRUE, BedrockItemMetadata.get(replacement).retainsAirUse());
++        assertEquals(Boolean.FALSE, first.retainsAirUse());
 +        assertSame(first, BedrockItemMetadata.get(data));
 +        assertEquals(72, first.animation().useDurationTicks());
 +        BedrockItemMetadata.clear();
@@ -18518,6 +18527,7 @@ index 0000000..89c8429
 +    @Test
 +    void missingAndInvalidNativeMetadataKeepJavaFallbacks() {
 +        assertNull(BedrockItemMetadata.get(null).identifier());
++        assertNull(BedrockItemMetadata.get(null).retainsAirUse());
 +        assertEquals(ItemAnimationData.EMPTY, BedrockItemMetadata.get(null).animation());
 +        final var malformed = new CompoundTag();
 +        malformed.putInt(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG, 7);
@@ -18531,6 +18541,7 @@ index 0000000..89c8429
 +        final var tag = new CompoundTag();
 +        tag.putString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG, "fixture:spear");
 +        tag.putInt(ItemDataRewriter.BEDROCK_USE_DURATION_TAG, 72);
++        tag.putBoolean(ItemDataRewriter.BEDROCK_AIR_USE_TAG, false);
 +        final var animation = new CompoundTag();
 +        final var tags = new ListTag();
 +        tags.add(StringTag.valueOf("minecraft:is_spear"));

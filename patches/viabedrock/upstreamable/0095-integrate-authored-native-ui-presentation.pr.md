@@ -14,6 +14,10 @@ Prerequisites:
 
 - viabedrock/0054-render-native-block-state-geometry-and-materials.patch: Land canonical block auxiliary descriptors and restriction lookup before native subtype-aware merge checks.
 
+- viabedrock/0078-preserve-native-identifiers-in-java-item-data.patch: Provide immutable native item predicates and their Java item-context transport.
+
+Native item predicates belong to the constructed receiver. Built-in Snowballs retain their constructor-installed throwable component when declarations omit it. Data-driven replacement of that name starts from its new class. Numeric lookup and retained definitions remain separate during item-ID collisions. `ItemRegistryAirUseTest` covers these boundaries.
+
 ## Validation and remaining limits
 
 Regression coverage includes `NativeItemNamesTest`, `NativeItemStackingTest`, `NativeContainerLegacyActionsTest`, `NativeContainerTransferTest`.
