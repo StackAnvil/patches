@@ -29,8 +29,10 @@ A controlled protocol-2225 replay uses the existing official 1.26.60.5-derived b
 Later corrections compare with the latest retained state before physics, after earlier authoritative commands.
 The original rewind baseline remains separate, so repeating a replay does not accumulate command effects.
 The regression fails before this change when a later correction matches the original prediction and verifies restoration afterward.
-An unchanged installed-client diagnostic applies two declared Java correction commands to one retained frame. The previous artifact leaves a four-block error; the fixed artifact restores the original position exactly.
-The full add-on build passes 1,399 tests with 154 skipped. Native BDS admission, packet pairing, and native trajectories remain outside this diagnostic.
+Installed-client controls send two declared protocol-2225 correction packets for the same input tick through core translation, Java payload/position pairing, and physical replay.
+On both direct and ViaProxy routes, the previous artifact leaves a four-block error; the fixed artifact restores the original position exactly.
+A read-only client observer checks the shared target frame and the second correction's match with the original prediction.
+The full add-on build passes 1,399 tests with 154 skipped. The wire controls use synthetic server corrections; native BDS admission and native trajectories remain unverified.
 This retained-state fix does not establish the cause of the reported pearl/wind rollback loop.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
