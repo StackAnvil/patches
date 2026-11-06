@@ -1,4 +1,4 @@
-From 1f4555ad78a1d5403fdb8fc534a2d20974ce9abd Mon Sep 17 00:00:00 2001
+From 25c6f9b72ae2d65914d190321845b8d30e60dc95 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -910,6 +910,13 @@ reproduce the former manufactured pointer leave and require source restoration
 without sending another item command. Unchanged hover does not rebuild scenes.
 Storage admission and intervening native controller/model work remain explicit
 probe boundaries; these controls do not establish complete controller parity.
+
+Guard resize and GUI-scale rebuilds with the same ordinary-menu fallback
+used for live presentation updates. A retired presentation can be observed
+before its next tick cleanup; rebuilding it must not escape through
+Screen.resize. Retain the connection and exact menu guard so fallback
+preserves the cursor and cannot restore a menu that has already changed.
+A full-screen resize regression covers both ownership outcomes.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockInventorySounds.java    |   35 +
@@ -924,7 +931,7 @@ probe boundaries; these controls do not establish complete controller parity.
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1561 +++++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1565 +++++++++++++++++
  .../container/BedrockNativeContainers.java    |  283 +++
  .../container/BedrockNativeCooking.java       |  147 ++
  .../BedrockNativePlayerInventory.java         |  191 ++
@@ -976,7 +983,7 @@ probe boundaries; these controls do not establish complete controller parity.
  .../viafabricplus-bedrock/lang/en_us.json     |    1 +
  .../viafabricplus-bedrock.mixins.json         |    9 +-
  .../BedrockInventorySoundsTest.java           |   72 +
- .../BedrockNativeContainerScreenTest.java     |  760 ++++++++
+ .../BedrockNativeContainerScreenTest.java     |  826 +++++++++
  .../container/NativeContainerButtonTest.java  |  280 +++
  .../container/NativeContainerDrawsTest.java   |   70 +
  .../NativeContainerGeometryTest.java          |  407 +++++
@@ -1000,7 +1007,7 @@ probe boundaries; these controls do not establish complete controller parity.
  .../container/NativePlayerScreenTest.java     |  947 ++++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 ++
  .../PlayerInventoryScreenLifecycleTest.java   |  139 ++
- 89 files changed, 13044 insertions(+), 62 deletions(-)
+ 89 files changed, 13114 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockInventorySounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
@@ -1597,10 +1604,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..ef59a9f
+index 0000000..e192cc9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1561 @@
+@@ -0,0 +1,1565 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1834,9 +1841,13 @@ index 0000000..ef59a9f
 +    @Override
 +    protected void repositionElements() {
 +        final boolean focused = this.search != null && this.getFocused() == this.search;
-+        super.repositionElements();
-+        if (focused && this.searchInput && this.search.visible && this.search.active && this.current() && !this.closing())
-+            this.focusSearch();
++        try {
++            super.repositionElements();
++            if (focused && this.searchInput && this.search.visible && this.search.active && this.current() && !this.closing())
++                this.focusSearch();
++        } catch (final RuntimeException unsupported) {
++            this.fallback(unsupported);
++        }
 +    }
 +
 +    private void focusSearch() {
@@ -7752,10 +7763,10 @@ index 0000000..80bc87a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java
 new file mode 100644
-index 0000000..be5c741
+index 0000000..b0e6986
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreenTest.java
-@@ -0,0 +1,760 @@
+@@ -0,0 +1,826 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7770,6 +7781,7 @@ index 0000000..be5c741
 +import com.google.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
 +import com.mojang.blaze3d.platform.InputConstants;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiLayout;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiPresentation;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiScene;
@@ -7781,6 +7793,8 @@ index 0000000..be5c741
 +import java.util.concurrent.atomic.AtomicReference;
 +import net.minecraft.SharedConstants;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.client.InputType;
++import net.minecraft.client.GameNarrator;
 +import net.minecraft.client.gui.Font;
 +import net.minecraft.client.gui.Gui;
 +import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -7816,6 +7830,7 @@ index 0000000..be5c741
 +import net.raphimc.viabedrock.api.resourcepack.ui.ContainerUi;
 +import org.joml.Matrix3x2f;
 +import org.joml.Matrix3x2fStack;
++import org.apache.logging.log4j.Logger;
 +import org.junit.jupiter.api.Test;
 +
 +final class BedrockNativeContainerScreenTest {
@@ -8390,6 +8405,68 @@ index 0000000..be5c741
 +                final var active = BedrockNativeContainerScreen.class.getDeclaredField("activated");
 +                active.setAccessible(true);
 +                assertFalse(active.getBoolean(screen));
++            }
++        }
++    }
++
++    @Test
++    void resizingARetiredPresentationRestoresOnlyItsStillOpenMenuAndCursor() throws Exception {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        if (!Items.IRON_INGOT.builtInRegistryHolder().areComponentsBound()) Items.IRON_INGOT.builtInRegistryHolder().bindComponents(DataComponentMap.EMPTY);
++        for (final boolean sameMenu : List.of(true, false)) {
++            final var player = mock(LocalPlayer.class);
++            final var inventory = new Inventory(player, new EntityEquipment());
++            final var menu = ChestMenu.threeRows(7, inventory);
++            final var carried = new ItemStack(Items.IRON_INGOT, 3);
++            menu.setCarried(carried);
++            player.containerMenu = menu;
++            final var ordinary = mock(AbstractContainerScreen.class);
++            when(ordinary.getMenu()).thenReturn(menu);
++            final var game = mock(Minecraft.class);
++            when(game.getLastInputType()).thenReturn(InputType.MOUSE);
++            when(game.getNarrator()).thenReturn(mock(GameNarrator.class));
++            game.player = player;
++            game.gameMode = mock(MultiPlayerGameMode.class);
++            final var gui = mock(Gui.class);
++            final var guiField = Minecraft.class.getField("gui");
++            guiField.setAccessible(true);
++            guiField.set(game, gui);
++            final var owner = mock(ClientPacketListener.class);
++            final var connection = mock(Connection.class);
++            when(owner.getConnection()).thenReturn(connection);
++            when(connection.isConnected()).thenReturn(true);
++            when(game.getConnection()).thenReturn(owner);
++            final var current = new AtomicBoolean(true);
++            final var implementation = mock(ViaFabricPlusBedrock.class);
++            when(implementation.logger()).thenReturn(mock(Logger.class));
++            try (final var singleton = mockStatic(Minecraft.class);
++                 final var entrypoint = mockStatic(ViaFabricPlusBedrock.class)) {
++                singleton.when(Minecraft::getInstance).thenReturn(game);
++                entrypoint.when(ViaFabricPlusBedrock::impl).thenReturn(implementation);
++                final var presentation = new NativeContainerPresentation(program(), ContainerUi.Kind.CHEST_3_ROWS, List.of());
++                final var screen = new BedrockNativeContainerScreen(owner, ordinary, inventory, Component.empty(),
++                        presentation, false, 1, () -> 0, current::get);
++                final var minecraft = Screen.class.getDeclaredField("minecraft");
++                minecraft.setAccessible(true);
++                minecraft.set(screen, game);
++                final var font = Screen.class.getDeclaredField("font");
++                font.setAccessible(true);
++                font.set(screen, mock(Font.class));
++                when(gui.screen()).thenReturn(screen);
++                try {
++                    screen.init(640, 320);
++                    current.set(false);
++                    if (!sameMenu) player.containerMenu = ChestMenu.threeRows(8, inventory);
++                    assertDoesNotThrow(() -> screen.resize(512, 300));
++                    if (sameMenu) verify(game).setScreenAndShow(ordinary);
++                    else verify(game, never()).setScreenAndShow(any());
++                    assertSame(carried, menu.getCarried());
++                    assertEquals(3, menu.getCarried().getCount());
++                    verify(player, never()).closeContainer();
++                } finally {
++                    screen.discard();
++                }
 +            }
 +        }
 +    }

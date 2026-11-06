@@ -43,6 +43,10 @@ Official Bedrock 1.26.60.5 local-world controls retain active Creative and Survi
 A Creative Ctrl+A selection survives a GUI-scale change. An inactive editor stays inactive through resizing.
 The first Escape removes the highlight; the next closes the inventory.
 Full Screen initialization and resize regressions preserve the same editor, registration, selection replacement, and inactive state.
+Resize and GUI-scale rebuild failures use the ordinary-menu fallback, including presentation retirement before tick cleanup.
+The resize regression retains the cursor stack and restores only the same still-open menu; it cannot revive a replacement menu.
+An installed direct control retires a real player presentation during resize and retains its menu and three-item cursor through fallback.
+Physical pickup and placement receive two successful BDS replies, and reopening retains all three items. This injected retirement does not reproduce the original inventory-background report.
 Installed direct and ViaProxy controls use ordinary typing and retain a Ctrl+A selection through an actual window resize.
 Both routes preserve inactive search, resume typing after Escape and blank clicks, and stop typing after recipe and slot selection.
 A read-only observer confirms one registered editor and SDL input ownership throughout these transitions.
