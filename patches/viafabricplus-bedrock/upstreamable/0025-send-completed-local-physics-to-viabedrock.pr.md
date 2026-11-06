@@ -37,6 +37,13 @@ Retained states show that the earlier correction applies and the later pair rest
 The wire controls use synthetic server corrections; native BDS admission and native trajectories remain unverified.
 This retained-state fix does not establish the cause of the reported pearl/wind rollback loop.
 
+Owned BDS 1.26.60.6 water-boat controls cover forward movement, a server impulse, an authoritative vehicle teleport, dismount, and remount on both routes.
+SDK water probes admit the fixture before mounted input.
+Real vehicle corrections replace historical positions before physics while separate rewind baselines remain available.
+Completed vehicle frame IDs advance, and the same vehicle returns under a fresh context epoch after dismount.
+Horizontal client and server endpoints settle within 0.0001 blocks in the recorded quiet windows.
+These controls use server mounting. Trajectories from the native client, horses, other seats, and adverse networks remain unverified.
+
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
 Fresh Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover walking and falling through Survival, Spectator, and return transitions. Native keeps larger downward motion on Spectator entry and applies flight drag; the small grounded residue clears. Java 26.3's local player-list callback instead zeros vertical motion, producing a pause on both Java routes before correction. Suppress that callback's motion write for Bedrock and keep the native boundary in `BedrockPlayerModes`. Installed direct and proxy controls check retained fall motion, the grounded boundary, and eventual landing. Both native and Java receive corrections in these controls. Packet delivery, input, camera angle, and tick phases differ, so exact trajectories and transition timing remain unverified.
@@ -100,7 +107,6 @@ A separate negotiated notification now stops the current use cycle without local
 Native predicts hunger through feedback before local completion. The server callback skips that feedback.
 An attribute-omission control leaves five hunger and seven bread after local completion and a server callback during the next cycle.
 
-The current CubeConverter, core, proxy, and local Linux add-on builds pass 3,538 tests, with 333 skipped and no failures or errors.
 Release packaging remains unverified because the other five native shaping libraries are unavailable locally.
 The broader animation, movement timing, consumable effects, and original intermittent no-feeding report remain open.
 See the [food admission evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) for core behavior and its limits.
