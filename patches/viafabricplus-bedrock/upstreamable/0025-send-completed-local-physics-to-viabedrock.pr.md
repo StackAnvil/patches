@@ -65,6 +65,13 @@ Both routes settle at the server count and hunger after the flush.
 The observer records unchanged item counts across local completion. Completed physics samples contain no active zero-counter use.
 These controls use declared relay mutations and an observer that adds logging without gameplay writes.
 
-The affected full-stack build passes 3,521 tests, with 332 skipped and no failures or errors.
+Correction replay reads recorded food eligibility for movement and preserves the live hunger value, including meals predicted after a recorded frame.
+The focused regression repeats historical sprint checks after two later meals.
+Matched native, direct, and ViaProxy controls cover walking, moving consumption, the final item, and an ordered 300 ms delay of server updates.
+Native also receives corrections at use transitions, so correction counts alone do not establish a client defect.
+The installed Java controls preserve hunger, saturation, use state, countdown, and item counts across actual resimulation without repeating consumption callbacks.
+Correction counts and endpoint distances still differ between routes. These controls establish hunger ownership, not complete trajectory parity.
+
+The affected full-stack build passes 3,522 tests, with 332 skipped and no failures or errors.
 The broader animation, movement timing, consumable effects, and original intermittent no-feeding report remain open.
 See the [food admission evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) for core behavior and its limits.

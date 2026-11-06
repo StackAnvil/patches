@@ -1,4 +1,4 @@
-From d2902a40d81c155683f047a860215282480ace3d Mon Sep 17 00:00:00 2001
+From 55284d28a46df46100cd93fd6136691bf2a471a5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -716,6 +716,19 @@ before/after control observes the actual completion and consumable calls,
 including distinct stack objects with equal counts. This establishes a
 completion-effects boundary, not the original intermittent no-feeding
 report or late completion across a new use cycle.
+
+Keep live hunger outside reversible physical snapshots. Current protocol
+2225 moving-food controls expose both installed Java routes losing five
+hunger during a delayed correction replay, while counts and local use
+counters stay unchanged. The FOOD snapshot restores a value from before
+local consumption, whose prediction must run only once.
+
+Record FoodData.hasEnoughFood at the same live phase as item-use input.
+Read that observation for historical exhaustive-movement eligibility,
+while retaining the separately replayed ability bypass. Remove the hunger
+setter from physical capture so correction replay cannot discard later
+meals. The focused regression keeps two later hunger values intact across
+repeated historical sprint-eligibility queries.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  14 +
@@ -744,11 +757,11 @@ report or late completion across a new use cycle.
  .../movement/MixinLevelPhysicsReplay.java     |  25 +
  .../features/movement/MixinLivingEntity.java  | 170 ++++++
  .../movement/MixinLivingPhysicsState.java     | 145 +++++
- .../features/movement/MixinLocalPlayer.java   | 410 +++++++++++++-
+ .../features/movement/MixinLocalPlayer.java   | 413 +++++++++++++-
  .../movement/MixinMobEffectPhysicsState.java  |  18 +
  .../movement/MixinParticlePhysicsReplay.java  |  24 +
  .../movement/MixinPassengerPhysicsReplay.java |  39 ++
- .../mixin/features/movement/MixinPlayer.java  | 205 ++++++-
+ .../mixin/features/movement/MixinPlayer.java  | 215 ++++++-
  .../MixinPlayerCorrectionPacketListener.java  |  79 +++
  .../MixinPotentSulfurBlockEntity.java         |  44 ++
  .../movement/MixinSoundPhysicsReplay.java     |  23 +
@@ -791,7 +804,7 @@ report or late completion across a new use cycle.
  .../movement/replay/PhysicalInput.java        |  20 +
  .../movement/replay/PhysicalItemUse.java      |  21 +
  .../replay/PhysicalMovementCorrection.java    |  35 ++
- .../replay/PhysicalReplayContext.java         | 255 +++++++++
+ .../replay/PhysicalReplayContext.java         | 270 +++++++++
  .../replay/PhysicalReplayHistory.java         | 190 +++++++
  .../movement/replay/PhysicalState.java        | 140 +++++
  .../movement/replay/PhysicalStateAccess.java  |  43 ++
@@ -818,13 +831,13 @@ report or late completion across a new use cycle.
  .../movement/replay/PhysicalItemUseTest.java  |  41 ++
  .../replay/PhysicalMotionReplayTest.java      | 102 ++++
  .../PhysicalMovementCorrectionTest.java       |  80 +++
- .../replay/PhysicalReplayContextTest.java     |  90 +++
+ .../replay/PhysicalReplayContextTest.java     | 114 ++++
  .../replay/PhysicalReplayHistoryTest.java     | 272 +++++++++
  .../movement/replay/PhysicalStateTest.java    | 124 ++++
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 107 files changed, 8529 insertions(+), 74 deletions(-)
+ 107 files changed, 8581 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -2506,10 +2519,10 @@ index 0000000..3cad3f3
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index 0e466e5..28c4928 100644
+index 0e466e5..64b243a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,428 @@
+@@ -21,22 +21,431 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2837,9 +2850,12 @@ index 0e466e5..28c4928 100644
 +    @WrapMethod(method = "aiStep")
 +    private void useRecordedItemMovementState(final Operation<Void> original) {
 +        if (!PhysicalReplayContext.replaying()) {
-+            if (PhysicalReplayContext.recording()) PhysicalReplayContext.recordItemUse((LocalPlayer) (Object) this,
-+                    new PhysicalItemUse(this.startedUsingItem, this.usingItemHand, this.useItemRemaining,
-+                            (byte) (this.entityData.get(DATA_LIVING_ENTITY_FLAGS) & 3), this.useItem));
++            if (PhysicalReplayContext.recording()) {
++                PhysicalReplayContext.recordItemUse((LocalPlayer) (Object) this,
++                        new PhysicalItemUse(this.startedUsingItem, this.usingItemHand, this.useItemRemaining,
++                                (byte) (this.entityData.get(DATA_LIVING_ENTITY_FLAGS) & 3), this.useItem));
++                PhysicalReplayContext.recordFoodEligibility(this.getFoodData());
++            }
 +            original.call();
 +            return;
 +        }
@@ -3040,10 +3056,10 @@ index 0000000..3dda60f
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-index 8d10241..5ce8ab9 100644
+index 8d10241..9772b7c 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-@@ -21,37 +21,120 @@
+@@ -21,37 +21,131 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -3053,10 +3069,14 @@ index 8d10241..5ce8ab9 100644
  import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 -import com.llamalad7.mixinextras.sugar.Local;
 -import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockFlightMotion;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockCollisionContacts;
 +import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalState;
++import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalReplayContext;
++import net.minecraft.world.food.FoodData;
 +import net.minecraft.world.entity.ai.attributes.Attributes;
 +import net.minecraft.util.Mth;
 +import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalStateAccess;
@@ -3093,13 +3113,21 @@ index 8d10241..5ce8ab9 100644
 -public abstract class MixinPlayer extends Avatar {
 +public abstract class MixinPlayer extends Avatar implements IBedrockFlightMotion, PhysicalStateAccess.Player {
 +
++    @WrapOperation(method = "hasEnoughFoodToDoExhaustiveManoeuvres", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/food/FoodData;hasEnoughFood()Z"))
++    private boolean retainHistoricalFoodEligibility(final FoodData food, final Operation<Boolean> original) {
++        final boolean live = original.call(food);
++        return (Object) this instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()
++                ? PhysicalReplayContext.foodEligibility(food, live) : live;
++    }
++
 +    @WrapWithCondition(method = "handleEntityEvent", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;completeUsingItem()V"))
 +    private boolean retainLocalUseAcrossServerAcknowledgment(final Player player) {
 +        // Native ActorUseItem is a notification. A delayed acknowledgment must not complete a newer cycle.
 +        return !(player instanceof LocalPlayer) || !BedrockInputPermissions.isBedrockConnection();
 +    }
-+
-+    @Unique
+ 
+     @Unique
+-    private int viaFabricPlusBedrock$ticksSinceSwimming;
 +    private Vec3 viaFabricPlusBedrock$flightMotion;
 +
 +    @Unique
@@ -3110,9 +3138,8 @@ index 8d10241..5ce8ab9 100644
 +
 +    @Unique
 +    private float viaFabricPlusBedrock$flightInputZ;
- 
-     @Unique
--    private int viaFabricPlusBedrock$ticksSinceSwimming;
++
++    @Unique
 +    private boolean viaFabricPlusBedrock$flightInputPrepared;
 +
 +    @Override
@@ -3171,7 +3198,7 @@ index 8d10241..5ce8ab9 100644
      @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/core/BlockPos;containing(DDD)Lnet/minecraft/core/BlockPos;"))
      private BlockPos modifyWaterAbovePosition(final double x, final double y, final double z) {
          if (BedrockInputPermissions.isBedrockConnection()) {
-@@ -63,21 +146,16 @@ public abstract class MixinPlayer extends Avatar {
+@@ -63,21 +157,16 @@ public abstract class MixinPlayer extends Avatar {
  
      @WrapWithCondition(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V", ordinal = 0))
      private boolean preventSwimmingMotionWhenJumping(final Player instance, final Vec3 movement) {
@@ -3198,7 +3225,7 @@ index 8d10241..5ce8ab9 100644
              this.setDeltaMovement(this.getDeltaMovement().x(), 0, this.getDeltaMovement().z());
          }
      }
-@@ -88,9 +166,20 @@ public abstract class MixinPlayer extends Avatar {
+@@ -88,9 +177,20 @@ public abstract class MixinPlayer extends Avatar {
              return instance.isSwimming();
          }
  
@@ -3222,7 +3249,7 @@ index 8d10241..5ce8ab9 100644
              instance.setDeltaMovement(instance.getDeltaMovement().x(), 0, instance.getDeltaMovement().z());
              return false;
          }
-@@ -99,12 +188,82 @@ public abstract class MixinPlayer extends Avatar {
+@@ -99,12 +199,81 @@ public abstract class MixinPlayer extends Avatar {
      }
  
      @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V", ordinal = 1))
@@ -3294,7 +3321,6 @@ index 8d10241..5ce8ab9 100644
 +        BedrockPlayerModes.captureAbility(player, state, PhysicsField.WALKING_SPEED, abilities.getWalkingSpeed(), abilities::setWalkingSpeed);
 +        state.capture(PhysicsField.JUMP_TRIGGER, this.jumpTriggerTime, value -> this.jumpTriggerTime = value);
 +        state.capture(PhysicsField.WAS_UNDERWATER, this.wasUnderwater, value -> this.wasUnderwater = value);
-+        state.capture(PhysicsField.FOOD, player.getFoodData().getFoodLevel(), player.getFoodData()::setFoodLevel);
 +        state.capture(PhysicsField.FLIGHT_MOTION, this.viaFabricPlusBedrock$flightMotion, value -> this.viaFabricPlusBedrock$flightMotion = value);
 +        state.capture(PhysicsField.FLIGHT_FRICTION, this.viaFabricPlusBedrock$flightFriction, value -> this.viaFabricPlusBedrock$flightFriction = value);
 +        state.capture(PhysicsField.FLIGHT_INPUT_X, this.viaFabricPlusBedrock$flightInputX, value -> this.viaFabricPlusBedrock$flightInputX = value);
@@ -3304,7 +3330,7 @@ index 8d10241..5ce8ab9 100644
 +
 +    private enum PhysicsField {
 +        FLYING, MAY_FLY, INVULNERABLE, INSTANT_BUILD, MAY_BUILD, FLYING_SPEED, WALKING_SPEED,
-+        JUMP_TRIGGER, WAS_UNDERWATER, FOOD, FLIGHT_MOTION, FLIGHT_FRICTION, FLIGHT_INPUT_X, FLIGHT_INPUT_Z, FLIGHT_PREPARED
++        JUMP_TRIGGER, WAS_UNDERWATER, FLIGHT_MOTION, FLIGHT_FRICTION, FLIGHT_INPUT_X, FLIGHT_INPUT_Z, FLIGHT_PREPARED
      }
  
  }
@@ -6294,10 +6320,10 @@ index 0000000..79ccffe
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java
 new file mode 100644
-index 0000000..cd6b4f9
+index 0000000..f822d62
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContext.java
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,270 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6308,6 +6334,7 @@ index 0000000..cd6b4f9
 +import net.minecraft.world.entity.Entity;
 +import net.minecraft.world.entity.EquipmentSlot;
 +import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.food.FoodData;
 +import net.minecraft.world.item.ItemStack;
 +import net.minecraft.network.Connection;
 +import net.minecraft.client.Minecraft;
@@ -6409,6 +6436,19 @@ index 0000000..cd6b4f9
 +        return state.step.itemUse.get(actor);
 +    }
 +
++    public static void recordFoodEligibility(final FoodData food) {
++        final PhysicalStep recording = RECORDING.get();
++        if (recording != null) recording.foodEligibility.put(food, food.hasEnoughFood());
++    }
++
++    public static boolean foodEligibility(final FoodData food, final boolean live) {
++        final State state = CURRENT.get();
++        if (state == null || state.step == null) return live;
++        final Boolean eligible = state.step.foodEligibility.get(food);
++        if (eligible == null) throw new IllegalStateException("Historical physics requested unrecorded food eligibility");
++        return eligible;
++    }
++
 +    public static ItemStack equipment(final LivingEntity actor, final EquipmentSlot slot) {
 +        final State state = CURRENT.get();
 +        if (state == null || state.step == null) return null;
@@ -6472,6 +6512,7 @@ index 0000000..cd6b4f9
 +        private final Set<Entity> predictedActors;
 +        private final Entity camera;
 +        private final Map<Entity, PhysicalItemUse> itemUse = new IdentityHashMap<>();
++        private final Map<FoodData, Boolean> foodEligibility = new IdentityHashMap<>();
 +        private final Map<LivingEntity, Map<EquipmentSlot, ItemStack>> equipment = new IdentityHashMap<>();
 +        private final java.util.List<PhysicalInput> inputs = new java.util.ArrayList<>();
 +        private final Map<Entity, PhysicalCollisionCache.Snapshot> collisionInputs = new IdentityHashMap<>();
@@ -9491,10 +9532,10 @@ index 0000000..a4ac827
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContextTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContextTest.java
 new file mode 100644
-index 0000000..bcdd69f
+index 0000000..f83bc99
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayContextTest.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,114 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9506,6 +9547,7 @@ index 0000000..bcdd69f
 +import net.minecraft.network.Connection;
 +import net.minecraft.network.protocol.PacketFlow;
 +import net.minecraft.world.entity.player.Input;
++import net.minecraft.world.food.FoodData;
 +import net.minecraft.world.phys.Vec2;
 +import org.junit.jupiter.api.Test;
 +
@@ -9518,6 +9560,29 @@ index 0000000..bcdd69f
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class PhysicalReplayContextTest {
++    @Test
++    void retainsHistoricalSprintEligibilityWithoutRewindingLaterMeals() {
++        final FoodData food = new FoodData();
++        food.setFoodLevel(5);
++        final var step = new PhysicalReplayContext.PhysicalStep(44, Set.of(), null, List.of(), () -> {
++            if (PhysicalReplayContext.replaying()) {
++                assertFalse(PhysicalReplayContext.foodEligibility(food, food.hasEnoughFood()));
++            } else {
++                PhysicalReplayContext.recordFoodEligibility(food);
++            }
++        });
++        step.record();
++        food.setFoodLevel(10);
++        try (var ignored = PhysicalReplayContext.enter(null, null, Set.of())) {
++            step.replay();
++            assertEquals(10, food.getFoodLevel());
++            food.setFoodLevel(20);
++            step.replay();
++            assertEquals(20, food.getFoodLevel());
++        }
++        assertTrue(PhysicalReplayContext.foodEligibility(food, food.hasEnoughFood()));
++    }
++
 +    @Test
 +    void confinesNetworkAndWorldOverridesToTheReplayThreadAndClosesOnFailure() throws Exception {
 +        assertFalse(PhysicalReplayContext.replaying());
