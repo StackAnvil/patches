@@ -56,6 +56,7 @@ Layout increment and decrement use the current native layout transition.
 Forced recipe-book layouts consume these actions without changing preferences.
 Layout changes retain the carried stack and wait for a matching profile snapshot.
 The current profile tab is separate from the controller's retained Inventory tab.
+Admitted pointer hosts use the shared [cursor-drop behavior](native-player-inventory.md#actions-and-presentation).
 
 The available bindings do not establish complete support for the default authored cooking program.
 Preserve ordinary controls when required native controls are unavailable.

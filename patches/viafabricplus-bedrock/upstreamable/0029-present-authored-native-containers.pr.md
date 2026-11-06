@@ -230,4 +230,8 @@ Geometry regressions reject an unowned clear control and preserve front-to-back 
 The matching native desktop controls establish these editor input lifetimes.
 Current native registration tables and callback controls also establish layout increment/decrement transitions.
 Screen regressions cover screen, panel, global-panel, and pointer-button dispatch, retained carried items, held input, matching snapshots, and forced-layout suppression.
-Complete default cooking screen admission and installed direct/proxy comparisons remain unfinished.
+Shared component events route cursor-drop input to the ordinary inventory request owner.
+Screen regressions cover player pointer and keyboard delivery, held presses, empty and pending cursors, Help transitions, and admitted cooking pointer hosts.
+Official 1.26.60.5 player and furnace desktop controls retain nine carried ingots through a blank-panel click, drop one on secondary input, and drop the remainder on primary input. An 800-millisecond secondary hold acts once.
+Installed direct and ViaProxy [player controls](../../../docs/native-player-inventory.md#actions-and-presentation) each receive three successful matched replies and retain the screen, menu, presentation, and total item count. Empty-cursor input adds no requests.
+Complete default cooking host input, screen admission, and installed direct/proxy cooking comparisons remain unfinished.

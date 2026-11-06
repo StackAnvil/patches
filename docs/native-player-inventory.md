@@ -124,6 +124,15 @@ Typing after Escape or a blank-area click resumes editing. Selecting another rec
 Retain the editor and its selection through screen rebuilds, viewport changes, and GUI-scale changes.
 An inactive editor must stay inactive after opening or resizing.
 
+Pointer cursor drops follow the authored host bindings.
+Primary input drops the carried stack. Secondary input drops one carried item per press.
+Holding secondary input does not repeat the drop. Blank recipe panels retain the cursor.
+Player pointer and keyboard drops share the ordinary inventory request owner.
+Empty cursors, pending native commands, and the transition into Help do not start a cursor-drop request.
+Admitted cooking pointer hosts use this same path. Partial container scopes retain ordinary controls when they require cursor drops.
+Installed direct and ViaProxy E-key controls each receive three successful replies: pickup of nine, secondary drop of one, and primary drop of eight.
+Both routes retain the same screen, menu, and presentation, conserve all nine ingots on the server, and send no further requests with an empty cursor.
+
 Bedrock 1.26.60.5 desktop drop keys follow the authored bindings for recipe, Creative catalog, and real inventory slots.
 With a held stack, Q and Shift+Q drop one carried item. Ctrl+Q leaves the cursor and pointed slot unchanged.
 With an empty cursor, Q drops one item from a real slot and Ctrl+Q drops its whole stack.
