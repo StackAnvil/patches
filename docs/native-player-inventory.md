@@ -124,11 +124,14 @@ Typing after Escape or a blank-area click resumes editing. Selecting another rec
 Retain the editor and its selection through screen rebuilds, viewport changes, and GUI-scale changes.
 An inactive editor must stay inactive after opening or resizing.
 
-Bedrock 1.26.60.5 desktop drop keys retain the authored screen over recipe and Creative catalog rows.
-With an empty cursor, Q does nothing.
-With a held stack, Q and Shift+Q drop one carried item. Ctrl+Q leaves that stack unchanged over these rows.
-Real inventory slots retain their ordinary drop behavior.
-Pending native commands suppress these actions.
+Bedrock 1.26.60.5 desktop drop keys follow the authored bindings for recipe, Creative catalog, and real inventory slots.
+With a held stack, Q and Shift+Q drop one carried item. Ctrl+Q leaves the cursor and pointed slot unchanged.
+With an empty cursor, Q drops one item from a real slot and Ctrl+Q drops its whole stack.
+Empty-cursor drops over recipe or catalog rows do nothing.
+Plain panels and areas outside controls ignore these keys.
+
+A held drop key acts once until release.
+Search editing and pending native commands suppress these actions.
 
 Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
 A normal recipe click fills the grid. Taking its output sends a separate craft request.

@@ -1,4 +1,4 @@
-From 28095f0514d41ef6c13334b69ff0fb01ce87f788 Mon Sep 17 00:00:00 2001
+From 242ea971bacbdb570508b9981ac51f6c4fdfa63f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -923,12 +923,13 @@ input conversions from the shared viewport. Java rounds each GUI dimension
 independently; drawing scale is not its input inverse on odd frame sizes.
 Keep the initial hover aligned with subsequent pointer and extraction events.
 
-Keep recipe drop keys inside the authored inventory. Native Bedrock
-1.26.60.5 controls retain empty cursors and drop one carried item with Q
-or Shift+Q over recipe and Creative catalog rows. Ctrl+Q leaves the cursor
-unchanged there, while real inventory slots still support full-stack drops.
-Use the existing cursor click transport after the pending-command gate
-instead of retiring the presentation on these keys.
+Route desktop drop keys through the authored input router, including their
+matching releases. Native Bedrock 1.26.60.5 bindings admit recipe/catalog
+and actual slot controls; panels and outside areas do not handle these
+sources. Drop-one prefers the carried stack. Drop-all requires an empty
+cursor before targeting a real slot. Retain the source chosen on press
+until release to preserve modifier order and one action per hold. Keep
+search, close, ownership and pending-command admission intact.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockInventorySounds.java    |   35 +
@@ -943,7 +944,7 @@ instead of retiring the presentation on these keys.
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1568 +++++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1592 +++++++++++++++++
  .../container/BedrockNativeContainers.java    |  283 +++
  .../container/BedrockNativeCooking.java       |  147 ++
  .../BedrockNativePlayerInventory.java         |  191 ++
@@ -988,7 +989,7 @@ instead of retiring the presentation on these keys.
  .../NativePlayerInventoryResultPayload.java   |   22 +
  .../container/NativePlayerPresentation.java   |  245 +++
  .../PlayerInventoryScreenClosePayload.java    |   22 +
- .../PlayerInventoryScreenLifecycle.java       |   98 ++
+ .../PlayerInventoryScreenLifecycle.java       |   98 +
  .../PlayerInventoryScreenReadyPayload.java    |   22 +
  .../PlayerInventoryScreenRequestPayload.java  |   28 +
  .../settings/impl/BedrockSettings.java        |    4 +
@@ -1016,10 +1017,10 @@ instead of retiring the presentation on these keys.
  .../container/NativePlayerHelpTextTest.java   |   34 +
  .../NativePlayerInventoryLifetimeTest.java    |  142 ++
  .../NativePlayerPresentationTest.java         |  267 +++
- .../container/NativePlayerScreenTest.java     | 1019 +++++++++++
+ .../container/NativePlayerScreenTest.java     | 1054 +++++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 ++
  .../PlayerInventoryScreenLifecycleTest.java   |  139 ++
- 89 files changed, 13191 insertions(+), 62 deletions(-)
+ 89 files changed, 13250 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockInventorySounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
@@ -1616,10 +1617,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..aa66d54
+index 0000000..17c9a0e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1568 @@
+@@ -0,0 +1,1592 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1735,6 +1736,7 @@ index 0000000..aa66d54
 +    private Map<Integer, ItemStack> craftingPreview = Map.of();
 +    private Map<Integer, Set<String>> recipeActions = Map.of();
 +    private final Map<Integer, String> pointerSources = new HashMap<>();
++    private final Map<Integer, String> dropSources = new HashMap<>();
 +    private long cookingUpdate = -1;
 +    private double pointerX = -1, pointerY = -1;
 +    private double layoutPointerX = -1, layoutPointerY = -1;
@@ -2118,6 +2120,7 @@ index 0000000..aa66d54
 +                this.capturedButtons.clear();
 +                this.nativeButtons.clear();
 +                this.pointerSources.clear();
++                this.dropSources.clear();
 +                this.keyboardPressed = false;
 +                this.deactivate();
 +                return;
@@ -2970,12 +2973,11 @@ index 0000000..aa66d54
 +            }
 +            return true;
 +        }
-+        if (this.presentation instanceof NativePlayerPresentation && !this.helpView && this.geometry != null
-+                && this.geometry.recipe(this.pointerX, this.pointerY) != null && Minecraft.getInstance().options.keyDrop.matches(event)) {
-+            // Native recipe/catalog rows have no stack to drop. Plain Q still drops one carried item;
-+            // Ctrl+Q applies only to real inventory slots and leaves the cursor unchanged here.
-+            if (!event.hasControlDown() && !this.menu.getCarried().isEmpty())
-+                this.slotClicked(null, -999, 1, ContainerInput.PICKUP);
++        if (this.presentation instanceof NativePlayerPresentation && !this.helpView
++                && Minecraft.getInstance().options.keyDrop.matches(event)) {
++            final String source = this.dropSources.computeIfAbsent(event.key(), _ -> event.hasControlDown()
++                    ? "button.menu_inventory_drop_all" : "button.menu_inventory_drop");
++            this.keyboardInput(source, true);
 +            return true;
 +        }
 +        if (this.authoredController()) {
@@ -3002,7 +3004,8 @@ index 0000000..aa66d54
 +                || NativeCookingNavigation.supports(target)) return true;
 +        if (node.properties().has("recipe_id")) {
 +            final int recipe = node.properties().get("recipe_id").getAsInt();
-+            return this.recipeActions.getOrDefault(recipe, Set.of()).stream().anyMatch(action -> NativeUiInput.symbol(action) == target);
++            return this.presentation instanceof NativePlayerPresentation && isDropTarget(target)
++                    || this.recipeActions.getOrDefault(recipe, Set.of()).stream().anyMatch(action -> NativeUiInput.symbol(action) == target);
 +        }
 +        if (this.presentation instanceof NativePlayerPresentation && playerUnsupportedHostAction(target)) return true;
 +        if (node.properties().has("inventory_slot"))
@@ -3016,6 +3019,10 @@ index 0000000..aa66d54
 +                && target == NativeUiInput.symbol("button.search_bar_selected")) return true;
 +        return (node.string("inventory_command", "").equals("close") || node.flag("help_close", false))
 +            && (target == NativeUiInput.symbol("button.menu_exit") || target == NativeUiInput.symbol("button.try_menu_exit"));
++    }
++
++    private static boolean isDropTarget(final int target) {
++        return target == NativeUiInput.symbol("button.drop_one") || target == NativeUiInput.symbol("button.drop_all");
 +    }
 +
 +    private static SlotInput playerSlotInput(final int target) {
@@ -3049,7 +3056,19 @@ index 0000000..aa66d54
 +            final var button = event.button();
 +            if (button == null || button.phase() != 0 && button.phase() != 1) continue;
 +            final var node = event.node();
-+            if (node.properties().has("recipe_id")) {
++            if (this.presentation instanceof NativePlayerPresentation && !this.helpView && isDropTarget(button.target())) {
++                if (button.transition()) {
++                    // Native slot bindings prefer a held stack for drop_one. A held stack blocks
++                    // drop_all, including when the pointed slot contains another item.
++                    if (!this.menu.getCarried().isEmpty()) {
++                        if (button.target() == NativeUiInput.symbol("button.drop_one"))
++                            this.slotClicked(null, -999, 1, ContainerInput.PICKUP);
++                    } else if (node.properties().has("inventory_slot")) {
++                        this.playerSlotAction(node.properties().get("inventory_slot").getAsInt(), button.target());
++                    }
++                }
++                handled = true;
++            } else if (node.properties().has("recipe_id")) {
 +                final int recipe = node.properties().get("recipe_id").getAsInt();
 +                final var mode = java.util.Arrays.stream(NativeCookingAction.Mode.values())
 +                    .filter(candidate -> NativeUiInput.symbol(candidate.button()) == button.target()).findFirst().orElse(null);
@@ -3114,6 +3133,11 @@ index 0000000..aa66d54
 +    @Override
 +    public boolean keyReleased(final KeyEvent event) {
 +        if (this.closing()) return true;
++        final String dropSource = this.dropSources.remove(event.key());
++        if (dropSource != null) {
++            if (this.current()) this.keyboardInput(dropSource, false);
++            return true;
++        }
 +        final String source = keyboardSource(event.key());
 +        if (this.current() && this.authoredController() && source != null) {
 +            if (this.helpView) this.inventoryInput.button(source, false, 1, this.clock.getAsLong(), false);
@@ -3158,6 +3182,7 @@ index 0000000..aa66d54
 +        this.capturedButtons.clear();
 +        this.nativeButtons.clear();
 +        this.pointerSources.clear();
++        this.dropSources.clear();
 +        this.keyboardPressed = false;
 +        this.consumedReleases.clear();
 +        this.recipePress = null;
@@ -13626,10 +13651,10 @@ index 0000000..950b348
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
 new file mode 100644
-index 0000000..0fa8997
+index 0000000..d854221
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerScreenTest.java
-@@ -0,0 +1,1019 @@
+@@ -0,0 +1,1054 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14555,7 +14580,7 @@ index 0000000..0fa8997
 +
 +    @ParameterizedTest
 +    @ValueSource(booleans = {false, true})
-+    void recipeDropKeysRetainTheScreenAndOnlyDropOneCarriedItem(final boolean creative) throws Exception {
++    void dropKeysRetainTheScreenAndRespectCursorOwnership(final boolean creative) throws Exception {
 +        final var game = mock(Minecraft.class);
 +        final var player = mock(LocalPlayer.class);
 +        final var inventory = new Inventory(player, new EntityEquipment());
@@ -14603,22 +14628,57 @@ index 0000000..0fa8997
 +                final var drop = new KeyEvent(InputConstants.KEY_Q, 0, 0);
 +                final var dropAll = new KeyEvent(InputConstants.KEY_Q, 0, InputConstants.MOD_CONTROL);
 +                assertTrue(screen.keyPressed(drop));
++                screen.keyReleased(drop);
 +                assertTrue(presentation.idle(), "An empty-cursor recipe drop must retain its presentation");
 +                verifyNoInteractions(game.gameMode);
 +                final var held = new ItemStack(Items.IRON_INGOT, 4);
 +                menu.setCarried(held);
 +                assertTrue(screen.keyPressed(dropAll));
++                screen.keyReleased(drop); // The modifier can be released before its mapped key.
 +                assertTrue(presentation.idle());
 +                verifyNoInteractions(game.gameMode);
 +                assertTrue(screen.keyPressed(drop));
-+                assertTrue(screen.keyPressed(new KeyEvent(InputConstants.KEY_Q, 0, InputConstants.MOD_SHIFT)));
++                assertTrue(screen.keyPressed(drop)); // A held key retains its original mapping until release.
++                screen.keyReleased(drop);
++                final var shifted = new KeyEvent(InputConstants.KEY_Q, 0, InputConstants.MOD_SHIFT);
++                assertTrue(screen.keyPressed(shifted));
++                screen.keyReleased(shifted);
 +                verify(game.gameMode, times(2)).handleContainerInput(0, -999, 1, ContainerInput.PICKUP, player);
 +                verifyNoMoreInteractions(game.gameMode);
 +                assertSame(held, menu.getCarried());
 +                assertTrue(presentation.idle());
++                menu.getSlot(36).set(new ItemStack(Items.IRON_INGOT, 32));
++                screen.prepare(font, 640, 360);
++                final var slot = pointer(screen, draw -> draw.box().node().type().equals("button")
++                        && draw.box().node().properties().has("inventory_slot")
++                        && draw.box().node().properties().get("inventory_slot").getAsInt() == 36);
++                screen.mouseMoved(slot.x(), slot.y());
++                assertTrue(screen.keyPressed(drop));
++                screen.keyReleased(drop);
++                assertTrue(screen.keyPressed(dropAll));
++                screen.keyReleased(drop); // The modifier can be released before its mapped key.
++                verify(game.gameMode, times(3)).handleContainerInput(0, -999, 1, ContainerInput.PICKUP, player);
++                verifyNoMoreInteractions(game.gameMode);
++                assertEquals(32, menu.getSlot(36).getItem().getCount());
++                screen.mouseMoved(0, 0);
++                assertTrue(screen.keyPressed(drop));
++                screen.keyReleased(drop);
++                verifyNoMoreInteractions(game.gameMode);
++                menu.setCarried(ItemStack.EMPTY);
++                screen.mouseMoved(slot.x(), slot.y());
++                assertTrue(screen.keyPressed(drop));
++                screen.keyReleased(drop);
++                assertTrue(screen.keyPressed(dropAll));
++                screen.keyReleased(drop); // The modifier can be released before its mapped key.
++                verify(game.gameMode).handleContainerInput(0, 36, 0, ContainerInput.THROW, player);
++                verify(game.gameMode).handleContainerInput(0, 36, 1, ContainerInput.THROW, player);
++                verifyNoMoreInteractions(game.gameMode);
++                menu.setCarried(held);
++                screen.mouseMoved(recipe.x(), recipe.y());
 +                presentation.query("oak", _ -> {});
 +                assertFalse(presentation.idle());
 +                assertTrue(screen.keyPressed(drop));
++                screen.keyReleased(drop);
 +                verifyNoMoreInteractions(game.gameMode);
 +                assertEquals(4, held.getCount());
 +            } finally { screen.discard(); }

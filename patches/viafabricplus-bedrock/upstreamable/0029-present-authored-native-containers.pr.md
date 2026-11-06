@@ -85,13 +85,17 @@ Physical bundle preview tables decode into owned Minecraft stacks and explicit t
 The default-screen regression retains an empty bundle alongside an inactive recipe.
 Installed direct and ViaProxy controls retain a server-issued empty bundle in Survival after reopening.
 Unknown snapshots restore ordinary controls. Player and workbench screens accept complete carried-bundle snapshots and desktop hover views. Touch selection and the full controller lifetime remain unfinished.
-Unsupported visible glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
-Desktop recipe drop keys follow the [native cursor behavior](../../../docs/native-player-inventory.md#actions-and-presentation) and keep the authored screen.
-Screen regressions cover Survival and Creative rows, empty and held cursors, modifiers, and the pending-command gate.
-Installed direct and ViaProxy controls each complete eight server-accepted requests across Survival and Creative.
-Four drops per route remove one carried item each. Empty-cursor drop keys and Ctrl+Q add no requests.
-Both routes retain the same screen, menu, and presentation, then reopen with the remaining items.
-These controls wait for rendered hover. Rapid pointer/key ordering, other devices, and complete native pixels remain unverified.
+Unsupported visible glyphs, `button.shape_drawing` recipe actions, and held-selection commands also restore ordinary controls.
+Desktop drop keys follow the [native cursor behavior](../../../docs/native-player-inventory.md#actions-and-presentation) through the authored input router and keep the screen.
+Screen regressions cover Survival and Creative slots, cursor ownership, held keys, modifier release order, outside controls, and pending commands.
+Installed direct and ViaProxy controls each complete 14 server-accepted requests across Survival and Creative.
+Six drops per route remove one carried item each. Four further drops use real slots with an empty cursor.
+An 800-millisecond hold acts once. Outside controls and Ctrl+Q with a held stack add no requests.
+Both routes retain the same screen, menu, and presentation, then reopen with the exact remaining items.
+These checks include one immediate move from a real slot to a recipe before Q.
+Full native pointer/key timing, workbench controls, other devices, and complete pixels remain unverified.
+The installed drop artifact predates the pointer-coordinate change. A combined full-stack build also passes after reconciliation.
+These builds include the private death-screen consumer. They do not establish a released artifact or complete death-screen parity.
 Rejected presentations remain retired until the next opening, so subsequent updates do not repeat the failed installation.
 Fixed recipe grids expand visible cells and retained keyboard neighbors over the complete catalog.
 Local window changes preserve the menu opening and authoritative revision.
