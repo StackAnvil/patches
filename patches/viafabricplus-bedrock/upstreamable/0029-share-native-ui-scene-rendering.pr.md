@@ -20,7 +20,9 @@ Installed automatic and explicitly resolved modes produce identical pixels in se
 Active Bedrock 1.26.60.5 death labels confirm automatic mode and the 52-pixel CPU distance cache at display sizes 16, 20, and 32.
 Retained native records match Java bearings and image dimensions for all 76 compared glyph instances.
 Seventy-four positions match bit for bit. Two reason-glyph instances differ by one float rounding step.
-Five representative Seven-font distance images match the original native parser, rasterizer, and distance converter byte for byte.
+Thirteen distinct Ten/Seven button-glyph distance images match the original native parser, rasterizer, and distance converter byte for byte, including row padding.
+For Respawn and Game menu, all 176 coordinate components of 88 native vertex-upload records match the current Java quad calculation at captured native origins.
+Coverage values and native UV extents also match. These supplied origins do not establish complete consumer layout.
 The acquired Noto Sans SC ideograph also matches original grayscale and 52-pixel CPU distance images byte for byte.
 This comparison covers glyph images, not complete CJK screen pixels.
 Three native redraws bind the glyph atlas to texture slot 2 of the Standard material.
