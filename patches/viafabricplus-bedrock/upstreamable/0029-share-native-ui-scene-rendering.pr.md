@@ -14,7 +14,12 @@ OreUI text retains its own font engine, shaping size, cache images, distance fie
 It remains separate from classic JSON UI typography.
 Original Bedrock 1.26.60.5 controls establish selected shaping, raster, distance, ordinary run coverage, and supplied-position arithmetic.
 Seven focused regressions pass through the owned font backend, atlas lifecycle, Minecraft vertex-buffer emission, and software shader checks.
-Complete OreUI screen consumers, automatic layout and fallback, native texture sampling, reloads, input, and live frame comparisons remain unfinished.
+An installed software-rendered Minecraft 26.3 diagnostic submits four labels through the unchanged OreUI font engine, atlas uploads, GUI extraction, and shaders.
+Bitmap and distance-field modes each run with nearest and linear filters at 1280 × 720.
+Returning to the original mode preserves all four text regions. Installed artifact hashes match the tested build.
+The eight nearest-filtered crops differ from the CPU raster reference by at most one color byte.
+Linear-filtered crops differ from that idealized reference by up to 14 color bytes. Exact native sampling remains unverified.
+The diagnostic supplies positions, spacing, colors, and font modes. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
 
 Prerequisites:
 
