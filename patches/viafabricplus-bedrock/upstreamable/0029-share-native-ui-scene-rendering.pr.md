@@ -37,9 +37,13 @@ Original 1.26.60.5 dispatch, feature records, and FreeType/HarfBuzz controls est
 Authored regressions preserve per-scalar advances and drawing substitutions across measurement calls.
 Installed Ten advances match original controls for `fi`, `office`, and `Respawn`.
 Ten selected draw regions retain identical pixels across measurement and mode return.
-The complete measurement wrapper/cache and automatic inline layout remain unverified.
+Ordinary single-font lines consume measured advances and preserve nonfinal tracking, whitespace ranges, explicit endings, soft wraps, and float alignment.
+Twenty-two original construction/alignment controls and 100 additional sequence controls match the compared Java results exactly.
+The controls supply the font map, metrics, advances, and style flags; original layout helpers execute.
+Installed paragraph ranges and placement match original native results at three supplied widths. Eleven selected draw regions remain unchanged across preparation modes and return.
+The complete measurement wrapper/cache, preprocessing, fallback/bidi, mixed-font fragments, ellipsis, and parent CSS sizing remain unverified.
 
-The full add-on build passes with 1,396 tests passing and 154 skipped, including software font GPU checks.
+The full add-on build passes with 1,397 tests passing and 154 skipped, including software font GPU checks.
 An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
 Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
 Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
@@ -48,8 +52,10 @@ Bitmap and distance-field modes each run with nearest and linear filters at 1280
 All five regions remain unchanged after returning to the original mode. Installed artifact hashes match the tested build.
 The eight nearest-filtered label crops differ from the CPU raster reference by at most one color byte.
 Linear-filtered crops differ from that idealized reference by up to 13 color bytes. Exact native sampling remains unverified.
-The diagnostic supplies border boxes, insets, spacing, colors, font modes, and explicit snap choices.
-A fixed comparison with the saved native frame improves three label masks and worsens Respawn. Adding the required shadows changes their visible pixels but leaves those white glyph masks unchanged. Live text bounds establish the two button label origins. Complete button styling and active native draw bindings remain unverified. Complete OreUI screen consumers, automatic layout and fallback, reloads, input, and complete native frame comparisons remain unfinished.
+The diagnostic uses production measurement and line construction. It supplies outer boxes, insets, spacing, colors, font modes, and node snap choices.
+The diagnostic centers intrinsic text boxes before node snapping, matching the observed native order.
+Fixed comparisons with the saved native frame give 98.5% to 100% foreground-mask overlap across four label regions at three thresholds each, without position fitting.
+Final sampling, colors, complete button styling, and complete screen pixels remain unverified. Complete OreUI screen consumers, CSS layout and fallback, reloads, and input remain unfinished.
 
 The acquired OreUI bundle also registers the original loading GIF and retains all previous font, stylesheet, and translation bytes.
 The decoder preserves frame durations, transparency, and disposal within a 16 MiB decoded-frame limit.
