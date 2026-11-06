@@ -1,4 +1,4 @@
-From 23be68d736d7d50dd31ad205f00ac246c06d2944 Mon Sep 17 00:00:00 2001
+From 97adce8fed64a9b2b0acb9c37a7a69fceb40fe93 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -740,11 +740,23 @@ then tick the retained stack once after LivingEntity.tick movement.
 
 Do not equate packet 142 with server inventory Use transactions. Matching
 native omission controls retain queued completion when 142 is omitted,
-and remove it when the inventory transaction is omitted. Translation of
-that independent server callback remains a separate lifecycle boundary.
+and remove it when the inventory transaction is omitted. Send that callback through a separate optional stop notification.
+
+Stop native use on a negotiated server inventory Use notification without
+consumption effects. Official 1.26.60.5/protocol 2225 executes local food
+feedback 1402c30c0 at zero before Actor::completeUsingItem. The trusted
+server transaction calls completion directly and skips that feedback,
+including when a new same-item cycle has 31 ticks remaining. With hunger
+attribute updates omitted, one local completion plus that callback leave
+hunger at five and the authoritative bread count at seven. Do not invoke
+Java's consumable a second time for this notification.
+
+Register the receiver on its owning connection and retain the existing
+Bedrock guard. Calling stopUsingItem clears local use and its native flags
+without changing hunger or inventory. Packet 142 remains independent.
 ---
  build.gradle.kts                              |   2 +-
- .../bedrock/ViaFabricPlusBedrock.java         |  14 +
+ .../bedrock/ViaFabricPlusBedrock.java         |  23 +
  .../access/IBedrockFlightMotion.java          |  14 +
  .../access/IBedrockPlayerPosture.java         |  14 +
  .../access/IBedrockTeleportTravel.java        |  12 +
@@ -790,6 +802,7 @@ that independent server callback remains a separate lifecycle boundary.
  .../bedrock/input/BedrockUsedItem.java        |  23 +
  .../input/BedrockVehiclePredictions.java      |  48 ++
  .../bedrock/input/FlightMovementPayload.java  |  24 +
+ .../bedrock/input/ItemUseStopPayload.java     |  22 +
  .../bedrock/input/MovementEffectPayload.java  |  24 +
  .../input/PlayerCorrectionPayload.java        |  24 +
  .../bedrock/input/PlayerModePayload.java      |  22 +
@@ -850,7 +863,7 @@ that independent server callback remains a separate lifecycle boundary.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 107 files changed, 8608 insertions(+), 74 deletions(-)
+ 108 files changed, 8639 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -889,6 +902,7 @@ that independent server callback remains a separate lifecycle boundary.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItem.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/FlightMovementPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStopPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerCorrectionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerModePayload.java
@@ -968,7 +982,7 @@ index ad7d3c5..a2642cd 100644
      jarInJar("org.redlance.mochafloats:runtime:6.1.0") {
          exclude(group = "io.netty")
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 6d7f012..5765f62 100644
+index 6d7f012..5b2869e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -27,6 +27,7 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockSkinChange;
@@ -979,7 +993,15 @@ index 6d7f012..5765f62 100644
  import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
  import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
  import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
-@@ -81,6 +82,10 @@ import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
+@@ -63,6 +64,7 @@ import com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext;
+ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
++import com.viaversion.viafabricplus.bedrock.input.ItemUseStopPayload;
+ import com.viaversion.viafabricplus.bedrock.hud.HudVisibilityPayload;
+ import com.viaversion.viafabricplus.bedrock.camera.CameraFadePayload;
+ import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFade;
+@@ -81,6 +83,10 @@ import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
  import com.viaversion.viafabricplus.bedrock.hud.LocatorBarPayload;
  import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
@@ -990,7 +1012,7 @@ index 6d7f012..5765f62 100644
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusBuiltinResourcePackProvider;
  import com.viaversion.viaversion.api.Via;
-@@ -156,6 +161,11 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -156,6 +162,11 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(NativeActorBoundsPayload.TYPE,
                  (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
@@ -1002,7 +1024,7 @@ index 6d7f012..5765f62 100644
          PayloadTypeRegistry.clientboundPlay().register(NativeAnimationPayload.TYPE, NativeAnimationPayload.CODEC);
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(NativeAnimationPayload.TYPE,
-@@ -172,6 +182,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -172,6 +183,18 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayNetworking.registerGlobalReceiver(NativeParticlePlaybackPayload.TYPE,
                  (payload, context) -> BedrockServerParticles.accept(payload.message()));
          PayloadTypeRegistry.serverboundPlay().register(RawInputPayload.TYPE, RawInputPayload.CODEC);
@@ -1010,6 +1032,14 @@ index 6d7f012..5765f62 100644
 +        BedrockPlayerCorrections.register();
 +        BedrockMovementEffects.register();
 +        BedrockVehiclePredictions.register();
++        PayloadTypeRegistry.clientboundPlay().register(ItemUseStopPayload.TYPE, ItemUseStopPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(ItemUseStopPayload.TYPE, (payload, context) -> {
++                if (context.client().getConnection() == listener && BedrockInputPermissions.isBedrockConnection()) {
++                    // Server completion stops the current cycle. Local countdown owns food prediction and feedback.
++                    context.player().stopUsingItem();
++                }
++            }));
          PayloadTypeRegistry.clientboundPlay().register(InputPermissionsPayload.TYPE, InputPermissionsPayload.CODEC);
          ClientPlayNetworking.registerGlobalReceiver(InputPermissionsPayload.TYPE,
              (payload, context) -> BedrockInputPermissions.accept(payload.permissions()));
@@ -4769,6 +4799,34 @@ index 0000000..b56fdfb
 +
 +    @Override
 +    public Type<FlightMovementPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStopPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStopPayload.java
+new file mode 100644
+index 0000000..6b67830
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStopPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++
++/** Server inventory Use completion, without the local countdown's consumption effects. */
++public record ItemUseStopPayload() implements CustomPacketPayload {
++    public static final Type<ItemUseStopPayload> TYPE = new Type<>(Identifier.parse("viabedrock:item_use_stop"));
++    public static final StreamCodec<RegistryFriendlyByteBuf, ItemUseStopPayload> CODEC = StreamCodec.unit(new ItemUseStopPayload());
++
++    @Override
++    public Type<ItemUseStopPayload> type() {
 +        return TYPE;
 +    }
 +}

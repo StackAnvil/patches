@@ -85,3 +85,10 @@ The current timed-to-instant custom-food switch cancels the old definition inste
 Early switches consume none of the old food; late switches retain one completion.
 The long-hold control retains three completions and reaches full hunger.
 The client input sidecar records the remaining placement timing and dispatch gaps.
+
+Server inventory `Use` completion is separate from packet 142.
+Native 1.26.60.5 applies that callback to a new active cycle, but skips the local countdown's hunger feedback.
+Send a negotiated stop notification after authoritative inventory actions. Preserve the existing path for clients without the channel.
+The packet regression covers negotiation, Release versus Use, legacy rejection, counts, and notification ordering.
+Native attribute-omission controls retain five hunger and seven bread after one local completion and a server callback with 31 ticks remaining.
+The client movement sidecar records installed verification and remaining timing limits.

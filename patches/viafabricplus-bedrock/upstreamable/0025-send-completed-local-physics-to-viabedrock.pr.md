@@ -76,9 +76,12 @@ Native 1.26.60.5 traces place the countdown decrement and completion after the f
 Retain the early item-identity check and tick the active stack after movement.
 The recorded moving-food controls check the final slowed frame, local completion, and correction replay.
 Native also completes active use through a server inventory `Use` transaction.
-Selective omissions distinguish that callback from packet 142. Its Java translation remains open.
+Selective omissions distinguish that callback from packet 142.
+A separate negotiated notification now stops the current use cycle without local consumption effects.
+Native predicts hunger through feedback before local completion. The server callback skips that feedback.
+An attribute-omission control leaves five hunger and seven bread after local completion and a server callback during the next cycle.
 
-The current core and local Linux add-on builds pass 3,529 tests, with 332 skipped and no failures or errors.
+The current CubeConverter, core, proxy, and local Linux add-on builds pass 3,538 tests, with 333 skipped and no failures or errors.
 Release packaging remains unverified because the other five native shaping libraries are unavailable locally.
 The broader animation, movement timing, consumable effects, and original intermittent no-feeding report remain open.
 See the [food admission evidence](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) for core behavior and its limits.
