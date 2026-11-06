@@ -12,7 +12,7 @@ Share authored scene, layout, image, text, actor, and focus primitives. Preserve
 
 Host pointer conversion uses the actual rounded Java GUI width and height separately from drawing scale. Click, release, movement, drag, scroll, and extraction retain the same native coordinate space. A real authored-action regression covers edge clicks on both rounded axes and a HiDPI host. Complete native input-device and viewport parity remains open.
 
-Installed direct and ViaProxy controls at 1276 × 720 and Java GUI scale 3 target the last inside column of the authored inventory close button. The baseline falls back to Java controls without closing; the corrected adapter closes the menu. These controls use the private native death-screen consumer and a declared server inventory-open acknowledgment. Their shared UI and container classes match the independently built tracked stack byte for byte. Native server admission and complete input parity remain unverified.
+Installed direct and ViaProxy controls using the rebuilt tracked stack target the last inside column of the authored inventory close button at 1276 × 720 and Java GUI scale 3. Both routes close the menu and send a Bedrock close request. The pre-fix direct control with the private consumer falls back to Java controls without closing. These runs use a declared server inventory-open acknowledgment and read-only GUI entry observations. Early-join admission, native server admission, and complete input parity remain unverified.
 
 OreUI text retains its own font engine, shaping size, cache images, distance fields, atlas, and float tint pipeline.
 It remains separate from classic JSON UI typography.
