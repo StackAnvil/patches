@@ -1,4 +1,4 @@
-From d96aa307bea89389f329c874a0e99c2e92b4f0e3 Mon Sep 17 00:00:00 2001
+From 63c9a463e187de88afbcd9ed515d1b8983768211 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -346,6 +346,26 @@ ordered base/stripe inputs and sampler2 UV transforms. Native red with a
 white bottom stripe is visibly patterned while blocking; the old Java
 path skipped atlas items. Keep the original oversized-shield and custom
 skin reports open because this fixture establishes a distinct failure.
+
+Preserve the complete native arm matrix when Java fallback held items
+attach to an animated player. Flattened humanoid fields discard reflected
+scale and inherited shear, and collapsed scales make their rotation
+undefined. Read only the selected arm and its ancestors, convert its
+translation to block units, and compose it with the existing render pose.
+Retain Java26.3's root-space half-pixel slim anchor. Missing arms and a
+retired native tree keep the ordinary Java attachment path.
+
+The target protocol2225 player runtime already draws the authored native
+hierarchy and exports its complete matrices to native attachables. This
+change makes Java fallback item placement use that same hierarchy.
+A mandatory regression exercises actual ArmedModel dispatch with authored
+parent rotation, reflected/nonuniform scale and collapsed positions, both
+arms, slim/wide models and a nonidentity incoming render pose. The old
+adapter moves a sampled point by 0.44624 blocks on X. Separate controls
+retain missing-arm fallback and restore Java placement after retirement.
+These controls establish adapter consistency, not native lighting or
+singular normal parity. The original oversized shield and custom-skin
+screenshots remain unmatched.
 ---
  .../appearance/BedrockActorAnimation.java     |  66 ++-
  .../appearance/BedrockAttachableBindings.java |  66 +++
@@ -356,12 +376,12 @@ skin reports open because this fixture establishes a distinct failure.
  .../render/MixinAvatarAnimationState.java     |  11 +-
  .../MixinBedrockFirstPersonVisibility.java    |   8 +
  .../bedrock/render/BedrockActorResources.java |   3 +
- .../bedrock/render/BedrockAnimatedModel.java  |  96 +++-
+ .../bedrock/render/BedrockAnimatedModel.java  | 101 +++-
  .../bedrock/render/BedrockEquipmentCache.java |  41 ++
  .../BedrockEquippedAttachableLayer.java       |  36 ++
  .../render/BedrockHeldAttachableBindings.java |  59 +++
  .../render/BedrockPlayerAttachables.java      | 501 ++++++++++++++++++
- .../bedrock/render/BedrockPlayerModel.java    |   8 +
+ .../bedrock/render/BedrockPlayerModel.java    |  28 +
  .../bedrock/render/BedrockPlayerSkins.java    |  37 +-
  .../bedrock/render/BedrockShieldAtlas.java    |  50 ++
  .../bedrock/render/BedrockShieldPatterns.java | 121 +++++
@@ -382,10 +402,10 @@ skin reports open because this fixture establishes a distinct failure.
  .../render/BedrockExplicitBindingsTest.java   | 155 ++++++
  .../BedrockHeldAttachableBindingsTest.java    | 128 +++++
  .../render/BedrockHeldGlintMaterialsTest.java |  39 ++
- .../render/BedrockPlayerModelTest.java        |  59 +++
+ .../render/BedrockPlayerModelTest.java        | 140 +++++
  .../render/BedrockShieldPatternsTest.java     |  91 ++++
  .../render/BedrockTextureMeshesTest.java      |  87 +++
- 38 files changed, 3006 insertions(+), 26 deletions(-)
+ 38 files changed, 3112 insertions(+), 26 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableBindings.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquipmentResources.java
@@ -917,7 +937,7 @@ index eb6c3eb..6b10dbd 100644
          BedrockAcceptedResources.clear();
          loaded = false;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
-index bbeebe6..3e8e5c4 100644
+index bbeebe6..0697b72 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 @@ -5,10 +5,9 @@
@@ -975,7 +995,7 @@ index bbeebe6..3e8e5c4 100644
      }
  
      Map<ModelPart, Matrix4f> drawingMatrices() {
-@@ -171,9 +175,93 @@ public final class BedrockAnimatedModel {
+@@ -171,9 +175,98 @@ public final class BedrockAnimatedModel {
          target.jacket.loadPose(target.body.storePose());
      }
  
@@ -1006,6 +1026,11 @@ index bbeebe6..3e8e5c4 100644
 +                this.boundMatrices.put(part, matrix);
 +            }
 +        });
++    }
++
++    Matrix4f boneMatrix(final String name) {
++        final var part = this.parts.get(this.boneName(name));
++        return part == null ? null : new Matrix4f(this.global(part, new HashMap<>()));
 +    }
 +
 +    Map<String, Matrix4f> boneMatrices() {
@@ -1731,21 +1756,60 @@ index 0000000..384a400
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
-index 4bedd7f..acf0f1b 100644
+index 4bedd7f..c69a29c 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
-@@ -13,6 +13,7 @@ import net.minecraft.client.model.player.PlayerModel;
+@@ -7,18 +7,22 @@ package com.viaversion.viafabricplus.bedrock.render;
+ 
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import com.mojang.blaze3d.vertex.PoseStack;
+ 
+ import net.minecraft.client.model.geom.ModelPart;
+ import net.minecraft.client.model.player.PlayerModel;
  import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import net.minecraft.world.entity.HumanoidArm;
  
  import java.util.Map;
 +import org.joml.Matrix4f;
  
  /** Applies native actor and emote poses to the authored bone hierarchy. */
  final class BedrockPlayerModel extends PlayerModel {
-@@ -50,4 +51,11 @@ final class BedrockPlayerModel extends PlayerModel {
+     private final Map<String, ModelPart> children;
+     private final Map<String, ModelPart> ordinary;
+     private final BedrockAnimatedModel animated;
++    private final float handOffset;
+ 
+     BedrockPlayerModel(
+             final ModelPart root,
+@@ -29,6 +33,7 @@ final class BedrockPlayerModel extends PlayerModel {
+         this.children = children;
+         this.ordinary = Map.copyOf(children);
+         this.animated = animated;
++        this.handOffset = slim ? .5F / 16F : 0F;
+     }
+ 
+     @Override
+@@ -50,4 +55,27 @@ final class BedrockPlayerModel extends PlayerModel {
          this.children.clear();
          this.children.put("animated", this.animated.model().root());
      }
++
++    @Override
++    public void translateToHand(final AvatarRenderState state, final HumanoidArm arm, final PoseStack poses) {
++        final var matrix = this.children.get("animated") == this.animated.model().root()
++                ? this.animated.boneMatrix(arm == HumanoidArm.RIGHT ? "rightarm" : "leftarm") : null;
++        if (matrix == null) {
++            super.translateToHand(state, arm, poses);
++            return;
++        }
++        this.root().translateAndRotate(poses);
++        // SRT decomposition loses inherited shear and reflection, and is undefined for collapsed bones.
++        matrix.m30(matrix.m30() / 16F + (arm == HumanoidArm.RIGHT ? this.handOffset : -this.handOffset))
++                .m31(matrix.m31() / 16F).m32(matrix.m32() / 16F);
++        poses.mulPose(matrix);
++    }
++
 +    Map<String, Matrix4f> boneMatrices() { return this.animated.boneMatrices(); }
 +
 +    /** Uses global bind/current transforms only while the native hierarchy is the rendered tree. */
@@ -3667,10 +3731,100 @@ index 0000000..f7b23fc
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
-index 166bca7..484967f 100644
+index 166bca7..0807022 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
-@@ -125,6 +125,65 @@ final class BedrockPlayerModelTest {
+@@ -14,8 +14,89 @@ import org.junit.jupiter.api.Test;
+ 
+ import java.util.Map;
+ import java.util.List;
++import com.mojang.blaze3d.vertex.PoseStack;
++import net.minecraft.world.entity.HumanoidArm;
++import net.minecraft.client.model.ArmedModel;
++import org.joml.Matrix4f;
++import org.joml.Vector3f;
+ 
+ final class BedrockPlayerModelTest {
++    @Test
++    void heldItemPointsRetainMirroredShearedAndCollapsedParentTransforms() throws Exception {
++        final var geometry = BedrockGeometryModel.fromJson("""
++                {"minecraft:geometry":[{"description":{"identifier":"geometry.hand_parent","texture_width":64,"texture_height":64},
++                 "bones":[{"name":"root","pivot":[0,0,0]},
++                  {"name":"rightarm","parent":"root","pivot":[-6,22,0]},
++                  {"name":"leftarm","parent":"root","pivot":[6,22,0]}]}]}
++                """).getFirst();
++        for (final boolean slim : List.of(false, true)) {
++            final var model = BedrockGeometry.playerModel(geometry, slim);
++            for (final float scale : new float[]{-2F, 0F}) {
++                final var state = new State();
++                state.pose = BedrockBoneAnimation.parse(JsonParser.parseString("""
++                        {"bones":{"root":{"rotation":[0,0,30],"scale":[%s,%s,%s]},
++                         "rightarm":{"rotation":[0,45,0]},"leftarm":{"rotation":[0,-45,0]}}}
++                        """.formatted(scale, scale == 0 ? 0 : 1, scale == 0 ? 0 : .5F))
++                        .getAsJsonObject()).playback().sample(0, Map.of());
++                model.setupAnim(state);
++                for (final var hand : HumanoidArm.values()) {
++                    final boolean right = hand == HumanoidArm.RIGHT;
++                    final var expected = new Matrix4f().translation(0, 1.5F, 0).rotateZ((float) Math.toRadians(30))
++                            .scale(scale, scale == 0 ? 0 : 1, scale == 0 ? 0 : .5F)
++                            .translate((right ? -6F : 6F) / 16F, -22F / 16F, 0)
++                            .rotateY((float) Math.toRadians(right ? 45 : -45));
++                    // Preserve Java's root-space half-pixel anchor for slim fallback items.
++                    if (slim) expected.m30(expected.m30() + (right ? .5F : -.5F) / 16F);
++                    final var incoming = new Matrix4f().translation(2, -.5F, 3).rotateY(.4F);
++                    expected.set(new Matrix4f(incoming).mul(expected));
++                    final var actual = new PoseStack();
++                    actual.mulPose(incoming);
++                    final ArmedModel<AvatarRenderState> heldItemOwner = model;
++                    heldItemOwner.translateToHand(state, hand, actual);
++                    for (final var point : List.of(new Vector3f(), new Vector3f(.125F, .25F, -.5F))) {
++                        final var wanted = expected.transformPosition(new Vector3f(point));
++                        final var submitted = actual.last().pose().transformPosition(new Vector3f(point));
++                        assertTrue(submitted.isFinite(), "Collapsed bones must not produce invalid item positions");
++                        assertEquals(wanted.x, submitted.x, .000005F, hand + " x, slim=" + slim + ", scale=" + scale);
++                        assertEquals(wanted.y, submitted.y, .000005F, hand + " y, slim=" + slim + ", scale=" + scale);
++                        assertEquals(wanted.z, submitted.z, .000005F, hand + " z, slim=" + slim + ", scale=" + scale);
++                    }
++                }
++            }
++        }
++    }
++
++    @Test
++    void restoresJavaHandPlacementWhenTheNativeTreeRetiresOrTheArmIsMissing() throws Exception {
++        for (final boolean slim : List.of(false, true)) for (final boolean hasArms : List.of(false, true)) {
++            final var geometry = BedrockGeometryModel.fromJson("""
++                    {"minecraft:geometry":[{"description":{"identifier":"geometry.missing_arm","texture_width":64,"texture_height":64},
++                     "bones":[{"name":"root","pivot":[0,0,0]},{"name":"head","parent":"root","pivot":[0,24,0]}%s]}]}
++                    """.formatted(hasArms ? """
++                        ,{"name":"rightarm","parent":"root","pivot":[-6,22,0]},
++                         {"name":"leftarm","parent":"root","pivot":[6,22,0]}
++                        """ : "")).getFirst();
++            final var model = BedrockGeometry.playerModel(geometry, slim);
++            final var state = new State();
++            model.setupAnim(state);
++            final var ordinary = new PoseStack();
++            model.translateToHand(state, HumanoidArm.RIGHT, ordinary);
++            state.pose = BedrockBoneAnimation.parse(JsonParser.parseString("""
++                    {"bones":{"root":{"rotation":[0,30,0]}}}
++                    """).getAsJsonObject()).playback().sample(0, Map.of());
++            model.setupAnim(state);
++            final var missing = new PoseStack();
++            model.translateToHand(state, HumanoidArm.RIGHT, missing);
++            if (!hasArms) assertEquals(ordinary.last().pose(), missing.last().pose());
++            else assertNotEquals(ordinary.last().pose(), missing.last().pose());
++            state.pose = Map.of();
++            model.setupAnim(state);
++            final var restored = new PoseStack();
++            model.translateToHand(state, HumanoidArm.RIGHT, restored);
++            assertEquals(ordinary.last().pose(), restored.last().pose());
++        }
++    }
++
+     @Test
+     void appliesControllerVisibilityWithoutBoneTransformsAndRestoresTheJavaTree() {
+         final var geometry = BedrockGeometryModel.fromJson("""
+@@ -125,6 +206,65 @@ final class BedrockPlayerModelTest {
          }
      }
  

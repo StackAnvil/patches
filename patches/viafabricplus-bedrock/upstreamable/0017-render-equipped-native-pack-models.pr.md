@@ -37,4 +37,8 @@ The shared material patch compares actual fragment pixels with 512 current nativ
 These controls use different appearances and viewports. Exact pixels, lighting, glint phase, and poses remain unverified.
 The reported oversized shield and distorted custom-skin pose remain unresolved.
 
+Java fallback held items retain the native arm's complete transform instead of its flattened humanoid fields.
+`BedrockPlayerModelTest` covers reflected and sheared parents, collapsed positions, slim/wide anchors, the incoming render transform, and ordinary fallback after retirement.
+The regression fails on the old adapter. These controls establish attachment consistency, not native pixels or singular surface normals.
+
 The [owning patch](0017-render-equipped-native-pack-models.patch) retains implementation rationale and versioned evidence.
