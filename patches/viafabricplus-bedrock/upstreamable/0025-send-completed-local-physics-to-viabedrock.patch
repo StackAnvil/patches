@@ -1,4 +1,4 @@
-From 97adce8fed64a9b2b0acb9c37a7a69fceb40fe93 Mon Sep 17 00:00:00 2001
+From 01c065dfd3a436b38de73c28095f83e6ca654dd0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -754,6 +754,22 @@ Java's consumable a second time for this notification.
 Register the receiver on its owning connection and retain the existing
 Bedrock guard. Calling stopUsingItem clears local use and its native flags
 without changing hunger or inventory. Packet 142 remains independent.
+
+Compare later prediction corrections with the most recent state before
+physics, after previously replayed authoritative commands. Keep that state
+separate from the immutable rewind baseline. Otherwise a second correction
+that matches the original prediction can be discarded after an earlier
+correction changed the same retained frame, leaving the older result live.
+
+Retain the new comparison snapshot before executing physical steps, and
+continue restoring the original baseline when replaying commands again.
+Regression controls reproduce the ignored correction before this change
+and verify return to the original position/motion afterward. A separate
+case prevents repeated replay from accumulating an authoritative delta.
+Historical mount checks bind participants to their frame, independently of
+the number of snapshot refreshes. This fixes the retained-state comparison;
+it does not establish the cause of the reported pearl/wind rollback loop
+or complete native correction timing and trajectory parity.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  23 +
@@ -831,7 +847,7 @@ without changing hunger or inventory. Packet 142 remains independent.
  .../movement/replay/PhysicalItemUse.java      |  21 +
  .../replay/PhysicalMovementCorrection.java    |  35 ++
  .../replay/PhysicalReplayContext.java         | 270 +++++++++
- .../replay/PhysicalReplayHistory.java         | 190 +++++++
+ .../replay/PhysicalReplayHistory.java         | 194 +++++++
  .../movement/replay/PhysicalState.java        | 140 +++++
  .../movement/replay/PhysicalStateAccess.java  |  43 ++
  .../bedrock/render/BedrockActorState.java     |  39 +-
@@ -858,12 +874,12 @@ without changing hunger or inventory. Packet 142 remains independent.
  .../replay/PhysicalMotionReplayTest.java      | 102 ++++
  .../PhysicalMovementCorrectionTest.java       |  80 +++
  .../replay/PhysicalReplayContextTest.java     | 114 ++++
- .../replay/PhysicalReplayHistoryTest.java     | 272 +++++++++
+ .../replay/PhysicalReplayHistoryTest.java     | 315 +++++++++++
  .../movement/replay/PhysicalStateTest.java    | 124 ++++
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 108 files changed, 8639 insertions(+), 74 deletions(-)
+ 108 files changed, 8686 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -6694,10 +6710,10 @@ index 0000000..f822d62
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistory.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistory.java
 new file mode 100644
-index 0000000..68a5ee5
+index 0000000..8d4d16f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistory.java
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,194 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6789,9 +6805,10 @@ index 0000000..68a5ee5
 +        return this.completed;
 +    }
 +
++    /** Compare new commands with the latest pre-physics state, while retaining the separate rewind baseline. */
 +    public S before(final long frame) {
 +        final Frame<S> value = this.frames.get(frame);
-+        return value == null ? null : value.before;
++        return value == null ? null : value.beforePhysics;
 +    }
 +
 +    public boolean schedule(final long frame, final Predicate<S> applicable, final Runnable command, final boolean dirty) {
@@ -6843,6 +6860,7 @@ index 0000000..68a5ee5
 +                if (command.applicable.test(frame.before)) command.action.run();
 +                command.dirty = false;
 +            });
++            frame.beforePhysics = this.recapture.apply(frame.before);
 +            if (frame.after != null) {
 +                frame.steps.forEach(Runnable::run);
 +                frame.after = this.recapture.apply(frame.after);
@@ -6874,6 +6892,7 @@ index 0000000..68a5ee5
 +    private static final class Frame<S> {
 +        private final long id;
 +        private S before;
++        private S beforePhysics;
 +        private S after;
 +        private final Runnable external;
 +        private final List<Runnable> externalCommands = new ArrayList<>();
@@ -6884,6 +6903,7 @@ index 0000000..68a5ee5
 +        private Frame(final long id, final S before, final Runnable external) {
 +            this.id = id;
 +            this.before = before;
++            this.beforePhysics = before;
 +            this.external = external;
 +        }
 +    }
@@ -9750,10 +9770,10 @@ index 0000000..f83bc99
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistoryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistoryTest.java
 new file mode 100644
-index 0000000..bed506d
+index 0000000..03e0df0
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistoryTest.java
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,315 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9765,6 +9785,7 @@ index 0000000..bed506d
 +
 +import java.util.ArrayList;
 +import java.util.List;
++import java.util.LinkedHashMap;
 +import java.util.Map;
 +import java.util.Set;
 +import java.util.function.Supplier;
@@ -9773,6 +9794,44 @@ index 0000000..bed506d
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class PhysicalReplayHistoryTest {
++    @Test
++    void replaysACorrectionThatRestoresThePredictionBeforeAnEarlierCorrection() {
++        final Fixture actor = new Fixture(20);
++        actor.tick(0);
++        actor.tick(1);
++        final State original = actor.capture();
++        assertTrue(actor.history.schedule(0, ignored -> true, () -> {
++            actor.position = 100;
++            actor.motion = 10;
++        }, true));
++        assertTrue(actor.history.replay());
++        assertEquals(new State(119, 8), actor.capture());
++
++        // The correction receiver compares the incoming command with the retained pre-physics state.
++        final State incoming = new State(0, 1);
++        final boolean differs = !incoming.equals(actor.history.before(0));
++        assertTrue(actor.history.schedule(0, ignored -> true, () -> {
++            actor.position = incoming.position();
++            actor.motion = incoming.motion();
++        }, differs));
++        assertTrue(actor.history.replay());
++        assertEquals(original, actor.capture());
++    }
++
++    @Test
++    void doesNotAccumulateAnAuthoritativeDeltaWhenReplayingTheSameInputAgain() {
++        final Fixture actor = new Fixture(20);
++        actor.tick(0);
++        actor.tick(1);
++        assertTrue(actor.history.schedule(0, ignored -> true, () -> actor.motion += 2, true));
++        assertTrue(actor.history.replay());
++        final State first = actor.capture();
++        assertEquals(new State(5, 1), first);
++        actor.history.markDirty(0);
++        assertTrue(actor.history.replay());
++        assertEquals(first, actor.capture());
++    }
++
 +    @Test
 +    void discardsCommandsAfterAuthorityReplacementWithoutRestoringOrReexecutingPhysics() {
 +        final Fixture actor = new Fixture(20);
@@ -9927,8 +9986,8 @@ index 0000000..bed506d
 +        assertTrue(graph.history.schedule(0, ignored -> true, () -> player.position = 10, true));
 +        assertTrue(graph.history.replay());
 +        assertEquals(13, player.position);
-+        assertEquals(List.of(Set.of(player, oldMount), Set.of(player, nextMount),
-+                Set.of(player, nextMount), Set.of(player, currentMount)), graph.refreshedLayouts);
++        assertEquals(Map.of(0L, Set.of(player, oldMount), 1L, Set.of(player, nextMount),
++                2L, Set.of(player, currentMount)), graph.refreshedLayouts);
 +        assertTrue(graph.history.schedule(1, ignored -> true, () -> player.position = 40, true));
 +        assertTrue(graph.history.replay());
 +        assertEquals(42, player.position);
@@ -10001,18 +10060,22 @@ index 0000000..bed506d
 +
 +    private static final class GraphFixture {
 +        private final List<GraphActor> active = new ArrayList<>();
-+        private final List<Set<GraphActor>> refreshedLayouts = new ArrayList<>();
++        private final Map<Long, Set<GraphActor>> refreshedLayouts = new LinkedHashMap<>();
++        private long replayFrame;
 +        private int restores;
 +        private final PhysicalReplayHistory<Map<GraphActor, Integer>> history = new PhysicalReplayHistory<>(20,
 +                () -> this.capture(this.active), previous -> {
-+                    this.refreshedLayouts.add(previous.keySet());
++                    this.refreshedLayouts.merge(this.replayFrame, previous.keySet(), (before, next) -> {
++                        assertEquals(before, next, "Every capture of one historical frame must retain its own participants");
++                        return next;
++                    });
 +                    return this.capture(previous.keySet());
 +                }, state -> {
 +                    this.restores++;
 +                    state.forEach((actor, position) -> actor.position = position);
 +                }, (previous, next) -> () -> next.forEach((actor, position) -> {
 +                    if (!position.equals(previous.get(actor))) actor.position = position;
-+                }), state -> state.keySet().stream().allMatch(actor -> actor.alive), frame -> {}, frame -> {});
++                }), state -> state.keySet().stream().allMatch(actor -> actor.alive), frame -> this.replayFrame = frame, frame -> {});
 +
 +        private Map<GraphActor, Integer> capture(final java.util.Collection<GraphActor> actors) {
 +            return actors.stream().collect(Collectors.toUnmodifiableMap(actor -> actor, actor -> actor.position));

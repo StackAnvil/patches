@@ -26,6 +26,13 @@ Historical mode queries use the local player's recorded mode on both the movemen
 
 A controlled protocol-2225 replay uses the existing official 1.26.60.5-derived bootstrap with declared mode transitions. A bounded installed probe queries all four historical Java modes across five live phases on direct and proxy routes. The previous client disagrees in 15 of 20 cases. The corrected client keeps local mode, Creative/Spectator predicates, and pickability aligned with the historical mode, while remote predicates and live queries after each scope remain unchanged. `BedrockPlayerModesTest` checks local ownership, remote fallback, and scope lifetime separately. These controls establish query ownership, without proving native trajectories or correction timing.
 
+Later corrections compare with the latest retained state before physics, after earlier authoritative commands.
+The original rewind baseline remains separate, so repeating a replay does not accumulate command effects.
+The regression fails before this change when a later correction matches the original prediction and verifies restoration afterward.
+An unchanged installed-client diagnostic applies two declared Java correction commands to one retained frame. The previous artifact leaves a four-block error; the fixed artifact restores the original position exactly.
+The full add-on build passes 1,399 tests with 154 skipped. Native BDS admission, packet pairing, and native trajectories remain outside this diagnostic.
+This retained-state fix does not establish the cause of the reported pearl/wind rollback loop.
+
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
 Fresh Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover walking and falling through Survival, Spectator, and return transitions. Native keeps larger downward motion on Spectator entry and applies flight drag; the small grounded residue clears. Java 26.3's local player-list callback instead zeros vertical motion, producing a pause on both Java routes before correction. Suppress that callback's motion write for Bedrock and keep the native boundary in `BedrockPlayerModes`. Installed direct and proxy controls check retained fall motion, the grounded boundary, and eventual landing. Both native and Java receive corrections in these controls. Packet delivery, input, camera angle, and tick phases differ, so exact trajectories and transition timing remain unverified.
