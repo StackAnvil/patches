@@ -1,4 +1,4 @@
-From 23537a99c24065ee92b0a5ed4262e9b413e8f65a Mon Sep 17 00:00:00 2001
+From c022f88cf32180fc4541ae0f769df863c98881be Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 5 Nov 2026 20:48:28 +0100
 Subject: [PATCH] fix(ui): retain Bedrock death screen lifetimes
@@ -17,12 +17,19 @@ reason changes retain the button stage and pending respawn timers. Source
 gameplay-6de8e340eddced55490b.js SHA-256:
 9e7efe423b6cc8a1c1fa92756bd181675cffa51a4728bce386b0081cad1bb979.
 
-Share pending respawn requests between manual screen actions and Java's
-automatic null-screen path. Send once, wait 500 milliseconds, then enter
+Share pending respawn requests between manual screen actions, Java's
+automatic null-screen path, and the combat-kill handler. Send once, wait 500 milliseconds, then enter
 the loading stage and retry once per second. Retain a pending manual
 screen through Java's automatic re-entry and disable both actions.
 Leaving the active route, becoming alive, or replacing the connection or
 player cancels its timer. Stale player actions cannot start a request.
+
+The combat-kill handler must also retain the immediate-respawn lifetime.
+An installed client previously sent another request 50 milliseconds after
+the first when a late reason packet entered that handler. Route the event
+through the same pending attempt before Java searches the entity index.
+The original OreUI controller retains its initial wait through a reason
+update in immediate mode, without another command.
 
 Executing the same original controller establishes the initial wait,
 retry spacing, route cancellation and reason retention. Late callbacks
@@ -39,12 +46,12 @@ menu routing and complete lifecycle parity remain unfinished.
 ---
  .../features/screen/DeathScreenAccess.java    |  24 ++
  .../screen/MixinBedrockAutomaticRespawn.java  |  37 +++
- .../MixinBedrockDeathScreenUpdates.java       |  49 +++
+ .../MixinBedrockDeathScreenUpdates.java       |  54 ++++
  .../screen/MixinBedrockRespawnScreen.java     |  38 +++
  .../death/BedrockDeathScreenUpdates.java      | 134 ++++++++
  .../viafabricplus-bedrock.mixins.json         |   4 +
  .../death/BedrockDeathScreenUpdatesTest.java  | 303 ++++++++++++++++++
- 7 files changed, 589 insertions(+)
+ 7 files changed, 594 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/DeathScreenAccess.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockAutomaticRespawn.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenUpdates.java
@@ -127,10 +134,10 @@ index 0000000..b054066
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenUpdates.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenUpdates.java
 new file mode 100644
-index 0000000..f07f039
+index 0000000..c18730d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenUpdates.java
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,54 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -164,7 +171,12 @@ index 0000000..f07f039
 +        final var client = Minecraft.getInstance();
 +        final var player = client.player;
 +        if (!BedrockInputPermissions.isBedrockConnection() || player == null || !player.isDeadOrDying()
-+                || player.getId() != packet.playerId() || !player.shouldShowDeathScreen()) return;
++                || player.getId() != packet.playerId()) return;
++        if (!player.shouldShowDeathScreen()) {
++            this.bedrockDeathScreens.respawn((ClientPacketListener) (Object) this, client.getConnection(), player, null);
++            ci.cancel();
++            return;
++        }
 +        // A dead local player need not remain registered in the world's entity lookup.
 +        final var incoming = new DeathScreen(packet.message(), client.level.getLevelData().isHardcore(), player);
 +        if (!this.bedrockDeathScreens.receive((ClientPacketListener) (Object) this,
@@ -226,7 +238,7 @@ index 0000000..e8a88b5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
 new file mode 100644
-index 0000000..5bf4fd4
+index 0000000..cd8d3e6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
 @@ -0,0 +1,134 @@
@@ -332,8 +344,8 @@ index 0000000..5bf4fd4
 +        this.deadline = now + 1000;
 +    }
 +
-+    void respawn(final ClientPacketListener source, final ClientPacketListener current,
-+                 final LocalPlayer player, final DeathScreen screen) {
++    public void respawn(final ClientPacketListener source, final ClientPacketListener current,
++                        final LocalPlayer player, final DeathScreen screen) {
 +        this.tick(current, player);
 +        if (source != current || source == null || !source.getConnection().isConnected()
 +                || player == null || !player.isDeadOrDying() || this.respawning) return;
