@@ -347,7 +347,14 @@ The first drawing event retains its destination. The second distributes across t
 Arrow-held events retain the latest destination without starting distribution.
 These controls keep the cursor empty and emit no cursor-drag start signal through the native sender.
 Control properties, source admission, item services, and atomic transfers remain supplied probe boundaries.
-Physical touch delivery, the request-backed native model, and selected-source Java transport remain unfinished.
+The negotiated Java input owner now sends snapshot-bound source taps, drawing, and terminal retirement through core's existing transfer queue.
+The optional Touch style retains source selection and the native quantity budget without filling the real cursor.
+Original authored selected-item controls receive a cached display snapshot and use the shared cursor layout.
+Extraction copies the display item, so rendering cannot mutate the source or retained preview.
+Regressions cover command ordering, stale replies, quantity input, selected image/count extraction, and retirement.
+Installed direct and ViaProxy controls cover partial taps, drawing, delayed close, real server rejection, and accepted retry.
+The [cooking reference](../../../docs/native-cooking-actions.md#validation) states the verified quantities and remaining limits.
+Physical touch delivery, the request-backed native model, selected detail popups, Touch bundle input, and configurable trigger time remain unfinished.
 
 An unhandled release over an empty recipe panel retains drag ownership, including subsequent pointer entry without a held button.
 A delivered slot release or qualifying reset callback ends the drag. Closing and fallback still retire it.

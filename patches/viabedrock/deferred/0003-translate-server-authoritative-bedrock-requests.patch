@@ -1,4 +1,4 @@
-From 4e52ae358345deec5d8117cda8673280b5fcd99c Mon Sep 17 00:00:00 2001
+From 4bd04b223ebc688babf61df6e1fdfe38d3d0580f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -845,13 +845,38 @@ Retain pre-close incremental drag visits while authoritative replies are pending
 Queue consecutive negotiated drag destinations as one bounded pointer path instead of charging every phase against the ordinary 32-interaction limit. A full player inventory has 36 destinations; delayed responses previously caused the 33rd queued visit to discard earlier input. Retain first-visit order and per-input revisions, deduplicate revisits, and drain one destination after each response while preserving the existing menu-generation, rejection and close owners. Release, new starts and unrelated interactions remain barriers. Regressions cover a 36-destination delayed drag through close and two consecutive gestures with different distribution modes.
 
 Admit queued destinations through the real Java-slot resolver, including player inventory appended to a furnace. javaSize describes only a container's own slots and cannot bound its complete menu. Parameterize the 36-destination regression over chest and furnace layouts so local-slot and appended-slot paths both remain covered.
+
+Retain selected-source drag budgets in their original ordinary slot. Native
+1.26.60.5/protocol 2225 controller and legacy-model controls distribute a
+nine-item source as 9, then 4/4 with one returned, then 3/3/3. A four-item
+budget from nine leaves six in the source after three destinations.
+Redistribute previous contributions directly before using the unallocated
+budget, then return excess to the original slot. Keep the HUD cursor empty
+and preserve the native absence of cursor-drag Start/Stop signals.
+
+Share the existing incremental transfer queue, per-request predictions,
+renewed stack identities, rejection reconciliation and opening generation.
+Admit only an idle current opening with an empty cursor and a valid ordinary
+source. Source selection and physical input remain separate client owners.
+Tests cover source slot mappings, full and partial budgets, capacity,
+queued close, complete and partial rejection, and source replacement.
+The native controls declare supplied atomic transfer services and do not
+establish native multiplayer grouping or complete touch input parity.
+
+Route a completed ordinary source tap through the same transfer owner and
+retire its allocation immediately. Unlike source drawing, native source
+taps send one cursor-drag Start/Stop pair even when a full target moves
+nothing. The original 1.26.60.5 count-selector instructions distinguish all,
+half and one modes; secondary source placement requests exactly one item,
+independently of a retained partial quantity. Keep the source and target
+snapshots for rejection recovery without inventing a cursor pickup.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
  .../api/model/PlayerInventoryScreenReady.java |   46 +
  .../model/PlayerInventoryScreenRequest.java   |   53 +
  .../api/model/container/ChestContainer.java   |   66 +-
- .../api/model/container/Container.java        | 1413 +++-
+ .../api/model/container/Container.java        | 1521 +++-
  .../model/container/ContainerOpenContext.java |   19 +
  .../api/model/container/HorseContainer.java   |  239 +
  .../NativeContainerActionBackend.java         |   85 +
@@ -968,7 +993,7 @@ Admit queued destinations through the real Java-slot resolver, including player 
  .../storage/BundleHolderPacketTest.java       |  450 ++
  .../storage/BundleInventoryActionTest.java    |  679 ++
  .../CraftedItemSynchronizationTest.java       |  287 +
- .../storage/IncrementalInventoryDragTest.java |  438 ++
+ .../storage/IncrementalInventoryDragTest.java |  659 ++
  .../InventoryContainerGenerationTest.java     |  118 +
  .../storage/InventoryMergeActionTest.java     |  837 +++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
@@ -986,7 +1011,7 @@ Admit queued destinations through the real Java-slot resolver, including player 
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 140 files changed, 30147 insertions(+), 2052 deletions(-)
+ 140 files changed, 30476 insertions(+), 2052 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
@@ -1344,7 +1369,7 @@ index 913255f8..d535541b 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f17241..c41733f7 100644
+index 26f17241..1ba16ef3 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -21,18 +21,56 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -1446,7 +1471,7 @@ index 26f17241..c41733f7 100644
          this.user = user;
          this.containerId = containerId;
          this.type = type;
-@@ -59,9 +118,1037 @@ public abstract class Container {
+@@ -59,9 +118,1139 @@ public abstract class Container {
          this.position = position;
          this.items = items;
          this.validBlockTags = validBlockTags;
@@ -1959,6 +1984,11 @@ index 26f17241..c41733f7 100644
 +        return this.nativeDrag != null;
 +    }
 +
++    /** A retired source publication must not cancel a later cursor-origin gesture. */
++    public boolean hasSelectedSourceDrag() {
++        return this.nativeDrag != null && !this.nativeDrag.cursorSource;
++    }
++
 +    public boolean supportsIncrementalDrag() {
 +        return this.incrementalDragEnabled()
 +                && !this.user.get(ItemRewriter.class).isBundle(this.user.get(InventoryTracker.class).getHudContainer().getItem(0));
@@ -1969,6 +1999,52 @@ index 26f17241..c41733f7 100644
 +        final var game = this.user.get(GameSessionStorage.class);
 +        return channels != null && channels.hasChannel(INCREMENTAL_DRAG_CHANNEL)
 +                && game != null && game.isInventoryServerAuthoritative();
++    }
++
++    /** Complete an ordinary selected-source tap without manufacturing a cursor pickup. */
++    public boolean handleNativeSourceTap(final int revision, final short sourceSlot,
++                                         final short destinationSlot, final int quantity) {
++        final var inventory = this.user.get(InventoryTracker.class);
++        if (destinationSlot < 0 || sourceSlot == destinationSlot
++                || this.resolveJavaSlot(inventory, destinationSlot) == null
++                || !this.beginNativeSourceDrag(sourceSlot, quantity)) {
++            return false;
++        }
++        try {
++            // Native ordinary taps signal an operation even when a full destination moves nothing.
++            // Drawing uses the same transfer owner without these Start/Stop signals.
++            inventory.setCursorItemDrag(true);
++            return this.handleNativeDrag(revision, destinationSlot, (byte) 1);
++        } finally {
++            this.cancelQuickCraft();
++        }
++    }
++
++    /** Start an admitted selected-source gesture without moving its budget onto the cursor. */
++    public boolean beginNativeSourceDrag(final short javaSlot, final int quantity) {
++        final var inventory = this.user.get(InventoryTracker.class);
++        final var requests = this.user.get(InventoryRequestTracker.class);
++        if (!this.incrementalDragEnabled() || this.nativeDrag != null || this.quickCraftState != null
++                || requests.hasPending() || requests.isPredictingClick() || requests.isRecovering()
++                || requests.isWaitingForInventoryOpen() || requests.isWaitingForDragClose()
++                || inventory.getContainerServerbound(this.javaContainerId()) != this
++                || !inventory.getHudContainer().getItem(0).isEmpty()) {
++            return false;
++        }
++        final var source = javaSlot < 0 ? null : this.resolveJavaSlot(inventory, javaSlot);
++        final var context = new ClickContext(this, 0, inventory, requests);
++        if (source == null || !this.isOrdinaryItemSlot(context, source)) {
++            return false;
++        }
++        final var item = source.container().getItem(source.bedrockSlot());
++        if (item.isEmpty() || item.netId() == null || item.netId() <= 0
++                || quantity <= 0 || quantity > item.amount()
++                || !source.container().canTakeItem(source.bedrockSlot(), quantity)
++                || this.user.get(ItemRewriter.class).isBundle(item)) {
++            return false;
++        }
++        this.nativeDrag = new NativeDrag(0, item.copy(), inventory.currentContainerGeneration(), source, quantity, false);
++        return true;
 +    }
 +
 +    private boolean handleNativeDrag(final int revision, final short javaSlot, final byte button) {
@@ -1983,7 +2059,8 @@ index 26f17241..c41733f7 100644
 +                    || inventory.getContainerServerbound(this.javaContainerId()) != this) {
 +                return false;
 +            }
-+            this.nativeDrag = new NativeDrag(mode, cursor.copy(), inventory.currentContainerGeneration());
++            this.nativeDrag = new NativeDrag(mode, cursor.copy(), inventory.currentContainerGeneration(),
++                    new SlotRef(inventory.getHudContainer(), 0), cursor.amount(), true);
 +            inventory.setCursorItemDrag(true);
 +            return true;
 +        }
@@ -2002,12 +2079,13 @@ index 26f17241..c41733f7 100644
 +            return false;
 +        }
 +        final var destination = javaSlot < 0 ? null : this.resolveJavaSlot(inventory, javaSlot);
-+        if (destination == null || drag.destinations.containsKey(destination)) {
++        if (destination == null || destination.equals(drag.source) || drag.destinations.containsKey(destination)) {
 +            return true;
 +        }
 +        final var context = new ClickContext(this, 0, inventory, requests);
 +        final var cursorSlot = new SlotRef(inventory.getHudContainer(), 0);
-+        if (!this.matchesDragItem(cursorSlot, drag.cursor)) {
++        if (!this.matchesDragItem(drag.source, drag.expectedSource)
++                || !drag.cursorSource && !cursorSlot.container().getItem(0).isEmpty()) {
 +            this.cancelQuickCraft();
 +            return false;
 +        }
@@ -2038,24 +2116,38 @@ index 26f17241..c41733f7 100644
 +            final int delta = count - allocation.placed;
 +            if (delta < 0) {
 +                if (!slot.container().canTakeItem(slot.bedrockSlot(), -delta)
-+                        || !cursorSlot.container().canPlaceItem(0, drag.item, -delta)) {
++                        || drag.cursorSource && !cursorSlot.container().canPlaceItem(0, drag.item, -delta)) {
 +                    return false;
 +                }
-+                returns.add(new DragTransfer(slot, cursorSlot, -delta));
++                returns.add(new DragTransfer(slot, drag.source, -delta));
 +            } else if (delta > 0) {
 +                if (!slot.container().canPlaceItem(slot.bedrockSlot(), drag.item, delta)) {
 +                    return false;
 +                }
-+                placements.add(new DragTransfer(cursorSlot, slot, delta));
++                placements.add(new DragTransfer(drag.source, slot, delta));
 +            }
 +            changes.put(slot, count);
 +        }
-+        returns.addAll(placements);
-+        if (returns.isEmpty()) {
++        final List<DragTransfer> transfers;
++        if (drag.cursorSource) {
++            returns.addAll(placements);
++            transfers = returns;
++        } else {
++            // Native source distribution redistributes prior contributions directly. Only the
++            // unallocated part of the selected budget can come from the retained source.
++            transfers = sourceDragTransfers(drag, returns, placements);
++            for (final var transfer : transfers) {
++                if (!transfer.source.container().canTakeItem(transfer.source.bedrockSlot(), transfer.count)
++                        || !transfer.destination.container().canPlaceItem(transfer.destination.bedrockSlot(), drag.item, transfer.count)) {
++                    return false;
++                }
++            }
++        }
++        if (transfers.isEmpty()) {
 +            return true;
 +        }
 +        // Validate identities before prediction, including destinations which may be used later.
-+        for (final var transfer : returns) {
++        for (final var transfer : transfers) {
 +            for (final var slot : List.of(transfer.source, transfer.destination)) {
 +                final var item = slot.container().getItem(slot.bedrockSlot());
 +                if (!item.isEmpty() && (item.netId() == null || item.netId() <= 0)) {
@@ -2066,7 +2158,7 @@ index 26f17241..c41733f7 100644
 +        final var batch = new ArrayList<InventoryRequestStorage>();
 +        requests.setPredictingClick(true);
 +        try {
-+            for (final var transfer : returns) {
++            for (final var transfer : transfers) {
 +                final var before = new ClickContext(this, 0, inventory, requests);
 +                before.snapshot(this);
 +                if (transfer.source.container() != cursorSlot.container()) {
@@ -2102,11 +2194,46 @@ index 26f17241..c41733f7 100644
 +        }
 +        requests.sendTransferBatch(batch);
 +        if (this.nativeDrag == drag) {
-+            drag.retain(allocations, changes, inventory.getHudContainer().getItem(0));
++            drag.retain(allocations, changes, drag.source.container().getItem(drag.source.bedrockSlot()));
 +        }
 +        PacketFactory.sendJavaContainerSetContent(this.user, this);
 +        PacketFactory.sendJavaContainerSetContent(this.user, inventory.getInventoryContainer());
 +        return true;
++    }
++
++    private static List<DragTransfer> sourceDragTransfers(final NativeDrag drag, final List<DragTransfer> excess,
++                                                          final List<DragTransfer> placements) {
++        final var transfers = new ArrayList<DragTransfer>();
++        final int[] remaining = excess.stream().mapToInt(DragTransfer::count).toArray();
++        int index = 0;
++        int available = drag.item.amount() - drag.destinations.values().stream().mapToInt(DragAllocation::placed).sum();
++        for (final var placement : placements) {
++            int needed = placement.count;
++            while (needed > 0 && index < excess.size()) {
++                final int count = Math.min(needed, remaining[index]);
++                if (count > 0) {
++                    transfers.add(new DragTransfer(excess.get(index).source, placement.destination, count));
++                    remaining[index] -= count;
++                    needed -= count;
++                }
++                if (remaining[index] == 0) {
++                    index++;
++                }
++            }
++            if (needed > available) {
++                throw new IllegalStateException("Native drag exceeds its retained source budget");
++            }
++            if (needed > 0) {
++                transfers.add(new DragTransfer(drag.source, placement.destination, needed));
++                available -= needed;
++            }
++        }
++        for (; index < excess.size(); index++) {
++            if (remaining[index] > 0) {
++                transfers.add(new DragTransfer(excess.get(index).source, drag.source, remaining[index]));
++            }
++        }
++        return transfers;
 +    }
 +
 +    private boolean matchesDragItem(final SlotRef slot, final BedrockItem expected) {
@@ -2302,9 +2429,8 @@ index 26f17241..c41733f7 100644
 +        }
 +
 +        return this.dropItem(inventoryTracker.getHudContainer(), 0, button == 0 ? cursorItem.amount() : 1);
-     }
- 
--    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++    }
++
 +    protected ItemStackRequestAction dropItem(
 +            final Container container, final int bedrockSlot, final int amountToDrop) {
 +        if (amountToDrop <= 0 || !container.canDiscardItem(bedrockSlot, amountToDrop)) {
@@ -2479,13 +2605,14 @@ index 26f17241..c41733f7 100644
 +                bundle.toggleSelectedItem(selectedItem);
 +            }
 +        }
-+    }
-+
+     }
+ 
+-    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
 +    public boolean handleButtonClick(final int button) {
          return false;
      }
  
-@@ -76,11 +1163,62 @@ public abstract class Container {
+@@ -76,11 +1265,62 @@ public abstract class Container {
      }
  
      public Item[] getJavaItems() {
@@ -2550,7 +2677,7 @@ index 26f17241..c41733f7 100644
      }
  
      public BedrockItem[] getItems() {
-@@ -88,29 +1226,175 @@ public abstract class Container {
+@@ -88,29 +1328,175 @@ public abstract class Container {
      }
  
      public boolean setItem(final int slot, final BedrockItem item) {
@@ -2733,7 +2860,7 @@ index 26f17241..c41733f7 100644
      public int javaSlot(final int slot) {
          return slot;
      }
-@@ -123,6 +1407,10 @@ public abstract class Container {
+@@ -123,6 +1509,10 @@ public abstract class Container {
          return this.items.length;
      }
  
@@ -2744,7 +2871,7 @@ index 26f17241..c41733f7 100644
      public byte containerId() {
          return this.containerId;
      }
-@@ -139,6 +1427,28 @@ public abstract class Container {
+@@ -139,6 +1529,28 @@ public abstract class Container {
          return this.position;
      }
  
@@ -2773,7 +2900,7 @@ index 26f17241..c41733f7 100644
      public boolean isValidBlockTag(final String tag) {
          if (tag == null) {
              return false;
-@@ -147,7 +1457,84 @@ public abstract class Container {
+@@ -147,7 +1559,90 @@ public abstract class Container {
          }
      }
  
@@ -2840,21 +2967,27 @@ index 26f17241..c41733f7 100644
 +        private final BedrockItem item;
 +        private final long generation;
 +        private final Map<SlotRef, DragAllocation> destinations = new LinkedHashMap<>();
-+        private BedrockItem cursor;
++        private final SlotRef source;
++        private final boolean cursorSource;
++        private BedrockItem expectedSource;
 +
-+        private NativeDrag(final int mode, final BedrockItem item, final long generation) {
++        private NativeDrag(final int mode, final BedrockItem item, final long generation,
++                           final SlotRef source, final int quantity, final boolean cursorSource) {
 +            this.mode = mode;
-+            this.item = item;
-+            this.cursor = item.copy();
++            this.expectedSource = item.copy();
++            this.item = item.copy();
++            this.item.setAmount(quantity);
 +            this.generation = generation;
++            this.source = source;
++            this.cursorSource = cursorSource;
 +        }
 +
 +        private void retain(final Map<SlotRef, DragAllocation> allocations, final Map<SlotRef, Integer> changes,
-+                            final BedrockItem cursor) {
++                            final BedrockItem source) {
 +            this.destinations.clear();
 +            changes.forEach((slot, count) -> this.destinations.put(slot,
 +                    new DragAllocation(allocations.get(slot).base, count, slot.container().getItem(slot.bedrockSlot()).copy())));
-+            this.cursor = cursor.copy();
++            this.expectedSource = source.copy();
 +        }
      }
  
@@ -11889,10 +12022,10 @@ index 7b3138e1..fdc8fd76 100644
  
          private ContainerUi.Title presentation() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 48b815ae..3102c7b4 100644
+index 71902c4e..ea61d2d6 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-@@ -448,7 +448,7 @@ public final class JoinPackets {
+@@ -450,7 +450,7 @@ public final class JoinPackets {
                      itemDefinitions.remove(entry.identifier());
                  }
              }
@@ -11901,7 +12034,7 @@ index 48b815ae..3102c7b4 100644
                  if (itemEntry.componentData() != null && itemEntry.version() == ItemVersion.DataDriven && itemRewriter.getComponentItems().contains(itemEntry.identifier())) {
                      itemDefinitions.addFromNetworkTag(itemEntry.identifier(), itemEntry.componentData());
                  }
-@@ -579,6 +579,7 @@ public final class JoinPackets {
+@@ -581,6 +581,7 @@ public final class JoinPackets {
          user.get(CameraEffectsStorage.class).sendSnapshot();
  
          WorldPackets.sendNativeCommandCapability(user);
@@ -38337,10 +38470,10 @@ index 00000000..628f6ced
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java
 new file mode 100644
-index 00000000..0cbccae0
+index 00000000..d3a62ca2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java
-@@ -0,0 +1,438 @@
+@@ -0,0 +1,659 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -38371,6 +38504,7 @@ index 00000000..0cbccae0
 +import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.CsvSource;
 +import org.junit.jupiter.params.provider.ValueSource;
 +import org.mockito.MockedStatic;
 +
@@ -38384,6 +38518,197 @@ index 00000000..0cbccae0
 +import static org.mockito.Mockito.*;
 +
 +class IncrementalInventoryDragTest {
++
++    @ParameterizedTest
++    @CsvSource({"9,0,9", "4,0,4", "1,0,1", "9,60,4", "4,64,0"})
++    void selectedSourceTapSignalsOnceAndTransfersOnlyTheAdmittedQuantity(
++            final int quantity, final int destinationCount, final int transferred) {
++        try (var f = new Fixture()) {
++            f.source(8, 9);
++            if (destinationCount > 0) {
++                f.menu.setItem(9, item(destinationCount, 301));
++            }
++            assertTrue(f.menu.handleNativeSourceTap(0, (short) 8, (short) 9, quantity));
++            assertFalse(f.menu.hasIncrementalDrag());
++            assertEquals(9 - transferred, f.menu.getItem(8).amount());
++            f.counts(destinationCount + transferred, 0, 0, 0);
++            assertEquals(transferred == 0 ? 0 : 1, f.sent.size());
++            if (transferred > 0) {
++                f.transfers(new int[]{8, 9, transferred});
++                f.accept();
++                assertEquals(9 - transferred, f.menu.getItem(8).amount());
++                f.counts(destinationCount + transferred, 0, 0, 0);
++            }
++            assertFalse(f.click(10, 1));
++            f.packets.verify(() -> PacketFactory.sendBedrockCursorItemDrag(f.user, true), times(1));
++            f.packets.verify(() -> PacketFactory.sendBedrockCursorItemDrag(f.user, false), times(1));
++        }
++    }
++
++    @Test
++    void rejectedSelectedSourceTapRestoresBothSlotsWithoutLeavingDrawingState() {
++        try (var f = new Fixture()) {
++            f.source(8, 9);
++            f.menu.setItem(9, item(60, 301));
++            assertTrue(f.menu.handleNativeSourceTap(0, (short) 8, (short) 9, 9));
++            f.requests.handleResponse(new ItemStackResponseInfo(ItemStackNetResult.getByValue(49), f.batch.getFirst().requestId(), null));
++            assertEquals(9, f.menu.getItem(8).amount());
++            assertEquals(300, f.menu.getItem(8).netId());
++            f.counts(60, 0, 0, 0);
++            assertEquals(301, f.menu.getItem(9).netId());
++            assertFalse(f.menu.hasIncrementalDrag());
++            assertFalse(f.requests.hasPending());
++            assertFalse(f.click(10, 1));
++            assertEquals(1, f.sent.size());
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(ints = {9, 4})
++    void selectedBudgetRedistributesDirectlyWithoutPickingUpTheSource(final int budget) {
++        try (var f = new Fixture()) {
++            f.source(8, 9);
++            assertTrue(f.menu.beginNativeSourceDrag((short) 8, budget));
++            assertTrue(f.sent.isEmpty());
++            assertTrue(f.click(8, 1));
++            assertTrue(f.click(9, 1));
++            f.counts(budget, 0, 0, 0);
++            assertEquals(9 - budget, f.menu.getItem(8).amount());
++            f.transfers(new int[]{8, 9, budget});
++            f.accept();
++            final int renewed = f.menu.getItem(9).netId();
++
++            assertTrue(f.click(10, 1));
++            final int half = budget / 2;
++            f.counts(half, half, 0, 0);
++            if (budget == 9) {
++                f.transfers(new int[]{9, 10, 4}, new int[]{9, 8, 1});
++            } else {
++                f.transfers(new int[]{9, 10, 2});
++            }
++            assertEquals(renewed, ((ItemStackRequestAction.PlaceAction) f.batch.getFirst().actions().getFirst()).source().stackNetworkId());
++            f.accept();
++            assertTrue(f.click(11, 1));
++            if (budget == 9) {
++                f.transfers(new int[]{9, 11, 1}, new int[]{10, 11, 1}, new int[]{8, 11, 1});
++            } else {
++                f.transfers(new int[]{9, 11, 1}, new int[]{10, 8, 1});
++            }
++            f.accept();
++            final int third = budget / 3;
++            f.counts(third, third, third, 0);
++            assertEquals(9 - third * 3, f.menu.getItem(8).amount());
++            assertTrue(f.click(-999, 2));
++            assertFalse(f.click(12, 1));
++            assertEquals(3, f.sent.size());
++            verify(f.inventory, never()).setCursorItemDrag(true);
++            f.packets.verify(() -> PacketFactory.sendBedrockCursorItemDrag(eq(f.user), anyBoolean()), never());
++        }
++    }
++
++    @ParameterizedTest
++    @CsvSource({"false,8,9", "true,0,3", "true,31,3", "true,3,4"})
++    void sourceDistributionRetainsItsOwnerAcrossContainerInventoryAndHotbarSlots(
++            final boolean furnace, final int source, final int first) {
++        try (var f = new Fixture(furnace)) {
++            f.source(source, 9);
++            assertTrue(f.menu.beginNativeSourceDrag((short) source, 9));
++            f.input(first, 1);
++            f.input(first + 1, 1);
++            f.input(first + 2, 1);
++            f.input(-999, 2);
++            for (int reply = 0; reply < 3; reply++) {
++                f.accept();
++            }
++            assertFalse(f.requests.hasPending());
++            assertTrue(f.menu.getItemInJavaSlot((short) source).isEmpty());
++            for (int slot = first; slot < first + 3; slot++) {
++                assertEquals(3, f.menu.getItemInJavaSlot((short) slot).amount());
++            }
++            assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
++        }
++    }
++
++    @Test
++    void sourceDistributionReturnsOnlyItsOwnContributionFromNearlyFullDestinations() {
++        try (var f = new Fixture()) {
++            f.source(8, 9);
++            f.menu.setItem(9, item(63, 301));
++            f.menu.setItem(10, item(60, 302));
++            assertTrue(f.menu.beginNativeSourceDrag((short) 8, 9));
++            f.input(9, 1);
++            f.accept();
++            f.input(10, 1);
++            f.accept();
++            f.input(11, 1);
++            f.accept();
++            f.counts(64, 63, 3, 0);
++            assertEquals(2, f.menu.getItem(8).amount());
++            assertEquals(132, f.menu.getItem(8).amount() + f.menu.getItem(9).amount()
++                    + f.menu.getItem(10).amount() + f.menu.getItem(11).amount());
++        }
++    }
++
++    @Test
++    void rejectedSourceRedistributionRestoresAcceptedItemsAndDiscardsVisitsBeforeClosing() {
++        try (var f = new Fixture()) {
++            f.source(8, 9);
++            assertTrue(f.menu.beginNativeSourceDrag((short) 8, 4));
++            f.input(9, 1);
++            f.accept();
++            f.input(10, 1);
++            f.input(11, 1);
++            f.input(-999, 2);
++            InventoryPackets.handleContainerClose(f.user, f.menu);
++            for (final var request : List.copyOf(f.batch)) {
++                f.requests.handleResponse(new ItemStackResponseInfo(ItemStackNetResult.getByValue(49), request.requestId(), null));
++            }
++            f.counts(4, 0, 0, 0);
++            assertEquals(5, f.menu.getItem(8).amount());
++            assertSame(f.menu, f.inventory.getPendingCloseContainer());
++            assertFalse(f.requests.hasPending());
++            assertFalse(f.menu.hasIncrementalDrag());
++            assertEquals(2, f.sent.size());
++        }
++    }
++
++    @Test
++    void partialSourceRedistributionRejectionKeepsItsAcceptedPredecessorAndStopsTheGesture() {
++        try (var f = new Fixture()) {
++            f.source(8, 9);
++            assertTrue(f.menu.beginNativeSourceDrag((short) 8, 9));
++            f.input(9, 1);
++            f.accept();
++            f.input(10, 1);
++            final var replies = f.responses();
++            // The second transfer returns one remainder to the source. Reject it before
++            // the first transfer's successful reply to exercise ordered reconciliation.
++            f.requests.handleResponse(new ItemStackResponseInfo(ItemStackNetResult.getByValue(49), replies.get(1).requestId(), null));
++            f.requests.handleResponse(replies.getFirst());
++            f.counts(5, 4, 0, 0);
++            assertTrue(f.menu.getItem(8).isEmpty());
++            assertFalse(f.requests.hasPending());
++            assertFalse(f.menu.hasIncrementalDrag());
++            assertFalse(f.click(11, 1));
++            assertEquals(2, f.sent.size());
++        }
++    }
++
++    @Test
++    void sourceChangesCancelDistributionWithoutConsumingTheReplacementStack() {
++        try (var f = new Fixture()) {
++            f.source(8, 9);
++            assertTrue(f.menu.beginNativeSourceDrag((short) 8, 4));
++            f.input(9, 1);
++            f.accept();
++            f.menu.setItem(8, item(6, 999));
++            assertFalse(f.click(10, 1));
++            f.counts(4, 0, 0, 0);
++            assertEquals(6, f.menu.getItem(8).amount());
++            assertFalse(f.menu.hasIncrementalDrag());
++            assertEquals(1, f.sent.size());
++        }
++    }
 +
 +    @Test
 +    void eachDestinationRedistributesBeforeReleaseAndUsesRenewedStackIds() {
@@ -38408,6 +38733,8 @@ index 00000000..0cbccae0
 +            assertFalse(f.click(12, 1));
 +            assertEquals(3, f.sent.size());
 +            verify(f.inventory, times(1)).setCursorItemDrag(false);
++            f.packets.verify(() -> PacketFactory.sendBedrockCursorItemDrag(f.user, true), times(1));
++            f.packets.verify(() -> PacketFactory.sendBedrockCursorItemDrag(f.user, false), times(1));
 +        }
 +    }
 +
@@ -38699,7 +39026,6 @@ index 00000000..0cbccae0
 +            when(this.user.getProtocolInfo()).thenReturn(info);
 +            when(info.getServerState()).thenReturn(State.CONFIGURATION);
 +            this.inventory = spy(new InventoryTracker(this.user));
-+            doNothing().when(this.inventory).setCursorItemDrag(anyBoolean());
 +            this.requests = new InventoryRequestTracker(this.user);
 +            this.storage.put(InventoryTracker.class, this.inventory);
 +            this.storage.put(InventoryRequestTracker.class, this.requests);
@@ -38732,6 +39058,29 @@ index 00000000..0cbccae0
 +            return this.menu.handleClick(0, (short) slot, (byte) button, ContainerInput.QUICK_CRAFT);
 +        }
 +
++        private void source(final int javaSlot, final int amount) {
++            this.inventory.getHudContainer().setItem(0, BedrockItem.empty());
++            if (javaSlot < this.menu.javaSize()) {
++                this.menu.setItem(this.menu.bedrockSlot(javaSlot), item(amount, 300));
++            } else {
++                final var owner = this.inventory.getInventoryContainer();
++                owner.setItem(owner.bedrockSlot(javaSlot - this.menu.javaSize() + 9), item(amount, 300));
++            }
++        }
++
++        private void transfers(final int[]... expected) {
++            assertEquals(expected.length, this.batch.size());
++            for (int index = 0; index < expected.length; index++) {
++                final var action = assertInstanceOf(ItemStackRequestAction.PlaceAction.class,
++                        this.batch.get(index).actions().getFirst());
++                assertEquals(this.menu.getFullContainerName(expected[index][0]), action.source().container());
++                assertEquals(expected[index][0], Byte.toUnsignedInt(action.source().slot()));
++                assertEquals(this.menu.getFullContainerName(expected[index][1]), action.destination().container());
++                assertEquals(expected[index][1], Byte.toUnsignedInt(action.destination().slot()));
++                assertEquals(expected[index][2], action.count());
++            }
++        }
++
 +        private void input(final int slot, final int button) {
 +            if (this.requests.hasPending()) {
 +                assertTrue(this.requests.queueClick(this.menu, 0, (short) slot, (byte) button, ContainerInput.QUICK_CRAFT));
@@ -38740,7 +39089,7 @@ index 00000000..0cbccae0
 +            }
 +        }
 +
-+        private void accept() {
++        private List<ItemStackResponseInfo> responses() {
 +            final var responses = new ArrayList<ItemStackResponseInfo>();
 +            for (final var request : this.batch) {
 +                final var action = request.actions().getFirst();
@@ -38760,6 +39109,11 @@ index 00000000..0cbccae0
 +                }
 +                responses.add(new ItemStackResponseInfo(ItemStackNetResult.Success, request.requestId(), updates));
 +            }
++            return responses;
++        }
++
++        private void accept() {
++            final var responses = this.responses();
 +            // The response owner must reconcile a transfer batch in request order.
 +            for (final var response : responses.reversed()) {
 +                this.requests.handleResponse(response);

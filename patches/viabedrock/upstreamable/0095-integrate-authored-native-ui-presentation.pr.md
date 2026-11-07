@@ -39,6 +39,11 @@ The full stack supplies descriptor binding and request execution in [deferred pa
 
 Packet, menu-lifetime, and action tests cover supported adapters. Complete installed player/cooking controllers and live native parity remain unfinished.
 
+Selected-item presentation retains an immutable source/count snapshot independently of the real cursor.
+Explicit selected-item bindings take precedence over enclosing slot and recipe collections.
+Scene regressions check the original selected icon and count controls, source retirement, and oversized quantities.
+Installed selected-source validation and its limits are recorded in the [cooking reference](../../../docs/native-cooking-actions.md#validation).
+
 Action-form dialog labels use the accepted pack translator, as the title and body already do.
 `ModalFormTransitionTest` covers translated and literal buttons without authored JSON UI.
 Native Bedrock 1.26.60.5 and BDS 1.26.60.6 establish the expected text with the same English language pack.

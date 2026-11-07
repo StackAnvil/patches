@@ -85,8 +85,12 @@ Ordinary selected-source drawing keeps the cursor empty and sends no cursor-drag
 Release preserves placed items and clears the selected source and distribution allocation.
 Native component, controller, and legacy-model controls establish these results for hotbar, inventory, and furnace ingredient sources.
 They do not establish physical touch delivery, native multiplayer request grouping, or complete screen behavior.
-The negotiated Java drag path currently supports cursor-origin desktop distribution.
-Selected-source transport and its client input owner remain unfinished.
+The negotiated Java path supports cursor-origin desktop distribution and selected-source taps and drawing.
+Selected-source commands retain the displayed frame and opening identity through the shared inventory request owner.
+The optional Touch control style uses mouse contact to exercise source selection and quantity input.
+Selection and quantity feedback leave the real source and cursor unchanged until a transfer starts.
+Authored selected-item controls display the retained source and count independently of the real cursor.
+The default trigger is 525 milliseconds; configurable trigger time and physical touchscreen delivery remain unfinished.
 Release over an empty recipe panel can retain the drag allocation.
 Pointer entry then redistributes items without a held mouse button.
 A delivered slot release or furnace-root reset retires that allocation.
@@ -208,6 +212,15 @@ Server inventory, response data, and the reopened menu agree. All 64 items remai
 These controls use an admitted authored furnace fixture. Default cooking hosts retain their admission guards.
 Native multiplayer transfer grouping and delayed or rejected native drag behavior remain unverified.
 
+Installed direct and ViaProxy selected-source controls retain seven selected items from a nine-item source without sending an inventory request.
+A tap transfers seven and leaves two in the source. Drawing across two destinations places three in each and leaves three in the source.
+Both routes preserve that distribution after closing with incoming replies held for about three seconds and reopening.
+A server replacement renews the source identity while its updates wait in the relay.
+The stale tap receives a real rejection, restores all nine items, and retires the selected preview without replacing the screen or menu.
+A fresh selection then transfers seven successfully. Both complete fault journals contain five matched replies, including the rejection.
+These controls use an admitted authored furnace fixture, mouse contact in Touch style, and software rendering.
+They do not establish native multiplayer grouping, native rejection recovery, physical touch input, or complete visual parity.
+
 Official 1.26.60.5 controls distinguish release over the empty recipe panel from release over the furnace root.
 After the recipe-panel release, an unheld pointer entry redistributes ten items from three stacks of three to four stacks of two.
 The cursor changes from one item to two. Read-only allocation fields and inspected screenshots agree.
@@ -233,7 +246,7 @@ The owning patch contains the durable rationale.
 ## Remaining limits
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
-Default hosts still require arrow-key state and scrollbar input integration.
+Default hosts still require complete input bindings and admission checks.
 Broader source-selection transitions and other input modes remain unfinished.
 The shared bundle controller retains padded selection through publication-bound extraction and replies.
 Native physical bundle navigation bindings remain unverified.
