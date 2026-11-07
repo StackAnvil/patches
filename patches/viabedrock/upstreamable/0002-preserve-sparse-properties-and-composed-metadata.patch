@@ -1,4 +1,4 @@
-From f68dcefa530e4f0ceffd7908cc6467266a15f5c3 Mon Sep 17 00:00:00 2001
+From 242ff686b4852bc639f112f36c9f1cf7b55e8d03 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(metadata): preserve sparse properties and composed actor
@@ -155,8 +155,15 @@ it does not establish movement simulation, complete body rotation, or the
 original local custom-skin report. Regressions cover remote sneak/stand,
 sparse flag composition, other established posture mappings, and retaining
 local prediction outside crawling transitions.
+
+Original 1.26.60.5 typed Float metadata admission retains finite negative
+Scale (38). The complete native size updater clamps its product to 0.005F
+before checking the upper bound, including negative overflow. Preserve
+this collapsed physical box instead of treating the dimensions as absent.
+Use the shared dimension calculation for metadata projection and native
+state consumers so their scale validation and float rounding agree.
 ---
- .../viabedrock/api/model/entity/Entity.java   |  51 ++
+ .../viabedrock/api/model/entity/Entity.java   |  50 ++
  .../api/model/entity/LivingEntity.java        |   4 +-
  .../api/model/entity/PlayerEntity.java        |  43 +-
  .../entity/properties/EntityProperty.java     |  20 +-
@@ -178,7 +185,7 @@ local prediction outside crawling transitions.
  .../rewriter/EntityMetadataRewriterTest.java  | 318 ++++++++++
  .../rewriter/EntityNameFormattingTest.java    | 256 ++++++++
  .../rewriter/PotionActorMetadataTest.java     | 107 ++++
- 22 files changed, 2204 insertions(+), 210 deletions(-)
+ 22 files changed, 2203 insertions(+), 210 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/properties/EntityPropertyListTest.java
@@ -190,7 +197,7 @@ local prediction outside crawling transitions.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/PotionActorMetadataTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 28991e6a..4c89abb2 100644
+index 28991e6a..b66e06fc 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -94,10 +94,12 @@ public class Entity {
@@ -206,7 +213,7 @@ index 28991e6a..4c89abb2 100644
  
      public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes26_3 javaType) {
          this.user = user;
-@@ -115,6 +117,24 @@ public class Entity {
+@@ -115,6 +117,23 @@ public class Entity {
          return scaleData == null ? 1F : ((Number) scaleData.value()).floatValue();
      }
  
@@ -220,18 +227,17 @@ index 28991e6a..4c89abb2 100644
 +        if (data == null || !(data.value() instanceof Number number)) {
 +            return Optional.empty();
 +        }
-+        final float baseValue = number.floatValue();
-+        final float scale = this.scale();
-+        final float value = baseValue * scale;
-+        // The native AABB producer clamps collapsed dimensions to .005 blocks.
-+        return Float.isFinite(baseValue) && baseValue >= 0F && Float.isFinite(scale) && scale >= 0F
-+                && Float.isFinite(value) && value < 1E9F ? Optional.of(Math.max(0.005F, value)) : Optional.empty();
++        try {
++            return Optional.of(NativeActorBoundsMessage.scaledDimension(number.floatValue(), this.scale()));
++        } catch (final IllegalArgumentException unavailableDimensions) {
++            return Optional.empty();
++        }
 +    }
 +
      public final Map<String, Object> entityProperties() {
          return Map.copyOf(this.entityProperties);
      }
-@@ -159,6 +179,18 @@ public class Entity {
+@@ -159,6 +178,18 @@ public class Entity {
          setEntityData.send(BedrockProtocol.class);
      }
  
@@ -250,7 +256,7 @@ index 28991e6a..4c89abb2 100644
      public final void updateEntityData(final EntityData[] entityData, final List<EntityData> javaEntityData) {
          for (EntityData data : entityData) {
              final ActorDataIds dataId = ActorDataIds.getByValue(data.id());
-@@ -265,6 +297,14 @@ public class Entity {
+@@ -265,6 +296,14 @@ public class Entity {
          return this.javaType;
      }
  
@@ -265,7 +271,7 @@ index 28991e6a..4c89abb2 100644
      public Position3f position() {
          return this.position;
      }
-@@ -453,6 +493,14 @@ public class Entity {
+@@ -453,6 +492,14 @@ public class Entity {
          return this.mountRuntimeId;
      }
  
@@ -280,7 +286,7 @@ index 28991e6a..4c89abb2 100644
      public final int getJavaEntityDataIndex(final String fieldName) {
          final int index = BedrockProtocol.MAPPINGS.getJavaEntityDataFields().get(this.javaType).indexOf(fieldName);
          if (index == -1) {
-@@ -605,4 +653,7 @@ public class Entity {
+@@ -605,4 +652,7 @@ public class Entity {
          payload.send(BedrockProtocol.class);
      }
  
@@ -723,10 +729,10 @@ index 8a8c6f74..d6ea7d51 100644
  
      private static void writeTickedEntityMotion(final PacketWrapper wrapper, final long runtimeId, final Position3f motion, final long tick) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index cb61ffc5..9eedc5c5 100644
+index 579f61fd..9e3495bf 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-@@ -294,7 +294,7 @@ public final class JoinPackets {
+@@ -295,7 +295,7 @@ public final class JoinPackets {
                  wrapper.read(BedrockTypes.STRING); // multiplayer correlation id
                  final boolean inventoryServerAuthoritative = wrapper.read(Types.BOOLEAN); // server authoritative inventories
                  final String serverEngine = wrapper.read(BedrockTypes.STRING); // server engine

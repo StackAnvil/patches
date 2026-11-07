@@ -103,7 +103,9 @@ These controls supply registry allocation, context fields, motion inputs and the
 
 Eight original position-request controls construct actor bounds with float arithmetic after subtracting the vertical offset from the position.
 Reset and state/motion requests produce equal bounds while retaining their separate motion behavior.
-The controls supply dimensions and offsets. Live boat offset selection, request production and tick integration remain unverified.
+Original boat initialization writes a 0.375 vertical offset and rebuilds bounds after scaled size updates.
+Coupled metadata and size controls support the [shared physical dimension calculation](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#validation-and-remaining-limits).
+Full Level and actor construction, initialization dispatch, request production and tick integration remain unverified.
 
 The add-on retains Java boat physics. Native tick integration, complete block-friction inputs, live random consumers, scheduling, and matching trajectories remain open.
 
