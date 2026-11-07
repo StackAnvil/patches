@@ -236,7 +236,10 @@ Retained bundle navigation separates row-bound directional input from wrapping p
 Original Bedrock 1.26.60.5 controls establish the padded cell range, input-mode gates, and the empty selected-stack requirement.
 Player and workbench callbacks retain that cell through the optional selected-extraction transport.
 Screen and backend regressions cover source ownership, pending input, sparse physical slots, and rejected transfers.
-Physical input bindings and cooking integration remain unfinished. Installed selected-cell extraction remains unverified.
+Cooking slot gestures use their own publication-bound bundle channel and retain pending selection across snapshots.
+A matching reply either releases the current frame or waits for renewed authority. Buffered search, timeout, capability withdrawal, and late-reply sound ownership share that lifetime.
+Screen regressions cover insertion and selected extraction without duplicate Java actions. Backend regressions cover rejection recovery and replacement openings.
+Physical input bindings and the remaining default cooking host callbacks remain unfinished. Installed selected-cell extraction remains unverified.
 
 Desktop player/workbench bundle inputs use the optional core transport and share the presentation's request sequence, reply handling, timeout, and retirement with search and crafting. Real exported-program tests exercise insertion and default extraction with either cursor or clicked roots, including filled hover views and a bundle moved to the cursor. They check exact payload scope, buffered search, stale replies, desktop cell/hide callbacks, and suppression of duplicate Java actions while a request is pending. A frame-extraction regression covers physical bundle hover.
 

@@ -240,7 +240,8 @@ Unknown storage snapshots restore ordinary controls.
 Player and workbench screens route selected desktop bundle gestures through the native input transport. Local regressions cover insertion and default extraction with either cursor or clicked roots, filled hover views, moved sources, stale snapshots, rejection rollback, and serialized search edits. Matching bundle replies route operation sounds through current native resources and captions. Stale commands and locally unsuccessful extraction attempts stay silent.
 Retained bundle navigation uses padded display cells. Directional callbacks stop at row edges, while previous and next callbacks wrap over item cells.
 A separate optional channel carries selected-cell extraction against the published source snapshot. Core resolves the physical slot and rejects padding, overflow labels, and stale contents.
-Physical input bindings and cooking integration remain unfinished. Installed selected-cell extraction remains unverified.
+Physical input bindings remain unfinished. Installed selected-cell extraction remains unverified.
+Cooking uses the same transfer owner with its [complete source contract](native-cooking-actions.md).
 Installed direct and ViaProxy controls each complete fourteen server-accepted item requests. They insert and extract iron ingots with the bundle in either the clicked slot or the cursor, retain a filled bundle after reopening, and reject insertion into a full bundle without an item request. Screen audits distinguish native commands from ordinary Java clicks. Sound audits observe seven matching level events and decoded PCM channel starts on each route.
 Bundle hover survives temporary source removal and returns when the source becomes available, without another pointer event.
 Source regressions cover independent selection and touch behavior. Screen regressions retain hover while a pending command blocks duplicate actions.

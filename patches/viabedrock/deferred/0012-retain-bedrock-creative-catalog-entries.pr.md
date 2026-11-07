@@ -187,4 +187,7 @@ The optional bundle-input channel accepts a displayed collection/index and input
 Selected extraction uses a separately negotiated version-2 channel. The original version-1 input remains unchanged.
 Core resolves the displayed cell through the published bundle layout and retains physical slot identities through the existing request owner.
 Regressions cover sparse slots, padding, the hidden-items label, full-grid cells beyond index 63, stale contents, and rejection recovery.
-Installed selected-cell extraction and cooking-controller integration remain unverified.
+Cooking bundle commands retain the complete six-field source and share search, recipe, and hold request ordering.
+Station aliases resolve physical slots without admitting crafting collections. Dynamic bundle contents retire old publications.
+Regressions cover all source fields, rejection restoration, replacement openings, request replay, and replies that retain current authority.
+Installed selected-cell extraction and native multiplayer grouping remain unverified.

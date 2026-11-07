@@ -57,6 +57,13 @@ During a retained primary drag, a secondary press preserves the allocation.
 Its delivered slot release ends the original operation, even though another button started it.
 Use the delivered authored callback to resolve this boundary. Physical release alone does not establish a reset.
 
+Route bundle insertion and extraction through the shared physical transfer owner.
+Cooking bundle commands retain all six source fields and share request ordering with search, recipes, and held-item input.
+Resolve selected display cells against the published bundle contents before extracting a physical slot.
+Dynamic bundle changes replace the publication even when the root stack and container revisions stay unchanged.
+A reply states whether the original authority remains current. Wait for a new snapshot only when it retires that authority.
+Retain newer search text while a bundle command waits. Late replies cannot release another opening or play its sound.
+
 Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
 Pointer entry and exit cannot replace or erase the selected-source snapshot.
 Native layout and tab callbacks clear hover while core retains ownership of the selected source.
@@ -180,9 +187,8 @@ The owning patch contains the durable rationale.
 ## Remaining limits
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
-Default hosts still require the retained bundle-selection controller.
-Its directional callbacks use row boundaries, wrapping, and the padding in the bundle tooltip grid.
-The controller must retain the selected physical bundle slot through extraction and server replies.
-Return, arrow-key state, scrollbar input, and source reset still need integration.
+Default hosts still require source reset, Return, arrow-key state, and scrollbar input integration.
+The shared bundle controller retains padded selection through publication-bound extraction and replies.
+Native physical bindings and installed selected-cell extraction remain unverified.
 Native state registration and isolated callback execution do not establish live controller delivery.
 A local request test does not establish native graphical behavior or complete server transaction recovery.
