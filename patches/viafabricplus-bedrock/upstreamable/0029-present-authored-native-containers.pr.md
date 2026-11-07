@@ -283,8 +283,9 @@ Leaving before typing permits inventory-key closure. A first character starts ed
 Screen regressions distinguish temporary hover from editing and preserve cursor items through authored exit actions.
 Installed direct and ViaProxy player controls admit physical text on hover, retain editing after Escape, and preserve the query after reopening.
 Both routes close through E outside inactive search and Escape over inactive search. Inventory and cursor counts stay unchanged without item requests.
-Cooking selected-source snapshots remain independent of hover. Original 1.26.60.5 getter controls distinguish the primary and hover contexts.
-Screen regressions preserve empty and selected snapshots through pointer entry, exit, and unchanged model refreshes.
+Cooking selected-source snapshots remain separate from ordinary recipe hover. Original 1.26.60.5 getter controls distinguish the primary and hover contexts.
+The shared source controller also handles native bundle transitions that clear the primary context.
+Screen regressions preserve ordinary recipe selection and retain local reset through unchanged model refreshes.
 Layout changes clear the shared hover context and prevent a stale bundle tooltip from returning after source restoration.
 Installed direct and ViaProxy controls use an admitted authored furnace scene with the normal admission guards.
 Hover leaves the recipe unselected. A held recipe action retains selection after pointer exit, and release clears it.
@@ -329,9 +330,17 @@ Secondary release retains one item per destination and six carried items.
 The [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) describes ownership and the remaining limits.
 These controls use an admitted furnace fixture and do not establish default cooking-screen support.
 An unhandled release over an empty recipe panel retains drag ownership, including subsequent pointer entry without a held button.
-A delivered slot or reset callback ends the drag. Closing and fallback still retire it.
+A delivered slot release or qualifying reset callback ends the drag. Closing and fallback still retire it.
 The delivered slot release can come from another button. Pressing that button preserves the retained allocation.
 The real-menu regression covers both release buttons, duplicate release, unheld entry, and close.
 Installed direct and ViaProxy controls match the selected native allocation through delayed replies and preserve every item after reopening.
-Complete reset and source-selection dispatch remain unfinished.
+Original 1.26.60.5 producer and dispatcher controls establish the raw reset phases. The client decoder matches all 216 recorded controls.
+Every pressed phase updates empty-source context. A released phase completes an operation only when its previous phase differs from pressed.
+Component consumption continues while inventory replies wait. A child can consume the press before a parent receives the release.
+Completion uses the existing recipe, quantity, and drag owners without retiring the opening or duplicating a later release.
+Screen regressions cover delayed recipe replies, source refresh, retained drag, and declined preference toggles. Held-quantity regressions preserve the original source through completion.
+Installed direct and ViaProxy reset controls each complete seven accepted transfers with one drag start/end pair.
+A release after the reset component receives its own press preserves the allocation. A later qualifying release ends it once.
+Server inventory and reopened menus retain three stacks of three, without dropped items or a transfer after completion.
+Broader source selection, other input modes, default-host bindings, and exact native frame timing remain unfinished.
 Native multiplayer request grouping and delayed or rejected native drag behavior remain unverified.

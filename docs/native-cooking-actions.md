@@ -40,6 +40,16 @@ The same inventory request owner handles pointer and Return pickup, source retur
 Repeated Return presses cannot start another pickup while that hold remains active.
 Space does not activate an ordinary desktop cooking slot.
 
+Cooking reset uses the raw phase retained by the authored component.
+Every pressed phase updates the empty-source context, including repeated presses.
+A released phase finishes an operation only when its previous phase differs from pressed.
+A release after that component received its own press does not finish the operation.
+Keep component consumption active while the controller waits for inventory replies.
+A child can consume the press before a parent receives the release.
+Recipe, quantity, and drag completion retain their existing request owners and original sources.
+A repeated release cannot send another completion or retire the opening.
+Declined preference changes restore their model-bound toggles without changing this input history.
+
 Desktop drag distribution includes the initially pressed slot before the first pointer movement.
 Use the ordinary slot admission checks for that cell and later destinations.
 Native distribution changes the real inventory as each destination is entered, before pointer release.
@@ -73,7 +83,10 @@ Pending item commands do not clear physical hover.
 Retain the bundle source through mouse release and renewed snapshots without requiring pointer movement.
 
 Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
-Pointer entry and exit cannot replace or erase the selected-source snapshot.
+Ordinary recipe hover preserves selection.
+The native source controller clears selected bundle context during its admitted desktop transitions.
+An empty-source press preserves bundle hover when the primary source is already empty.
+Retain a local source reset through publications with unchanged selected-source data.
 Native layout and tab callbacks clear hover while core retains ownership of the selected source.
 Read transfer quantities from native descriptors and current stack identity.
 Respect item locks, source permissions, destination capacity, and carried stacks.
@@ -185,7 +198,11 @@ Read-only controller observations and physical button masks establish that event
 Installed direct and ViaProxy controls retain selection during the second press and complete it before primary release.
 Each journal contains four accepted transfers and retains all nine items after reopening.
 These controls establish the input lifetime, not exact frame timing or equal selected counts at matching requested durations.
-Broader reset, source selection, and same-frame pointer and press admission still need matching controls.
+Installed direct and ViaProxy reset controls retain drag allocation after a release whose previous phase is pressed.
+A later qualifying reset ends the allocation once. Pointer entry cannot redistribute items after that completion.
+Each journal contains seven accepted transfers and one drag start/end pair.
+Server inventory and reopened menus retain three stacks of three, without dropped items.
+Other input modes, broader source selection, and same-frame pointer and press admission still need matching controls.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.
@@ -195,7 +212,8 @@ The owning patch contains the durable rationale.
 ## Remaining limits
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
-Default hosts still require source reset, arrow-key state, and scrollbar input integration.
+Default hosts still require arrow-key state and scrollbar input integration.
+Broader source-selection transitions and other input modes remain unfinished.
 The shared bundle controller retains padded selection through publication-bound extraction and replies.
 Native physical bundle navigation bindings remain unverified.
 Installed selected-cell extraction uses an admitted authored fixture. See the [container validation](../patches/viafabricplus-bedrock/upstreamable/0029-present-authored-native-containers.pr.md).
