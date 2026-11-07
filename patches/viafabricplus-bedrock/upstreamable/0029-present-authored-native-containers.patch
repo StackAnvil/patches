@@ -1,4 +1,4 @@
-From bffaeccaf7c6337cba6f1ab0f2c9b6981a2a6eba Mon Sep 17 00:00:00 2001
+From 094f423f3fa50ce3c673df5524badcfa2106e1de Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -1189,6 +1189,14 @@ request owners and original source identities, without retiring the menu.
 Preserve empty-primary bundle hover, clear admitted selected-source context,
 and retain the local selection through unchanged snapshot publications.
 Keep arrow and scrollbar controller admission guarded pending their owners.
+
+Honor the original held-input edge filters independently of activation.
+Return press requires raw phase one after another phase. Return release
+requires raw phase zero after phase one. Unmatched and intermediate
+releases preserve the held flag, timer and source until a matching edge.
+Original 1.26.60.5 producer/dispatcher controls cover all three modes,
+phases and previous phases. Real-menu regressions keep quantity selection
+active after unmatched releases, then complete once through its owner.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockInventorySounds.java    |   35 +
@@ -1230,7 +1238,7 @@ Keep arrow and scrollbar controller admission guarded pending their owners.
  .../container/NativeCookingActions.java       |  317 +++
  .../container/NativeCookingBundlePayload.java |   22 +
  .../NativeCookingBundleResultPayload.java     |   22 +
- .../screen/container/NativeCookingHold.java   |  162 ++
+ .../screen/container/NativeCookingHold.java   |  166 ++
  .../container/NativeCookingHoldPayload.java   |   22 +
  .../NativeCookingHoldResultPayload.java       |   22 +
  .../container/NativeCookingNavigation.java    |   73 +
@@ -1274,10 +1282,10 @@ Keep arrow and scrollbar controller admission guarded pending their owners.
  .../container/NativeContainerScrollTest.java  |   51 +
  .../container/NativeContainerSessionTest.java |   40 +
  .../container/NativeCookingActionsTest.java   |  449 +++
- .../container/NativeCookingHoldTest.java      |  158 ++
+ .../container/NativeCookingHoldTest.java      |  158 +
  ...tiveCookingPresentationControllerTest.java |  260 ++
  .../NativeCookingPresentationTest.java        |  301 ++
- .../container/NativeCookingScreenTest.java    | 2515 +++++++++++++++++
+ .../container/NativeCookingScreenTest.java    | 2532 +++++++++++++++++
  .../NativeFurnacePreferenceStateTest.java     |   45 +
  .../container/NativeInventoryFlightsTest.java |   70 +
  .../NativeInventoryHelpTextTest.java          |   34 +
@@ -1290,7 +1298,7 @@ Keep arrow and scrollbar controller admission guarded pending their owners.
  .../container/NativePlayerScreenTest.java     | 1145 ++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 +
  .../PlayerInventoryScreenLifecycleTest.java   |  139 +
- 100 files changed, 16676 insertions(+), 62 deletions(-)
+ 100 files changed, 16697 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockInventorySounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
@@ -1898,7 +1906,7 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..edcc7a0
+index 0000000..0e068c4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 @@ -0,0 +1,2069 @@
@@ -3376,7 +3384,7 @@ index 0000000..edcc7a0
 +            }
 +            if (this.presentation instanceof NativeCookingPresentation cooking && NativeCookingHold.returnTarget(input.target())) {
 +                if (this.current() && !this.closing() && this.nativeInput.enabled(event.node())) {
-+                    this.cookingHold.returnInput(input.pressed());
++                    this.cookingHold.returnInput(input);
 +                    this.cookingHold.flush(cooking, this.menu.getCarried(), this::sendCookingHold);
 +                    cooking.holdInput(this.cookingHold.busy());
 +                    cooking.quantity(this.cookingHold.quantity());
@@ -7004,10 +7012,10 @@ index 0000000..9478179
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHold.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHold.java
 new file mode 100644
-index 0000000..362ec49
+index 0000000..8a18950
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHold.java
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,166 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7061,9 +7069,13 @@ index 0000000..362ec49
 +    static boolean returnTarget(final int target) { return target == NativeUiInput.symbol("button.return"); }
 +
 +    /** The native Return edge also supplies the keyboard branch of held quantity input. */
-+    void returnInput(final boolean pressed) {
-+        this.returnHeld = pressed;
-+        if (!pressed && this.owns(InputConstants.KEY_RETURN)) this.release(InputConstants.KEY_RETURN, true);
++    void returnInput(final NativeUiInput.ButtonEvent input) {
++        // Native edge filters are independent of the mode-specific activation flag.
++        if (input.phase() == 1 && input.previous() != 1) this.returnHeld = true;
++        else if (input.phase() == 0 && input.previous() == 1) {
++            this.returnHeld = false;
++            if (this.owns(InputConstants.KEY_RETURN)) this.release(InputConstants.KEY_RETURN, true);
++        }
 +    }
 +
 +    boolean pickupReturn(final int slot, final ItemStack item, final long update, final long now,
@@ -13427,10 +13439,10 @@ index 0000000..0f526b6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java
 new file mode 100644
-index 0000000..a7f8499
+index 0000000..e6608b6
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java
-@@ -0,0 +1,2515 @@
+@@ -0,0 +1,2532 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14033,8 +14045,9 @@ index 0000000..a7f8499
 +        }
 +    }
 +
-+    @Test
-+    void returnHoldUsesTheFocusedCookingSlotAndCompletesOnceAfterItsReply() throws Exception {
++    @ParameterizedTest
++    @ValueSource(ints = {0, 2})
++    void returnHoldIgnoresAnUnmatchedReleaseAndCompletesOnceAfterItsReply(final int previous) throws Exception {
 +        try (final var f = new Fixture()) {
 +            final var message = returnSlotMessage(2);
 +            assertTrue(f.controller.accept(f.owner, f.menu, 5, message, _ -> new ItemStack(Items.IRON_INGOT)));
@@ -14068,10 +14081,26 @@ index 0000000..a7f8499
 +            f.menu.setCarried(ItemStack.EMPTY);
 +            f.clock.set(601_000_000L);
 +            f.screen.advanceCookingInput();
++            final var drawsField = BedrockNativeContainerScreen.class.getDeclaredField("draws");
++            drawsField.setAccessible(true);
++            @SuppressWarnings("unchecked")
++            final var draws = (List<NativeUiPresentation.Draw>) drawsField.get(f.screen);
++            final var returnNode = draws.stream().map(draw -> draw.box().node())
++                    .filter(node -> node.name().equals("return_input")).findFirst().orElseThrow();
++            final var callbacks = BedrockNativeContainerScreen.class.getDeclaredMethod("componentEvents", NativeContainerInput.Result.class);
++            callbacks.setAccessible(true);
++            final int target = NativeUiInput.symbol("button.return");
++            final var unmatched = new NativeUiInput.ButtonEvent(target, target, previous, 0, false, 1,
++                    NativeUiInput.Scope.DEFAULT, false, false);
++            callbacks.invoke(f.screen, new NativeContainerInput.Result(true,
++                    List.of(new NativeContainerInput.Event(returnNode, unmatched, null))));
++            assertEquals(1, held.size(), "A release without this component's press cannot finish Return selection");
++            f.clock.set(801_000_000L);
++            f.screen.advanceCookingInput();
 +            assertTrue(f.screen.keyReleased(enter));
 +            assertEquals(2, held.size());
 +            assertEquals(NativeCookingHoldAction.Phase.COMPLETE, held.getLast().phase());
-+            assertEquals(3, held.getLast().quantity());
++            assertEquals(5, held.getLast().quantity());
 +            assertEquals(held.getFirst().source(), held.getLast().source());
 +            f.screen.keyReleased(enter);
 +            assertEquals(2, held.size());

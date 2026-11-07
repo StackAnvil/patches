@@ -299,6 +299,13 @@ Core now retains the return and partial-pickup transaction phases across delayed
 Desktop primary pickup now retains its source through the shared View countdown and a separate quantity timer.
 Official 1.26.60.5 desktop Return controls enter quantity state 15 and end it on key release. Space over the same ordinary slot leaves items unchanged.
 Return uses authored slot confirmation and a separate held-input callback. It shares the existing quantity request owner and retains the routed slot as its origin.
+Original 1.26.60.5 producer and dispatcher controls establish Return's held-edge filters in all three input modes.
+The production handler matches all 54 combinations of mode, phase, previous phase, and initial held state.
+A release without the same component's prior press cannot clear Return or finish its quantity owner.
+Real-menu regressions preserve the source and timer after unmatched releases, then complete once on the matching release.
+Installed controls reveal a second Return mapping during a physical hold. Its first release has no prior press in that component.
+The previous build completes at two items while Return remains down. Current direct and ViaProxy controls retain selection until the real release.
+Each fixed route completes four accepted transfers and retains all nine items after reopening, with the same screen and menu throughout the gesture.
 Screen regressions cover pickup, key repeats, completion while the hold owns input, duplicate release, and unchanged menu previews. Unsupported keyboard quick-move still restores ordinary controls.
 Installed direct and ViaProxy Return controls each complete ten accepted requests across short pickup, partial and full holds, return, and reopening.
 Both routes retain six items after the partial release and nine after the full release. Held input uses the loaded client's Return key constant.

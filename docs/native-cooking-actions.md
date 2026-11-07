@@ -38,6 +38,11 @@ Desktop Return activates the slot through its authored confirmation mapping.
 Its separate Return callback retains keyboard-held state and completes the matching quantity selection on release.
 The same inventory request owner handles pointer and Return pickup, source return, and partial pickup.
 Repeated Return presses cannot start another pickup while that hold remains active.
+Return callbacks use raw held-input edges independently of the activation flag.
+Only a release after that component received a press can clear Return or complete its quantity owner.
+An unmatched release from a newly visible mapping preserves the original source and timer.
+Installed direct and ViaProxy controls cover a mapping that becomes visible during a physical Return hold.
+Both routes keep quantity selection active through its unmatched release and finish once on the real Return release.
 Space does not activate an ordinary desktop cooking slot.
 
 Cooking reset uses the raw phase retained by the authored component.
