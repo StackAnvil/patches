@@ -33,16 +33,12 @@ Core, add-on, and proxy packages retain the original NBT bytes and its license.
 
 Shape, state, culling, and conversion tests cover supported definitions. Carrier capacity, unsupported materials, and complete native appearance remain limits.
 
-Camera bounds combine local component boxes before continuous world-float translation.
-Two one-pixel boxes within one block retain their native envelope at X/Z 1,048,576, where each translated box collapses separately.
-The compiled helper matches 64 original 1.26.60.5 envelope controls, including 312 float fields. State/shared offset lookup and the boat friction probe execute with the original shape method.
-These controls supply component storage and primary cell reads. Nonbase shape overrides, authored decoding, installed camera behavior, and complete trajectories remain unverified.
-Collision components use the native Byte enabled flag and Float coordinates. Missing or differently typed values decode to false and zero.
-Endpoints clamp to 16 pixels horizontally and 24 vertically before conversion; an enabled empty list supplies a full block.
-Retain flat bounds through conversion, metadata, camera envelopes, and cache identity. Movement queries discard empty translated volumes.
-The compiled converter and metadata path match 13 original NBT-to-finalized-cache-to-shape controls, including mixed flat and solid bounds.
-Two supplied-matrix controls also show that native rotation can give a flat box positive volume.
-Original decoding and finalization use supplied component storage, tag IDs, empty property maps, and unrelated cache defaults.
-The full 109-patch core replay and build pass. Exact transformed float order, full publication, nonbase providers, and installed camera or movement trajectories remain open.
+Camera bounds combine local component boxes before translating them with native float arithmetic. Retain flat bounds through metadata and cache identity; movement queries discard volumes that collapse after world translation.
+
+Collision components require the native Byte enabled flag and Float coordinates. Missing or differently typed values decode to false and zero. Endpoints clamp to 16 pixels horizontally and 24 vertically; an enabled empty list supplies a full block.
+
+Physical transformations require integer quarter turns and Float scale, translation, and pivot fields. Preserve the native missing-field defaults, quaternion reconstruction, matrix products, and paired AABB sums. Keep this path separate from model vertices. A missing physical component retains its Legacy fallback bounds.
+
+Compiled converter and metadata controls match original 1.26.60.5 decoding, typed component application, Block finalization, and primary bounds. They include all quarter-turn combinations and mixed scales, pivots, and translations. Component storage, tag IDs, empty property maps, unrelated cache values, and libc boundaries remain supplied inputs. Full world publication, nonbase shape providers, selection-component decoding, visual transformation parity, and installed transformed camera or movement trajectories remain open.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.

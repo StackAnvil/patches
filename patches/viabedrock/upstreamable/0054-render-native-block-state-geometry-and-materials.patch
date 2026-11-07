@@ -1,4 +1,4 @@
-From 5f85cdf64db08e88d6b2b062d7cc3bf9b1ee01da Mon Sep 17 00:00:00 2001
+From 51901df6eb20285f75b1cd9c9dea2777f74675f2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -420,6 +420,19 @@ as the source asset instead of maintaining a derived JSON list and a
 conversion tool. Bundle its Apache-2.0 license and document the source,
 checksum, and update procedure in Data Asset Sources.md. Runtime palette
 selection still depends on the current StartGame registrations.
+
+Reproduce the protocol-2225 physical transformation decoder and matrix
+application separately from model vertices. Require integer quarter turns
+and Float scale, translation and pivot fields, with native missing-field
+defaults. Build the native quaternion matrix with float products, center
+it on the block, and project bounds using the original paired sums.
+Do not transform Legacy fallback bounds when no physical component exists.
+
+Original 1.26.60 NBT decode, typed component application, Block finalizer
+and primary shape controls expose reversed rotation and float-boundary
+errors in the previous double corner path. Retain the separate visual
+transform and existing selection-component decode policy; their complete
+parity is outside these physical-bound controls.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -450,9 +463,10 @@ selection still depends on the current StartGame registrations.
  .../protocol/rewriter/BlockStateRewriter.java |  285 +++--
  .../rewriter/ResourcePackRewriter.java        |    2 +
  .../CustomBlockCullingCompiler.java           |  162 +++
- .../resourcepack/CustomBlockModel.java        |  609 +++++++++
+ .../resourcepack/CustomBlockModel.java        |  607 +++++++++
  .../CustomBlockResourceRewriter.java          |  237 ++++
  .../CustomBlockStateDefinitions.java          |  225 ++++
+ .../resourcepack/NativeBlockTransform.java    |  180 +++
  .../protocol/storage/ChunkTracker.java        |   40 +-
  .../storage/CustomBlockPackStorage.java       |   37 +
  .../protocol/storage/ResourcePackStorage.java |   44 +-
@@ -479,7 +493,7 @@ selection still depends on the current StartGame registrations.
  .../protocol/model/BlockTraitStatesTest.java  |  291 +++++
  .../protocol/model/CustomBlockStatesTest.java |  139 ++
  .../rewriter/CustomBlockBoneGeometryTest.java |  213 ++++
- .../CustomBlockModelSelectionTest.java        |  582 +++++++++
+ .../CustomBlockModelSelectionTest.java        |  655 ++++++++++
  .../CustomBlockPlaneGeometryTest.java         |  170 +++
  .../CustomBlockCullingCompilerTest.java       |  140 ++
  .../CustomBlockMaterialVisibilityTest.java    |  106 ++
@@ -489,7 +503,7 @@ selection still depends on the current StartGame registrations.
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  230 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   78 ++
- 68 files changed, 10095 insertions(+), 129 deletions(-)
+ 69 files changed, 10346 insertions(+), 129 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -511,6 +525,7 @@ selection still depends on the current StartGame registrations.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBuffer.java
@@ -3446,10 +3461,10 @@ index 00000000..5a7981fc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..e6cf9601
+index 00000000..2ed4b71b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,609 @@
+@@ -0,0 +1,607 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3879,15 +3894,18 @@ index 00000000..e6cf9601
 +    }
 +
 +    private static List<CustomBlockVisual.Box> boxes(final CompoundTag component, final boolean selection, final Transform transform) {
-+        if (!selection && component != null && (!(component.get("enabled") instanceof ByteTag enabled) || enabled.asByte() == 0)) {
++        if (component == null) {
++            return List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1, 1));
++        }
++        if (!selection && (!(component.get("enabled") instanceof ByteTag enabled) || enabled.asByte() == 0)) {
 +            return List.of();
 +        }
-+        if (selection && component != null && component.get("enabled") instanceof NumberTag enabled && enabled.asInt() == 0) {
++        if (selection && component.get("enabled") instanceof NumberTag enabled && enabled.asInt() == 0) {
 +            return List.of();
 +        }
 +        final List<double[]> bounds = new ArrayList<>();
-+        final ListTag<CompoundTag> boxes = component == null || !selection ? null : component.getListTag("boxes", CompoundTag.class);
-+        if (!selection && component != null) {
++        final ListTag<CompoundTag> boxes = !selection ? null : component.getListTag("boxes", CompoundTag.class);
++        if (!selection) {
 +            if (component.get("boxes") instanceof ListTag<?> supplied) {
 +                for (final Tag tag : supplied) {
 +                    if (tag instanceof CompoundTag box) {
@@ -3905,7 +3923,7 @@ index 00000000..e6cf9601
 +                bounds.add(new double[]{number(box, "minX", 0), number(box, "minY", 0), number(box, "minZ", 0),
 +                        number(box, "maxX", 16), number(box, "maxY", 16), number(box, "maxZ", 16)});
 +            }
-+        } else if (component != null && component.getListTag("origin") != null && component.getListTag("size") != null) {
++        } else if (component.getListTag("origin") != null && component.getListTag("size") != null) {
 +            final ListTag<?> origin = component.getListTag("origin");
 +            final ListTag<?> size = component.getListTag("size");
 +            final double x = ((NumberTag) origin.get(0)).asDouble() + 8;
@@ -3921,19 +3939,11 @@ index 00000000..e6cf9601
 +            if (selection && (box[0] == box[3] || box[1] == box[4] || box[2] == box[5])) {
 +                continue;
 +            }
-+            final double[] min = new double[]{Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY};
-+            final double[] max = new double[]{Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY};
-+            for (int corner = 0; corner < 8; corner++) {
-+                final double[] point = transform.point(new double[]{box[(corner & 1) == 0 ? 0 : 3], box[(corner & 2) == 0 ? 1 : 4], box[(corner & 4) == 0 ? 2 : 5]});
-+                for (int i = 0; i < 3; i++) {
-+                    min[i] = Math.min(min[i], point[i]);
-+                    max[i] = Math.max(max[i], point[i]);
-+                }
-+            }
-+            if (selection && (min[0] == max[0] || min[1] == max[1] || min[2] == max[2])) {
++            final CustomBlockVisual.Box transformed = transform.physical.box(box);
++            if (selection && (transformed.minX() == transformed.maxX() || transformed.minY() == transformed.maxY() || transformed.minZ() == transformed.maxZ())) {
 +                continue;
 +            }
-+            result.add(new CustomBlockVisual.Box(min[0] / 16, min[1] / 16, min[2] / 16, max[0] / 16, max[1] / 16, max[2] / 16));
++            result.add(transformed);
 +        }
 +        return List.copyOf(result);
 +    }
@@ -4001,6 +4011,7 @@ index 00000000..e6cf9601
 +    }
 +
 +    static final class Transform {
++        private final NativeBlockTransform physical;
 +        private final double[] scale;
 +        private final double[] translation;
 +        private final double[] rotationPivot;
@@ -4008,6 +4019,7 @@ index 00000000..e6cf9601
 +        private final double[][] rotation;
 +
 +        Transform(final CompoundTag tag) {
++            this.physical = new NativeBlockTransform(tag);
 +            this.scale = new double[]{number(tag, "SX", 1), number(tag, "SY", 1), number(tag, "SZ", 1)};
 +            this.translation = new double[]{number(tag, "TX", 0) * 16, number(tag, "TY", 0) * 16, number(tag, "TZ", 0) * 16};
 +            this.rotationPivot = new double[]{8 + number(tag, "RXP", 0) * 16, 8 + number(tag, "RYP", 0) * 16, 8 + number(tag, "RZP", 0) * 16};
@@ -4016,6 +4028,7 @@ index 00000000..e6cf9601
 +        }
 +
 +        Transform(final Parent bone) {
++            this.physical = new NativeBlockTransform(null);
 +            this.scale = new double[]{1, 1, 1};
 +            this.translation = new double[]{0, 0, 0};
 +            this.rotationPivot = new double[]{8 - bone.getPivot().getX(), bone.getPivot().getY(), 8 + bone.getPivot().getZ()};
@@ -4530,6 +4543,192 @@ index 00000000..a063da13
 +            model.addProperty("y", rotation);
 +        }
 +        return model;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
+new file mode 100644
+index 00000000..4e151bb7
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
+@@ -0,0 +1,180 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.FloatTag;
++import com.viaversion.nbt.tag.IntTag;
++import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++
++/**
++ * Physical block transforms selected by the protocol-2225 component decoder.
++ * Keep matrix products and paired AABB sums in native float order. Model vertices use their separate coordinate transform.
++ */
++final class NativeBlockTransform {
++
++    private final float[] matrix;
++
++    NativeBlockTransform(final CompoundTag tag) {
++        this.matrix = tag == null ? null : physicalMatrix(tag);
++    }
++
++    CustomBlockVisual.Box box(final double[] pixels) {
++        final float[] minimum = new float[3];
++        final float[] maximum = new float[3];
++        for (int axis = 0; axis < 3; axis++) {
++            minimum[axis] = Math.min((float) pixels[axis], (float) pixels[axis + 3]) / 16F;
++            maximum[axis] = Math.max((float) pixels[axis], (float) pixels[axis + 3]) / 16F;
++        }
++        if (this.matrix == null) {
++            return bounds(minimum, maximum);
++        }
++        final float[] center = new float[3];
++        final float[] half = new float[3];
++        for (int axis = 0; axis < 3; axis++) {
++            half[axis] = (maximum[axis] - minimum[axis]) * 0.5F;
++            center[axis] = minimum[axis] + half[axis];
++        }
++        for (int axis = 0; axis < 3; axis++) {
++            final float transformed = (this.matrix[axis + 4] * center[1] + this.matrix[axis] * center[0])
++                + (this.matrix[axis + 12] + this.matrix[axis + 8] * center[2]);
++            final float extent = (Math.abs(this.matrix[axis + 4]) * half[1] + Math.abs(this.matrix[axis]) * half[0])
++                + (Math.abs(this.matrix[axis + 12]) * 0F + Math.abs(this.matrix[axis + 8]) * half[2]);
++            minimum[axis] = Math.min(transformed - extent, transformed + extent);
++            maximum[axis] = Math.max(transformed - extent, transformed + extent);
++        }
++        return bounds(minimum, maximum);
++    }
++
++    private static CustomBlockVisual.Box bounds(final float[] min, final float[] max) {
++        return new CustomBlockVisual.Box(min[0], min[1], min[2], max[0], max[1], max[2]);
++    }
++
++    private static float number(final CompoundTag tag, final String key) {
++        return tag.get(key) instanceof FloatTag value ? value.asFloat() : 0F;
++    }
++
++    private static int turns(final CompoundTag tag, final String key) {
++        return tag.get(key) instanceof IntTag value ? Math.max(value.asInt(), 0) % 4 : 0;
++    }
++
++    static float[] matrix(final CompoundTag tag) {
++        float[] rotation = identity();
++        final float[][] axes = {
++            {1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1},
++            {0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1},
++            {0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
++        };
++        final int[] turns = {turns(tag, "RX"), turns(tag, "RY"), turns(tag, "RZ")};
++        for (int axis = 2; axis >= 0; axis--) {
++            for (int turn = 0; turn < turns[axis]; turn++) {
++                rotation = multiply(rotation, axes[axis]);
++            }
++        }
++        // Native quarter-turn matrices pass through quaternion extraction before scale and pivot application.
++        rotation = quaternionMatrix(rotation);
++        final float[] translation = {number(tag, "TX"), number(tag, "TY"), number(tag, "TZ")};
++        final float[] rotationPivot = {number(tag, "RXP"), number(tag, "RYP"), number(tag, "RZP")};
++        final float[] scalePivot = {number(tag, "SXP"), number(tag, "SYP"), number(tag, "SZP")};
++        final float[] scale = {number(tag, "SX"), number(tag, "SY"), number(tag, "SZ")};
++        float[] result = identity();
++        for (int axis = 0; axis < 3; axis++) {
++            result[axis + 12] = translation[axis] + rotationPivot[axis];
++        }
++        result = multiply(result, rotation);
++        for (int row = 0; row < 4; row++) {
++            final float shifted = (-rotationPivot[0] * result[row] - rotationPivot[1] * result[row + 4])
++                - rotationPivot[2] * result[row + 8] + result[row + 12];
++            final float unscaled = ((result[row] * scalePivot[0] + result[row + 4] * scalePivot[1])
++                + result[row + 8] * scalePivot[2]) + shifted;
++            result[row] *= scale[0];
++            result[row + 4] *= scale[1];
++            result[row + 8] *= scale[2];
++            result[row + 12] = (-scalePivot[0] * result[row] - scalePivot[1] * result[row + 4])
++                - scalePivot[2] * result[row + 8] + unscaled;
++        }
++        return result;
++    }
++
++    private static float[] physicalMatrix(final CompoundTag tag) {
++        final float[] before = identity();
++        final float[] after = identity();
++        for (int axis = 0; axis < 3; axis++) {
++            before[axis + 12] = 0.5F;
++            after[axis + 12] = -0.5F;
++        }
++        return multiply(multiply(before, matrix(tag)), after);
++    }
++
++    private static float[] quaternionMatrix(final float[] m) {
++        final float[] choices = {m[0] + m[5] + m[10], (m[0] - m[5]) - m[10], (m[5] - m[0]) - m[10], (m[10] - m[0]) - m[5]};
++        int biggest = 0;
++        for (int i = 1; i < choices.length; i++) {
++            if (choices[i] > choices[biggest]) {
++                biggest = i;
++            }
++        }
++        final float value = (float) Math.sqrt(choices[biggest] + 1F) * 0.5F;
++        final float multiplier = 0.25F / value;
++        final float x;
++        final float y;
++        final float z;
++        final float w;
++        switch (biggest) {
++            case 0 -> {
++                w = value;
++                x = (m[6] - m[9]) * multiplier;
++                y = (m[8] - m[2]) * multiplier;
++                z = (m[1] - m[4]) * multiplier;
++            }
++            case 1 -> {
++                x = value;
++                w = (m[6] - m[9]) * multiplier;
++                y = (m[4] + m[1]) * multiplier;
++                z = (m[8] + m[2]) * multiplier;
++            }
++            case 2 -> {
++                y = value;
++                w = (m[8] - m[2]) * multiplier;
++                x = (m[4] + m[1]) * multiplier;
++                z = (m[9] + m[6]) * multiplier;
++            }
++            default -> {
++                z = value;
++                w = (m[1] - m[4]) * multiplier;
++                x = (m[8] + m[2]) * multiplier;
++                y = (m[9] + m[6]) * multiplier;
++            }
++        }
++        final float xx = x * (x + x);
++        final float yy = y * (y + y);
++        final float zz = z * (z + z);
++        final float xy = x * (y + y);
++        final float xz = x * (z + z);
++        final float yz = y * (z + z);
++        final float wx = w * (x + x);
++        final float wy = w * (y + y);
++        final float wz = w * (z + z);
++        return new float[]{1F - yy - zz, xy + wz, xz - wy, 0, xy - wz, 1F - xx - zz, yz + wx, 0,
++            xz + wy, yz - wx, 1F - xx - yy, 0, 0, 0, 0, 1};
++    }
++
++    private static float[] identity() {
++        return new float[]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
++    }
++
++    private static float[] multiply(final float[] left, final float[] right) {
++        final float[] result = new float[16];
++        for (int column = 0; column < 4; column++) {
++            for (int row = 0; row < 4; row++) {
++                result[column * 4 + row] = ((left[row] * right[column * 4] + left[row + 4] * right[column * 4 + 1])
++                    + left[row + 8] * right[column * 4 + 2]) + left[row + 12] * right[column * 4 + 3];
++            }
++        }
++        return result;
 +    }
 +
 +}
@@ -9799,10 +9998,10 @@ index 00000000..61c3a60c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..a8a76dc2
+index 00000000..9b3756de
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,582 @@
+@@ -0,0 +1,655 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -9920,33 +10119,106 @@ index 00000000..a8a76dc2
 +    }
 +
 +    @Test
-+    void retainsFlatCollisionBoundsUntilNativeVolumeQueriesAndTransformsThem() {
++    void retainsFlatCollisionBoundsUntilNativeVolumeQueries() {
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
 +        for (int axis = 0; axis < 3; axis++) {
-+            for (boolean rotated : new boolean[]{false, true}) {
-+                final CompoundTag components = components("geometry.test", "ruby", "opaque");
-+                final CompoundTag shape = new CompoundTag();
-+                shape.put("origin", new ListTag<>(List.of(new FloatTag(-8), new FloatTag(0), new FloatTag(-8))));
-+                shape.put("size", new ListTag<>(List.of(new FloatTag(axis == 0 ? 0 : 16), new FloatTag(axis == 1 ? 0 : 16), new FloatTag(axis == 2 ? 0 : 16))));
-+                final CompoundTag collision = new CompoundTag();
-+                collision.putByte("enabled", (byte) 1);
-+                collision.put("boxes", new ListTag<>(List.of(collisionBox(0, 0, 0,
-+                        axis == 0 ? 0 : 16, axis == 1 ? 0 : 16, axis == 2 ? 0 : 16))));
-+                components.put("minecraft:collision_box", collision);
-+                components.put("minecraft:selection_box", shape.copy());
-+                if (rotated) {
-+                    final CompoundTag transform = new CompoundTag();
-+                    transform.putFloat("RX", 0.5F);
-+                    transform.putFloat("RY", 0.5F);
-+                    components.put("minecraft:transformation", transform);
-+                }
-+                final var visual = CustomBlockModel.compile(storage, "test:block", 42, components);
-+                assertFalse(visual.collisionBoxes().isEmpty());
-+                assertEquals(!rotated, CustomBlockProperties.of(visual).collisionBoxesAt(0, 0, 0).isEmpty());
-+                assertTrue(visual.selectionBoxes().isEmpty());
-+                assertFalse(JsonParser.parseString(visual.modelJson()).getAsJsonObject().getAsJsonArray("elements").isEmpty());
-+            }
++            final CompoundTag components = components("geometry.test", "ruby", "opaque");
++            final CompoundTag shape = new CompoundTag();
++            shape.put("origin", new ListTag<>(List.of(new FloatTag(-8), new FloatTag(0), new FloatTag(-8))));
++            shape.put("size", new ListTag<>(List.of(new FloatTag(axis == 0 ? 0 : 16), new FloatTag(axis == 1 ? 0 : 16), new FloatTag(axis == 2 ? 0 : 16))));
++            final CompoundTag collision = new CompoundTag();
++            collision.putByte("enabled", (byte) 1);
++            collision.put("boxes", new ListTag<>(List.of(collisionBox(0, 0, 0,
++                    axis == 0 ? 0 : 16, axis == 1 ? 0 : 16, axis == 2 ? 0 : 16))));
++            components.put("minecraft:collision_box", collision);
++            components.put("minecraft:selection_box", shape);
++            final var visual = CustomBlockModel.compile(storage, "test:block", 42, components);
++            assertFalse(visual.collisionBoxes().isEmpty());
++            assertTrue(CustomBlockProperties.of(visual).collisionBoxesAt(0, 0, 0).isEmpty());
++            assertTrue(visual.selectionBoxes().isEmpty());
++            assertFalse(JsonParser.parseString(visual.modelJson()).getAsJsonObject().getAsJsonArray("elements").isEmpty());
 +        }
++    }
++
++    @Test
++    void preservesLegacyBoundsWithoutPhysicalComponent() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CompoundTag components = components("geometry.test", "ruby", "opaque");
++        components.put("minecraft:transformation", new CompoundTag());
++        final var visual = CustomBlockModel.compile(storage, "test:block", 42, components);
++        final var unit = List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1, 1));
++        assertEquals(unit, visual.collisionBoxes());
++        assertEquals(unit, visual.selectionBoxes());
++    }
++
++    @Test
++    void requiresIntegerQuarterTurnsForPhysicalBlockRotation() {
++        final CompoundTag transform = unitScale();
++        transform.putInt("RX", 1);
++        assertEquals(new CustomBlockVisual.Box(0.125F, 0.12500003F, 0.0625F, 0.375F, 0.75F, 0.5625F),
++                collisionVisual(transform).collisionBoxes().getFirst());
++        transform.putFloat("RX", 0.5F);
++        final var unchanged = new CustomBlockVisual.Box(0.125F, 0.0625F, 0.25F, 0.375F, 0.5625F, 0.875F);
++        assertEquals(unchanged, collisionVisual(transform).collisionBoxes().getFirst());
++        transform.putInt("RX", -1);
++        assertEquals(unchanged, collisionVisual(transform).collisionBoxes().getFirst());
++    }
++
++    @Test
++    void usesZeroForMissingAndNonFloatPhysicalScale() {
++        final CompoundTag transform = unitScale();
++        transform.remove("SX");
++        assertTrue(CustomBlockProperties.of(collisionVisual(transform)).collisionBoxesAt(0, 64, 0).isEmpty());
++        transform.putInt("SX", 1);
++        assertTrue(CustomBlockProperties.of(collisionVisual(transform)).collisionBoxesAt(0, 64, 0).isEmpty());
++    }
++
++    @Test
++    void preservesQuaternionAndPairedProjectionRoundingInPhysicalBounds() {
++        final CompoundTag transform = unitScale();
++        transform.putInt("RY", 1);
++        assertEquals(new CustomBlockVisual.Box(0.24999997F, 0.0625F, 0.625F, 0.8749999F, 0.5625F, 0.875F),
++                collisionVisual(transform).collisionBoxes().getFirst());
++        transform.putInt("RX", 1);
++        transform.putInt("RY", 2);
++        assertEquals(new CustomBlockVisual.Box(0.625F, 0.12500003F, 0.4375F, 0.875F, 0.75F, 0.9375F),
++                collisionVisual(transform).collisionBoxes().getFirst());
++    }
++
++    @Test
++    void appliesScalePivotsAndTranslationBeforeWorldFloatRounding() {
++        final CompoundTag transform = unitScale();
++        transform.putFloat("TX", 0.1F);
++        transform.putFloat("TY", 0.2F);
++        transform.putFloat("TZ", 0.3F);
++        transform.putFloat("SX", 0.5F);
++        transform.putFloat("SY", 2F);
++        transform.putFloat("SZ", -1F);
++        transform.putFloat("SXP", 0.3F);
++        transform.putFloat("SYP", 0.25F);
++        transform.putFloat("SZP", -0.5F);
++        final var properties = CustomBlockProperties.of(collisionVisual(transform));
++        assertEquals(List.of(new CustomBlockVisual.Box(0.5625F, 63.575F, -0.575F, 0.6875F, 64.575F, 0.050000012F)),
++                properties.cameraBoxesAt(0, 64, 0));
++    }
++
++    private static CompoundTag unitScale() {
++        final CompoundTag transform = new CompoundTag();
++        transform.putFloat("SX", 1F);
++        transform.putFloat("SY", 1F);
++        transform.putFloat("SZ", 1F);
++        return transform;
++    }
++
++    private static CustomBlockVisual collisionVisual(final CompoundTag transform) {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CompoundTag components = components("geometry.test", "ruby", "opaque");
++        final CompoundTag collision = new CompoundTag();
++        collision.putByte("enabled", (byte) 1);
++        collision.put("boxes", new ListTag<>(List.of(collisionBox(2, 1, 4, 6, 9, 14))));
++        components.put("minecraft:collision_box", collision);
++        components.put("minecraft:transformation", transform);
++        return CustomBlockModel.compile(storage, "test:block", 42, components);
 +    }
 +
 +    @Test
@@ -10152,7 +10424,7 @@ index 00000000..a8a76dc2
 +        collision.putByte("enabled", (byte) 1);
 +        collision.put("boxes", boxes);
 +        components.put("minecraft:collision_box", collision);
-+        final CompoundTag transform = new CompoundTag();
++        final CompoundTag transform = unitScale();
 +        transform.putInt("RY", 1);
 +        components.put("minecraft:transformation", transform);
 +        final CustomBlockVisual visual = CustomBlockModel.compile(storage, "test:bench[facing=east]", 123, components);
@@ -10164,8 +10436,8 @@ index 00000000..a8a76dc2
 +        final var bounds = visual.collisionBoxes().get(0);
 +        assertEquals(0, bounds.minX(), 1E-8);
 +        assertEquals(1, bounds.maxX(), 1E-8);
-+        assertEquals(0, bounds.minZ(), 1E-8);
-+        assertEquals(0.5, bounds.maxZ(), 1E-8);
++        assertEquals(0.5, bounds.minZ(), 1E-8);
++        assertEquals(1, bounds.maxZ(), 1E-8);
 +        assertEquals(0.5, bounds.maxY(), 1E-8);
 +        assertFalse(visual.occluding());
 +        assertParticleTexture(model);
