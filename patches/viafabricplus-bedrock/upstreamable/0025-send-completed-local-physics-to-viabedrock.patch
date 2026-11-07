@@ -1,4 +1,4 @@
-From 6374549385ecd0a2c641066be68dec90574d867d Mon Sep 17 00:00:00 2001
+From d87054aba30a2682de806604335e2a12ad480e6b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -805,15 +805,18 @@ current-clock corrections instead of retaining an inert command or forcing
 a replay. Preserve future commands without marking the history dirty.
 
 A command already inserted into history sets a native mask that bypasses
-later comparisons. Track that mask per actor lifetime until history reset.
-Current-clock commands acquire the mask when their frame completes, so a
-second matching pending correction does not overwrite the first. Keep the
-comparison snapshot and immutable rewind baseline separate.
+later comparisons. Track that mask per actor lifetime while those commands
+await replay. Current-clock commands acquire the native mask when captured
+into history. A successful rewind clears the mask without removing retained
+commands; normal frame completion must not restore it from commands that
+have already run. Keep the comparison snapshot and immutable rewind baseline
+separate.
 
 Original receiver, comparator and queue controls cover typed and cached
 state descriptors, unsigned tick placement, ground changes, float tolerance
-and mixed historical/current/future sequences. Scheduler regressions check
-replay requests, commands applied during later rewinds and history reset.
+and mixed historical/current/future sequences. Complete original capture and replay controls establish pending
+command transfer, dirty frames and mask clearing. Scheduler regressions check
+replay requests, later command application, replay completion and history reset.
 These controls do not establish native world trajectories or the cause of
 the reported pearl/wind rollback loop.
 ---
@@ -895,7 +898,7 @@ the reported pearl/wind rollback loop.
  .../movement/replay/PhysicalItemUse.java      |  21 +
  .../replay/PhysicalMovementCorrection.java    |  35 ++
  .../replay/PhysicalReplayContext.java         | 293 ++++++++++
- .../replay/PhysicalReplayHistory.java         | 215 +++++++
+ .../replay/PhysicalReplayHistory.java         | 213 +++++++
  .../movement/replay/PhysicalState.java        | 140 +++++
  .../movement/replay/PhysicalStateAccess.java  |  43 ++
  .../bedrock/render/BedrockActorState.java     |  39 +-
@@ -906,7 +909,7 @@ the reported pearl/wind rollback loop.
  .../bedrock/input/BedrockPlayerModesTest.java | 194 +++++++
  .../bedrock/input/BedrockUsedItemTest.java    |  66 +++
  .../input/BedrockVehiclePredictionsTest.java  | 155 +++++
- .../PhysicalCorrectionSchedulingTest.java     | 172 ++++++
+ .../PhysicalCorrectionSchedulingTest.java     | 190 ++++++
  .../input/VehiclePredictionPayloadTest.java   |  75 +++
  .../input/VehiclePredictionSessionTest.java   | 284 +++++++++
  .../movement/BedrockClimbingPhysicsTest.java  |  53 ++
@@ -930,7 +933,7 @@ the reported pearl/wind rollback loop.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 113 files changed, 9178 insertions(+), 74 deletions(-)
+ 113 files changed, 9194 insertions(+), 74 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -6861,10 +6864,10 @@ index 0000000..1cf2d38
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistory.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistory.java
 new file mode 100644
-index 0000000..45a6830
+index 0000000..339d033
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalReplayHistory.java
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,213 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6876,10 +6879,10 @@ index 0000000..45a6830
 +
 +import java.util.ArrayList;
 +import java.util.HashSet;
-+import java.util.Set;
 +import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.SequencedMap;
++import java.util.Set;
 +import java.util.function.BiFunction;
 +import java.util.function.Consumer;
 +import java.util.function.Predicate;
@@ -6940,7 +6943,6 @@ index 0000000..45a6830
 +    public void complete(final long frame) {
 +        if (this.open == null || this.open.id != frame) return;
 +        this.open.after = this.capture.get();
-+        this.open.commands.forEach(command -> this.retainGroup(command.group));
 +        this.completed = frame;
 +        this.open = null;
 +    }
@@ -6966,7 +6968,7 @@ index 0000000..45a6830
 +        return value == null ? null : value.beforePhysics;
 +    }
 +
-+    /** Native history command masks remain set until the history is cleared. */
++    /** Native history command masks bypass comparisons until a replay or history reset. */
 +    public boolean hasHistoricalCommands(final Object group) {
 +        return this.historicalCommandGroups.contains(group);
 +    }
@@ -6982,12 +6984,12 @@ index 0000000..45a6830
 +    public boolean schedule(final long frame, final Predicate<S> applicable, final Runnable command, final boolean dirty, final Object group) {
 +        final Frame<S> target = this.frames.get(frame);
 +        if (target != null) {
-+            target.commands.add(new Command<>(applicable, command, dirty, group));
++            target.commands.add(new Command<>(applicable, command, dirty));
 +            if (target.after != null) this.retainGroup(group);
 +            return true;
 +        }
 +        if (!this.frames.isEmpty() && frame == this.completed + 1 && this.open == null) {
-+            this.pending.add(new Command<>(applicable, command, true, group));
++            this.pending.add(new Command<>(applicable, command, true));
 +            return true;
 +        }
 +        return false;
@@ -7036,6 +7038,7 @@ index 0000000..45a6830
 +            }
 +            frame.dirty = false;
 +        }
++        this.historicalCommandGroups.clear();
 +        return true;
 +    }
 +
@@ -7050,13 +7053,11 @@ index 0000000..45a6830
 +    private static final class Command<S> {
 +        private final Predicate<S> applicable;
 +        private final Runnable action;
-+        private final Object group;
 +        private boolean dirty;
 +
-+        private Command(final Predicate<S> applicable, final Runnable action, final boolean dirty, final Object group) {
++        private Command(final Predicate<S> applicable, final Runnable action, final boolean dirty) {
 +            this.applicable = applicable;
 +            this.action = action;
-+            this.group = group;
 +            this.dirty = dirty;
 +        }
 +    }
@@ -8160,10 +8161,10 @@ index 0000000..4f2bef0
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/PhysicalCorrectionSchedulingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/PhysicalCorrectionSchedulingTest.java
 new file mode 100644
-index 0000000..f719a93
+index 0000000..374d1a1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/PhysicalCorrectionSchedulingTest.java
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,190 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -8243,18 +8244,36 @@ index 0000000..f719a93
 +    }
 +
 +    @Test
-+    void completedPendingCommandsRetainTheirMaskUntilHistoryIsCleared() throws ReflectiveOperationException {
++    void aCompletedPendingCorrectionDoesNotRestoreTheMaskClearedByReplay() throws ReflectiveOperationException {
 +        try (var fixture = new Fixture()) {
 +            fixture.schedule(105, 200.25F, false);
 +            assertTrue(fixture.history.replay());
 +            fixture.history.complete(21);
 +            fixture.history.begin(22);
 +            fixture.schedule(106, 200F, false);
-+            assertTrue(fixture.history.needsReplay());
++            assertFalse(fixture.history.needsReplay());
 +            fixture.history.clear();
 +            fixture.seedHistory();
 +            fixture.schedule(105, 200F, false);
 +            assertFalse(fixture.history.needsReplay());
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void historicalReplayClearsComparisonMasksIncludingCommandsFromTheOpenFrame(final boolean currentCommand) throws ReflectiveOperationException {
++        try (var fixture = new Fixture()) {
++            fixture.schedule(100, 200.25F, false);
++            if (currentCommand) fixture.schedule(105, 200F, false);
++            assertTrue(fixture.history.replay());
++            fixture.history.complete(21);
++            fixture.history.begin(22);
++            clearInvocations(fixture.player);
++            fixture.schedule(106, 200F, false);
++            assertFalse(fixture.history.needsReplay());
++            fixture.history.markDirty(22);
++            assertTrue(fixture.history.replay());
++            verify(fixture.player, never()).setPos(anyDouble(), anyDouble(), anyDouble());
 +        }
 +    }
 +
