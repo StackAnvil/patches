@@ -73,20 +73,21 @@ Native flag setters and metadata producers preserve the three flag words in meta
 
 The current native world-version parser retains wildcard and `beta`, normalizes accepted suffixes, and clears invalid versions before comparison.
 Under supplied registry storage, a typed world-version component takes precedence over the default. Missing, null and wrongly typed entries use the default.
-Parser controls supply regex matches, allocation and memory copying. Complete native regex execution, packet decoding and live world configuration remain unverified.
+Parser controls supply regex matches, allocation and memory copying. Complete native regex and wire-decoder execution remain unverified.
 
 Two original boat initialization paths write saved leash friction of `0.91F` from `1.21.90`, otherwise `1.0F`, after native version selection.
 Reinitialization replaces this value. The dry callback uses it while leashed, and water overrides it without changing the saved value.
 Initialization selects between two level versions before applying its initialized wildcard fallback.
 Missing buoyancy context uses an initialized invalid version instead. The private port keeps these defaults and the explicit sentinel flag separate.
-Original constructor fragments copy the settings version into the first slot. Generator zero limits the second slot to `1.17.40`; other generators use wildcard.
+Original StartGame and settings-copy fragments preserve the packet's version and generator through the native settings factory.
+Constructor fragments copy the settings version into the first slot. Generator zero sets the second slot to `1.17.40`; other generators use wildcard.
 The world-setup fragment publishes the selected version through the concrete Level getter into the typed buoyancy component.
-The compiled private port matches these fragments and composed native motion. Focused tests retain the generator limit and preserve the coefficient across rewind.
-Accepted network settings construction, active initialization and normal tick integration remain unbound.
+The compiled private port matches these fragments and composed native motion across 378 controls. Focused tests retain the generator limit and preserve the coefficient across rewind.
+Whole native world and actor lifecycles and normal tick integration remain outside these controls.
 
-The version-5 native world reset carries the original `StartGame` version text through the level-bound block mirror.
-Movement consumers can read that text without using resource cutoffs or client protocol versions.
-The [core transport controls](../../viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md) cover installed version-5 metadata and dictionary replacement across dimensions.
+The version-6 native world reset carries the original `StartGame` version text and signed generator ID through the level-bound block mirror.
+Movement consumers can read both fields from `worldSettings()` without using resource cutoffs or client protocol versions.
+The [core transport controls](../../viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md) cover installed version-6 metadata and dictionary replacement across dimensions.
 
 Native frames own a concrete snapshot. Buoyancy capture retains configuration, the double-valued phase and independent copies of liquid selectors. Restore also recovers recorded float-request flags. A separate visitor saves and restores the vehicle input component.
 General component history separately retains boat movement, paddle and buoyancy state. Original frame-producer and callback-list controls exercise this capture path with supplied ECS views.
@@ -94,7 +95,7 @@ Refreshing that history clears saved presence bits before recapture. Restore pre
 Under supplied ECS storage, the native lending kernel moves the player's replay ownership to a connected vehicle when the rider reference resolves in the same registry generation, clearing the old history. An unresolved reference creates fresh vehicle history.
 Rewind controls start at the first marked frame, run it and later retained frames, then clear replay markers. Active rider selection, populated-history lifetime and correction-packet admission remain unverified.
 
-The add-on retains Java boat physics. Native tick integration, block-friction inputs, accepted world-version binding, shared random-state ownership, live scheduling, and matching trajectories remain open.
+The add-on retains Java boat physics. Native tick integration, complete block-friction inputs, shared random-state ownership, live scheduling, and matching trajectories remain open.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
