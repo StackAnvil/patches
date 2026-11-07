@@ -77,7 +77,9 @@ Parser controls supply regex matches, allocation and memory copying. Complete na
 
 Two original boat initialization paths write saved leash friction of `0.91F` from `1.21.90`, otherwise `1.0F`, after native version selection.
 Reinitialization replaces this value. The dry callback uses it while leashed, and water overrides it without changing the saved value.
-Private port controls preserve this coefficient across rewind. Active initialization and world-provider binding remain open.
+Initialization selects between two level versions before applying its initialized wildcard fallback.
+Missing buoyancy context uses an initialized invalid version instead. The private port keeps these defaults and the explicit sentinel flag separate.
+Controls match native candidate selection and resulting motion, and preserve the coefficient across rewind. Active initialization and world-provider construction remain unbound.
 
 The version-5 native world reset carries the original `StartGame` version text through the level-bound block mirror.
 Movement consumers can read that text without using resource cutoffs or client protocol versions.
