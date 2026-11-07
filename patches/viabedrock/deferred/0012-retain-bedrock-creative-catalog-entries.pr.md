@@ -99,7 +99,9 @@ Player snapshots include both real Help graphs and their translations.
 The current native callback selects How to Play topic 5 for Survival and Encyclopedia topic 47 for Creative.
 A physical 1.26.60.5 capture confirms the Survival Your First Craft topic.
 Translated Help paragraphs replace both plain text and rendered components, preserving the native color palette.
-Program round trips retain these components and navigation labels from authored topic and category variables. Full installed Help lifetimes and glyph appearance remain unverified.
+Program round trips retain these components and navigation labels from authored topic and category variables.
+Player inventory delegates export and resolution to the [shared Help contract](../upstreamable/0095-share-native-ui-programs-and-resources.pr.md).
+Complete glyph appearance and broader Help lifetimes remain unverified.
 Complete installed action and screen parity remain unfinished. The Survival bulk validation below covers selected recipe boundaries.
 
 The retained model exposes output quantity separately from availability and action admission.

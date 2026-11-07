@@ -14,6 +14,13 @@ Prerequisites:
 
 ## Validation and remaining limits
 
+Official Bedrock 1.26.60.5 desktop controls open Encyclopedia topic 31, Furnace, from all three cooking families.
+Furnace and blast-furnace controls retain carried items after returning from Help.
+Language data distinguishes encyclopedia topic labels from Survival guide title keys.
+Regressions retain the selected topic, localized heading, body text, and cooking payload bound across program transport.
+Player inventory uses the same Help resolver with its existing guide choice.
+Native multiplayer Help traffic and complete visual parity remain unverified.
+
 Storage programs export and resolve the complete host graph, including backdrop, close controls, and animation tracks.
 Synthetic screen fixtures declare their content controls explicitly.
 The bundled-family regression retains authoritative slots and the host hurt policy across program transport.

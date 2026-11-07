@@ -93,6 +93,11 @@ Shared naming and recipe APIs belong in core rather than screen-specific copies.
 ## Progress and controls
 
 Keep cooking progress and preferences independent of recipe requests.
+Cooking Help opens the Encyclopedia at Furnace for all three station families.
+Help retains the inventory opening, carried items, and pending search while its own view receives input.
+Back and Escape return to that inventory without closing its container.
+The shared Help renderer uses the localized encyclopedia heading and scrolls the selected topic into view.
+Installed direct and ViaProxy controls retain nine carried items through Back and Escape, then retain all nine after reopening.
 Use authored component flags for visibility, focus, input, and toggle behavior.
 Check controller registrations before treating an authored mapping as a required cooking action.
 Shared screen definitions can name callbacks that belong to another controller.

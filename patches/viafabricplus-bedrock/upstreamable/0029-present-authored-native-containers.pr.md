@@ -81,6 +81,14 @@ Default player and workbench graphs retain all 46 menu slots and real recipe row
 Help uses the native How to Play or Encyclopedia graph and the client key bindings.
 Screen regressions cover slot confirmation, keyboard Back, Escape, repeated Help openings, and a retained carried stack.
 Model regressions retain the opening and pending search across Help and source updates.
+Cooking uses that same Help lifetime with the native Furnace encyclopedia topic.
+Regressions retain pending search, source updates, carried items, and the inventory owner across Back and Escape.
+The selected topic starts within the visible list, and encyclopedia headings use their localized prefix and topic label.
+Installed direct and ViaProxy controls each open Furnace Help and return with Back and Escape while carrying nine items.
+Each complete journal contains only the two accepted pickup and return transfers, followed by ordinary container closes.
+Fresh openings, authoritative responses, and server inventory agree on all nine items.
+These controls use an authored furnace fixture with normal admission guards and software rendering.
+Other input modes, native multiplayer Help traffic, and complete visual parity remain unverified.
 Live direct and ViaProxy checks retain the real Survival recipe layout and its inactive row after reopening.
 Both routes open translated Help and return on Escape.
 Server responses confirm placement of the retained eight-log cursor stack.
