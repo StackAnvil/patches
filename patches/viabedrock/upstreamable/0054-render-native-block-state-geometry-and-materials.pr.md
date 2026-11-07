@@ -49,13 +49,14 @@ The independent physical decoder and version-7 dictionary match nine original na
 Registration regressions retain geometry through pack refusal and unavailable visuals while leaving recognized nonbase classes unresolved.
 Installed direct and ViaProxy controls preserve the same bounds without visual definitions across state changes, resource reload, and dimension return.
 
-Hardcoded slab geometry follows the exact target registration family. Ordinary slabs select lower or upper primary bounds from the decoded half state.
-Double slabs use a full block for either half. Other classes and unresolved half values retain the existing provider.
-The provider feeds the same nonvisual world dictionary and accepted-level camera consumer.
+Hardcoded slab geometry covers all 138 registered types, including copper variants that inherit the native slab provider.
+Ordinary slabs select lower or upper primary bounds from the decoded half state. Double slabs use a full block for either half.
+Other classes and unresolved half values retain the existing provider. The geometry feeds the nonvisual world dictionary and accepted-level camera consumer.
 
-Original property construction, class factories, half-property admission, registry enumeration, and finalization reproduce all 244 slab state hashes.
-The built provider matches 1,462 native primary-bound queries after metadata encoding and decoding, including the installed grid positions and far float collapse.
-Installed direct and ViaProxy controls cover all 244 states through swaps, resource reload, and dimension return.
-The full core, add-on, and proxy builds pass. The whole main registration configuration and loaded native world remain outside the constructor controls.
+Original static initialization and main registration reproduce the exact 1,382 built-in names in the pinned palette.
+Original property construction, subset registry enumeration, and finalization reproduce all 276 slab state hashes.
+The built provider matches 1,654 native primary-bound queries after metadata encoding and decoding, including the installed grid positions and far float collapse.
+Installed direct and ViaProxy controls cover all 276 states through swaps, resource reload, and dimension return.
+The full core, add-on, and proxy builds pass. Native post-registration aliases, unrelated-class state enumeration, and loaded native world publication remain unverified.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
