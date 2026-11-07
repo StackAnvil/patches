@@ -12,9 +12,14 @@ An isolated direct join verifies visible output, accepted textures, and positive
 Bedrock 1.26.60.5 normalizes the complete marker direction before it computes horizontal bearing.
 The add-on now uses this float calculation and the camera forward vector.
 This preserves native visibility for vertical and near-coincident markers and at a rounded 60-degree boundary.
+
 Three regression tests fail on the previous implementation and pass after the change.
 Fifty-five controls execute the original draw instructions with supplied camera vectors and named math-library boundaries.
-They establish horizontal visibility for these inputs. They do not establish complete native camera, image, or HUD parity.
+Installed direct and ViaProxy controls complete eight scripted waypoint phases each.
+Packet updates, actual draw submissions, and sixteen foreground measurements agree on marker presence, hiding, boundary placement, and removal.
+All 1,079 recorded client projections match the original native bearing controls for their supplied inputs.
+
+These controls establish horizontal visibility for these inputs. They do not establish complete native camera, image, or HUD parity.
 
 ## Current player updates
 
