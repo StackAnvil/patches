@@ -1,4 +1,4 @@
-From 7e0075e197abb8c932d7979e2fd39bcfad467443 Mon Sep 17 00:00:00 2001
+From 64caf6024f38bc354b0cb790a332209cc25f25ce Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
@@ -541,15 +541,27 @@ Apply the same nonempty-ingredient admission to output quantity counting
 as preview selection. Zero-slot and all-empty placeholders contribute no
 output and cannot abort later valid candidates. A regression reproduces
 the inventory count failure before this guard and retains later outputs.
+
+Selected bundle extraction uses a separately advertised protocol-2225 channel.
+The original input codec remains version 1. The version-2 codec binds a
+displayed cell to the same opening, publication revision and request sequence.
+Resolve cells through the server-owned BundleTooltipLayout, including sparse
+physical slots, leading padding and the hidden-items label. Reuse the existing
+physical extraction planner and authoritative rejection recovery.
+
+Original Bedrock 1.26.60.5 navigation instructions establish padded cell
+coordinates independently of compact Java bundle ordinals. A full grid can
+contain display cells beyond physical slot 63. Stale snapshots and non-item
+cells cannot authorize a transfer.
 ---
- .../api/model/NativeBundleAction.java         |  76 ++
+ .../api/model/NativeBundleAction.java         | 101 +++
  .../api/model/NativeBundleResult.java         |  72 ++
  .../model/NativePlayerInventoryAction.java    |  94 +++
- .../model/NativePlayerInventoryMessage.java   | 334 +++++++++
+ .../model/NativePlayerInventoryMessage.java   | 334 ++++++++
  .../model/NativePlayerInventoryResult.java    |  47 ++
  .../api/model/container/Container.java        |   4 +-
  .../container/NativeBundleActionSession.java  | 285 +++++++
- .../container/NativeBundleInputSession.java   | 185 +++++
+ .../container/NativeBundleInputSession.java   | 208 +++++
  .../model/container/NativeRecipeCounter.java  | 117 +++
  .../model/container/NativeRecipeCrafting.java | 286 +++++++
  .../container/NativeRecipeDescriptor.java     |  44 ++
@@ -563,16 +575,16 @@ the inventory count failure before this guard and retains later outputs.
  .../model/ItemDefinitionProperties.java       |  31 +
  .../protocol/model/ItemRegistry.java          |   8 +
  .../protocol/model/PlayerRecipeContext.java   |  96 +++
- .../protocol/model/PlayerRecipeModel.java     | 125 ++++
+ .../protocol/model/PlayerRecipeModel.java     | 125 +++
  .../protocol/packet/InventoryPackets.java     | 213 ++++--
  .../protocol/packet/MultiStatePackets.java    |  48 ++
  .../protocol/rewriter/ItemRewriter.java       |  79 +-
  .../protocol/storage/CraftingDataTracker.java | 217 +++++-
  .../storage/InventoryRequestTracker.java      |  24 +
  .../protocol/storage/InventoryTracker.java    |  21 +
- .../storage/NativePlayerRecipeState.java      | 704 ++++++++++++++++++
+ .../storage/NativePlayerRecipeState.java      | 704 +++++++++++++++++
  .../storage/PlayerInventoryScreenTracker.java |  40 +-
- .../api/model/NativeBundleActionTest.java     |  61 ++
+ .../api/model/NativeBundleActionTest.java     |  87 +++
  .../api/model/NativeBundleResultTest.java     |  56 ++
  .../NativePlayerInventoryMessageTest.java     | 197 +++++
  .../container/NativeRecipeCounterTest.java    |  84 +++
@@ -582,18 +594,18 @@ the inventory count failure before this guard and retains later outputs.
  .../protocol/model/CreativeCatalogTest.java   | 382 ++++++++++
  .../model/NativeStoragePolicyTest.java        | 113 +++
  .../protocol/packet/InventoryPacketsTest.java | 266 +++++--
- .../packet/NativeBundleResultPacketTest.java  |  69 ++
- .../rewriter/PlayerRecipeModelTest.java       | 704 ++++++++++++++++++
+ .../packet/NativeBundleResultPacketTest.java  |  73 ++
+ .../rewriter/PlayerRecipeModelTest.java       | 704 +++++++++++++++++
  ...egisteredPlayerRecipeAvailabilityTest.java |   5 +-
  .../RegisteredPlayerRecipeSearchTest.java     |   3 +-
  .../storage/BundleInventoryActionTest.java    |  61 ++
  .../storage/CreativeInventoryActionTest.java  | 262 +++++++
- .../storage/InventoryRequestTrackerTest.java  |  83 +++
- .../NativeBundleActionSessionTest.java        | 630 ++++++++++++++++
- .../NativePlayerCreativeAuxiliaryTest.java    | 333 +++++++++
+ .../storage/InventoryRequestTrackerTest.java  |  83 ++
+ .../NativeBundleActionSessionTest.java        | 712 ++++++++++++++++++
+ .../NativePlayerCreativeAuxiliaryTest.java    | 333 ++++++++
  .../storage/NativePlayerCreativePickTest.java | 138 ++++
- .../storage/NativeRecipeCraftingTest.java     | 500 +++++++++++++
- 51 files changed, 8029 insertions(+), 172 deletions(-)
+ .../storage/NativeRecipeCraftingTest.java     | 500 ++++++++++++
+ 51 files changed, 8189 insertions(+), 172 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleResult.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativePlayerInventoryAction.java
@@ -626,10 +638,10 @@ the inventory count failure before this guard and retains later outputs.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBundleAction.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBundleAction.java
 new file mode 100644
-index 00000000..746c4e44
+index 00000000..80706356
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBundleAction.java
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,101 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -644,56 +656,81 @@ index 00000000..746c4e44
 +
 +/** Only a displayed source and input are client supplied; stacks and physical contents remain server owned. */
 +public record NativeBundleAction(int menuId, long opening, long generation, long revision, long request,
-+                                 String collection, int index, Kind kind, int tooltipMode) {
++                                 String collection, int index, Kind kind, int tooltipMode, int selectedCell) {
 +
 +    public static final String CHANNEL = "viabedrock:native_bundle_input";
-+    public static final Type<NativeBundleAction> TYPE = new Type<>(NativeBundleAction.class) {
-+        @Override
-+        public NativeBundleAction read(final ByteBuf buffer) {
-+            if (buffer.readableBytes() > 256 || buffer.readUnsignedByte() != 1
-+                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
-+                throw new IllegalArgumentException("Unsupported native bundle input");
-+            }
-+            final int menu = Types.VAR_INT.readPrimitive(buffer);
-+            final long opening = Types.VAR_LONG.readPrimitive(buffer);
-+            final long generation = Types.VAR_LONG.readPrimitive(buffer);
-+            final long revision = Types.VAR_LONG.readPrimitive(buffer);
-+            final long request = Types.VAR_LONG.readPrimitive(buffer);
-+            final String collection = Types.STRING.read(buffer);
-+            final int index = Types.VAR_INT.readPrimitive(buffer);
-+            final int kind = buffer.readUnsignedByte();
-+            if (kind >= Kind.values().length) {
-+                throw new IllegalArgumentException("Unknown native bundle input kind");
-+            }
-+            final var action = new NativeBundleAction(menu, opening, generation, revision, request, collection, index,
-+                    Kind.values()[kind], buffer.readUnsignedByte());
-+            if (buffer.isReadable()) {
-+                throw new IllegalArgumentException("Trailing native bundle input");
-+            }
-+            return action;
-+        }
++    public static final String SELECTION_CHANNEL = "viabedrock:native_bundle_selection";
++    public static final Type<NativeBundleAction> TYPE = codec(false);
++    public static final Type<NativeBundleAction> SELECTION_TYPE = codec(true);
 +
-+        @Override
-+        public void write(final ByteBuf buffer, final NativeBundleAction action) {
-+            buffer.writeByte(1);
-+            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
-+            Types.VAR_INT.writePrimitive(buffer, action.menuId);
-+            Types.VAR_LONG.writePrimitive(buffer, action.opening);
-+            Types.VAR_LONG.writePrimitive(buffer, action.generation);
-+            Types.VAR_LONG.writePrimitive(buffer, action.revision);
-+            Types.VAR_LONG.writePrimitive(buffer, action.request);
-+            Types.STRING.write(buffer, action.collection);
-+            Types.VAR_INT.writePrimitive(buffer, action.index);
-+            buffer.writeByte(action.kind.ordinal()).writeByte(action.tooltipMode);
-+        }
-+    };
++    public NativeBundleAction(final int menuId, final long opening, final long generation, final long revision, final long request,
++                              final String collection, final int index, final Kind kind, final int tooltipMode) {
++        this(menuId, opening, generation, revision, request, collection, index, kind, tooltipMode, -1);
++    }
 +
 +    public NativeBundleAction {
 +        if (menuId < 0 || menuId > 255 || opening < 0 || generation <= 0 || revision <= 0 || request <= 0
 +                || collection == null || !collection.matches("[a-z_]{1,64}") || index < 0 || index > 255
-+                || kind == null || tooltipMode != 0 && tooltipMode != 2) {
++                || kind == null || tooltipMode != 0 && tooltipMode != 2 || selectedCell < -1 || selectedCell > 255
++                || selectedCell >= 0 && (kind != Kind.SECONDARY || tooltipMode != 2)) {
 +            throw new IllegalArgumentException("Invalid native bundle input");
 +        }
++    }
++
++    private static Type<NativeBundleAction> codec(final boolean selection) {
++        return new Type<>(NativeBundleAction.class) {
++            @Override
++            public NativeBundleAction read(final ByteBuf buffer) {
++                if (buffer.readableBytes() > 256 || buffer.readUnsignedByte() != (selection ? 2 : 1)
++                        || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                    throw new IllegalArgumentException("Unsupported native bundle input");
++                }
++                final int menu = Types.VAR_INT.readPrimitive(buffer);
++                final long opening = Types.VAR_LONG.readPrimitive(buffer);
++                final long generation = Types.VAR_LONG.readPrimitive(buffer);
++                final long revision = Types.VAR_LONG.readPrimitive(buffer);
++                final long request = Types.VAR_LONG.readPrimitive(buffer);
++                final String collection = Types.STRING.read(buffer);
++                final int index = Types.VAR_INT.readPrimitive(buffer);
++                final int kind = buffer.readUnsignedByte();
++                if (kind >= Kind.values().length) {
++                    throw new IllegalArgumentException("Unknown native bundle input kind");
++                }
++                final var action = new NativeBundleAction(menu, opening, generation, revision, request, collection, index,
++                        Kind.values()[kind], buffer.readUnsignedByte(), selection ? Types.VAR_INT.readPrimitive(buffer) : -1);
++                if (selection && action.selectedCell < 0) {
++                    throw new IllegalArgumentException("Missing native bundle selection");
++                }
++                if (buffer.isReadable()) {
++                    throw new IllegalArgumentException("Trailing native bundle input");
++                }
++                return action;
++            }
++
++            @Override
++            public void write(final ByteBuf buffer, final NativeBundleAction action) {
++                if (selection != (action.selectedCell >= 0)) {
++                    throw new IllegalArgumentException("Native bundle input requires its negotiated channel");
++                }
++                buffer.writeByte(selection ? 2 : 1);
++                Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++                Types.VAR_INT.writePrimitive(buffer, action.menuId);
++                Types.VAR_LONG.writePrimitive(buffer, action.opening);
++                Types.VAR_LONG.writePrimitive(buffer, action.generation);
++                Types.VAR_LONG.writePrimitive(buffer, action.revision);
++                Types.VAR_LONG.writePrimitive(buffer, action.request);
++                Types.STRING.write(buffer, action.collection);
++                Types.VAR_INT.writePrimitive(buffer, action.index);
++                buffer.writeByte(action.kind.ordinal()).writeByte(action.tooltipMode);
++                if (selection) {
++                    Types.VAR_INT.writePrimitive(buffer, action.selectedCell);
++                }
++            }
++        };
++    }
++
++    public String channel() {
++        return this.selectedCell >= 0 ? SELECTION_CHANNEL : CHANNEL;
 +    }
 +
 +    public boolean belongsTo(final NativePlayerInventoryMessage message, final long lastRequest) {
@@ -1592,10 +1629,10 @@ index 00000000..fd136657
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/NativeBundleInputSession.java b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeBundleInputSession.java
 new file mode 100644
-index 00000000..d92a02a3
+index 00000000..5ff10bb2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/NativeBundleInputSession.java
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,208 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1605,6 +1642,8 @@ index 00000000..d92a02a3
 +
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.api.model.NativeBundleAction;
++import net.raphimc.viabedrock.api.model.NativeBundleTooltipData;
++import net.raphimc.viabedrock.api.resourcepack.ui.BundleTooltipLayout;
 +import net.raphimc.viabedrock.api.model.NativeItemStorageData;
 +import net.raphimc.viabedrock.api.model.NativePlayerInventoryMessage;
 +import net.raphimc.viabedrock.api.model.container.block.CraftingTableContainer;
@@ -1751,8 +1790,29 @@ index 00000000..d92a02a3
 +            return null;
 +        }
 +        final var session = NativeBundleActionSession.create(this.user, root.owner, root.index);
-+        return session == null ? null : action.kind() == NativeBundleAction.Kind.PRIMARY
-+                ? session.insert(external.owner, external.index, null, 0) : session.extractLast(external.owner, external.index, 0);
++        if (session == null) {
++            return null;
++        }
++        if (action.kind() == NativeBundleAction.Kind.PRIMARY) {
++            return session.insert(external.owner, external.index, null, 0);
++        }
++        if (action.selectedCell() < 0) {
++            return session.extractLast(external.owner, external.index, 0);
++        }
++        final var item = this.snapshots.get(root.owner).getItem(root.index);
++        final var contents = NativeBundleTooltipData.resolve(item, this.definitions.storageProperties(item), identity -> {
++            final var owner = this.dynamic.get(new FullContainerName(ContainerEnumName.DynamicContainer, identity));
++            final var snapshot = this.snapshots.get(owner);
++            return snapshot == null ? null : snapshot.getItems();
++        });
++        if (contents == null) {
++            return null;
++        }
++        final var cells = BundleTooltipLayout.resolve(contents).sourceSlots();
++        if (action.selectedCell() >= cells.size() || cells.get(action.selectedCell()) < 0) {
++            return null;
++        }
++        return session.extract(external.owner, external.index, cells.get(action.selectedCell()), 0);
 +    }
 +
 +    private boolean storage(final BedrockItem item) {
@@ -3813,7 +3873,7 @@ index 7d61b8f3..39fef1ff 100644
  
      public static boolean handleLegacyOffhandClick(final UserConnection user, final Container container,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index c677cd38..d552f9f6 100644
+index c677cd38..1866e0de 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -17,6 +17,11 @@
@@ -3832,11 +3892,11 @@ index c677cd38..d552f9f6 100644
              }
              return;
          }
-+        if (channel.equals(NativeBundleAction.CHANNEL)) {
++        if (channel.equals(NativeBundleAction.CHANNEL) || channel.equals(NativeBundleAction.SELECTION_CHANNEL)) {
 +            final var state = wrapper.user().get(NativePlayerRecipeState.class);
 +            if (state != null && state.actionsEnabled()) {
 +                try {
-+                    final var action = wrapper.read(NativeBundleAction.TYPE);
++                    final var action = wrapper.read(channel.equals(NativeBundleAction.SELECTION_CHANNEL) ? NativeBundleAction.SELECTION_TYPE : NativeBundleAction.TYPE);
 +                    final var outcome = state.handleBundleAction(action);
 +                    state.tick();
 +                    final var message = state.publication();
@@ -4449,7 +4509,7 @@ index 04ad1756..4a6f0c14 100644
      private void updateInventoryOptions() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 00000000..ae1d94b2
+index 00000000..dd026f2a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 @@ -0,0 +1,704 @@
@@ -4701,7 +4761,7 @@ index 00000000..ae1d94b2
 +        final var packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +        packet.write(Types.STRING, available ? "minecraft:register" : "minecraft:unregister");
 +        packet.write(Types.REMAINING_BYTES, (NativePlayerInventoryAction.CHANNEL + "\0" + NativePlayerInventoryAction.AUTO_DESTROY_CHANNEL
-+                + "\0" + NativeBundleAction.CHANNEL).getBytes(StandardCharsets.UTF_8));
++                + "\0" + NativeBundleAction.CHANNEL + "\0" + NativeBundleAction.SELECTION_CHANNEL).getBytes(StandardCharsets.UTF_8));
 +        packet.send(BedrockProtocol.class);
 +        this.actionsAdvertised = available;
 +    }
@@ -5272,10 +5332,10 @@ index 39383eac..81f061e9 100644
      }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBundleActionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBundleActionTest.java
 new file mode 100644
-index 00000000..e5638c0d
+index 00000000..94381305
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBundleActionTest.java
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,87 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5313,6 +5373,32 @@ index 00000000..e5638c0d
 +        } finally {
 +            buffer.release();
 +        }
++    }
++
++    @Test
++    void selectedExtractionRequiresTheNegotiatedCodecAndPreservesTheDisplayedCell() {
++        final var action = new NativeBundleAction(0, 7, 3, 11, 2, "inventory_items", 1,
++                NativeBundleAction.Kind.SECONDARY, 2, 3);
++        final var buffer = Unpooled.buffer();
++        try {
++            assertThrows(IllegalArgumentException.class, () -> NativeBundleAction.TYPE.write(buffer, action));
++            assertEquals(0, buffer.writerIndex());
++            NativeBundleAction.SELECTION_TYPE.write(buffer, action);
++            assertEquals(action, NativeBundleAction.SELECTION_TYPE.read(buffer));
++            buffer.readerIndex(0);
++            assertThrows(IllegalArgumentException.class, () -> NativeBundleAction.TYPE.read(buffer));
++            buffer.clear();
++            NativeBundleAction.TYPE.write(buffer, new NativeBundleAction(0, 7, 3, 11, 2,
++                    "inventory_items", 1, NativeBundleAction.Kind.SECONDARY, 2));
++            assertThrows(IllegalArgumentException.class, () -> NativeBundleAction.SELECTION_TYPE.read(buffer));
++            assertEquals(NativeBundleAction.SELECTION_CHANNEL, action.channel());
++        } finally {
++            buffer.release();
++        }
++        assertThrows(IllegalArgumentException.class, () -> new NativeBundleAction(0, 7, 3, 11, 2,
++                "inventory_items", 1, NativeBundleAction.Kind.PRIMARY, 2, 3));
++        assertThrows(IllegalArgumentException.class, () -> new NativeBundleAction(0, 7, 3, 11, 2,
++                "inventory_items", 1, NativeBundleAction.Kind.SECONDARY, 0, 3));
 +    }
 +
 +    @Test
@@ -6824,10 +6910,10 @@ index 1cfb02f6..d8eb367f 100644
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeBundleResultPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeBundleResultPacketTest.java
 new file mode 100644
-index 00000000..7569ddfb
+index 00000000..c1a3814d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeBundleResultPacketTest.java
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,73 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6857,7 +6943,9 @@ index 00000000..7569ddfb
 +
 +    @Test
 +    void bundleRepliesUseTheOptionalEnvelopeOnlyForClientsThatAdvertiseIt() throws Exception {
-+        for (final boolean extended : new boolean[]{false, true}) {
++        for (int mode = 0; mode < 4; mode++) {
++            final boolean extended = mode % 2 != 0;
++            final boolean selection = mode >= 2;
 +            for (final Boolean success : new Boolean[]{null, false, true}) {
 +                final var user = mock(UserConnection.class);
 +                final var state = mock(NativePlayerRecipeState.class);
@@ -6869,11 +6957,12 @@ index 00000000..7569ddfb
 +                when(state.actionsEnabled()).thenReturn(true);
 +                when(state.publication()).thenReturn(published);
 +                when(published.revision()).thenReturn(12L);
-+                final var command = new NativeBundleAction(0, 7, 3, 11, 2, "inventory_items", 0, NativeBundleAction.Kind.PRIMARY, 2);
++                final var command = new NativeBundleAction(0, 7, 3, 11, 2, "inventory_items", 0,
++                        selection ? NativeBundleAction.Kind.SECONDARY : NativeBundleAction.Kind.PRIMARY, 2, selection ? 3 : -1);
 +                when(state.handleBundleAction(command)).thenReturn(success == null ? null : new NativeBundleActionSession.Outcome(success, 0));
 +                final var request = new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, null, user);
-+                request.write(Types.STRING, NativeBundleAction.CHANNEL);
-+                request.write(NativeBundleAction.TYPE, command);
++                request.write(Types.STRING, command.channel());
++                request.write(selection ? NativeBundleAction.SELECTION_TYPE : NativeBundleAction.TYPE, command);
 +                request.resetReader();
 +                final var reply = spy(new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, null, user));
 +                doNothing().when(reply).send(BedrockProtocol.class);
@@ -6885,7 +6974,8 @@ index 00000000..7569ddfb
 +                    if (extended) {
 +                        assertEquals(NativeBundleResult.CHANNEL, reply.get(Types.STRING, 0));
 +                        final var result = reply.get(NativeBundleResult.TYPE, 0);
-+                        assertEquals(success == null ? "" : success ? "bundle.insert" : "bundle.insert_fail", result.sound().event());
++                        assertEquals(success == null ? "" : selection ? success ? "bundle.remove_one" : ""
++                                : success ? "bundle.insert" : "bundle.insert_fail", result.sound().event());
 +                        assertEquals(new NativePlayerInventoryResult(7, 3, 2, 12, Boolean.TRUE.equals(success)), result.result());
 +                    } else {
 +                        assertEquals(NativePlayerInventoryResult.CHANNEL, reply.get(Types.STRING, 0));
@@ -8108,10 +8198,10 @@ index b69f1868..037328f2 100644
          final BedrockItem current = new BedrockItem(276);
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeBundleActionSessionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeBundleActionSessionTest.java
 new file mode 100644
-index 00000000..6ac467d8
+index 00000000..b579706a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeBundleActionSessionTest.java
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,712 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8246,6 +8336,84 @@ index 00000000..6ac467d8
 +                final var take = (ItemStackRequestAction.TakeAction) f.sent.getFirst().actions().getFirst();
 +                assertEquals(f.bundle.requestSlotInfo(3, 103), take.source());
 +                assertEquals(rootOnCursor ? f.player.requestSlotInfo(10, 0) : cursor.requestSlotInfo(0, 0), take.destination());
++            }
++        }
++    }
++
++    @Test
++    void selectedPublishedCellExtractsItsSparsePhysicalSlotAndRejectionRestoresAllItems() {
++        for (final boolean rootOnCursor : new boolean[]{false, true}) {
++            try (var f = new Fixture()) {
++                f.bundle.setItem(0, item(30031, 2, 100));
++                f.bundle.setItem(3, item(30032, 5, 103));
++                f.bundle.setItem(7, item(30031, 9, 107));
++                final var cursor = f.inventory.getHudContainer();
++                if (rootOnCursor) {
++                    cursor.setItem(0, f.player.getItem(9));
++                    f.player.setItem(9, BedrockItem.empty());
++                }
++                final var published = f.publication();
++                final var input = NativeBundleInputSession.capture(f.user, published);
++                assertNotNull(input);
++                final var action = new NativeBundleAction(published.menuId(), published.opening(), published.generation(),
++                        published.revision(), 1, "inventory_items", rootOnCursor ? 1 : 0,
++                        NativeBundleAction.Kind.SECONDARY, 2, 2);
++                assertEquals(new NativeBundleActionSession.Outcome(true, 1), input.execute(action));
++                final var take = (ItemStackRequestAction.TakeAction) f.sent.getFirst().actions().getFirst();
++                assertEquals(f.bundle.requestSlotInfo(3, 103), take.source());
++                assertEquals(rootOnCursor ? f.player.requestSlotInfo(10, 0) : cursor.requestSlotInfo(0, 0), take.destination());
++                assertTrue(f.bundle.getItem(3).isEmpty());
++                assertEquals(item(30031, 9, 107), f.bundle.getItem(7));
++                f.requests.handleResponse(rejected(f.sent.getFirst()));
++                assertEquals(item(30031, 2, 100), f.bundle.getItem(0));
++                assertEquals(item(30032, 5, 103), f.bundle.getItem(3));
++                assertEquals(item(30031, 9, 107), f.bundle.getItem(7));
++                assertTrue(rootOnCursor ? f.player.getItem(10).isEmpty() : cursor.getItem(0).isEmpty());
++            }
++        }
++    }
++
++    @Test
++    void lastCellInFullBundleResolvesBeyondPhysicalSlots() {
++        try (var f = new Fixture()) {
++            for (int slot = 0; slot < 64; slot++) {
++                f.bundle.setItem(slot, item(slot == 0 ? 30032 : 30031, 1, 100 + slot));
++            }
++            final var published = f.publication();
++            final var input = NativeBundleInputSession.capture(f.user, published);
++            assertNotNull(input);
++            final var outcome = input.execute(new NativeBundleAction(published.menuId(), published.opening(), published.generation(),
++                    published.revision(), 1, "inventory_items", 0, NativeBundleAction.Kind.SECONDARY, 2, 65));
++            assertNotNull(outcome);
++            assertTrue(outcome.successful());
++            final var take = (ItemStackRequestAction.TakeAction) f.sent.getFirst().actions().getFirst();
++            assertEquals(f.bundle.requestSlotInfo(0, 100), take.source());
++            assertEquals(30032, f.inventory.getHudContainer().getItem(0).identifier());
++            assertEquals(1, f.inventory.getHudContainer().getItem(0).amount());
++            assertEquals(63, Arrays.stream(f.bundle.getItems()).mapToInt(BedrockItem::amount).sum());
++        }
++    }
++
++    @Test
++    void selectedInputRejectsPaddingOverflowLabelsAndChangedPublishedBundles() {
++        for (final int count : new int[]{3, 13}) {
++            try (var f = new Fixture(12)) {
++                for (int slot = 0; slot < count; slot++) {
++                    f.bundle.setItem(slot, item(30031, 1, 100 + slot));
++                }
++                final var published = f.publication();
++                final var input = NativeBundleInputSession.capture(f.user, published);
++                assertNotNull(input);
++                for (final int cell : count == 3 ? new int[]{0, 4, 63} : new int[]{0, 2, 11, 12}) {
++                    assertNull(input.execute(new NativeBundleAction(published.menuId(), published.opening(), published.generation(),
++                            published.revision(), 1, "inventory_items", 0, NativeBundleAction.Kind.SECONDARY, 2, cell)));
++                }
++                assertTrue(f.sent.isEmpty());
++                f.bundle.setItem(1, item(30032, 2, 999));
++                assertNull(input.execute(new NativeBundleAction(published.menuId(), published.opening(), published.generation(),
++                        published.revision(), 2, "inventory_items", 0, NativeBundleAction.Kind.SECONDARY, 2, 3)));
++                assertTrue(f.sent.isEmpty());
++                assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
 +            }
 +        }
 +    }
@@ -8637,6 +8805,10 @@ index 00000000..6ac467d8
 +        private final List<ItemStackRequestInfo> sent = new ArrayList<>();
 +
 +        private Fixture() {
++            this(64);
++        }
++
++        private Fixture(final int viewableSlots) {
 +            when(this.user.get(any())).thenAnswer(call -> this.storage.computeIfAbsent(call.getArgument(0), key -> mock(key)));
 +            final var platform = mock(ViaBedrockPlatform.class);
 +            when(platform.getLogger()).thenReturn(Logger.getAnonymousLogger());
@@ -8669,7 +8841,7 @@ index 00000000..6ac467d8
 +            for (final var field : Map.of("minecraft:storage_weight_modifier", "weight_in_storage_item",
 +                    "minecraft:storage_weight_limit", "max_weight_limit", "minecraft:bundle_interaction", "num_viewable_slots").entrySet()) {
 +                final var value = new CompoundTag();
-+                value.putInt(field.getValue(), field.getValue().equals("weight_in_storage_item") ? 4 : 64);
++                value.putInt(field.getValue(), field.getValue().equals("weight_in_storage_item") ? 4 : field.getValue().equals("num_viewable_slots") ? viewableSlots : 64);
 +                components.put(field.getKey(), value);
 +            }
 +            final var data = new CompoundTag();
