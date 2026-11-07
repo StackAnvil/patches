@@ -1,4 +1,4 @@
-From 51901df6eb20285f75b1cd9c9dea2777f74675f2 Mon Sep 17 00:00:00 2001
+From ed72a56678656460a6219637a661f4c7c4ebea90 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -433,6 +433,18 @@ and primary shape controls expose reversed rotation and float-boundary
 errors in the previous double corner path. Retain the separate visual
 transform and existing selection-component decode policy; their complete
 parity is outside these physical-bound controls.
+
+Decode selection origin/size independently from collision endpoints. The
+1.26.60 native decoder requires a Byte enabled flag and Float list items,
+defaults missing entries to zero, clamps every axis to one block, reflects
+X through the rounded center/half extent, and retains flat bounds before
+physical transformation. Skip malformed descriptions lacking a required
+vector instead of turning them into full selection blocks.
+
+An actual BDS pack and installed BlockState hooks expose the prior X-side
+error. Original selection decode, typed application and Block finalization
+controls cover all quarter-turn combinations, clamping and truncated lists.
+Complete native picking and cursor trajectories still require validation.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -463,10 +475,11 @@ parity is outside these physical-bound controls.
  .../protocol/rewriter/BlockStateRewriter.java |  285 +++--
  .../rewriter/ResourcePackRewriter.java        |    2 +
  .../CustomBlockCullingCompiler.java           |  162 +++
- .../resourcepack/CustomBlockModel.java        |  607 +++++++++
+ .../resourcepack/CustomBlockModel.java        |  583 +++++++++
  .../CustomBlockResourceRewriter.java          |  237 ++++
  .../CustomBlockStateDefinitions.java          |  225 ++++
- .../resourcepack/NativeBlockTransform.java    |  180 +++
+ .../resourcepack/NativeBlockSelection.java    |   54 +
+ .../resourcepack/NativeBlockTransform.java    |  189 +++
  .../protocol/storage/ChunkTracker.java        |   40 +-
  .../storage/CustomBlockPackStorage.java       |   37 +
  .../protocol/storage/ResourcePackStorage.java |   44 +-
@@ -493,7 +506,7 @@ parity is outside these physical-bound controls.
  .../protocol/model/BlockTraitStatesTest.java  |  291 +++++
  .../protocol/model/CustomBlockStatesTest.java |  139 ++
  .../rewriter/CustomBlockBoneGeometryTest.java |  213 ++++
- .../CustomBlockModelSelectionTest.java        |  655 ++++++++++
+ .../CustomBlockModelSelectionTest.java        |  723 +++++++++++
  .../CustomBlockPlaneGeometryTest.java         |  170 +++
  .../CustomBlockCullingCompilerTest.java       |  140 ++
  .../CustomBlockMaterialVisibilityTest.java    |  106 ++
@@ -503,7 +516,7 @@ parity is outside these physical-bound controls.
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  230 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   78 ++
- 69 files changed, 10346 insertions(+), 129 deletions(-)
+ 70 files changed, 10453 insertions(+), 129 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -525,6 +538,7 @@ parity is outside these physical-bound controls.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
@@ -3461,10 +3475,10 @@ index 00000000..5a7981fc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..2ed4b71b
+index 00000000..4641bd70
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,607 @@
+@@ -0,0 +1,583 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3897,53 +3911,29 @@ index 00000000..2ed4b71b
 +        if (component == null) {
 +            return List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1, 1));
 +        }
-+        if (!selection && (!(component.get("enabled") instanceof ByteTag enabled) || enabled.asByte() == 0)) {
-+            return List.of();
++        if (selection) {
++            final CustomBlockVisual.Box selected = NativeBlockSelection.decode(component);
++            return selected == null ? List.of() : List.of(transform.physical.box(selected));
 +        }
-+        if (selection && component.get("enabled") instanceof NumberTag enabled && enabled.asInt() == 0) {
++        if (!(component.get("enabled") instanceof ByteTag enabled) || enabled.asByte() == 0) {
 +            return List.of();
 +        }
 +        final List<double[]> bounds = new ArrayList<>();
-+        final ListTag<CompoundTag> boxes = !selection ? null : component.getListTag("boxes", CompoundTag.class);
-+        if (!selection) {
-+            if (component.get("boxes") instanceof ListTag<?> supplied) {
-+                for (final Tag tag : supplied) {
-+                    if (tag instanceof CompoundTag box) {
-+                        bounds.add(new double[]{collisionCoordinate(box, "minX", 16F), collisionCoordinate(box, "minY", 24F),
-+                                collisionCoordinate(box, "minZ", 16F), collisionCoordinate(box, "maxX", 16F),
-+                                collisionCoordinate(box, "maxY", 24F), collisionCoordinate(box, "maxZ", 16F)});
-+                    }
++        if (component.get("boxes") instanceof ListTag<?> supplied) {
++            for (final Tag tag : supplied) {
++                if (tag instanceof CompoundTag box) {
++                    bounds.add(new double[]{collisionCoordinate(box, "minX", 16F), collisionCoordinate(box, "minY", 24F),
++                            collisionCoordinate(box, "minZ", 16F), collisionCoordinate(box, "maxX", 16F),
++                            collisionCoordinate(box, "maxY", 24F), collisionCoordinate(box, "maxZ", 16F)});
 +                }
 +            }
-+            if (bounds.isEmpty()) {
-+                bounds.add(new double[]{0, 0, 0, 16, 16, 16});
-+            }
-+        } else if (boxes != null) {
-+            for (CompoundTag box : boxes) {
-+                bounds.add(new double[]{number(box, "minX", 0), number(box, "minY", 0), number(box, "minZ", 0),
-+                        number(box, "maxX", 16), number(box, "maxY", 16), number(box, "maxZ", 16)});
-+            }
-+        } else if (component.getListTag("origin") != null && component.getListTag("size") != null) {
-+            final ListTag<?> origin = component.getListTag("origin");
-+            final ListTag<?> size = component.getListTag("size");
-+            final double x = ((NumberTag) origin.get(0)).asDouble() + 8;
-+            final double y = ((NumberTag) origin.get(1)).asDouble();
-+            final double z = ((NumberTag) origin.get(2)).asDouble() + 8;
-+            bounds.add(new double[]{x, y, z, x + ((NumberTag) size.get(0)).asDouble(), y + ((NumberTag) size.get(1)).asDouble(), z + ((NumberTag) size.get(2)).asDouble()});
-+        } else {
++        }
++        if (bounds.isEmpty()) {
 +            bounds.add(new double[]{0, 0, 0, 16, 16, 16});
 +        }
 +        final List<CustomBlockVisual.Box> result = new ArrayList<>();
-+        for (double[] box : bounds) {
-+            // Selection keeps its existing empty-shape policy; collision retains native component bounds.
-+            if (selection && (box[0] == box[3] || box[1] == box[4] || box[2] == box[5])) {
-+                continue;
-+            }
-+            final CustomBlockVisual.Box transformed = transform.physical.box(box);
-+            if (selection && (transformed.minX() == transformed.maxX() || transformed.minY() == transformed.maxY() || transformed.minZ() == transformed.maxZ())) {
-+                continue;
-+            }
-+            result.add(transformed);
++        for (final double[] box : bounds) {
++            result.add(transform.physical.box(box));
 +        }
 +        return List.copyOf(result);
 +    }
@@ -4546,12 +4536,72 @@ index 00000000..a063da13
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java
+new file mode 100644
+index 00000000..3f5ae8ad
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.nbt.tag.ByteTag;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.FloatTag;
++import com.viaversion.nbt.tag.ListTag;
++import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++
++/**
++ * Native selection components use a reflected, clamped origin/size box rather than collision endpoints.
++ */
++final class NativeBlockSelection {
++
++    private NativeBlockSelection() {
++    }
++
++    static CustomBlockVisual.Box decode(final CompoundTag component) {
++        if (!(component.get("enabled") instanceof ByteTag enabled) || enabled.asByte() == 0) {
++            return null;
++        }
++        if (!(component.get("origin") instanceof ListTag<?> origin) || !(component.get("size") instanceof ListTag<?> size)) {
++            // The wire description supplies both lists. Do not turn malformed descriptions into full blocks.
++            return null;
++        }
++        final float[] minimum = new float[3];
++        final float[] maximum = new float[3];
++        for (int axis = 0; axis < 3; axis++) {
++            final float offset = coordinate(origin, axis) + (axis == 1 ? 0F : 8F);
++            final float first = clamp(offset * 0.0625F);
++            final float second = clamp((coordinate(size, axis) + offset) * 0.0625F);
++            final float low = Math.min(first, second);
++            final float high = Math.max(first, second);
++            final float half = (high - low) * 0.5F;
++            final float center = low + half;
++            minimum[axis] = (axis == 0 ? 1F - center : center) - half;
++            maximum[axis] = (axis == 0 ? 1F - center : center) + half;
++        }
++        return new CustomBlockVisual.Box(minimum[0], minimum[1], minimum[2], maximum[0], maximum[1], maximum[2]);
++    }
++
++    private static float coordinate(final ListTag<?> list, final int index) {
++        return index < list.size() && list.get(index) instanceof FloatTag number ? number.asFloat() : 0F;
++    }
++
++    private static float clamp(final float value) {
++        return value > 1F ? 1F : value > 0F ? value : 0F;
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
 new file mode 100644
-index 00000000..4e151bb7
+index 00000000..09e03da3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,189 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4583,6 +4633,15 @@ index 00000000..4e151bb7
 +            minimum[axis] = Math.min((float) pixels[axis], (float) pixels[axis + 3]) / 16F;
 +            maximum[axis] = Math.max((float) pixels[axis], (float) pixels[axis + 3]) / 16F;
 +        }
++        return this.project(minimum, maximum);
++    }
++
++    CustomBlockVisual.Box box(final CustomBlockVisual.Box normalized) {
++        return this.project(new float[]{(float) normalized.minX(), (float) normalized.minY(), (float) normalized.minZ()},
++                new float[]{(float) normalized.maxX(), (float) normalized.maxY(), (float) normalized.maxZ()});
++    }
++
++    private CustomBlockVisual.Box project(final float[] minimum, final float[] maximum) {
 +        if (this.matrix == null) {
 +            return bounds(minimum, maximum);
 +        }
@@ -9998,10 +10057,10 @@ index 00000000..61c3a60c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..9b3756de
+index 00000000..638bed76
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,655 @@
+@@ -0,0 +1,723 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -10124,6 +10183,7 @@ index 00000000..9b3756de
 +        for (int axis = 0; axis < 3; axis++) {
 +            final CompoundTag components = components("geometry.test", "ruby", "opaque");
 +            final CompoundTag shape = new CompoundTag();
++            shape.putByte("enabled", (byte) 1);
 +            shape.put("origin", new ListTag<>(List.of(new FloatTag(-8), new FloatTag(0), new FloatTag(-8))));
 +            shape.put("size", new ListTag<>(List.of(new FloatTag(axis == 0 ? 0 : 16), new FloatTag(axis == 1 ? 0 : 16), new FloatTag(axis == 2 ? 0 : 16))));
 +            final CompoundTag collision = new CompoundTag();
@@ -10135,9 +10195,76 @@ index 00000000..9b3756de
 +            final var visual = CustomBlockModel.compile(storage, "test:block", 42, components);
 +            assertFalse(visual.collisionBoxes().isEmpty());
 +            assertTrue(CustomBlockProperties.of(visual).collisionBoxesAt(0, 0, 0).isEmpty());
-+            assertTrue(visual.selectionBoxes().isEmpty());
++            assertFalse(visual.selectionBoxes().isEmpty());
++            assertTrue(CustomBlockProperties.of(visual).selectionBoxesAt(0, 0, 0).isEmpty());
 +            assertFalse(JsonParser.parseString(visual.modelJson()).getAsJsonObject().getAsJsonArray("elements").isEmpty());
 +        }
++    }
++
++    @Test
++    void reflectsAndTransformsNativeSelectionCoordinates() {
++        final CompoundTag selection = nativeSelection();
++        assertEquals(List.of(new CustomBlockVisual.Box(0.125, 0.0625, 0.25, 0.375, 0.5625, 0.875)),
++                selectionVisual(selection, null).selectionBoxes());
++        final CompoundTag transform = unitScale();
++        transform.putInt("RY", 1);
++        assertEquals(List.of(new CustomBlockVisual.Box(0.24999997F, 0.0625F, 0.625F, 0.8749999F, 0.5625F, 0.875F)),
++                selectionVisual(selection, transform).selectionBoxes());
++    }
++
++    @Test
++    void clampsSelectionHeightToOneBlockAndPreservesFlatBounds() {
++        final CompoundTag selection = nativeSelection();
++        selection.put("origin", new ListTag<>(List.of(new FloatTag(-8), new FloatTag(16), new FloatTag(-8))));
++        selection.put("size", new ListTag<>(List.of(new FloatTag(16), new FloatTag(16), new FloatTag(16))));
++        final var visual = selectionVisual(selection, null);
++        assertEquals(List.of(new CustomBlockVisual.Box(0, 1, 0, 1, 1, 1)), visual.selectionBoxes());
++        assertTrue(CustomBlockProperties.of(visual).selectionBoxesAt(0, 64, 0).isEmpty());
++    }
++
++    @Test
++    void defaultsShortAndNonFloatSelectionVectorsToZero() {
++        final CompoundTag selection = nativeSelection();
++        selection.put("origin", new ListTag<>(List.of(new FloatTag(2))));
++        selection.put("size", new ListTag<>(List.of(new FloatTag(4))));
++        assertEquals(List.of(new CustomBlockVisual.Box(0.125, 0, 0.5, 0.375, 0, 0.5)),
++                selectionVisual(selection, null).selectionBoxes());
++        selection.put("origin", new ListTag<>(List.of(new IntTag(2), new IntTag(1), new IntTag(-4))));
++        selection.put("size", new ListTag<>(List.of(new IntTag(4), new IntTag(8), new IntTag(10))));
++        assertEquals(List.of(new CustomBlockVisual.Box(0.5, 0, 0.5, 0.5, 0, 0.5)),
++                selectionVisual(selection, null).selectionBoxes());
++    }
++
++    @Test
++    void requiresByteEnabledAndBothSelectionVectors() {
++        final CompoundTag selection = nativeSelection();
++        selection.putByte("enabled", (byte) 0);
++        assertTrue(selectionVisual(selection, null).selectionBoxes().isEmpty());
++        selection.putInt("enabled", 1);
++        assertTrue(selectionVisual(selection, null).selectionBoxes().isEmpty());
++        selection.remove("enabled");
++        assertTrue(selectionVisual(selection, null).selectionBoxes().isEmpty());
++        selection.putByte("enabled", (byte) 1);
++        selection.remove("origin");
++        assertTrue(selectionVisual(selection, null).selectionBoxes().isEmpty());
++    }
++
++    private static CompoundTag nativeSelection() {
++        final CompoundTag selection = new CompoundTag();
++        selection.putByte("enabled", (byte) 1);
++        selection.put("origin", new ListTag<>(List.of(new FloatTag(2), new FloatTag(1), new FloatTag(-4))));
++        selection.put("size", new ListTag<>(List.of(new FloatTag(4), new FloatTag(8), new FloatTag(10))));
++        return selection;
++    }
++
++    private static CustomBlockVisual selectionVisual(final CompoundTag selection, final CompoundTag transform) {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CompoundTag components = components("geometry.test", "ruby", "opaque");
++        components.put("minecraft:selection_box", selection);
++        if (transform != null) {
++            components.put("minecraft:transformation", transform);
++        }
++        return CustomBlockModel.compile(storage, "test:block", 42, components);
 +    }
 +
 +    @Test

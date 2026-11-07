@@ -37,8 +37,10 @@ Camera bounds combine local component boxes before translating them with native 
 
 Collision components require the native Byte enabled flag and Float coordinates. Missing or differently typed values decode to false and zero. Endpoints clamp to 16 pixels horizontally and 24 vertically; an enabled empty list supplies a full block.
 
+Selection components require a Byte enabled flag and Float origin/size lists. Clamp all axes to one block, reflect X using the native rounded center and half extent, and retain flat bounds before transformation. Missing list entries decode to zero; malformed descriptions without both lists do not gain a full-block selection shape.
+
 Physical transformations require integer quarter turns and Float scale, translation, and pivot fields. Preserve the native missing-field defaults, quaternion reconstruction, matrix products, and paired AABB sums. Keep this path separate from model vertices. A missing physical component retains its Legacy fallback bounds.
 
-Compiled converter and metadata controls match original 1.26.60.5 decoding, typed component application, Block finalization, and primary bounds. They include all quarter-turn combinations and mixed scales, pivots, and translations. Component storage, tag IDs, empty property maps, unrelated cache values, and libc boundaries remain supplied inputs. Full world publication, nonbase shape providers, selection-component decoding, visual transformation parity, and installed transformed camera or movement trajectories remain open.
+Compiled converter and metadata controls match original 1.26.60.5 decoding, typed component application, Block finalization, and primary bounds. They include all quarter-turn combinations and mixed scales, pivots, and translations. Component storage, tag IDs, empty property maps, unrelated cache values, and libc boundaries remain supplied inputs. Installed software-rendered BDS controls cover the transformed collision and selection metadata on direct and ViaProxy routes, including resource reload and dimension return. Full world publication, nonbase shape providers, native picking and movement trajectories, and visual transformation parity remain open.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
