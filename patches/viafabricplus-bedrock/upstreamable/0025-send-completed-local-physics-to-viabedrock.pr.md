@@ -80,7 +80,8 @@ Reinitialization replaces this value. The dry callback uses it while leashed, an
 Private port controls preserve this coefficient across rewind. Active initialization and world-provider binding remain open.
 
 The version-5 native world reset carries the original `StartGame` version text through the level-bound block mirror.
-Movement consumers can read that text without using resource cutoffs or client protocol versions. Installed version-5 transport remains unverified.
+Movement consumers can read that text without using resource cutoffs or client protocol versions.
+The [core transport controls](../../viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md) cover installed version-5 metadata and dictionary replacement across dimensions.
 
 Native frames own a concrete snapshot. Buoyancy capture retains configuration, the double-valued phase and independent copies of liquid selectors. Restore also recovers recorded float-request flags. A separate visitor saves and restores the vehicle input component.
 General component history separately retains boat movement, paddle and buoyancy state. Original frame-producer and callback-list controls exercise this capture path with supplied ECS views.
