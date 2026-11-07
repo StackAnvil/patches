@@ -260,6 +260,13 @@ Each route receives four accepted transfer replies and retains nine items after 
 Regressions cover cached completion, delayed frames, correction, capability loss, transport retirement, and one physical screen pickup.
 Installed direct and ViaProxy controls verify short, partial, and full hotbar holds, partial ingredient pickup, and completion before physical release on pointer exit.
 Each journal contains 18 successful transfers. Both routes retain all nine items with the same screen, menu, and presentation.
+Official 1.26.60.5 desktop registries agree across furnace, smoker, and blast-furnace controllers.
+Six shared controller targets have no registered callback in those cooking scenes.
+Their consuming mappings now retain authored presentation without invoking crafting-screen handlers or Java item input.
+Original producer and dispatcher controls cover 35 input cases. Screen regressions preserve carried items and pointer and keyboard input ownership.
+Installed direct and ViaProxy controls retain the same screen, menu, and cursor through all six actions.
+Each route sends only the pickup and return requests and retains nine items after reopening.
+Unknown, registered but unfinished, and nonconsuming custom mappings still restore ordinary controls.
 Default cooking host admission, other input modes, exact frame scheduling, and native graphical parity remain unfinished.
 
 Negotiated desktop drags submit the pressed cell and later destinations before release, including visits after the real cursor empties.

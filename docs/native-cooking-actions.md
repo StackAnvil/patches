@@ -94,6 +94,9 @@ Shared naming and recipe APIs belong in core rather than screen-specific copies.
 
 Keep cooking progress and preferences independent of recipe requests.
 Use authored component flags for visibility, focus, input, and toggle behavior.
+Check controller registrations before treating an authored mapping as a required cooking action.
+Shared screen definitions can name callbacks that belong to another controller.
+Preserve the component's input consumption when the cooking controller has no callback.
 Layout increment and decrement use the current native layout transition.
 Forced recipe-book layouts consume these actions without changing preferences.
 Layout changes retain the carried stack and wait for a matching profile snapshot.
