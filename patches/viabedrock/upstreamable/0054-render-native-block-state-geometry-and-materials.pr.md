@@ -33,4 +33,10 @@ Core, add-on, and proxy packages retain the original NBT bytes and its license.
 
 Shape, state, culling, and conversion tests cover supported definitions. Carrier capacity, unsupported materials, and complete native appearance remain limits.
 
+Camera bounds combine local component boxes before continuous world-float translation.
+Two one-pixel boxes within one block retain their native envelope at X/Z 1,048,576, where each translated box collapses separately.
+The compiled helper matches 64 original 1.26.60.5 envelope controls, including 312 float fields. State/shared offset lookup and the boat friction probe execute with the original shape method.
+These controls supply component storage and primary cell reads. Nonbase shape overrides, authored decoding, installed camera behavior, and complete trajectories remain unverified.
+The full 109-patch core replay and build pass, including the camera boundary regression.
+
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.

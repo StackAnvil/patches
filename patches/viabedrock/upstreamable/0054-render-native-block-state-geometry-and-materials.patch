@@ -1,4 +1,4 @@
-From f8171bd71728c31689f4c04fabf72e32d56d3126 Mon Sep 17 00:00:00 2001
+From f72280ec34630eb76565bc5a43a115cbac91299d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -158,6 +158,17 @@ by 16 at component loading without inventing a client clamp. Keep floored
 world component collision separate from continuous selection and camera
 translation; native wrappers use different paths. Metadata format 2 makes
 those definitions available through ViaProxy as well as direct sessions.
+
+Combine local component boxes before translating the camera envelope to world
+floats. Filtering each translated box first loses the native envelope when
+narrow boxes collapse separately at large coordinates. Two disjoint one-pixel
+boxes within one block reproduce this at X/Z 1,048,576. Native 1.26.60.5 primary
+shape dispatch combines cached component bounds before its continuous offset
+and world translation. Original full shape, state/shared offset lookup and
+boat friction-probe controls retain this order. The regression keeps camera
+volume while selection and movement collision preserve their own paths.
+These controls supply component storage and do not establish every vanilla
+shape override, authored component decoding or full camera trajectories.
 This supplies custom component shapes, not a complete native movement
 solver or vanilla per-type collision provider.
 
@@ -407,7 +418,7 @@ selection still depends on the current StartGame registrations.
  .../api/model/CustomBlockFaceLighting.java    |   98 ++
  .../api/model/CustomBlockLighting.java        |   59 +
  .../api/model/CustomBlockOffset.java          |   97 ++
- .../api/model/CustomBlockProperties.java      |  150 +++
+ .../api/model/CustomBlockProperties.java      |  167 +++
  .../api/model/CustomBlockVisual.java          |   27 +
  .../definition/BlockCullingDefinitions.java   |   86 ++
  .../definition/BlockDefinitions.java          |   17 +-
@@ -447,7 +458,7 @@ selection still depends on the current StartGame registrations.
  .../api/model/CustomBlockCullingTest.java     |   54 +
  .../api/model/CustomBlockLightingTest.java    |  171 +++
  .../api/model/CustomBlockOffsetTest.java      |   80 ++
- .../api/model/CustomBlockPropertiesTest.java  |   69 +
+ .../api/model/CustomBlockPropertiesTest.java  |   80 ++
  .../definition/TextureDefinitionsTest.java    |   42 +
  .../http/ConvertedResourcePackCacheTest.java  |   29 +
  .../protocol/model/BlockPropertiesTest.java   |   85 ++
@@ -464,7 +475,7 @@ selection still depends on the current StartGame registrations.
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  230 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   78 ++
- 68 files changed, 9962 insertions(+), 129 deletions(-)
+ 68 files changed, 9990 insertions(+), 129 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -1672,10 +1683,10 @@ index 00000000..e3b4c919
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
 new file mode 100644
-index 00000000..8abffa1f
+index 00000000..b3db6674
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,167 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1729,9 +1740,26 @@ index 00000000..8abffa1f
 +        return this.translated(this.selectionBoxes, x, y, z, false);
 +    }
 +
-+    /** Camera collision uses the continuous envelope of the component boxes. */
++    /** Native camera bounds combine local boxes before world-float translation can collapse them. */
 +    public List<CustomBlockVisual.Box> cameraBoxesAt(final int x, final int y, final int z) {
-+        return this.translated(this.collisionBoxes, x, y, z, false);
++        if (this.collisionBoxes.isEmpty()) {
++            return List.of();
++        }
++        float minX = Float.MAX_VALUE;
++        float minY = Float.MAX_VALUE;
++        float minZ = Float.MAX_VALUE;
++        float maxX = -Float.MAX_VALUE;
++        float maxY = -Float.MAX_VALUE;
++        float maxZ = -Float.MAX_VALUE;
++        for (final CustomBlockVisual.Box box : this.collisionBoxes) {
++            minX = Math.min(minX, (float) box.minX());
++            minY = Math.min(minY, (float) box.minY());
++            minZ = Math.min(minZ, (float) box.minZ());
++            maxX = Math.max(maxX, (float) box.maxX());
++            maxY = Math.max(maxY, (float) box.maxY());
++            maxZ = Math.max(maxZ, (float) box.maxZ());
++        }
++        return this.translated(List.of(new CustomBlockVisual.Box(minX, minY, minZ, maxX, maxY, maxZ)), x, y, z, false);
 +    }
 +
 +    private List<CustomBlockVisual.Box> translated(final List<CustomBlockVisual.Box> boxes, final int x, final int y, final int z,
@@ -8788,10 +8816,10 @@ index 00000000..2615420e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
 new file mode 100644
-index 00000000..0e855c20
+index 00000000..9c0cc9ae
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,80 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8836,6 +8864,17 @@ index 00000000..0e855c20
 +        assertTrue(properties.selectionBoxes().isEmpty());
 +        assertEquals(properties, CustomBlockProperties.decode(CustomBlockProperties.encode(List.of(visual))).get(42));
 +        assertEquals(4, visual.collisionBoxes().size());
++    }
++
++    @Test
++    void retainsCameraEnvelopeWhenIndividualBoxesCollapseAtLargeWorldCoordinates() {
++        final var boxes = List.of(new CustomBlockVisual.Box(0, 0, 0, 0.0625, 1, 0.0625),
++                new CustomBlockVisual.Box(0.5, 0, 0.5, 0.5625, 1, 0.5625));
++        final var properties = new CustomBlockProperties("test:split", 42, boxes, boxes, false, 0, 15, CustomBlockOffset.NONE);
++        assertEquals(List.of(new CustomBlockVisual.Box(1048576, 64, 1048576, 1048576.5, 65, 1048576.5)),
++                properties.cameraBoxesAt(1048576, 64, 1048576));
++        assertTrue(properties.selectionBoxesAt(1048576, 64, 1048576).isEmpty());
++        assertTrue(properties.collisionBoxesAt(1048576, 64, 1048576).isEmpty());
 +    }
 +
 +    @Test
