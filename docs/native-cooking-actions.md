@@ -63,6 +63,8 @@ Resolve selected display cells against the published bundle contents before extr
 Dynamic bundle changes replace the publication even when the root stack and container revisions stay unchanged.
 A reply states whether the original authority remains current. Wait for a new snapshot only when it retires that authority.
 Retain newer search text while a bundle command waits. Late replies cannot release another opening or play its sound.
+Pending item commands do not clear physical hover.
+Retain the bundle source through mouse release and renewed snapshots without requiring pointer movement.
 
 Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
 Pointer entry and exit cannot replace or erase the selected-source snapshot.
@@ -189,6 +191,7 @@ The owning patch contains the durable rationale.
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
 Default hosts still require source reset, Return, arrow-key state, and scrollbar input integration.
 The shared bundle controller retains padded selection through publication-bound extraction and replies.
-Native physical bindings and installed selected-cell extraction remain unverified.
+Native physical bindings remain unverified.
+Installed selected-cell extraction uses an admitted authored fixture. See the [container validation](../patches/viafabricplus-bedrock/upstreamable/0029-present-authored-native-containers.pr.md).
 Native state registration and isolated callback execution do not establish live controller delivery.
 A local request test does not establish native graphical behavior or complete server transaction recovery.

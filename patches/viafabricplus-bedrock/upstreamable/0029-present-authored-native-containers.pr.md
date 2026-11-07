@@ -239,7 +239,12 @@ Screen and backend regressions cover source ownership, pending input, sparse phy
 Cooking slot gestures use their own publication-bound bundle channel and retain pending selection across snapshots.
 A matching reply either releases the current frame or waits for renewed authority. Buffered search, timeout, capability withdrawal, and late-reply sound ownership share that lifetime.
 Screen regressions cover insertion and selected extraction without duplicate Java actions. Backend regressions cover rejection recovery and replacement openings.
-Physical input bindings and the remaining default cooking host callbacks remain unfinished. Installed selected-cell extraction remains unverified.
+Physical input bindings and the remaining default cooking host callbacks remain unfinished.
+Pending cooking commands retain physical hover through captured-button release. Regressions preserve the source and selected cell while duplicate item input stays blocked.
+Installed direct and ViaProxy controls insert two distinct stacks, select the older bundle entry, extract both stacks, and retain all items after reopening.
+Stationary hover and cell selection survive a delayed server reply. An overlapping transfer sends no extra item request.
+Each complete journal contains nine successful requests. These controls use an admitted authored furnace fixture with explicit navigation mappings.
+They do not establish native physical bindings, complete default-screen support, or native pixels.
 
 Desktop player/workbench bundle inputs use the optional core transport and share the presentation's request sequence, reply handling, timeout, and retirement with search and crafting. Real exported-program tests exercise insertion and default extraction with either cursor or clicked roots, including filled hover views and a bundle moved to the cursor. They check exact payload scope, buffered search, stale replies, desktop cell/hide callbacks, and suppression of duplicate Java actions while a request is pending. A frame-extraction regression covers physical bundle hover.
 
