@@ -79,7 +79,10 @@ Two original boat initialization paths write saved leash friction of `0.91F` fro
 Reinitialization replaces this value. The dry callback uses it while leashed, and water overrides it without changing the saved value.
 Initialization selects between two level versions before applying its initialized wildcard fallback.
 Missing buoyancy context uses an initialized invalid version instead. The private port keeps these defaults and the explicit sentinel flag separate.
-Controls match native candidate selection and resulting motion, and preserve the coefficient across rewind. Active initialization and world-provider construction remain unbound.
+Original constructor fragments copy the settings version into the first slot. Generator zero limits the second slot to `1.17.40`; other generators use wildcard.
+The world-setup fragment publishes the selected version through the concrete Level getter into the typed buoyancy component.
+The compiled private port matches these fragments and composed native motion. Focused tests retain the generator limit and preserve the coefficient across rewind.
+Accepted network settings construction, active initialization and normal tick integration remain unbound.
 
 The version-5 native world reset carries the original `StartGame` version text through the level-bound block mirror.
 Movement consumers can read that text without using resource cutoffs or client protocol versions.
