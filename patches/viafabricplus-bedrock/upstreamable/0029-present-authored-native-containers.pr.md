@@ -266,3 +266,6 @@ Installed direct and ViaProxy controls each receive six successful inventory res
 The drag batch places three items into each destination. Ordinary ingredient placement and return preserve all nine items.
 These controls use an admitted furnace fixture and do not establish default cooking-screen support.
 Release over a plain panel can retain the native operation source. Complete reset dispatch remains unfinished.
+The matching interrupted-drag control exposes a remaining transaction gap: native commits and redistributes items at each destination before release, while Java keeps a preview and leaves all nine carried after Escape and reopening.
+The native result is verified through read-only integrated-world inventory observations with Escape while the physical mouse button remains down.
+Incremental drag request ownership and native multiplayer grouping remain unfinished. The successful release controls above do not cover this interruption.

@@ -33,6 +33,13 @@ Rejection, reopening, or transport retirement cancels queued completion.
 
 Desktop drag distribution includes the initially pressed slot before the first pointer movement.
 Use the ordinary slot admission checks for that cell and later destinations.
+Native distribution changes the real inventory as each destination is entered, before pointer release.
+A nine-item desktop drag places nine in the first cell, then redistributes to four in each of two cells, then three in each of three cells.
+Closing with Escape while the button is still down retains the placed items.
+The current Java path keeps these changes as a preview until release and leaves all nine items carried in the same interrupted-drag control.
+Implement incremental distribution through the inventory request owner, with retained destinations and authoritative response handling.
+Keep the drag budget separate from the live cursor count so later destinations remain admissible after earlier placements empty the cursor.
+Do not approximate it with a transfer triggered only by screen closure.
 Drag distribution and held quantity selection have different lifetimes.
 A drag can retain its operation source after release over a plain panel.
 Do not use every pointer release as an unconditional reset of the shared controller.
@@ -108,6 +115,10 @@ A short press picks up nine items. A 600-millisecond hold picks up three, and a 
 Pointer exit completes a partial pickup before physical release without another request on release.
 The hotbar and ingredient controls conserve all nine items through 18 successful inventory responses on each route.
 These controls do not establish default cooking-screen support or exact native frame timing.
+
+The incremental drag and interrupted-close reference uses the official 1.26.60.5 integrated world.
+Read-only script observations establish real inventory changes before physical Escape and mouse release.
+Native multiplayer transfer grouping and delayed or rejected drag requests remain unverified.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.
