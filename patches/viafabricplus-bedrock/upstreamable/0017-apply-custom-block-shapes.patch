@@ -1,4 +1,4 @@
-From c86979dd73dfcfcf373c0ef88beb2dc7876304ac Mon Sep 17 00:00:00 2001
+From d49e3158cd9c846aa1750aca0debc15bf103bb83 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -180,11 +180,22 @@ pool and geometry lookup repairs remain separate responsibilities.
 Targeted tests cover exact preserved coordinates, unmarked models,
 invalid array sizes, nulls, infinities and oversized vertices. Runtime
 verification must also exercise the injected Java model loader.
+
+Apply native world-float rounding before creating position-dependent collision
+and selection shapes even when random offsets are disabled. Reusing the
+local cached shape otherwise keeps thin collision boxes at large coordinates
+where native world bounds collapse. Camera queries still combine local
+bounds before world translation, retaining their distinct envelope.
+
+A private installed 1.26.60 BDS array-box fixture demonstrates the bypass
+through the real BlockState hook at a supplied far query position. Keep
+the boundary regression for direct definitions and encoded proxy metadata;
+this method control does not establish loaded far-world movement parity.
 ---
  .../bedrock/block/BedrockBlockFace.java       |  22 +++
  .../block/BedrockBlockModelBounds.java        |  38 ++++
  .../block/BedrockCustomBlockResources.java    |  81 +++++++++
- .../bedrock/block/BedrockCustomBlocks.java    | 137 +++++++++++++++
+ .../bedrock/block/BedrockCustomBlocks.java    | 134 +++++++++++++++
  .../bedrock/block/BedrockCustomCulling.java   |  50 ++++++
  .../bedrock/block/BedrockSodiumLightData.java |  13 ++
  .../bedrock/block/BedrockSodiumQuad.java      |  18 ++
@@ -210,10 +221,10 @@ verification must also exercise the injected Java model loader.
  .../block/BedrockBlockModelBoundsTest.java    |  32 ++++
  .../block/BedrockCustomBlockLightingTest.java |  54 ++++++
  .../BedrockCustomBlockResourcesTest.java      |  91 ++++++++++
- .../block/BedrockCustomBlocksTest.java        |  88 ++++++++++
+ .../block/BedrockCustomBlocksTest.java        | 107 ++++++++++++
  .../block/BedrockCustomCullingTest.java       |  51 ++++++
  .../block/BedrockTerrainLightingTest.java     | 142 +++++++++++++++
- 32 files changed, 1641 insertions(+)
+ 32 files changed, 1657 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockFace.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockModelBounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
@@ -407,10 +418,10 @@ index 0000000..0681cfb
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
 new file mode 100644
-index 0000000..d14c83e
+index 0000000..4e08d3c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,134 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -427,7 +438,6 @@ index 0000000..d14c83e
 +import net.minecraft.world.phys.shapes.Shapes;
 +import net.minecraft.world.phys.shapes.VoxelShape;
 +import net.minecraft.world.phys.Vec3;
-+import net.raphimc.viabedrock.api.model.CustomBlockOffset;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
 +import net.raphimc.viabedrock.api.model.CustomBlockProperties;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -521,12 +531,10 @@ index 0000000..d14c83e
 +        }
 +
 +        public VoxelShape collision(final BlockPos pos) {
-+            if (this.definition.randomOffset().equals(CustomBlockOffset.NONE)) return this.collision;
 +            return localShape(this.definition.collisionBoxesAt(pos.getX(), pos.getY(), pos.getZ()), pos);
 +        }
 +
 +        public VoxelShape selection(final BlockPos pos) {
-+            if (this.definition.randomOffset().equals(CustomBlockOffset.NONE)) return this.selection;
 +            return localShape(this.definition.selectionBoxesAt(pos.getX(), pos.getY(), pos.getZ()), pos);
 +        }
 +
@@ -1805,10 +1813,10 @@ index 0000000..acea52c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
 new file mode 100644
-index 0000000..8a05166
+index 0000000..5d54f6e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,107 @@
 +package com.viaversion.viafabricplus.bedrock.block;
 +
 +import net.raphimc.viabedrock.api.model.CustomBlockOffset;
@@ -1887,6 +1895,25 @@ index 0000000..8a05166
 +            "texture", "{}", "opaque", List.of(bounds), List.of(bounds), false, 0, 0, java.util.Map.of(), java.util.Map.of(), offset)))).get(1);
 +        assertTrue(Shapes.equal(visual.collision(pos), BedrockCustomBlocks.visual(remote).collision(pos)));
 +        assertEquals(visual.offset(pos), BedrockCustomBlocks.visual(remote).offset(pos));
++    }
++
++    @Test
++    void roundsUnshiftedCollisionAndSelectionAtWorldFloatBoundaries() {
++        final var boxes = List.of(box(0.9375, 0, 0, 1, 1, 0.0625), box(0.4375, 0, 0.5, 0.5, 1, 0.5625));
++        final var visual = BedrockCustomBlocks.visual(definition(boxes, boxes, false));
++        final BlockPos near = new BlockPos(2, 64, 4);
++        final BlockPos far = new BlockPos(1048576, 64, 1048576);
++
++        assertFalse(visual.collision(near).isEmpty());
++        assertFalse(visual.selection(near).isEmpty());
++        assertTrue(visual.collision(far).isEmpty());
++        assertTrue(visual.selection(far).isEmpty());
++        assertTrue(Shapes.equal(Shapes.box(0.5, 0, 0, 1, 1, 0.5), visual.camera(far)));
++
++        final var remote = CustomBlockProperties.decode(CustomBlockProperties.encode(List.of(new CustomBlockVisual("test:block", 1,
++            "texture", "{}", "opaque", boxes, boxes, false, 0, 0, java.util.Map.of(), java.util.Map.of(), CustomBlockOffset.NONE)))).get(1);
++        assertTrue(BedrockCustomBlocks.visual(remote).collision(far).isEmpty());
++        assertTrue(Shapes.equal(visual.camera(far), BedrockCustomBlocks.visual(remote).camera(far)));
 +    }
 +
 +    private static CustomBlockProperties definition(final List<CustomBlockVisual.Box> collision, final List<CustomBlockVisual.Box> selection, final boolean occluding) {
