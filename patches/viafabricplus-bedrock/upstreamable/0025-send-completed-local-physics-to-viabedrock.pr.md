@@ -56,13 +56,21 @@ Native water requests use the actor's cell and the cell above. The concrete bloc
 Coupled request and layer-reader controls cover secondary water over solid blocks and secondary non-water blocks masking primary water.
 The existing surface-height helper matches the original calculation for supplied depth states.
 
+Dry-friction material reads use the merged block view, while shape and coefficient reads use primary blocks.
+The on-ground component admits block friction. If the primary collision shape has a zero or reversed extent on any axis, the probe selects the primary block below.
+These controls supply material, shape and coefficient values; actual block-property binding remains unverified.
+
 The inspected client registration path places generic movement before buoyancy.
 Original collision-free movement controls apply the saved movement request to the bounds even after the actor's velocity changes.
 The request and the later velocity must remain separate.
 
 Native flag setters and metadata producers preserve the three flag words in metadata order.
-`LEASHED` (30) selects saved dry friction and the positive-motion branch when its version predicate permits it. The original initializer and comparison enable that branch from `1.21.90` for ordinary release versions.
+`LEASHED` (30) selects saved dry friction and the positive-motion branch when its version predicate permits it. The original initializer and comparison enable that branch from `1.21.90`.
 `OUT_OF_CONTROL` (96) prevents the surface counter from resetting. `GLIDING` (32) does neither.
+
+The current native world-version parser retains wildcard and `beta`, normalizes accepted suffixes, and clears invalid versions before comparison.
+Under supplied registry storage, a typed world-version component takes precedence over the default. Missing, null and wrongly typed entries use the default.
+Parser controls supply regex matches, allocation and memory copying. Complete native regex execution, packet decoding and live world configuration remain unverified.
 
 Native frames own a concrete snapshot. Buoyancy capture retains configuration, the double-valued phase and independent copies of liquid selectors. Restore also recovers recorded float-request flags. A separate visitor saves and restores the vehicle input component.
 General component history separately retains boat movement, paddle and buoyancy state. Original frame-producer and callback-list controls exercise this capture path with supplied ECS views.
