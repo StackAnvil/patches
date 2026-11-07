@@ -98,4 +98,12 @@ These controls cover one headwear item. Observer FOV effects and idle-pose diffe
 Full skin geometry, lighting, and account parity remain open.
 The full add-on suite passes: 1,464 tests, 153 optional skips, and no failures. A fresh full-stack replay reproduces the tested source tree.
 
+Physical geometry queries use the accepted level owner and the authoritative native block mirror.
+They do not require a Java carrier or compiled visual. Unknown geometry keeps the existing camera fallback.
+A regression rejects another level owner and clears geometry with the world mirror.
+
+Complete installed direct and ViaProxy controls receive physical geometry while both visual-definition maps remain empty.
+They preserve the accepted level lifetime through resource reload and an Overworld, Nether, and return sequence.
+The full add-on build and fresh stack replay pass. Broader native world and actor lifecycles remain open.
+
 The [owning patch](0008-share-native-actor-and-resource-runtime.patch) retains implementation rationale and versioned evidence.

@@ -8,6 +8,8 @@ Resolve custom block properties and ordered permutations after StartGame, includ
 
 Resolve ordered permutations and preserve original native block identities. Assign deterministic Java carriers only for representable states. Keep physical properties, culling, lighting, and supplemental-pack admission with their authoritative owner.
 
+Resolve physical collision separately from visual compilation and Java pack acceptance. Native base-factory registrations retain collision planes, transforms, random offsets, and default friction. Known native classes keep their own providers. Missing physical data remains distinct from an empty shape.
+
 ## Validation and remaining limits
 
 Regression coverage includes `BlockItemDescriptorsTest`, `BlockItemStatesTest`, `BlockRegistryNamesTest`, `RuntimeBlockPaletteTest`, and `VanillaBlockStatesTest`.
@@ -33,7 +35,7 @@ Core, add-on, and proxy packages retain the original NBT bytes and its license.
 
 Shape, state, culling, and conversion tests cover supported definitions. Carrier capacity, unsupported materials, and complete native appearance remain limits.
 
-Camera bounds combine local component boxes before translating them with native float arithmetic. Retain flat bounds through metadata and cache identity; movement queries discard volumes that collapse after world translation.
+Camera bounds combine local component boxes before translating them with native float arithmetic. Retain flat bounds through metadata and cache identity; camera queries discard volumes that collapse after world translation.
 
 Collision components require the native Byte enabled flag and Float coordinates. Missing or differently typed values decode to false and zero. Endpoints clamp to 16 pixels horizontally and 24 vertically; an enabled empty list supplies a full block.
 
@@ -41,6 +43,10 @@ Selection components require a Byte enabled flag and Float origin/size lists. Cl
 
 Physical transformations require integer quarter turns and Float scale, translation, and pivot fields. Preserve the native missing-field defaults, quaternion reconstruction, matrix products, and paired AABB sums. Keep this path separate from model vertices. A missing physical component retains its Legacy fallback bounds.
 
-Compiled converter and metadata controls match original 1.26.60.5 decoding, typed component application, Block finalization, and primary bounds. They include all quarter-turn combinations and mixed scales, pivots, and translations. Component storage, tag IDs, empty property maps, unrelated cache values, and libc boundaries remain supplied inputs. Installed software-rendered BDS controls cover the transformed collision and selection metadata on direct and ViaProxy routes, including resource reload and dimension return. Full world publication, nonbase shape providers, native picking and movement trajectories, and visual transformation parity remain open.
+Compiled converter and metadata controls match original 1.26.60.5 decoding, typed component application, Block finalization, and primary bounds. They include all quarter-turn combinations and mixed scales, pivots, and translations. Component storage, tag IDs, empty property maps, unrelated cache values, and libc boundaries remain supplied inputs. Installed software-rendered BDS controls cover the transformed collision and selection metadata on direct and ViaProxy routes, including resource reload and dimension return. Full native world publication, nonbase shape providers, native picking and movement trajectories, and visual transformation parity remain open.
+
+The independent physical decoder and version-7 dictionary match nine original native description chains and all 36 primary-bound queries.
+Registration regressions retain geometry through pack refusal and unavailable visuals while leaving recognized nonbase classes unresolved.
+Installed direct and ViaProxy controls preserve the same bounds without visual definitions across state changes, resource reload, and dimension return.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
