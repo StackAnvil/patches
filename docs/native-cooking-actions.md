@@ -30,6 +30,13 @@ Route that completion through the inventory request owner before clearing the co
 Core retains the starting frame while ordinary Place and Take requests return the cursor and pick up the selected quantity.
 Completion waits for the return response and uses its renewed network stack ID.
 Rejection, reopening, or transport retirement cancels queued completion.
+
+Desktop drag distribution includes the initially pressed slot before the first pointer movement.
+Use the ordinary slot admission checks for that cell and later destinations.
+Drag distribution and held quantity selection have different lifetimes.
+A drag can retain its operation source after release over a plain panel.
+Do not use every pointer release as an unconditional reset of the shared controller.
+
 Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
 Pointer entry and exit cannot replace or erase the selected-source snapshot.
 Native layout and tab callbacks clear hover while core retains ownership of the selected source.

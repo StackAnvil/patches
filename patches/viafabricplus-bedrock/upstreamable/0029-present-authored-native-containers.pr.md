@@ -257,3 +257,12 @@ Regressions cover cached completion, delayed frames, correction, capability loss
 Installed direct and ViaProxy controls verify short, partial, and full hotbar holds, partial ingredient pickup, and completion before physical release on pointer exit.
 Each journal contains 18 successful transfers. Both routes retain all nine items with the same screen, menu, and presentation.
 Default cooking host admission, other input modes, exact frame scheduling, and native graphical parity remain unfinished.
+
+Desktop drag distribution includes the pressed cell without an extra pointer movement.
+The screen reuses Java drag eligibility for this first cell and later destinations.
+A real-menu regression distributes nine items across three cells and leaves the cursor empty.
+Official Bedrock 1.26.60.5 controls show the same three-item distribution and the shared drag state lifecycle.
+Installed direct and ViaProxy controls each receive six successful inventory responses.
+The drag batch places three items into each destination. Ordinary ingredient placement and return preserve all nine items.
+These controls use an admitted furnace fixture and do not establish default cooking-screen support.
+Release over a plain panel can retain the native operation source. Complete reset dispatch remains unfinished.
