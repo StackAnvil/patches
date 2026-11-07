@@ -93,6 +93,10 @@ Shared naming and recipe APIs belong in core rather than screen-specific copies.
 ## Progress and controls
 
 Keep cooking progress and preferences independent of recipe requests.
+Cooking recipe cells use the shared inventory drop input owner.
+With a carried stack, the desktop drop key drops one item and the whole-stack drop key leaves that stack alone.
+With an empty cursor, neither key takes an item from the recipe preview.
+A held drop key acts once until release, including when its modifier changes.
 Cooking Help opens the Encyclopedia at Furnace for all three station families.
 Help retains the inventory opening, carried items, and pending search while its own view receives input.
 Back and Escape return to that inventory without closing its container.

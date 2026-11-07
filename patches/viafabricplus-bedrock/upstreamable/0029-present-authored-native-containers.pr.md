@@ -81,6 +81,17 @@ Default player and workbench graphs retain all 46 menu slots and real recipe row
 Help uses the native How to Play or Encyclopedia graph and the client key bindings.
 Screen regressions cover slot confirmation, keyboard Back, Escape, repeated Help openings, and a retained carried stack.
 Model regressions retain the opening and pending search across Help and source updates.
+Cooking recipe drop keys share the player inventory drop owner.
+Official 1.26.60.5 Furnace controls drop one carried item with Q and retain that stack with Ctrl+Q.
+Both keys leave an empty recipe cursor alone.
+Regressions distinguish recipe previews from real slots across the three default cooking geometries.
+An admitted scene also covers held-key repeats and modifier release without extra requests.
+Other default host actions retain their admission guards.
+Installed direct and ViaProxy controls each accept a nine-item pickup, two one-item drops, and a seven-item return.
+Their cursor responses are 9, 8, 7, and 0. Reopening accounts for all nine items across inventory and dropped items.
+A separate direct control retains seven carried items and two inventory items after the server rejects the return destination.
+The installed controls use an admitted authored furnace fixture with normal guards. They do not establish complete default-screen support.
+
 Cooking uses that same Help lifetime with the native Furnace encyclopedia topic.
 Regressions retain pending search, source updates, carried items, and the inventory owner across Back and Escape.
 The selected topic starts visible and focused, and encyclopedia headings use their localized prefix and topic label.
