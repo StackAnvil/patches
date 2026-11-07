@@ -46,3 +46,9 @@ Optional query messages share recipe request ordering and reject stale openings,
 Core regressions cover filtered publication, repeated edits, category lists, clearing, reopening, family independence, and old recipe authority.
 Official Bedrock 1.26.60.5 integrated-world desktop controls establish the observed search and retention behavior.
 Other input modes, cross-connection query lifetime, and complete installed cooking screens remain unverified.
+
+Held quantity selection retains its source across the initial pickup, cursor return, and partial pickup.
+Core waits for pending inventory responses and uses the confirmed stack IDs for each transfer.
+Regressions cover delayed initial and return replies, rejection, capacity, reopening, and explicit retirement.
+The full core build passes 2,173 tests with 177 skipped tests.
+Client hold timing, previews, and installed direct/proxy controls remain unfinished.

@@ -61,3 +61,7 @@ Transfers reject missing network IDs before changing predicted items or selectio
 The new sparse request sequences still need installed server controls and a matching native capture.
 
 The [owning patch](0003-translate-server-authoritative-bedrock-requests.patch) retains implementation rationale and versioned evidence.
+
+Held quantity selection uses ordinary Place and explicit-count Take requests with the existing prediction and response owner.
+Transfers validate source permissions, cursor contents, capacity, and network stack IDs before prediction.
+Packet/state regressions cover renewed IDs and rejected partial pickup without item loss.

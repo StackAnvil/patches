@@ -1,4 +1,4 @@
-From 3ada8b26ee12352795cf86d50c91bbf9f976f281 Mon Sep 17 00:00:00 2001
+From 3be595c21f8e789462ff8552a128e8cb46248808 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -818,13 +818,24 @@ Only successful replies capture container revisions and filter buffered
 slots. Error replies retain their status for ordered rollback. Batch
 regressions decode the real error shape and cover complete rejection,
 accepted predecessors, crafting, and newer authoritative contents.
+
+Expose ordinary native cursor return and explicit-quantity pickup through
+the existing transfer request owner. Held quantity selection in the target
+1.26.60.5 client returns its cursor to a retained source before the final
+pickup. Java repeated clicks cannot preserve that request ownership.
+
+Resolve Java slots against their native containers, check source and cursor
+permissions, capacity, merge compatibility and current authority, and keep
+the original prediction snapshots for response reconciliation. Use one
+ordinary Place or Take request for each admitted phase. This also preserves
+renewed server stack identities when a later phase waits for its reply.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
  .../api/model/PlayerInventoryScreenReady.java |   46 +
  .../model/PlayerInventoryScreenRequest.java   |   53 +
  .../api/model/container/ChestContainer.java   |   66 +-
- .../api/model/container/Container.java        | 1117 ++-
+ .../api/model/container/Container.java        | 1203 +++-
  .../model/container/ContainerOpenContext.java |   19 +
  .../api/model/container/HorseContainer.java   |  239 +
  .../NativeContainerActionBackend.java         |   85 +
@@ -958,7 +969,7 @@ accepted predecessors, crafting, and newer authoritative contents.
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 139 files changed, 29224 insertions(+), 2050 deletions(-)
+ 139 files changed, 29310 insertions(+), 2050 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
@@ -1315,10 +1326,10 @@ index 913255f8..d535541b 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f17241..71856177 100644
+index 26f17241..2f02b0a7 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-@@ -21,18 +21,50 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+@@ -21,18 +21,51 @@ import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.BlockPosition;
  import com.viaversion.viaversion.api.minecraft.item.Item;
  import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
@@ -1344,6 +1355,7 @@ index 26f17241..71856177 100644
 +import net.raphimc.viabedrock.protocol.storage.InventoryRequestStorage;
 +import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
 +import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
  
 +import java.util.ArrayList;
  import java.util.Arrays;
@@ -1369,7 +1381,7 @@ index 26f17241..71856177 100644
      protected final UserConnection user;
      protected final byte containerId;
      protected final ContainerType type;
-@@ -40,8 +72,20 @@ public abstract class Container {
+@@ -40,8 +73,20 @@ public abstract class Container {
      protected final BlockPosition position;
      protected final BedrockItem[] items;
      protected final Set<String> validBlockTags;
@@ -1391,7 +1403,7 @@ index 26f17241..71856177 100644
          this.user = user;
          this.containerId = containerId;
          this.type = type;
-@@ -49,9 +93,17 @@ public abstract class Container {
+@@ -49,9 +94,17 @@ public abstract class Container {
          this.position = position;
          this.items = BedrockItem.emptyArray(size);
          this.validBlockTags = Set.of(validBlockTags);
@@ -1410,7 +1422,7 @@ index 26f17241..71856177 100644
          this.user = user;
          this.containerId = containerId;
          this.type = type;
-@@ -59,9 +111,775 @@ public abstract class Container {
+@@ -59,9 +112,860 @@ public abstract class Container {
          this.position = position;
          this.items = items;
          this.validBlockTags = validBlockTags;
@@ -1473,6 +1485,85 @@ index 26f17241..71856177 100644
 +            inventoryRequestTracker.setPredictingClick(false);
 +        }
 +
++        return this.sendClickRequest(clickContext, revision, itemActions);
++    }
++
++    /** Copy the native item behind a Java slot without exposing mutable authoritative storage. */
++    public BedrockItem getItemInJavaSlot(final short javaSlot) {
++        final var source = javaSlot < 0 ? null : this.resolveJavaSlot(this.user.get(InventoryTracker.class), javaSlot);
++        return source == null ? null : source.container().getItem(source.bedrockSlot()).copy();
++    }
++
++    /** Complete a native held quantity without approximating it with repeated Java clicks. */
++    public boolean handleNativeQuantityPickup(final int revision, final short javaSlot, final int amount) {
++        final var inventory = this.user.get(InventoryTracker.class);
++        final var requests = this.user.get(InventoryRequestTracker.class);
++        if (javaSlot < 0 || amount < 1 || amount > 255 || inventory.getCurrentContainer() != this
++                || !this.user.get(GameSessionStorage.class).isInventoryServerAuthoritative()
++                || !requests.canStartRecipePlacement() || requests.isPredictingClick()
++                || !inventory.getHudContainer().getItem(0).isEmpty()) {
++            return false;
++        }
++        final var source = this.resolveJavaSlot(inventory, javaSlot);
++        if (source == null) {
++            return false;
++        }
++        final var item = source.container().getItem(source.bedrockSlot());
++        if (item.isEmpty() || item.netId() == null || item.netId() <= 0 || item.amount() < amount
++                || !source.container().canTakeItem(source.bedrockSlot(), amount)
++                || !inventory.getHudContainer().canPlaceItem(0, item, amount)) {
++            return false;
++        }
++        this.cancelQuickCraft();
++        final var context = new ClickContext(source.container(), source.bedrockSlot(), inventory, requests);
++        context.snapshot(source.container());
++        requests.setPredictingClick(true);
++        final ItemStackRequestAction take;
++        try {
++            take = this.handlePickupTake(context, source.container(), source.bedrockSlot(), amount, item);
++        } finally {
++            requests.setPredictingClick(false);
++        }
++        return this.sendClickRequest(context, revision, this.singletonAction(take));
++    }
++
++    /** Return the whole cursor to its retained source before native quantity selection starts. */
++    public boolean handleNativeCursorReturn(final int revision, final short javaSlot) {
++        final var inventory = this.user.get(InventoryTracker.class);
++        final var requests = this.user.get(InventoryRequestTracker.class);
++        if (javaSlot < 0 || inventory.getCurrentContainer() != this
++                || !this.user.get(GameSessionStorage.class).isInventoryServerAuthoritative()
++                || !requests.canStartRecipePlacement() || requests.isPredictingClick()) {
++            return false;
++        }
++        final var source = this.resolveJavaSlot(inventory, javaSlot);
++        if (source == null) {
++            return false;
++        }
++        final var cursor = inventory.getHudContainer().getItem(0);
++        final var item = source.container().getItem(source.bedrockSlot());
++        if (cursor.isEmpty() || cursor.netId() == null || cursor.netId() <= 0
++                || !item.isEmpty() && !this.user.get(ItemRewriter.class).canMerge(cursor, item)
++                || cursor.amount() + item.amount() > source.container().maxStackSize(source.bedrockSlot(), cursor)
++                || !inventory.getHudContainer().canTakeItem(0, cursor.amount())
++                || !source.container().canPlaceItem(source.bedrockSlot(), cursor, cursor.amount())) {
++            return false;
++        }
++        this.cancelQuickCraft();
++        final var context = new ClickContext(source.container(), source.bedrockSlot(), inventory, requests);
++        context.snapshot(source.container());
++        requests.setPredictingClick(true);
++        final ItemStackRequestAction place;
++        try {
++            place = this.handlePickupPlace(context, source.container(), source.bedrockSlot(), (byte) 0, cursor, item);
++        } finally {
++            requests.setPredictingClick(false);
++        }
++        return this.sendClickRequest(context, revision, this.singletonAction(place));
++    }
++
++    private boolean sendClickRequest(final ClickContext clickContext, final int revision,
++                                     final List<ItemStackRequestAction> itemActions) {
 +        if (itemActions.isEmpty()) {
 +            return false;
 +        }
@@ -1561,6 +1652,12 @@ index 26f17241..71856177 100644
 +            final byte button,
 +            final BedrockItem item) {
 +        final int amountToTake = (button == 0 ? NativeTransferQuantity.ALL : NativeTransferQuantity.HALF).count(item.amount());
++        return this.handlePickupTake(clickContext, container, bedrockSlot, amountToTake, item);
++    }
++
++    private ItemStackRequestAction handlePickupTake(
++            final ClickContext clickContext, final Container container, final int bedrockSlot,
++            final int amountToTake, final BedrockItem item) {
 +        if (!container.canTakeItem(bedrockSlot, amountToTake)) {
 +            return null;
 +        }
@@ -1638,8 +1735,9 @@ index 26f17241..71856177 100644
 +        return new ItemStackRequestAction.SwapAction(
 +                clickContext.inventoryTracker.getHudContainer().requestSlotInfo(0, cursorItem.netId()),
 +                container.requestSlotInfo(bedrockSlot, item.netId()));
-+    }
-+
+     }
+ 
+-    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
 +    private ItemStackRequestAction handleSwapClick(
 +            final ClickContext clickContext, final short javaSlot, final byte button) {
 +        if (button != 40 && (button < 0 || button > 8)) {
@@ -1807,9 +1905,8 @@ index 26f17241..71856177 100644
 +        }
 +
 +        return this.dropItem(container, source.bedrockSlot(), button == 0 ? 1 : item.amount());
-     }
- 
--    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++    }
++
 +    public void cancelQuickCraft() {
 +        if (this.quickCraftState == null) {
 +            return;
@@ -2187,7 +2284,7 @@ index 26f17241..71856177 100644
          return false;
      }
  
-@@ -76,11 +894,62 @@ public abstract class Container {
+@@ -76,11 +980,62 @@ public abstract class Container {
      }
  
      public Item[] getJavaItems() {
@@ -2252,7 +2349,7 @@ index 26f17241..71856177 100644
      }
  
      public BedrockItem[] getItems() {
-@@ -88,29 +957,175 @@ public abstract class Container {
+@@ -88,29 +1043,175 @@ public abstract class Container {
      }
  
      public boolean setItem(final int slot, final BedrockItem item) {
@@ -2305,10 +2402,10 @@ index 26f17241..71856177 100644
 +            if (!previous[i].equals(items[i])) {
 +                this.onSlotChanged(i, previous[i], items[i]);
 +            }
-         }
-         return true;
-     }
- 
++        }
++        return true;
++    }
++
 +    public FullContainerName getFullContainerName(final int slot) {
 +        return new FullContainerName(ContainerEnumName.LevelEntityContainer, null);
 +    }
@@ -2411,11 +2508,11 @@ index 26f17241..71856177 100644
 +        final Integer previous = this.data.put(id, value);
 +        if (previous != null && previous == value) {
 +            return false;
-+        }
+         }
 +        this.serverDataRevision++;
-+        return true;
-+    }
-+
+         return true;
+     }
+ 
 +    public Integer getData(final int id) {
 +        return this.data.get(id);
 +    }
@@ -2435,7 +2532,7 @@ index 26f17241..71856177 100644
      public int javaSlot(final int slot) {
          return slot;
      }
-@@ -123,6 +1138,10 @@ public abstract class Container {
+@@ -123,6 +1224,10 @@ public abstract class Container {
          return this.items.length;
      }
  
@@ -2446,7 +2543,7 @@ index 26f17241..71856177 100644
      public byte containerId() {
          return this.containerId;
      }
-@@ -139,6 +1158,28 @@ public abstract class Container {
+@@ -139,6 +1244,28 @@ public abstract class Container {
          return this.position;
      }
  
@@ -2475,7 +2572,7 @@ index 26f17241..71856177 100644
      public boolean isValidBlockTag(final String tag) {
          if (tag == null) {
              return false;
-@@ -147,7 +1188,57 @@ public abstract class Container {
+@@ -147,7 +1274,57 @@ public abstract class Container {
          }
      }
  

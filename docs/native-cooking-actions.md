@@ -23,6 +23,9 @@ Keep held quantity selection separate from the initial pickup and its source.
 Entering quantity selection retains a secondary source and starts its own timer.
 Pointer exit can finish the partial pickup before physical release.
 Route that completion through the inventory request owner before clearing the controller state.
+Core retains the starting frame while ordinary Place and Take requests return the cursor and pick up the selected quantity.
+Completion waits for the return response and uses its renewed network stack ID.
+Rejection, reopening, or transport retirement cancels queued completion.
 Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
 Pointer entry and exit cannot replace or erase the selected-source snapshot.
 Native layout and tab callbacks clear hover while core retains ownership of the selected source.
@@ -83,7 +86,8 @@ These private integrated-world controls do not establish controller input, exact
 Official 1.26.60.5 desktop controls also establish held quantity selection in hotbar and furnace ingredient slots.
 A nine-item source produces a partial pickup during a hold and retains the remaining items in its original slot.
 Read-only observations of the live controller distinguish initial pickup, quantity selection, and completion on release or pointer exit.
-The Java controller and request path do not yet reproduce this complete interaction.
+Core regressions cover delayed responses, renewed stack IDs, rejection recovery, source capacity, and opening retirement.
+The Java input controller and quantity preview do not yet reproduce this complete interaction.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.
