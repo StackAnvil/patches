@@ -37,6 +37,12 @@ Camera bounds combine local component boxes before continuous world-float transl
 Two one-pixel boxes within one block retain their native envelope at X/Z 1,048,576, where each translated box collapses separately.
 The compiled helper matches 64 original 1.26.60.5 envelope controls, including 312 float fields. State/shared offset lookup and the boat friction probe execute with the original shape method.
 These controls supply component storage and primary cell reads. Nonbase shape overrides, authored decoding, installed camera behavior, and complete trajectories remain unverified.
-The full 109-patch core replay and build pass, including the camera boundary regression.
+Collision components use the native Byte enabled flag and Float coordinates. Missing or differently typed values decode to false and zero.
+Endpoints clamp to 16 pixels horizontally and 24 vertically before conversion; an enabled empty list supplies a full block.
+Retain flat bounds through conversion, metadata, camera envelopes, and cache identity. Movement queries discard empty translated volumes.
+The compiled converter and metadata path match 13 original NBT-to-finalized-cache-to-shape controls, including mixed flat and solid bounds.
+Two supplied-matrix controls also show that native rotation can give a flat box positive volume.
+Original decoding and finalization use supplied component storage, tag IDs, empty property maps, and unrelated cache defaults.
+The full 109-patch core replay and build pass. Exact transformed float order, full publication, nonbase providers, and installed camera or movement trajectories remain open.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
