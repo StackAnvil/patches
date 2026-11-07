@@ -76,8 +76,14 @@ It retains a separate quantity budget instead of picking that quantity up onto t
 Redistribution can return items to the original source while preserving items outside that budget.
 For a four-item selection from nine, three destinations receive one each and the source retains six.
 Repeated visits do not add a destination or transfer more items.
-Native controller and legacy-model controls establish these results for hotbar, inventory, and furnace ingredient sources.
-They do not establish native multiplayer request grouping or complete touch input delivery.
+The first drawing event retains its destination without transferring items.
+The second event enters distribution with that retained destination, then distributes to the current destination.
+An arrow hold blocks this entry but preserves the latest drawing destination.
+After arrow release, distribution starts with that destination and the next entered destination.
+Ordinary selected-source drawing keeps the cursor empty and sends no cursor-drag start signal.
+Release preserves placed items and clears the selected source and distribution allocation.
+Native component, controller, and legacy-model controls establish these results for hotbar, inventory, and furnace ingredient sources.
+They do not establish physical touch delivery, native multiplayer request grouping, or complete screen behavior.
 The negotiated Java drag path currently supports cursor-origin desktop distribution.
 Selected-source transport and its client input owner remain unfinished.
 Release over an empty recipe panel can retain the drag allocation.

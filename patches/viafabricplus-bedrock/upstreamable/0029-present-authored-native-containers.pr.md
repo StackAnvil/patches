@@ -339,6 +339,15 @@ Each complete journal contains 18 successful requests across ordinary drag, dela
 Secondary release retains one item per destination and six carried items.
 The [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) describes ownership and the remaining limits.
 These controls use an admitted furnace fixture and do not establish default cooking-screen support.
+
+Original 1.26.60.5 component and controller controls execute source selection, drawing, and release for hotbar, inventory, and furnace ingredient sources.
+Six controls cover ordinary drawing and arrow-held admission through the native state machine and synchronous legacy inventory model.
+The first drawing event retains its destination. The second distributes across the retained and current destinations.
+Arrow-held events retain the latest destination without starting distribution.
+These controls keep the cursor empty and emit no cursor-drag start signal through the native sender.
+Control properties, source admission, item services, and atomic transfers remain supplied probe boundaries.
+Physical touch delivery, the request-backed native model, and selected-source Java transport remain unfinished.
+
 An unhandled release over an empty recipe panel retains drag ownership, including subsequent pointer entry without a held button.
 A delivered slot release or qualifying reset callback ends the drag. Closing and fallback still retire it.
 The delivered slot release can come from another button. Pressing that button preserves the retained allocation.
