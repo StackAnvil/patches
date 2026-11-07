@@ -36,10 +36,13 @@ Use the ordinary slot admission checks for that cell and later destinations.
 Native distribution changes the real inventory as each destination is entered, before pointer release.
 A nine-item desktop drag places nine in the first cell, then redistributes to four in each of two cells, then three in each of three cells.
 Closing with Escape while the button is still down retains the placed items.
-The current Java path keeps these changes as a preview until release and leaves all nine items carried in the same interrupted-drag control.
-Implement incremental distribution through the inventory request owner, with retained destinations and authoritative response handling.
-Keep the drag budget separate from the live cursor count so later destinations remain admissible after earlier placements empty the cursor.
-Do not approximate it with a transfer triggered only by screen closure.
+The negotiated Java path sends each destination through the inventory request owner before release.
+The client sends ordered click phases without Java menu prediction, which would distribute the same items again on release.
+It retains the original budget after a placement empties the cursor and uses renewed stack IDs after server replies.
+A close waits for earlier drag inputs and their replies. New input cannot extend that closing operation.
+Rejection discards unaccepted visits and closes with reconciled items.
+A retired close cannot affect a replacement menu or opening.
+Unnegotiated clients and bundle extraction retain their existing paths.
 Drag distribution and held quantity selection have different lifetimes.
 A drag can retain its operation source after release over a plain panel.
 Do not use every pointer release as an unconditional reset of the shared controller.
@@ -118,7 +121,12 @@ These controls do not establish default cooking-screen support or exact native f
 
 The incremental drag and interrupted-close reference uses the official 1.26.60.5 integrated world.
 Read-only script observations establish real inventory changes before physical Escape and mouse release.
-Native multiplayer transfer grouping and delayed or rejected drag requests remain unverified.
+Installed direct and ViaProxy controls match the nine-item sequence before release and retain three items per destination after reopening.
+Both routes also close visibly while incoming replies wait for about three seconds, then reconcile the earlier destinations before sending the native close.
+Each complete journal contains 18 successful requests: 14 across the ordinary and delayed controls, plus four for secondary dragging.
+Secondary dragging places one item in each visited destination before release. Release preserves those three placements and the six carried items.
+These controls use an admitted authored furnace fixture. Default cooking hosts retain their admission guards.
+Native multiplayer transfer grouping and delayed or rejected native drag behavior remain unverified.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.

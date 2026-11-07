@@ -258,14 +258,14 @@ Installed direct and ViaProxy controls verify short, partial, and full hotbar ho
 Each journal contains 18 successful transfers. Both routes retain all nine items with the same screen, menu, and presentation.
 Default cooking host admission, other input modes, exact frame scheduling, and native graphical parity remain unfinished.
 
-Desktop drag distribution includes the pressed cell without an extra pointer movement.
-The screen reuses Java drag eligibility for this first cell and later destinations.
-A real-menu regression distributes nine items across three cells and leaves the cursor empty.
-Official Bedrock 1.26.60.5 controls show the same three-item distribution and the shared drag state lifecycle.
-Installed direct and ViaProxy controls each receive six successful inventory responses.
-The drag batch places three items into each destination. Ordinary ingredient placement and return preserve all nine items.
+Negotiated desktop drags submit the pressed cell and later destinations before release, including visits after the real cursor empties.
+Client regressions cover both buttons, close, and a late release without another action.
+A real-menu regression prevents Java from distributing the same items again on secondary release.
+Installed direct and ViaProxy controls match the official 1.26.60.5 integrated-world distribution: nine in the first cell, four in each of two cells, then three in each of three cells.
+Escape while held retains that distribution after reopening, including a control that holds incoming replies for about three seconds.
+Each complete journal contains 18 successful requests across ordinary drag, delayed close, and secondary drag.
+Secondary release retains one item per destination and six carried items.
+The [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) describes ownership and the remaining limits.
 These controls use an admitted furnace fixture and do not establish default cooking-screen support.
 Release over a plain panel can retain the native operation source. Complete reset dispatch remains unfinished.
-The matching interrupted-drag control exposes a remaining transaction gap: native commits and redistributes items at each destination before release, while Java keeps a preview and leaves all nine carried after Escape and reopening.
-The native result is verified through read-only integrated-world inventory observations with Escape while the physical mouse button remains down.
-Incremental drag request ownership and native multiplayer grouping remain unfinished. The successful release controls above do not cover this interruption.
+Native multiplayer request grouping and delayed or rejected native drag behavior remain unverified.
