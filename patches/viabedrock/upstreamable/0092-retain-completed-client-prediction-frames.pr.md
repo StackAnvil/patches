@@ -8,15 +8,19 @@ Native 1.26.51.1 protocol 2193 packets distinguish completed fluid motion from a
 
 Pair input, completed motion, item state, and authoritative frame identity. Retain correction history and ordered effects without allowing stale actor or world state into replay.
 
-Prerequisites:
+The version-4 native block dictionary carries explicit friction coefficients from resolved per-state components, independently of Java carriers and pack acceptance.
+Unknown defaults remain separate from supplied coefficients. Original legacy description and cache controls establish the supported Float conversion.
 
-- viabedrock/0018-preserve-sparse-actor-spatial-updates.patch: Retain complete received spatial state before local-control admission. The registered vehicle comparisons require this cache independently of the live actor pose.
+The prerequisite entries in `series.json` supply actor snapshots, block dictionaries, and resolved custom-block components.
 
 ## Validation and remaining limits
 
 Regression coverage includes `ActorMotionCommandTest`, `ActorSpatialCommandTest`, `CollisionContactTest`, `FlightMovementTest`.
 
 History, clock, correction, and ordering regressions cover retained-frame behavior. Native world history, mixed mechanics, network conditions, and broader replay parity remain open.
+
+Friction regressions follow registered state overlays through pack refusal, failed visual compilation, dictionary encoding, both native block layers, and world reset.
+Installed friction transport, vanilla defaults, and native boat tick integration remain unverified.
 
 Original Bedrock 1.26.60.5 Dolphin Boost kernel controls establish that the swim multiplier uses effect-marker presence, including the final zero-duration frame. The shared timeline exposes that multiplier from retained values. A regression checks actor and effect-kind isolation, the swimming gate, expiry, and restoration after clearing state. Full world scheduling at the swim-expiry boundary remains unverified.
 
