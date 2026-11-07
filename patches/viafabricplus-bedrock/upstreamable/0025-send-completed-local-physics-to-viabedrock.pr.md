@@ -58,7 +58,10 @@ The existing surface-height helper matches the original calculation for supplied
 
 Dry-friction material reads use the merged block view, while shape and coefficient reads use primary blocks.
 The on-ground component admits block friction. If the primary collision shape has a zero or reversed extent on any axis, the probe selects the primary block below.
-These controls supply material, shape and coefficient values; actual block-property binding remains unverified.
+The original block cache selects a per-state friction component, then the shared block component, then the legacy default.
+Legacy component application stores `1.0F - configured friction`. The cache copies that value without another conversion.
+Original NBT-to-cache controls accept a Float tag named `value`. A missing key or another tag type decodes to zero.
+These controls supply component storage and unrelated properties. Live block-definition dispatch, property transport and world binding remain unverified.
 
 The inspected client registration path places generic movement before buoyancy.
 Original collision-free movement controls apply the saved movement request to the bounds even after the actor's velocity changes.
