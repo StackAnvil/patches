@@ -267,5 +267,9 @@ Each complete journal contains 18 successful requests across ordinary drag, dela
 Secondary release retains one item per destination and six carried items.
 The [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) describes ownership and the remaining limits.
 These controls use an admitted furnace fixture and do not establish default cooking-screen support.
-Release over a plain panel can retain the native operation source. Complete reset dispatch remains unfinished.
+An unhandled release over an empty recipe panel retains drag ownership, including subsequent pointer entry without a held button.
+A delivered slot or reset callback ends the drag. Closing and fallback still retire it.
+The real-menu regression distinguishes unhandled release, unheld entry, delivered slot release, and close.
+Installed direct and ViaProxy controls match the selected native allocation through delayed replies and preserve every item after reopening.
+Complete reset and source-selection dispatch remain unfinished.
 Native multiplayer request grouping and delayed or rejected native drag behavior remain unverified.

@@ -47,8 +47,10 @@ Rejection discards unaccepted visits and closes with reconciled items.
 A retired close cannot affect a replacement menu or opening.
 Unnegotiated clients and bundle extraction retain their existing paths.
 Drag distribution and held quantity selection have different lifetimes.
-A drag can retain its operation source after release over a plain panel.
-Do not use every pointer release as an unconditional reset of the shared controller.
+Release over an empty recipe panel can retain the drag allocation.
+Pointer entry then redistributes items without a held mouse button.
+A delivered slot release or furnace-root reset retires that allocation.
+Use the delivered authored callback to resolve this boundary. Physical release alone does not establish a reset.
 
 Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
 Pointer entry and exit cannot replace or erase the selected-source snapshot.
@@ -135,6 +137,13 @@ Each journal contains 173 accepted transfers. Replies finish before the native c
 Server inventory, response data, and the reopened menu agree. All 64 items remain accounted for, with no dropped items.
 These controls use an admitted authored furnace fixture. Default cooking hosts retain their admission guards.
 Native multiplayer transfer grouping and delayed or rejected native drag behavior remain unverified.
+
+Official 1.26.60.5 controls distinguish release over the empty recipe panel from release over the furnace root.
+After the recipe-panel release, an unheld pointer entry redistributes ten items from three stacks of three to four stacks of two.
+The cursor changes from one item to two. Read-only allocation fields and inspected screenshots agree.
+Installed direct and ViaProxy controls retain this behavior while replies wait and stop further visits after a delivered slot release.
+Each complete journal contains eleven successful transfers and preserves all ten items after reopening.
+Broader reset and source-selection behavior still need matching controls.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.
