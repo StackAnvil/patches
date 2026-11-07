@@ -21,6 +21,10 @@ Do not replace those rules with a universal click handler.
 Keep selection, ingredient placement, repeated placement, and ingredient return as separate operations.
 Keep held quantity selection separate from the initial pickup and its source.
 Entering quantity selection retains a secondary source and starts its own timer.
+The native View starts a separate 0.3-second countdown after controller admission.
+It subtracts float frame durations and emits a hold event only when the countdown falls below zero.
+That event retains the starting pointer; displacement greater than five native units on either axis blocks quantity-selection entry.
+The View countdown and the quantity-selection timer have different owners and start times.
 Pointer exit can finish the partial pickup before physical release.
 Route that completion through the inventory request owner before clearing the controller state.
 Core retains the starting frame while ordinary Place and Take requests return the cursor and pick up the selected quantity.

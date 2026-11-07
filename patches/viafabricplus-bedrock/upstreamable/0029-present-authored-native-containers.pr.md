@@ -247,4 +247,8 @@ Hover leaves the recipe unselected. A held recipe action retains selection after
 Both routes retain the same screen, menu, and presentation. Server replies confirm all nine cobblestone in the furnace input.
 Official 1.26.60.5 desktop holds establish a partial pickup from both hotbar and furnace ingredient slots.
 Live controller observations retain a separate source and timer for quantity selection. Pointer exit can complete the pickup before physical release.
-The matching Java controller and inventory request path remain unfinished, along with default cooking host admission and native graphical parity.
+Original 1.26.60.5 View countdown and event-construction controls establish the [hold timing contract](../../../docs/native-cooking-actions.md#recipe-input).
+The produced event passes unchanged through the original controller dispatcher and secondary-transition predicate in separate composition controls.
+Item lookup and final state entry remain declared boundaries in those controls.
+Core now retains the return and partial-pickup transaction phases across delayed responses and renewed stack IDs.
+Java hold input, quantity previews, installed comparisons, default cooking host admission, and native graphical parity remain unfinished.
