@@ -97,6 +97,10 @@ Cooking Help opens the Encyclopedia at Furnace for all three station families.
 Help retains the inventory opening, carried items, and pending search while its own view receives input.
 Back and Escape return to that inventory without closing its container.
 The shared Help renderer uses the localized encyclopedia heading and scrolls the selected topic into view.
+Help starts with its selected topic focused.
+Moving the pointer hides the keyboard highlight.
+Hovering another topic changes the focus without changing the chapter.
+Arrow keys resume from that topic, and confirmation selects its chapter.
 Installed direct and ViaProxy controls retain nine carried items through Back and Escape, then retain all nine after reopening.
 Use authored component flags for visibility, focus, input, and toggle behavior.
 Check controller registrations before treating an authored mapping as a required cooking action.

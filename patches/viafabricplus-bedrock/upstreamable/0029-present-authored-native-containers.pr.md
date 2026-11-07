@@ -83,7 +83,16 @@ Screen regressions cover slot confirmation, keyboard Back, Escape, repeated Help
 Model regressions retain the opening and pending search across Help and source updates.
 Cooking uses that same Help lifetime with the native Furnace encyclopedia topic.
 Regressions retain pending search, source updates, carried items, and the inventory owner across Back and Escape.
-The selected topic starts within the visible list, and encyclopedia headings use their localized prefix and topic label.
+The selected topic starts visible and focused, and encyclopedia headings use their localized prefix and topic label.
+Official 1.26.60.5 controls distinguish the selected chapter from keyboard and pointer focus.
+Pointer movement clears the keyboard highlight and retains the navigation anchor.
+Hovering another topic moves that anchor without selecting its chapter.
+Arrow keys resume from the anchor, and confirmation selects the chapter.
+Cached drawing retains the active keyboard highlight and avoids highlighting the parked pointer at the same time.
+The release of the opening click preserves Help focus because the replacement view retains the physical pointer position.
+Installed direct and ViaProxy controls match the scoped native green and gray focus pixels at 1280 × 720.
+Both routes retain nine carried items through pointer handoff, resumed keyboard navigation, Back, Escape, and reopening.
+Settled backdrop samples match the native opaque color. Selector layout, inline input glyphs, Java overlays, and complete screen parity remain open.
 Installed direct and ViaProxy controls each open Furnace Help and return with Back and Escape while carrying nine items.
 Each complete journal contains only the two accepted pickup and return transfers, followed by ordinary container closes.
 Fresh openings, authoritative responses, and server inventory agree on all nine items.
