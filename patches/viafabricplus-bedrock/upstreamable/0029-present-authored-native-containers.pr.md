@@ -369,5 +369,10 @@ Screen regressions cover delayed recipe replies, source refresh, retained drag, 
 Installed direct and ViaProxy reset controls each complete seven accepted transfers with one drag start/end pair.
 A release after the reset component receives its own press preserves the allocation. A later qualifying release ends it once.
 Server inventory and reopened menus retain three stacks of three, without dropped items or a transfer after completion.
-Broader source selection, other input modes, default-host bindings, and exact native frame timing remain unfinished.
+Registered arrow and scrollbar mappings now reach their existing source-state consumers.
+Raw arrow aliases accompany ordinary focus input. Scrollbar press bookkeeping runs before capture, so dragging over an item cannot enter quantity selection.
+Screen regressions check authored persistent-text visibility through release and expiry, and source selection after scrollbar release without moving items.
+The original 1.26.60.5 producer, dispatcher, and flag callbacks pass 162 controls. Their callback tables match all three cooking registries.
+Full default-screen preparation advances to the separate `coalesce_stack` guard in both control styles.
+Broader source selection, other input modes, installed default-host workflows, and exact native frame timing remain unfinished.
 Native multiplayer request grouping and delayed or rejected native drag behavior remain unverified.

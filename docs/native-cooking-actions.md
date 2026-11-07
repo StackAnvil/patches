@@ -81,6 +81,10 @@ The first drawing event retains its destination without transferring items.
 The second event enters distribution with that retained destination, then distributes to the current destination.
 An arrow hold blocks this entry but preserves the latest drawing destination.
 After arrow release, distribution starts with that destination and the next entered destination.
+The Java keyboard route forwards the authored raw arrow aliases alongside ordinary focus input and matches their releases.
+The arrow callback also controls persistent Touch hover text, which expires after six seconds.
+Scrollbar capture delivers its authored press before taking pointer ownership.
+Moving that held pointer over an item cannot start source hover quantity selection. A fresh contact after release can select the item.
 Ordinary selected-source drawing keeps the cursor empty and sends no cursor-drag start signal.
 Release preserves placed items and clears the selected source and distribution allocation.
 Native component, controller, and legacy-model controls establish these results for hotbar, inventory, and furnace ingredient sources.
@@ -247,6 +251,7 @@ The owning patch contains the durable rationale.
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
 Default hosts still require complete input bindings and admission checks.
+The current default furnace, smoker, and blast-furnace programs stop at the unsupported `coalesce_stack` keyboard action.
 Broader source-selection transitions and other input modes remain unfinished.
 The shared bundle controller retains padded selection through publication-bound extraction and replies.
 Native physical bundle navigation bindings remain unverified.
