@@ -52,7 +52,11 @@ Original scheduler controls place passenger input before vehicle paddle updates,
 System membership differs between phases. Their use during correction replay remains unverified.
 Native water requests use the actor's cell and the cell above. The existing surface-height helper matches the original calculation for supplied depth states.
 
-The add-on retains Java boat physics. Historical paddle, buoyancy and random state, active phase selection, and matching trajectories remain open.
+Native frames own a concrete snapshot. Buoyancy capture retains configuration, the double-valued phase and independent copies of liquid selectors. Restore also recovers recorded float-request flags. A separate visitor saves and restores the vehicle input component.
+Under supplied ECS storage, the native lending kernel moves the player's replay ownership to a connected vehicle when the rider reference resolves in the same registry generation, clearing the old history. An unresolved reference creates fresh vehicle history.
+These controls establish the component contracts. Active rider selection, populated-history lifetime and correction dispatch remain unverified.
+
+The add-on retains Java boat physics. Native physics and historical state integration, paddle and random replay policy, active phase selection, and matching trajectories remain open.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
