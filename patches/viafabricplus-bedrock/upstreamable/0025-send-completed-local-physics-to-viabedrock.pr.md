@@ -54,13 +54,21 @@ That phase omits passenger input gathering and buoyancy timer/request constructi
 The controls supply the Level's root instance and stop at system iterators. Live provider construction, entity filtering and trajectories remain unverified.
 Native water requests use the actor's cell and the cell above. The existing surface-height helper matches the original calculation for supplied depth states.
 
+The inspected client registration path places generic movement before buoyancy.
+Original collision-free movement controls apply the saved movement request to the bounds even after the actor's velocity changes.
+The request and the later velocity must remain separate.
+
+Native flag setters and metadata producers preserve the three flag words in metadata order.
+`LEASHED` (30) selects saved dry friction and the positive-motion branch when its version predicate permits it.
+`OUT_OF_CONTROL` (96) prevents the surface counter from resetting. `GLIDING` (32) does neither.
+
 Native frames own a concrete snapshot. Buoyancy capture retains configuration, the double-valued phase and independent copies of liquid selectors. Restore also recovers recorded float-request flags. A separate visitor saves and restores the vehicle input component.
 General component history separately retains boat movement, paddle and buoyancy state. Original frame-producer and callback-list controls exercise this capture path with supplied ECS views.
 Refreshing that history clears saved presence bits before recapture. Restore preserves live components absent from the saved state.
 Under supplied ECS storage, the native lending kernel moves the player's replay ownership to a connected vehicle when the rider reference resolves in the same registry generation, clearing the old history. An unresolved reference creates fresh vehicle history.
 Rewind controls start at the first marked frame, run it and later retained frames, then clear replay markers. Active rider selection, populated-history lifetime and correction-packet admission remain unverified.
 
-The add-on retains Java boat physics. Native physics and historical state integration, random replay policy, live scheduling, and matching trajectories remain open.
+The add-on retains Java boat physics. Native tick integration, water-layer selection, the active version predicate, shared random-state ownership, live scheduling, and matching trajectories remain open.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
