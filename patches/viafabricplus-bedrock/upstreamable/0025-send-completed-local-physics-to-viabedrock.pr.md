@@ -79,6 +79,9 @@ Two original boat initialization paths write saved leash friction of `0.91F` fro
 Reinitialization replaces this value. The dry callback uses it while leashed, and water overrides it without changing the saved value.
 Private port controls preserve this coefficient across rewind. Active initialization and world-provider binding remain open.
 
+The version-5 native world reset carries the original `StartGame` version text through the level-bound block mirror.
+Movement consumers can read that text without using resource cutoffs or client protocol versions. Installed version-5 transport remains unverified.
+
 Native frames own a concrete snapshot. Buoyancy capture retains configuration, the double-valued phase and independent copies of liquid selectors. Restore also recovers recorded float-request flags. A separate visitor saves and restores the vehicle input component.
 General component history separately retains boat movement, paddle and buoyancy state. Original frame-producer and callback-list controls exercise this capture path with supplied ECS views.
 Refreshing that history clears saved presence bits before recapture. Restore preserves live components absent from the saved state.

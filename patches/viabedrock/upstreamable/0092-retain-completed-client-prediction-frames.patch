@@ -1,4 +1,4 @@
-From 75869ac73fd11bbd2d1ed054cae56426163aa2b4 Mon Sep 17 00:00:00 2001
+From 61445ac78c57feea5a8f74d9c249935196d0cdcc Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -692,7 +692,7 @@ verify the swimming gate, absent entry and zero-duration marker. Keep the
 existing duration-active query for callers that need duration activity.
 
 Carry explicit native block friction with the authoritative state dictionary,
-independently of Java carrier models or pack acceptance. The version-4 channel
+independently of Java carrier models or pack acceptance. The version-5 channel
 retains unknown defaults separately from present float coefficients. Resolve
 registered per-state component overlays before transport. Legacy NBT decoding
 accepts only a Float named value, defaults a missing or differently typed field
@@ -700,6 +700,12 @@ to zero, and stores 1.0F minus that value without another cache conversion.
 Original protocol-2225 description, cache and component-name controls establish
 these rules. Vanilla defaults and unsupported component forms remain unknown;
 normal boat tick integration and installed trajectories remain unfinished.
+
+Carry the exact StartGame base-game version text in the native world reset.
+Keep it with dimension and block state so replacement worlds and disconnects
+cannot retain the previous physics gate. Preserve wildcard, suffix and invalid
+text instead of substituting resource selection or client protocol versions.
+The version-5 contract rejects old resets that cannot supply this context.
 ---
  build.gradle                                  |   29 +
  .../api/model/ActorMotionCommand.java         |   72 ++
@@ -717,7 +723,8 @@ normal boat tick integration and installed trajectories remain unfinished.
  .../api/model/MovementEffectTimeline.java     |  438 +++++++
  .../api/model/NativeActorStates.java          |   30 +
  .../api/model/NativeBlockFriction.java        |   25 +
- .../api/model/NativeBlockIdentifiers.java     |   21 +-
+ .../api/model/NativeBlockIdentifiers.java     |   39 +-
+ .../viabedrock/api/model/NativeBlockView.java |    6 +
  .../api/model/NativeMovementSources.java      |  137 ++
  .../api/model/PlayerCorrection.java           |  138 ++
  .../api/model/PlayerCorrectionTracker.java    |   36 +
@@ -742,7 +749,7 @@ normal boat tick integration and installed trajectories remain unfinished.
  .../protocol/model/ItemUseModifiers.java      |   50 +
  .../protocol/packet/ClientPlayerPackets.java  |  147 ++-
  .../protocol/packet/EntityPackets.java        |   63 +-
- .../protocol/packet/JoinPackets.java          |    2 +
+ .../protocol/packet/JoinPackets.java          |    3 +
  .../packet/MovementEffectPackets.java         |   54 +
  .../protocol/packet/MultiStatePackets.java    |   53 +-
  .../protocol/packet/OtherPlayerPackets.java   |    6 +-
@@ -750,8 +757,9 @@ normal boat tick integration and installed trajectories remain unfinished.
  .../protocol/rewriter/BlockStateRewriter.java |    6 +
  .../protocol/rewriter/ItemDataRewriter.java   |    7 +-
  .../protocol/rewriter/ItemRewriter.java       |   19 +
- .../protocol/storage/ChunkTracker.java        |    3 +-
+ .../protocol/storage/ChunkTracker.java        |    9 +-
  .../protocol/storage/EntityTracker.java       |   43 +
+ .../protocol/storage/GameSessionStorage.java  |    9 +
  .../protocol/storage/PlayerInputStorage.java  |   11 +-
  .../protocol/storage/PlayerModeStorage.java   |   63 +
  .../storage/PlayerPredictionStorage.java      |  133 ++
@@ -773,7 +781,7 @@ normal boat tick integration and installed trajectories remain unfinished.
  .../api/model/MovementEffectTest.java         |  127 ++
  .../api/model/MovementEffectTimelineTest.java |  273 ++++
  .../api/model/NativeBlockFrictionTest.java    |  187 +++
- .../api/model/NativeBlockViewTest.java        |    6 +-
+ .../api/model/NativeBlockViewTest.java        |   34 +-
  .../api/model/NativeMovementSourcesTest.java  |  126 ++
  .../api/model/PlayerCorrectionTest.java       |  101 ++
  .../api/model/PlayerModeMessageTest.java      |  113 ++
@@ -802,7 +810,7 @@ normal boat tick integration and installed trajectories remain unfinished.
  .../packet/PlayerSpatialResetTest.java        |  147 +++
  .../packet/TickedMotionPacketTest.java        |  156 +++
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 101 files changed, 9474 insertions(+), 87 deletions(-)
+ 103 files changed, 9535 insertions(+), 94 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
@@ -2529,25 +2537,39 @@ index 00000000..2b7d22e0
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
-index 7cc87f22..b730cb29 100644
+index 7cc87f22..786d7730 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
-@@ -21,12 +21,12 @@ import java.util.Map;
+@@ -16,24 +16,25 @@ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.Objects;
+ 
+ /** Ordered authoritative block identity snapshots and changes for native client effects. */
  public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Reset, NativeBlockIdentifiers.Section,
          NativeBlockIdentifiers.Update, NativeBlockIdentifiers.Dictionary, NativeBlockIdentifiers.Forget {
  
 -    String CHANNEL = "viabedrock:block_identifiers_v3";
-+    String CHANNEL = "viabedrock:block_identifiers_v4";
++    String CHANNEL = "viabedrock:block_identifiers_v5";
      int MAX_DICTIONARY_BYTES = 256 * 1024;
      Type<NativeBlockIdentifiers> TYPE = new Type<>(NativeBlockIdentifiers.class) {
          @Override
          public NativeBlockIdentifiers read(final ByteBuf buffer) {
 -            if (Types.VAR_INT.readPrimitive(buffer) != 3
-+            if (Types.VAR_INT.readPrimitive(buffer) != 4
++            if (Types.VAR_INT.readPrimitive(buffer) != 5
                      || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
                  throw new IllegalArgumentException("Unsupported native block identity message");
              }
-@@ -82,7 +82,8 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
+             final int kind = buffer.readUnsignedByte();
+             final int dimension = Types.VAR_INT.readPrimitive(buffer);
+             return switch (kind) {
+-                case 0 -> new Reset(dimension, buffer.readInt(), buffer.readInt(), buffer.readInt());
++                case 0 -> new Reset(dimension, buffer.readInt(), buffer.readInt(), buffer.readInt(), Types.STRING.read(buffer));
+                 case 1 -> {
+                     final int x = buffer.readInt();
+                     final int y = buffer.readInt();
+@@ -82,7 +83,8 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
                                  throw new IllegalArgumentException("Duplicate native block property");
                              }
                          }
@@ -2557,16 +2579,22 @@ index 7cc87f22..b730cb29 100644
                          if (buffer.readerIndex() - start > MAX_DICTIONARY_BYTES) {
                              throw new IllegalArgumentException("Native block dictionary exceeds its byte limit");
                          }
-@@ -95,7 +96,7 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
+@@ -95,12 +97,13 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
  
          @Override
          public void write(final ByteBuf buffer, final NativeBlockIdentifiers value) {
 -            Types.VAR_INT.writePrimitive(buffer, 3);
-+            Types.VAR_INT.writePrimitive(buffer, 4);
++            Types.VAR_INT.writePrimitive(buffer, 5);
              Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
              buffer.writeByte(value instanceof Reset ? 0 : value instanceof Section ? 1 : value instanceof Update ? 2 : value instanceof Forget ? 3 : 4);
              Types.VAR_INT.writePrimitive(buffer, value.dimension());
-@@ -131,6 +132,10 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
+             if (value instanceof Reset reset) {
+                 buffer.writeInt(reset.minY()).writeInt(reset.height()).writeInt(reset.air());
++                Types.STRING.write(buffer, reset.baseGameVersion());
+             } else if (value instanceof Section section) {
+                 buffer.writeInt(section.chunkX()).writeInt(section.sectionY()).writeInt(section.chunkZ());
+                 buffer.writeByte(section.layer());
+@@ -131,6 +134,10 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
                          Types.STRING.write(buffer, property.getKey());
                          Types.STRING.write(buffer, property.getValue());
                      }
@@ -2577,7 +2605,38 @@ index 7cc87f22..b730cb29 100644
                  }
              }
          }
-@@ -193,7 +198,11 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
+@@ -170,8 +177,16 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
+         return value < 128 ? 1 : 2;
+     }
+ 
+-    record Reset(int dimension, int minY, int height, int air) implements NativeBlockIdentifiers {
++    record Reset(int dimension, int minY, int height, int air, String baseGameVersion) implements NativeBlockIdentifiers {
++        public Reset(final int dimension, final int minY, final int height, final int air) {
++            this(dimension, minY, height, air, "");
++        }
++
+         public Reset {
++            Objects.requireNonNull(baseGameVersion);
++            if (baseGameVersion.length() > 32767) {
++                throw new IllegalArgumentException("Native world version exceeds limits");
++            }
+             if ((minY & 15) != 0 || height <= 0 || height > 4096 || (height & 15) != 0
+                     || (long) minY + height > Integer.MAX_VALUE) {
+                 throw new IllegalArgumentException("Invalid native block world height");
+@@ -182,18 +197,22 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
+     record Section(int dimension, int chunkX, int sectionY, int chunkZ, int layer, NativeBlockSection blocks) implements NativeBlockIdentifiers {
+         public Section {
+             NativeBlockIdentifiers.layer(layer);
+-            java.util.Objects.requireNonNull(blocks);
++            Objects.requireNonNull(blocks);
+         }
+     }
+ 
+     record Update(int dimension, BlockPosition position, int layer, int state) implements NativeBlockIdentifiers {
+         public Update {
+             NativeBlockIdentifiers.layer(layer);
+-            java.util.Objects.requireNonNull(position);
++            Objects.requireNonNull(position);
          }
      }
  
@@ -2590,7 +2649,7 @@ index 7cc87f22..b730cb29 100644
          public Name {
              checkText(identifier);
              if (fluidJavaId < -1) {
-@@ -210,7 +219,7 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
+@@ -210,7 +229,7 @@ public sealed interface NativeBlockIdentifiers permits NativeBlockIdentifiers.Re
          }
  
          public int encodedSize() {
@@ -2599,6 +2658,23 @@ index 7cc87f22..b730cb29 100644
              for (final var property : this.properties.entrySet()) {
                  size += textSize(property.getKey()) + textSize(property.getValue());
              }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
+index 621fab75..a0115386 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
+@@ -22,6 +22,12 @@ public final class NativeBlockView {
+         return this.snapshot != null;
+     }
+ 
++    /** Exact StartGame level version, or null until this world's reset arrives. */
++    public String baseGameVersion() {
++        final Snapshot current = this.snapshot;
++        return current == null ? null : current.world.baseGameVersion();
++    }
++
+     public synchronized void accept(final NativeBlockIdentifiers message) {
+         if (message instanceof NativeBlockIdentifiers.Reset reset) {
+             this.snapshot = new Snapshot(reset);
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeMovementSources.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeMovementSources.java
 new file mode 100644
 index 00000000..76bf5d59
@@ -4935,18 +5011,21 @@ index a88292f9..1d7c6c07 100644
          final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(runtimeId);
          if (entity == null) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 85a0d136..2210c336 100644
+index 85a0d136..e450bd8f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-@@ -338,6 +338,7 @@ public final class JoinPackets {
+@@ -336,8 +336,10 @@ public final class JoinPackets {
+                 }
+ 
                  gameSession.setBedrockVanillaVersion(version);
++                gameSession.setBedrockBaseGameVersionText(vanillaVersion);
                  gameSession.setFlatGenerator(generatorType == GeneratorType.Flat);
                  gameSession.setMovementRewindHistorySize(rewindHistorySize);
 +                wrapper.user().get(PlayerPredictionStorage.class).configureHistory(rewindHistorySize);
                  gameSession.setLevelGameType(levelGameType);
                  gameSession.setLevelTime(levelTime);
                  gameSession.setHardcoreMode(hardcore);
-@@ -566,6 +567,7 @@ public final class JoinPackets {
+@@ -566,6 +568,7 @@ public final class JoinPackets {
  
          clientPlayer.createTeam();
          clientPlayer.sendInitialEntityData();
@@ -5265,10 +5344,30 @@ index 006250a2..abfd6bd4 100644
          javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA,
                  ItemDataRewriter.withBedrockItemData(javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA),
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index e2f2db7f..d5e1519e 100644
+index e2f2db7f..4e23716a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-@@ -745,7 +745,8 @@ public class ChunkTracker extends StoredObject {
+@@ -712,7 +712,8 @@ public class ChunkTracker extends StoredObject {
+             return;
+         }
+         this.nativeBlockWorldSent = false;
+-        this.sendNativeBlocks(new NativeBlockIdentifiers.Reset(this.dimension.ordinal(), this.minY, this.worldHeight, this.bedrockAirId()));
++        this.sendNativeBlocks(new NativeBlockIdentifiers.Reset(this.dimension.ordinal(), this.minY, this.worldHeight, this.bedrockAirId(),
++                this.user().get(GameSessionStorage.class).getBedrockBaseGameVersionText()));
+         for (final BedrockChunk chunk : this.chunks.values()) {
+             if (isChunkFullyLoaded(chunk)) {
+                 this.sendNativeChunk(chunk);
+@@ -733,7 +734,8 @@ public class ChunkTracker extends StoredObject {
+             this.nativeBlockWorldSent = true;
+             this.nativeBlockNames.clear();
+         } else if (!this.nativeBlockWorldSent) {
+-            this.sendNativeBlocks(new NativeBlockIdentifiers.Reset(this.dimension.ordinal(), this.minY, this.worldHeight, this.bedrockAirId()));
++            this.sendNativeBlocks(new NativeBlockIdentifiers.Reset(this.dimension.ordinal(), this.minY, this.worldHeight, this.bedrockAirId(),
++                this.user().get(GameSessionStorage.class).getBedrockBaseGameVersionText()));
+         }
+         final int[] states = message instanceof NativeBlockIdentifiers.Section section ? section.blocks().palette()
+                 : message instanceof NativeBlockIdentifiers.Update update ? new int[]{update.state()} : new int[0];
+@@ -745,7 +747,8 @@ public class ChunkTracker extends StoredObject {
              }
              final var block = this.user().get(BlockStateRewriter.class).blockState(state);
              final var name = new NativeBlockIdentifiers.Name(state, block == null ? "" : block.namespacedIdentifier(),
@@ -5352,6 +5451,33 @@ index 136722c7..d50c2799 100644
 +
      public ClientPlayerEntity getClientPlayer() {
          return this.clientPlayerEntity;
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
+index fb054492..20381802 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
+@@ -36,6 +36,7 @@ import java.util.Set;
+ 
+ public class GameSessionStorage extends StoredObject {
+ 
++    private String bedrockBaseGameVersionText = "";
+     private CompoundTag javaRegistries;
+     private CompoundTag bedrockBiomeDefinitions = BedrockProtocol.MAPPINGS.getBedrockBiomeDefinitions();
+     private final Map<String, DimensionDefinition> bedrockDimensionDefinitions = new HashMap<>();
+@@ -111,6 +112,14 @@ public class GameSessionStorage extends StoredObject {
+         this.bedrockVanillaVersion = bedrockVanillaVersion;
+     }
+ 
++    public String getBedrockBaseGameVersionText() {
++        return this.bedrockBaseGameVersionText;
++    }
++
++    public void setBedrockBaseGameVersionText(final String version) {
++        this.bedrockBaseGameVersionText = version;
++    }
++
+     public boolean isFlatGenerator() {
+         return this.flatGenerator;
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 index 95391851..f8bf20f8 100644
@@ -7383,7 +7509,7 @@ index 00000000..4ff00ed1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockFrictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockFrictionTest.java
 new file mode 100644
-index 00000000..98a684f6
+index 00000000..f126511f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockFrictionTest.java
 @@ -0,0 +1,187 @@
@@ -7509,7 +7635,7 @@ index 00000000..98a684f6
 +    void rejectsOldIdentityMessagesBeforeReadingTheirDictionaryBody() {
 +        final var buffer = Unpooled.buffer();
 +        try {
-+            Types.VAR_INT.writePrimitive(buffer, 3);
++            Types.VAR_INT.writePrimitive(buffer, 4);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            final var failure = assertThrows(IllegalArgumentException.class, () -> NativeBlockIdentifiers.TYPE.read(buffer));
 +            assertEquals("Unsupported native block identity message", failure.getMessage());
@@ -7575,29 +7701,68 @@ index 00000000..98a684f6
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
-index 9140b86b..28b111e1 100644
+index 9140b86b..d8a47845 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
-@@ -202,7 +202,7 @@ class NativeBlockViewTest {
+@@ -80,11 +80,37 @@ class NativeBlockViewTest {
+         assertFalse(view.ready());
+     }
+ 
++    @Test
++    void worldVersionTravelsWithResetAndCannotSurviveWorldReplacementOrDisconnect() {
++        final var view = new NativeBlockView();
++        assertNull(view.baseGameVersion());
++        final var buffer = Unpooled.buffer();
++        try {
++            for (final String version : List.of("1.21.89", "*", "invalid-version", "1.21.90-pre+world")) {
++                NativeBlockIdentifiers.TYPE.write(buffer, new NativeBlockIdentifiers.Reset(0, -64, 384, 0, version));
++                view.accept(NativeBlockIdentifiers.TYPE.read(buffer));
++                assertEquals(version, view.baseGameVersion());
++                view.accept(new NativeBlockIdentifiers.Forget(0, 2, 3));
++                assertEquals(version, view.baseGameVersion());
++                assertFalse(buffer.isReadable());
++                buffer.clear();
++            }
++            view.accept(new NativeBlockIdentifiers.Reset(1, 0, 256, 0, "1.26.60"));
++            assertEquals("1.26.60", view.baseGameVersion());
++            view.clear();
++            assertNull(view.baseGameVersion());
++            view.accept(new NativeBlockIdentifiers.Reset(0, -64, 384, 0));
++            assertEquals("", view.baseGameVersion());
++        } finally {
++            buffer.release();
++        }
++    }
++
+     @Test
+     void roundtripsAllMessagesWithoutConsumingFollowingFields() {
+         final var section = NativeBlockSection.create(index -> index * 17 - 4096);
+         final List<NativeBlockIdentifiers> messages = List.of(
+-                new NativeBlockIdentifiers.Reset(0, -64, 384, 0),
++                new NativeBlockIdentifiers.Reset(0, -64, 384, 0, "1.21.90-pre+world"),
+                 new NativeBlockIdentifiers.Dictionary(0, List.of(new NativeBlockIdentifiers.Name(Integer.MIN_VALUE, "test:custom", Map.of("test:mode", "mixed_α"), 1234))),
+                 new NativeBlockIdentifiers.Section(0, -5, -4, 7, 1, section),
+                 new NativeBlockIdentifiers.Update(0, new BlockPosition(-79, -62, 115), 1, Integer.MAX_VALUE),
+@@ -202,7 +228,7 @@ class NativeBlockViewTest {
              assertTrue(name.encodedSize() * 3 > NativeBlockIdentifiers.MAX_DICTIONARY_BYTES);
              assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Dictionary(0, List.of(name, name, name)));
              buffer.clear();
 -            Types.VAR_INT.writePrimitive(buffer, 3);
-+            Types.VAR_INT.writePrimitive(buffer, 4);
++            Types.VAR_INT.writePrimitive(buffer, 5);
              Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
              buffer.writeByte(4);
              Types.VAR_INT.writePrimitive(buffer, 0);
-@@ -231,11 +231,11 @@ class NativeBlockViewTest {
+@@ -231,11 +257,11 @@ class NativeBlockViewTest {
          assertThrows(IllegalArgumentException.class, () -> new NativeBlockIdentifiers.Update(0, new BlockPosition(0, 0, 0), -1, 0));
          final var buffer = Unpooled.buffer();
          try {
 -            Types.VAR_INT.writePrimitive(buffer, 3);
-+            Types.VAR_INT.writePrimitive(buffer, 4);
++            Types.VAR_INT.writePrimitive(buffer, 5);
              Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
              assertThrows(IllegalArgumentException.class, () -> NativeBlockIdentifiers.TYPE.read(buffer));
              buffer.clear();
 -            Types.VAR_INT.writePrimitive(buffer, 3);
-+            Types.VAR_INT.writePrimitive(buffer, 4);
++            Types.VAR_INT.writePrimitive(buffer, 5);
              Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
              buffer.writeByte(1);
              Types.VAR_INT.writePrimitive(buffer, 0);
