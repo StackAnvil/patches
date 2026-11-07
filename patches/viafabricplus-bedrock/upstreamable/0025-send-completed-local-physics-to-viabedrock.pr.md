@@ -26,7 +26,7 @@ Historical mode queries use the local player's recorded mode on both the movemen
 
 A controlled protocol-2225 replay uses the existing official 1.26.60.5-derived bootstrap with declared mode transitions. A bounded installed probe queries all four historical Java modes across five live phases on direct and proxy routes. The previous client disagrees in 15 of 20 cases. The corrected client keeps local mode, Creative/Spectator predicates, and pickability aligned with the historical mode, while remote predicates and live queries after each scope remain unchanged. `BedrockPlayerModesTest` checks local ownership, remote fallback, and scope lifetime separately. These controls establish query ownership, without proving native trajectories or correction timing.
 
-Later corrections compare with the latest retained state before physics, after earlier authoritative commands.
+Clean-history corrections compare with the latest retained state before physics, after earlier authoritative commands.
 The original rewind baseline remains separate, so repeating a replay does not accumulate command effects.
 The regression fails before this change when a later correction matches the original prediction and verifies restoration afterward.
 Installed-client controls send two declared protocol-2225 correction packets for the same input tick through core translation, Java payload/position pairing, and physical replay.
@@ -36,6 +36,8 @@ Both routes also queue opposite corrections before one physics step, then receiv
 Retained states show that the earlier correction applies and the later pair restores the original position. The final forty completed frames stay settled.
 The wire controls use synthetic server corrections; native BDS admission and native trajectories remain unverified.
 This retained-state fix does not establish the cause of the reported pearl/wind rollback loop.
+
+Original 1.26.60.5 receiver and queue controls establish ordinary correction admission for both typed and cached state. Clean history discards matching historical and current-clock corrections. Historical command masks bypass later comparisons, while future commands remain queued without requesting replay. Pending current-clock commands acquire their mask when captured into history. Scheduler regressions check these distinctions, later command application, and history reset. These bounded controls supply the history and controller boundary; they do not execute live controller construction or world physics.
 
 Owned BDS 1.26.60.6 water-boat controls cover forward movement, a server impulse, an authoritative vehicle teleport, dismount, and remount on both routes.
 SDK water probes admit the fixture before mounted input.
