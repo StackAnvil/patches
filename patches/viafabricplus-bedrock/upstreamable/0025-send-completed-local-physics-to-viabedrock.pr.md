@@ -52,14 +52,16 @@ Original scheduler controls place passenger input before vehicle paddle updates,
 Rewind-kernel controls resolve the Level getter and dispatch vehicle paddle updates, boat friction, control and movement, then buoyancy gravity and float through the native replay phase.
 That phase omits passenger input gathering and buoyancy timer/request construction.
 The controls supply the Level's root instance and stop at system iterators. Live provider construction, entity filtering and trajectories remain unverified.
-Native water requests use the actor's cell and the cell above. The existing surface-height helper matches the original calculation for supplied depth states.
+Native water requests use the actor's cell and the cell above. The concrete block reader selects the secondary layer first and falls back to primary only for air.
+Coupled request and layer-reader controls cover secondary water over solid blocks and secondary non-water blocks masking primary water.
+The existing surface-height helper matches the original calculation for supplied depth states.
 
 The inspected client registration path places generic movement before buoyancy.
 Original collision-free movement controls apply the saved movement request to the bounds even after the actor's velocity changes.
 The request and the later velocity must remain separate.
 
 Native flag setters and metadata producers preserve the three flag words in metadata order.
-`LEASHED` (30) selects saved dry friction and the positive-motion branch when its version predicate permits it.
+`LEASHED` (30) selects saved dry friction and the positive-motion branch when its version predicate permits it. The original initializer and comparison enable that branch from `1.21.90` for ordinary release versions.
 `OUT_OF_CONTROL` (96) prevents the surface counter from resetting. `GLIDING` (32) does neither.
 
 Native frames own a concrete snapshot. Buoyancy capture retains configuration, the double-valued phase and independent copies of liquid selectors. Restore also recovers recorded float-request flags. A separate visitor saves and restores the vehicle input component.
@@ -68,7 +70,7 @@ Refreshing that history clears saved presence bits before recapture. Restore pre
 Under supplied ECS storage, the native lending kernel moves the player's replay ownership to a connected vehicle when the rider reference resolves in the same registry generation, clearing the old history. An unresolved reference creates fresh vehicle history.
 Rewind controls start at the first marked frame, run it and later retained frames, then clear replay markers. Active rider selection, populated-history lifetime and correction-packet admission remain unverified.
 
-The add-on retains Java boat physics. Native tick integration, water-layer selection, the active version predicate, shared random-state ownership, live scheduling, and matching trajectories remain open.
+The add-on retains Java boat physics. Native tick integration, block-friction inputs, accepted world-version binding, shared random-state ownership, live scheduling, and matching trajectories remain open.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
