@@ -26,6 +26,9 @@ It subtracts float frame durations and emits a hold event only when the countdow
 That event retains the starting pointer; displacement greater than five native units on either axis blocks quantity-selection entry.
 The View countdown and the quantity-selection timer have different owners and start times.
 Pointer exit can finish the partial pickup before physical release.
+A second button press preserves quantity selection.
+Its delivered slot release completes selection while the initiating button remains held.
+An unmapped button release cannot complete another button's selection.
 Route that completion through the inventory request owner before clearing the controller state.
 Core retains the starting frame while ordinary Place and Take requests return the cursor and pick up the selected quantity.
 Completion waits for the return response and uses its renewed network stack ID.
@@ -146,6 +149,11 @@ The cursor changes from one item to two. Read-only allocation fields and inspect
 Installed direct and ViaProxy controls retain this behavior while replies wait.
 Both routes preserve the allocation during a secondary hold and stop further visits after its slot release.
 Each complete journal contains eleven successful transfers and preserves all ten items after reopening.
+Official 1.26.60.5 controls also complete quantity selection after secondary release while the primary button remains held.
+Read-only controller observations and physical button masks establish that event order.
+Installed direct and ViaProxy controls retain selection during the second press and complete it before primary release.
+Each journal contains four accepted transfers and retains all nine items after reopening.
+These controls establish the input lifetime, not exact frame timing or equal selected counts at matching requested durations.
 Broader reset, source selection, and same-frame pointer and press admission still need matching controls.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.

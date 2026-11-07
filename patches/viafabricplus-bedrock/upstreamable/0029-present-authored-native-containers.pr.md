@@ -253,6 +253,10 @@ Item lookup and final state entry remain declared boundaries in those controls.
 Core now retains the return and partial-pickup transaction phases across delayed responses and renewed stack IDs.
 Desktop primary pickup now retains its source through the shared View countdown and a separate quantity timer.
 Quantity previews leave the real menu unchanged. Delayed pickup snapshots cannot admit an overlapping query or recipe action.
+Official 1.26.60.5 physical controls retain quantity selection while both buttons are held and complete it after secondary release before primary release.
+Screen regressions cover that delivered release, an unmapped button, and duplicate completion.
+Installed direct and ViaProxy controls retain selection during the second press and complete it before primary release.
+Each route receives four accepted transfer replies and retains nine items after reopening. Exact native frame timing remains unverified.
 Regressions cover cached completion, delayed frames, correction, capability loss, transport retirement, and one physical screen pickup.
 Installed direct and ViaProxy controls verify short, partial, and full hotbar holds, partial ingredient pickup, and completion before physical release on pointer exit.
 Each journal contains 18 successful transfers. Both routes retain all nine items with the same screen, menu, and presentation.

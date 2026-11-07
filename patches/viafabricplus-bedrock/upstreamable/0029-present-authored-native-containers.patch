@@ -1,4 +1,4 @@
-From db6b51e7e6803a9c310f653c4eba49dcf5d30b85 Mon Sep 17 00:00:00 2001
+From da4005a44b7018136761d64b98fc45f9b5836279 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(inventory): present authored native containers
@@ -1040,6 +1040,15 @@ and starts quantity timing independently of the shared View countdown. Release
 or pointer exit submits the cached displayed count. Preview source and cursor
 without mutating the real menu, and wait for authoritative transfer replies.
 
+Retain authored button phases while quantity selection owns input. A secondary
+press preserves the selection; a delivered slot release completes it even while
+the initiating primary button remains held. Unmapped buttons cannot complete
+another button's selection, and later releases cannot submit it twice.
+Official Bedrock 1.26.60.5 physical controls retain state15 with both buttons
+down, then return to state1 after secondary release while primary stays down.
+Read-only state and pointer observations establish this ordering. Keep the
+original source and cached count in the authoritative completion request.
+
 Keep local input ownership while the initial pickup frame is delayed. START
 uses a newer frame and COMPLETE retains that exact authority. Share request
 sequences with queries and recipes, suppress overlapping gestures, and retire
@@ -1088,7 +1097,7 @@ Retain negotiated desktop drags until a native slot or reset callback receives r
  .../render/MixinNativeGuiItemState.java       |   20 +
  .../render/MixinNativeGuiOversizedItem.java   |   31 +
  .../container/BedrockFurnacePreferences.java  |   60 +
- .../BedrockNativeContainerScreen.java         | 1861 ++++++++++++++++
+ .../BedrockNativeContainerScreen.java         | 1870 +++++++++++++++
  .../container/BedrockNativeContainers.java    |  300 +++
  .../container/BedrockNativeCooking.java       |  196 ++
  .../BedrockNativePlayerInventory.java         |  191 ++
@@ -1150,7 +1159,7 @@ Retain negotiated desktop drags until a native slot or reset callback receives r
  .../container/NativeContainerButtonTest.java  |  280 +++
  .../container/NativeContainerDrawsTest.java   |   70 +
  .../NativeContainerGeometryTest.java          |  435 ++++
- .../container/NativeContainerInputTest.java   |  610 ++++++
+ .../container/NativeContainerInputTest.java   |  610 +++++
  ...veContainerPresentationControllerTest.java |   91 +
  .../container/NativeContainerScrollTest.java  |   51 +
  .../container/NativeContainerSessionTest.java |   40 +
@@ -1158,7 +1167,7 @@ Retain negotiated desktop drags until a native slot or reset callback receives r
  .../container/NativeCookingHoldTest.java      |  154 ++
  ...tiveCookingPresentationControllerTest.java |  260 +++
  .../NativeCookingPresentationTest.java        |  226 ++
- .../container/NativeCookingScreenTest.java    | 1951 +++++++++++++++++
+ .../container/NativeCookingScreenTest.java    | 1998 +++++++++++++++++
  .../NativeFurnacePreferenceStateTest.java     |   45 +
  .../container/NativeInventoryFlightsTest.java |   70 +
  .../NativeInventoryItemPresentationTest.java  |  282 +++
@@ -1171,7 +1180,7 @@ Retain negotiated desktop drags until a native slot or reset callback receives r
  .../container/NativePlayerScreenTest.java     | 1126 ++++++++++
  .../PlayerInventoryAdmissionTest.java         |  147 ++
  .../PlayerInventoryScreenLifecycleTest.java   |  139 ++
- 96 files changed, 15245 insertions(+), 62 deletions(-)
+ 96 files changed, 15301 insertions(+), 62 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockInventorySounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiItemStyle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinNativeContainerGeometry.java
@@ -1775,10 +1784,10 @@ index 0000000..1583ce0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000..5599d2d
+index 0000000..edee42f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
-@@ -0,0 +1,1861 @@
+@@ -0,0 +1,1870 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2925,7 +2934,15 @@ index 0000000..5599d2d
 +        if (!this.current()) return false;
 +        if (this.dragInput != null) return true;
 +        this.consumedReleases.remove(event.button());
-+        if (this.cookingHold.busy()) { this.nativeButtons.add(event.button()); return true; }
++        if (this.cookingHold.busy()) {
++            this.mouseMoved(event.x(), event.y());
++            final String heldSource = source(event.button());
++            this.pointerSources.put(event.button(), heldSource);
++            // Retain authored button phases without starting another item operation.
++            this.nativeInput.button(heldSource, true, 1, this.clock.getAsLong(), true);
++            this.nativeButtons.add(event.button());
++            return true;
++        }
 +        final boolean clearSearch = this.presentation instanceof NativeCookingPresentation
 +                && this.geometry.clearsSearch(event.x(), event.y(), source(event.button()));
 +        final boolean editorInput = clearSearch && !this.waitingForPreference() && this.capturedButtons.isEmpty();
@@ -3299,10 +3316,24 @@ index 0000000..5599d2d
 +    @Override
 +    public boolean mouseReleased(final MouseButtonEvent event) {
 +        if (this.closing()) return true;
-+        boolean dragReleaseDelivered = !this.authoredController();
++        boolean gestureReleaseDelivered = !this.authoredController();
 +        final String pressedSource = this.pointerSources.remove(event.button());
 +        final String componentSource = pressedSource == null ? source(event.button()) : pressedSource;
-+        if (this.current() && this.presentation instanceof NativeCookingPresentation cooking && this.cookingHold.release(event.button())) {
++        if (this.current() && this.authoredController()) {
++            if (this.helpView) this.inventoryInput.button(componentSource, false, 1, this.clock.getAsLong(), false);
++            final var hover = this.nativeInput.pointer(event.x(), event.y(), 1, this.clock.getAsLong(), this.pointerEnabled());
++            final var released = this.nativeInput.button(componentSource, false, 1, this.clock.getAsLong(),
++                    this.componentEnabled() || this.dragInput != null || this.cookingHold.busy());
++            if (!this.waitingForPreference()) { this.componentEvents(hover); this.componentEvents(released); }
++            gestureReleaseDelivered = released.events().stream().anyMatch(control -> control.button() != null
++                    && control.button().phase() == 0
++                    && (control.button().target() == NativeUiInput.symbol("button.container_reset_held")
++                        || control.node().properties().has("inventory_slot")
++                            && (control.button().target() == NativeUiInput.symbol("button.container_take_all_place_all")
++                                || control.button().target() == NativeUiInput.symbol("button.container_take_half_place_one"))));
++        }
++        if (this.current() && this.presentation instanceof NativeCookingPresentation cooking
++                && this.cookingHold.release(event.button(), gestureReleaseDelivered)) {
 +            this.nativeButtons.remove(event.button());
 +            this.consumedReleases.add(event.button());
 +            this.cookingHold.flush(cooking, this.menu.getCarried(), this::sendCookingHold);
@@ -3311,22 +3342,9 @@ index 0000000..5599d2d
 +            this.refreshSafely();
 +            return true;
 +        }
-+        if (this.current() && this.authoredController()) {
-+            if (this.helpView) this.inventoryInput.button(componentSource, false, 1, this.clock.getAsLong(), false);
-+            final var hover = this.nativeInput.pointer(event.x(), event.y(), 1, this.clock.getAsLong(), this.pointerEnabled());
-+            final var released = this.nativeInput.button(componentSource, false, 1, this.clock.getAsLong(),
-+                    this.componentEnabled() || this.dragInput != null);
-+            if (!this.waitingForPreference()) { this.componentEvents(hover); this.componentEvents(released); }
-+            dragReleaseDelivered = released.events().stream().anyMatch(control -> control.button() != null
-+                    && control.button().phase() == 0
-+                    && (control.button().target() == NativeUiInput.symbol("button.container_reset_held")
-+                        || control.node().properties().has("inventory_slot")
-+                            && (control.button().target() == NativeUiInput.symbol("button.container_take_all_place_all")
-+                                || control.button().target() == NativeUiInput.symbol("button.container_take_half_place_one"))));
-+        }
 +        if (this.dragInput != null && (this.authoredController() || this.dragInput.button == event.button())) {
 +            // Native keeps redistributing on pointer entry after an unhandled physical release.
-+            if (dragReleaseDelivered) {
++            if (gestureReleaseDelivered) {
 +                this.finishDragInput();
 +                this.consumedReleases.add(event.button());
 +            }
@@ -6464,7 +6482,7 @@ index 0000000..f8accb7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHold.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHold.java
 new file mode 100644
-index 0000000..574bb36
+index 0000000..1295886
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHold.java
 @@ -0,0 +1,139 @@
@@ -6521,8 +6539,8 @@ index 0000000..574bb36
 +        if (this.selecting() && !inside) this.finish();
 +    }
 +
-+    boolean release(final int button) {
-+        if (!this.owns(button)) return false;
++    boolean release(final int button, final boolean completionDelivered) {
++        if (!this.owns(button) && !(this.selecting() && completionDelivered)) return false;
 +        if (this.selecting) this.finish();
 +        else this.clear();
 +        return true;
@@ -11826,7 +11844,7 @@ index 0000000..4ebb7e0
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHoldTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHoldTest.java
 new file mode 100644
-index 0000000..48d1559
+index 0000000..fa998b1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingHoldTest.java
 @@ -0,0 +1,154 @@
@@ -11887,7 +11905,7 @@ index 0000000..48d1559
 +        assertEquals(start.source(), complete.source());
 +        assertEquals(6, f.hold.preview(30, ItemStack.EMPTY).getCount());
 +        assertEquals(3, f.hold.cursor(ItemStack.EMPTY).getCount());
-+        assertTrue(f.hold.release(0));
++        assertTrue(f.hold.release(0, true));
 +        f.hold.flush(f.presentation, ItemStack.EMPTY, f.sent::add);
 +        assertEquals(2, f.sent.size());
 +        assertTrue(f.presentation.result(new NativeCookingHoldResult(complete, true)));
@@ -11905,7 +11923,7 @@ index 0000000..48d1559
 +        f.frame(601_000_000L, f.item);
 +        assertTrue(f.sent.isEmpty());
 +        f.clock.set(901_000_000L);
-+        assertTrue(f.hold.release(0));
++        assertTrue(f.hold.release(0, true));
 +        f.update(2);
 +        f.hold.flush(f.presentation, f.item, f.sent::add);
 +        assertEquals(2, f.sent.size());
@@ -11923,7 +11941,7 @@ index 0000000..48d1559
 +        final var f = new Fixture();
 +        f.pickup();
 +        f.frame(100_000_000L, f.item);
-+        assertTrue(f.hold.release(0));
++        assertTrue(f.hold.release(0, true));
 +        assertFalse(f.hold.busy());
 +        assertTrue(f.sent.isEmpty());
 +        f.pickup();
@@ -12484,10 +12502,10 @@ index 0000000..c9e172a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java
 new file mode 100644
-index 0000000..6bbef1f
+index 0000000..6d19193
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativeCookingScreenTest.java
-@@ -0,0 +1,1951 @@
+@@ -0,0 +1,1998 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12800,6 +12818,53 @@ index 0000000..6bbef1f
 +            verify(preview).item(argThat(item -> item.getCount() == 3), eq(622), eq(292));
 +            assertTrue(f.screen.mouseReleased(pointer(MOUSE_BUTTON_LEFT, 630, 300)));
 +            assertEquals(2, held.size());
++            verify(f.game.gameMode).handleContainerInput(f.menu.containerId, 30, 0, ContainerInput.PICKUP, f.player);
++            verifyNoMoreInteractions(f.game.gameMode);
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(ints = {MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE})
++    void quantitySelectionOnlyCompletesOnAnAdmittedSecondaryRelease(final int releaseButton) throws Exception {
++        try (final var f = new Fixture()) {
++            f.presentation.holdCapability(true);
++            final var held = new ArrayList<NativeCookingHoldAction>();
++            f.networking.when(() -> ClientPlayNetworking.send(any())).thenAnswer(call -> {
++                held.add(((NativeCookingHoldPayload) call.getArgument(0)).action());
++                return null;
++            });
++            final var slot = f.menu.getSlot(30);
++            slot.set(new ItemStack(Items.IRON_INGOT, 9));
++            f.screen.containerTick();
++            doAnswer(_ -> { f.menu.setCarried(slot.getItem().copy()); slot.set(ItemStack.EMPTY); return null; })
++                    .when(f.game.gameMode).handleContainerInput(f.menu.containerId, 30, 0, ContainerInput.PICKUP, f.player);
++            final var primary = pointer(MOUSE_BUTTON_LEFT, 109, 219);
++            final var secondary = pointer(releaseButton, 109, 219);
++            f.screen.mouseMoved(primary.x(), primary.y());
++            assertTrue(f.screen.mouseClicked(primary, false));
++            assertTrue(f.controller.accept(f.owner, f.menu, 5, message(2, true), _ -> new ItemStack(Items.IRON_INGOT)));
++            f.clock.set(301_000_000L);
++            f.screen.advanceCookingInput();
++            assertEquals(1, held.size());
++            assertTrue(f.presentation.result(new NativeCookingHoldResult(held.getFirst(), true)));
++            slot.set(new ItemStack(Items.IRON_INGOT, 9));
++            f.menu.setCarried(ItemStack.EMPTY);
++            f.clock.set(601_000_000L);
++            f.screen.advanceCookingInput();
++            assertTrue(f.screen.mouseClicked(secondary, false));
++            assertEquals(1, held.size(), "A second press preserves quantity selection");
++            assertTrue(f.screen.mouseReleased(secondary));
++            assertEquals(releaseButton == MOUSE_BUTTON_RIGHT ? 2 : 1, held.size(),
++                    "Only a delivered slot release completes selection before the primary release");
++            assertTrue(f.screen.mouseReleased(primary));
++            assertEquals(2, held.size());
++            assertEquals(NativeCookingHoldAction.Phase.COMPLETE, held.getLast().phase());
++            assertEquals(3, held.getLast().quantity());
++            assertEquals(held.getFirst().source(), held.getLast().source());
++            assertTrue(f.screen.mouseReleased(secondary));
++            assertEquals(2, held.size(), "Later releases cannot complete the same quantity twice");
++            assertEquals(9, slot.getItem().getCount());
++            assertTrue(f.menu.getCarried().isEmpty());
 +            verify(f.game.gameMode).handleContainerInput(f.menu.containerId, 30, 0, ContainerInput.PICKUP, f.player);
 +            verifyNoMoreInteractions(f.game.gameMode);
 +        }
