@@ -34,6 +34,12 @@ Core retains the starting frame while ordinary Place and Take requests return th
 Completion waits for the return response and uses its renewed network stack ID.
 Rejection, reopening, or transport retirement cancels queued completion.
 
+Desktop Return activates the slot through its authored confirmation mapping.
+Its separate Return callback retains keyboard-held state and completes the matching quantity selection on release.
+The same inventory request owner handles pointer and Return pickup, source return, and partial pickup.
+Repeated Return presses cannot start another pickup while that hold remains active.
+Space does not activate an ordinary desktop cooking slot.
+
 Desktop drag distribution includes the initially pressed slot before the first pointer movement.
 Use the ordinary slot admission checks for that cell and later destinations.
 Native distribution changes the real inventory as each destination is entered, before pointer release.
@@ -189,9 +195,9 @@ The owning patch contains the durable rationale.
 ## Remaining limits
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
-Default hosts still require source reset, Return, arrow-key state, and scrollbar input integration.
+Default hosts still require source reset, arrow-key state, and scrollbar input integration.
 The shared bundle controller retains padded selection through publication-bound extraction and replies.
-Native physical bindings remain unverified.
+Native physical bundle navigation bindings remain unverified.
 Installed selected-cell extraction uses an admitted authored fixture. See the [container validation](../patches/viafabricplus-bedrock/upstreamable/0029-present-authored-native-containers.pr.md).
 Native state registration and isolated callback execution do not establish live controller delivery.
 A local request test does not establish native graphical behavior or complete server transaction recovery.

@@ -296,6 +296,12 @@ The produced event passes unchanged through the original controller dispatcher a
 Item lookup and final state entry remain declared boundaries in those controls.
 Core now retains the return and partial-pickup transaction phases across delayed responses and renewed stack IDs.
 Desktop primary pickup now retains its source through the shared View countdown and a separate quantity timer.
+Official 1.26.60.5 desktop Return controls enter quantity state 15 and end it on key release. Space over the same ordinary slot leaves items unchanged.
+Return uses authored slot confirmation and a separate held-input callback. It shares the existing quantity request owner and retains the routed slot as its origin.
+Screen regressions cover pickup, key repeats, completion while the hold owns input, duplicate release, and unchanged menu previews. Unsupported keyboard quick-move still restores ordinary controls.
+Installed direct and ViaProxy Return controls each complete ten accepted requests across short pickup, partial and full holds, return, and reopening.
+Both routes retain six items after the partial release and nine after the full release. Held input uses the loaded client's Return key constant.
+These controls do not establish equal native timing, complete default-screen support, or native pixels.
 Quantity previews leave the real menu unchanged. Delayed pickup snapshots cannot admit an overlapping query or recipe action.
 Official 1.26.60.5 physical controls retain quantity selection while both buttons are held and complete it after secondary release before primary release.
 Screen regressions cover that delivered release, an unmapped button, and duplicate completion.
