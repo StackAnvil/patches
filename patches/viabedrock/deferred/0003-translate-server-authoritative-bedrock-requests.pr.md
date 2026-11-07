@@ -71,7 +71,9 @@ Each visit uses the existing transfer prediction and response owner. Later trans
 A close retains earlier inputs until their replies settle and rejects subsequent input or a new player opening.
 Rejection closes with reconciled items. An old close cannot affect a replacement menu, including one with the same Java ID.
 Regressions cover queued pickup, delayed and reordered responses, rejection, capacity, bundle compatibility, and opening replacement.
-Installed direct and ViaProxy controls retain three items in each of three destinations after Escape while held, with and without delayed replies.
-Each complete journal contains 18 accepted requests, including secondary dragging before and after release.
+A 36-destination regression covers chest slots and player slots appended to a furnace.
+Queued revisits preserve first-visit order. Release and a new press keep consecutive gestures separate.
+Installed direct and ViaProxy controls retain three-slot and full-inventory distributions through Escape while held and delayed replies.
+The full-inventory control reconciles every destination before closing and conserves all 64 items after reopening.
 Native multiplayer grouping and delayed or rejected native behavior remain unverified.
 See the [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) for the versioned visible control and host limits.

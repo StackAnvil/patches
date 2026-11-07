@@ -1,4 +1,4 @@
-From 74181ab5d0b3fb4facbe79d30cfa8282ab630a80 Mon Sep 17 00:00:00 2001
+From 4e52ae358345deec5d8117cda8673280b5fcd99c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -841,6 +841,10 @@ ownership. Preserve release-time bundle extraction and unnegotiated clients.
 These controls do not establish native multiplayer request grouping.
 
 Retain pre-close incremental drag visits while authoritative replies are pending, including a start queued behind pickup. Reject subsequent input and fresh player openings until the exact old menu finishes closing. Rejection discards unaccepted visits but still closes with reconciled items. Bind the close barrier to the container object and opening generation so an old reply cannot close a replacement. Keep temporary-input return behavior in the container close override. Regression tests cover delayed replies, queued pickup, rejection, menu replacement and player opening admission. Native delayed/rejected multiplayer drag timing remains unverified.
+
+Queue consecutive negotiated drag destinations as one bounded pointer path instead of charging every phase against the ordinary 32-interaction limit. A full player inventory has 36 destinations; delayed responses previously caused the 33rd queued visit to discard earlier input. Retain first-visit order and per-input revisions, deduplicate revisits, and drain one destination after each response while preserving the existing menu-generation, rejection and close owners. Release, new starts and unrelated interactions remain barriers. Regressions cover a 36-destination delayed drag through close and two consecutive gestures with different distribution modes.
+
+Admit queued destinations through the real Java-slot resolver, including player inventory appended to a furnace. javaSize describes only a container's own slots and cannot bound its complete menu. Parameterize the 36-destination regression over chest and furnace layouts so local-slot and appended-slot paths both remain covered.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
@@ -907,7 +911,7 @@ Retain pre-close incremental drag visits while authoritative replies are pending
  .../protocol/storage/CraftingDataTracker.java |  206 +
  .../storage/InventoryRequestRecovery.java     |   80 +
  .../storage/InventoryRequestStorage.java      |  232 +
- .../storage/InventoryRequestTracker.java      |  853 +++
+ .../storage/InventoryRequestTracker.java      |  895 +++
  .../protocol/storage/InventoryTracker.java    |  282 +-
  .../storage/PlayerInventoryScreenTracker.java |  269 +
  .../protocol/types/item/BedrockItemType.java  |   68 +-
@@ -964,7 +968,7 @@ Retain pre-close incremental drag visits while authoritative replies are pending
  .../storage/BundleHolderPacketTest.java       |  450 ++
  .../storage/BundleInventoryActionTest.java    |  679 ++
  .../CraftedItemSynchronizationTest.java       |  287 +
- .../storage/IncrementalInventoryDragTest.java |  378 +
+ .../storage/IncrementalInventoryDragTest.java |  438 ++
  .../InventoryContainerGenerationTest.java     |  118 +
  .../storage/InventoryMergeActionTest.java     |  837 +++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
@@ -982,7 +986,7 @@ Retain pre-close incremental drag visits while authoritative replies are pending
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 140 files changed, 30045 insertions(+), 2052 deletions(-)
+ 140 files changed, 30147 insertions(+), 2052 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
@@ -11885,10 +11889,10 @@ index 7b3138e1..fdc8fd76 100644
  
          private ContainerUi.Title presentation() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 5af0eca2..8f6f76ef 100644
+index 48b815ae..3102c7b4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-@@ -447,7 +447,7 @@ public final class JoinPackets {
+@@ -448,7 +448,7 @@ public final class JoinPackets {
                      itemDefinitions.remove(entry.identifier());
                  }
              }
@@ -11897,7 +11901,7 @@ index 5af0eca2..8f6f76ef 100644
                  if (itemEntry.componentData() != null && itemEntry.version() == ItemVersion.DataDriven && itemRewriter.getComponentItems().contains(itemEntry.identifier())) {
                      itemDefinitions.addFromNetworkTag(itemEntry.identifier(), itemEntry.componentData());
                  }
-@@ -578,6 +578,7 @@ public final class JoinPackets {
+@@ -579,6 +579,7 @@ public final class JoinPackets {
          user.get(CameraEffectsStorage.class).sendSnapshot();
  
          WorldPackets.sendNativeCommandCapability(user);
@@ -13272,10 +13276,10 @@ index 00000000..5fddc92e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 new file mode 100644
-index 00000000..d8d9b1a4
+index 00000000..d5f075f5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-@@ -0,0 +1,853 @@
+@@ -0,0 +1,895 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -13512,7 +13516,21 @@ index 00000000..d8d9b1a4
 +
 +    public boolean queueClick(final Container container, final int revision, final short slot,
 +                              final byte button, final ContainerInput action) {
-+        return this.queueInteraction(new QueuedClick(container, revision, slot, button, action));
++        final var click = new QueuedClick(container, revision, slot, button, action);
++        if (action == ContainerInput.QUICK_CRAFT && (button == 1 || button == 5)
++                && !this.recovery.isActive() && !this.isWaitingForDragClose()
++                && container.supportsIncrementalDrag() && container.getItemInJavaSlot(slot) != null) {
++            final long generation = this.user().get(InventoryTracker.class).currentContainerGeneration();
++            if (this.queuedInteractions.peekLast() instanceof QueuedDragVisits visits
++                    && visits.container() == container && visits.button() == button && visits.generation() == generation) {
++                visits.add(click);
++                return true;
++            }
++            final var visits = new QueuedDragVisits(container, button, generation);
++            visits.add(click);
++            return this.queueInteraction(visits);
++        }
++        return this.queueInteraction(click);
 +    }
 +
 +    public boolean isWaitingForInventoryOpen() {
@@ -14009,6 +14027,9 @@ index 00000000..d8d9b1a4
 +                        current != null ? current : tracker.getInventoryContainer());
 +                return;
 +            }
++            if (interaction instanceof QueuedDragVisits visits && !visits.clicks().isEmpty()) {
++                this.queuedInteractions.addFirst(visits);
++            }
 +        }
 +        this.finishDragClose();
 +    }
@@ -14117,6 +14138,31 @@ index 00000000..d8d9b1a4
 +        @Override
 +        public boolean apply() {
 +            return this.container.handleClick(this.revision, this.slot, this.button, this.action);
++        }
++    }
++
++    /** One pointer path remains one queued interaction, bounded by the menu's unique Java slots. */
++    private record QueuedDragVisits(Container container, byte button, long generation, ArrayDeque<QueuedClick> clicks,
++                                    Set<Short> slots) implements QueuedInteraction {
++
++        private QueuedDragVisits(final Container container, final byte button, final long generation) {
++            this(container, button, generation, new ArrayDeque<>(), new HashSet<>());
++        }
++
++        private void add(final QueuedClick click) {
++            if (this.slots.add(click.slot())) {
++                this.clicks.addLast(click);
++            }
++        }
++
++        @Override
++        public boolean isValid(final InventoryTracker tracker) {
++            return QueuedInteraction.super.isValid(tracker) && tracker.currentContainerGeneration() == this.generation;
++        }
++
++        @Override
++        public boolean apply() {
++            return this.clicks.removeFirst().apply();
 +        }
 +    }
 +
@@ -38291,10 +38337,10 @@ index 00000000..628f6ced
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java
 new file mode 100644
-index 00000000..57945319
+index 00000000..0cbccae0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java
-@@ -0,0 +1,378 @@
+@@ -0,0 +1,438 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -38307,6 +38353,7 @@ index 00000000..57945319
 +import com.viaversion.viaversion.api.protocol.packet.State;
 +import net.raphimc.viabedrock.ViaBedrock;
 +import net.raphimc.viabedrock.api.model.container.ChestContainer;
++import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
 +import net.raphimc.viabedrock.api.model.container.Container;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.platform.ViaBedrockPlatform;
@@ -38323,6 +38370,8 @@ index 00000000..57945319
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
 +import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 +import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
 +import org.mockito.MockedStatic;
 +
 +import java.util.ArrayList;
@@ -38359,6 +38408,58 @@ index 00000000..57945319
 +            assertFalse(f.click(12, 1));
 +            assertEquals(3, f.sent.size());
 +            verify(f.inventory, times(1)).setCursorItemDrag(false);
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void largeDragKeepsEveryUniqueDestinationUntilRepliesSettleBeforeClose(final boolean furnace) {
++        try (var f = new Fixture(furnace)) {
++            final int first = furnace ? 3 : 0;
++            f.inventory.getHudContainer().setItem(0, item(64, 11));
++            f.input(-999, 0);
++            for (int slot = first; slot < first + 36; slot++) {
++                f.input(slot, 1);
++            }
++            // Re-entering queued destinations must not consume another queue entry or share.
++            for (int repeat = 0; repeat < 40; repeat++) {
++                f.input(10, 1);
++            }
++            f.input(-999, 2);
++            InventoryPackets.handleContainerClose(f.user, f.menu);
++            int replies = 0;
++            while (f.requests.hasPending() && replies++ < 40) {
++                f.accept();
++            }
++            assertFalse(f.requests.hasPending());
++            assertEquals(36, f.sent.size());
++            for (short slot = (short) first; slot < first + 36; slot++) {
++                assertEquals(1, f.menu.getItemInJavaSlot(slot).amount(), "Destination " + slot);
++            }
++            assertEquals(28, f.inventory.getHudContainer().getItem(0).amount());
++            assertSame(f.menu, f.inventory.getPendingCloseContainer());
++        }
++    }
++
++    @Test
++    void queuedVisitsCannotCrossTheReleaseAndStartOfAnotherDrag() {
++        try (var f = new Fixture()) {
++            f.input(-999, 4);
++            f.input(9, 5);
++            f.input(10, 5);
++            f.input(-999, 6);
++            f.input(-999, 0);
++            f.input(11, 1);
++            f.input(12, 1);
++            f.input(-999, 2);
++            int replies = 0;
++            while (f.requests.hasPending() && replies++ < 10) {
++                f.accept();
++            }
++            assertFalse(f.requests.hasPending());
++            assertEquals(List.of(1, 1, 3, 3), List.of(f.menu.getItem(9).amount(), f.menu.getItem(10).amount(),
++                    f.menu.getItem(11).amount(), f.menu.getItem(12).amount()));
++            assertEquals(1, f.inventory.getHudContainer().getItem(0).amount());
 +        }
 +    }
 +
@@ -38580,12 +38681,16 @@ index 00000000..57945319
 +        private final InventoryTracker inventory;
 +        private final InventoryRequestTracker requests;
 +        private final ChannelStorage channels = new ChannelStorage();
-+        private final ChestContainer menu;
++        private final Container menu;
 +        private final List<List<ItemStackRequestInfo>> sent = new ArrayList<>();
 +        private List<ItemStackRequestInfo> batch;
 +        private int nextNetworkId = 100;
 +
 +        private Fixture() {
++            this(false);
++        }
++
++        private Fixture(final boolean furnace) {
 +            when(this.user.get(any())).thenAnswer(call -> this.storage.computeIfAbsent(call.getArgument(0), key -> mock(key)));
 +            final var api = mock(ViaBedrockPlatform.class);
 +            when(api.getLogger()).thenReturn(Logger.getAnonymousLogger());
@@ -38605,7 +38710,8 @@ index 00000000..57945319
 +            when(items.maxStackSize(any())).thenReturn(64);
 +            when(items.canMerge(any(), any())).thenAnswer(call -> !((BedrockItem) call.getArgument(0)).isDifferent(call.getArgument(1)));
 +            this.requests.setPredictingClick(true);
-+            this.menu = new ChestContainer(this.user, (byte) 6, null, null, 27);
++            this.menu = furnace ? new FurnaceContainer(this.user, (byte) 6, null, null)
++                    : new ChestContainer(this.user, (byte) 6, null, null, 27);
 +            this.inventory.setCurrentContainer(this.menu);
 +            this.inventory.getHudContainer().setItem(0, item(9, 11));
 +            this.requests.setPredictingClick(false);

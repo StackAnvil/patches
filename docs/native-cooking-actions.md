@@ -40,6 +40,9 @@ The negotiated Java path sends each destination through the inventory request ow
 The client sends ordered click phases without Java menu prediction, which would distribute the same items again on release.
 It retains the original budget after a placement empties the cursor and uses renewed stack IDs after server replies.
 A close waits for earlier drag inputs and their replies. New input cannot extend that closing operation.
+Consecutive queued destinations share one pointer path and retain their first-visit order.
+Repeated visits do not consume more queue entries. Release and a new press separate gestures.
+Resolve destinations through the complete menu, including player slots appended to a cooking container.
 Rejection discards unaccepted visits and closes with reconciled items.
 A retired close cannot affect a replacement menu or opening.
 Unnegotiated clients and bundle extraction retain their existing paths.
@@ -125,6 +128,11 @@ Installed direct and ViaProxy controls match the nine-item sequence before relea
 Both routes also close visibly while incoming replies wait for about three seconds, then reconcile the earlier destinations before sending the native close.
 Each complete journal contains 18 successful requests: 14 across the ordinary and delayed controls, plus four for secondary dragging.
 Secondary dragging places one item in each visited destination before release. Release preserves those three placements and the six carried items.
+The official 1.26.60.5 client also distributes 64 items across all 36 player slots before release.
+The held native model and visible items agree on one item per destination and 28 carried items.
+Installed direct and ViaProxy controls retain this allocation through delayed replies, Escape while held, and a fresh opening.
+Each journal contains 173 accepted transfers. Replies finish before the native close.
+Server inventory, response data, and the reopened menu agree. All 64 items remain accounted for, with no dropped items.
 These controls use an admitted authored furnace fixture. Default cooking hosts retain their admission guards.
 Native multiplayer transfer grouping and delayed or rejected native drag behavior remain unverified.
 
