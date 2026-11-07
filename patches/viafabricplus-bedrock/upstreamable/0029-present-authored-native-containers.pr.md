@@ -87,6 +87,8 @@ Both keys leave an empty recipe cursor alone.
 Regressions distinguish recipe previews from real slots across the three default cooking geometries.
 An admitted scene also covers held-key repeats and modifier release without extra requests.
 Other default host actions retain their admission guards.
+Registered directional callbacks navigate the retained bundle grid, with separate row and wrap rules.
+The selected cell must resolve to the physical bundle slot before extraction and reply reconciliation.
 Installed direct and ViaProxy controls each accept a nine-item pickup, two one-item drops, and a seven-item return.
 Their cursor responses are 9, 8, 7, and 0. Reopening accounts for all nine items across inventory and dropped items.
 A separate direct control retains seven carried items and two inventory items after the server rejects the return destination.

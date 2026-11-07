@@ -180,6 +180,9 @@ The owning patch contains the durable rationale.
 ## Remaining limits
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
-Default hosts still need their remaining input actions. The editor binding alone does not admit them.
+Default hosts still require the retained bundle-selection controller.
+Its directional callbacks use row boundaries, wrapping, and the padding in the bundle tooltip grid.
+The controller must retain the selected physical bundle slot through extraction and server replies.
+Return, arrow-key state, scrollbar input, and source reset still need integration.
 Native state registration and isolated callback execution do not establish live controller delivery.
 A local request test does not establish native graphical behavior or complete server transaction recovery.
