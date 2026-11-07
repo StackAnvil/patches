@@ -52,6 +52,16 @@ Original scheduler controls place passenger input before vehicle paddle updates,
 Rewind-kernel controls resolve the Level getter and dispatch vehicle paddle updates, boat friction, control and movement, then buoyancy gravity and float through the native replay phase.
 That phase omits passenger input gathering and buoyancy timer/request construction.
 The controls supply the Level's root instance and stop at system iterators. Live provider construction, entity filtering and trajectories remain unverified.
+
+The controlled boat receives this frame's filtered input before its movement tick.
+Java 26.3 normally refreshes that input during the later passenger tick.
+The physical step retains one poll and lets the passenger reuse it. Replay restores the recorded value without reading live keys.
+Admission requires the local controlling passenger, the same level, local vehicle authority and ownership in the current physical step.
+Regression tests cover fresh boat control, passenger reuse, repeated replay and cleanup when the passenger tick is absent.
+Installed BDS water-boat controls show the old client using stale input on a press and release.
+The updated direct and ViaProxy clients poll before control and match the fresh filtered input in every observed complete step.
+Direct correction replay restores recorded input without another keyboard poll. Both recordings finish normally on a software GPU.
+These first-person controls do not verify local-avatar rendering or native boat trajectories.
 Native water requests use the actor's cell and the cell above. The concrete block reader selects the secondary layer first and falls back to primary only for air.
 Coupled request and layer-reader controls cover secondary water over solid blocks and secondary non-water blocks masking primary water.
 The existing surface-height helper matches the original calculation for supplied depth states.
@@ -107,7 +117,7 @@ Original boat initialization writes a 0.375 vertical offset and rebuilds bounds 
 Coupled metadata and size controls support the [shared physical dimension calculation](../../viabedrock/upstreamable/0064-evaluate-named-actor-properties.pr.md#validation-and-remaining-limits).
 Full Level and actor construction, initialization dispatch, request production and tick integration remain unverified.
 
-The add-on retains Java boat physics. Native tick integration, complete block-friction inputs, live random consumers, scheduling, and matching trajectories remain open.
+The add-on retains Java boat motion. Native motion phases, complete block-friction inputs, live random consumers, full scheduling and matching trajectories remain open.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
