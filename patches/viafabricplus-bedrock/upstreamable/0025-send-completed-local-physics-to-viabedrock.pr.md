@@ -47,9 +47,11 @@ These controls use server mounting. Trajectories from the native client, horses,
 Original 1.26.60.5 constructors zero paddle strength and timing state. The input callbacks retain strength and release decay.
 The [versioned boat definition](https://github.com/Mojang/bedrock-samples/blob/v1.26.60.5/behavior_pack/entities/boat.json) uses buoyancy 1.0 and wave movement.
 Selected native callbacks differ from Java 26.3's boat control method under supplied inputs.
+
 Original scheduler controls place passenger input before vehicle paddle updates, then boat friction and control before buoyancy.
-Phase membership differs, so replay cannot assume that passenger input runs again.
+System membership differs between phases. Their use during correction replay remains unverified.
 Native water requests use the actor's cell and the cell above. The existing surface-height helper matches the original calculation for supplied depth states.
+
 The add-on retains Java boat physics. Historical paddle, buoyancy and random state, active phase selection, and matching trajectories remain open.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
