@@ -6,7 +6,7 @@ Read physical camera geometry from native world snapshots and visual properties 
 
 ## Design constraints
 
-Apply authoritative custom collision, selection, lighting, and culling to owned carrier states. Preserve ordinary Java behavior outside those states. Collision and selection queries use native world-float bounds even when random offsets are disabled. Camera queries combine local bounds before world translation. The level-owned physical mirror supplies this geometry independently of visual carriers. It also accepts the [hardcoded slab provider](../../viabedrock/upstreamable/0054-render-native-block-state-geometry-and-materials.pr.md). Known empty collision suppresses the camera shape. Unknown classes retain their existing fallback.
+Apply authoritative custom collision, selection, lighting, and culling to owned carrier states. Preserve ordinary Java behavior outside those states. Collision and selection queries use native world-float bounds even when random offsets are disabled. Camera queries combine local bounds before world translation. The level-owned physical mirror supplies this geometry independently of visual carriers. It also accepts the [hardcoded primary providers](../../viabedrock/upstreamable/0054-render-native-block-state-geometry-and-materials.pr.md). Known empty collision suppresses the camera shape. Unknown classes retain their existing fallback.
 
 ## Validation and remaining limits
 

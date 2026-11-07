@@ -49,14 +49,19 @@ The independent physical decoder and version-7 dictionary match nine original na
 Registration regressions retain geometry through pack refusal and unavailable visuals while leaving recognized nonbase classes unresolved.
 Installed direct and ViaProxy controls preserve the same bounds without visual definitions across state changes, resource reload, and dimension return.
 
-Hardcoded slab geometry covers all 138 registered types, including copper variants that inherit the native slab provider.
-Ordinary slabs select lower or upper primary bounds from the decoded half state. Double slabs use a full block for either half.
-Other classes and unresolved half values retain the existing provider. The geometry feeds the nonvisual world dictionary and accepted-level camera consumer.
+Hardcoded primary geometry covers 1,051 registered types: 203 empty providers, 710 fixed providers, and 138 slab providers.
+Fixed providers use their finalized collision component before the Legacy fallback. This preserves the lectern's 0.9-block height and the rounded chest and egg bounds.
+Empty providers ignore collision and offset components. Slabs retain their decoded half behavior.
+Other classes retain their existing fallback. Physical metadata remains independent of visual models and pack acceptance.
 
-Original static initialization and main registration reproduce the exact 1,382 built-in names in the pinned palette.
-Original property construction, subset registry enumeration, and finalization reproduce all 276 slab state hashes.
-The built provider matches 1,654 native primary-bound queries after metadata encoding and decoding, including the installed grid positions and far float collapse.
-Installed direct and ViaProxy controls cover all 276 states through swaps, resource reload, and dimension return.
-The full core, add-on, and proxy builds pass. Native post-registration aliases, unrelated-class state enumeration, and loaded native world publication remain unverified.
+Original static initialization, main registration, and state enumeration produce all 1,382 built-in types and 22,543 states.
+All ordinary state hashes match the pinned palette. The `unknown` entry still differs from the pinned fallback ID and remains outside ID-parity claims.
+Corrected shared constants, finalized caches, and original primary/friction queries establish the fixed and empty profiles.
+The observed feature bit affects two unsupported classes and leaves these providers unchanged.
+
+The compiled provider matches 34,530 original bounds queries across 8,495 states after metadata encoding and decoding.
+Installed direct and ViaProxy controls cover all 18 fixed profiles, representative empty states, an inherited slab, and an unresolved fence.
+These controls retain the bounds through swaps, resource reload, and dimension return. Full core, add-on, and proxy builds pass.
+Other shape providers, loaded native world publication, full camera trajectories, and mounted movement parity remain unverified.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
