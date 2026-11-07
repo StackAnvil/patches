@@ -1,4 +1,4 @@
-From a5c679e122ba3f2308ec41c9ff9988a2751efb0a Mon Sep 17 00:00:00 2001
+From eada3477864737df04d9debba1f2ab5851bdbbb3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(hud): render native locator groups
@@ -20,20 +20,34 @@ private; production resolves textures through accepted resource packs.
 This implements the default native locator renderer. Full resource-pack
 HUD definition overrides, legacy player-location presentation, and the
 remaining native comparison matrix are still incomplete.
+
+Use native float normalization and the camera forward vector for horizontal
+bearing. Keep the native atan2(z,x) zero-vector result and signed wrapping.
+Deriving bearing from yaw and unnormalized doubles changed visibility for
+vertical and near-coincident targets and at a rounded 60-degree boundary.
+
+Bedrock 1.26.60.5 draw 0x145745690, instructions 0x145746a56..0x145746b64,
+establish normalization, the 0.0001 cutoff and the visibility branch.
+Fifty-five original-instruction controls with supplied cardinal camera
+vectors and named atan2f/fmodf import boundaries expose nine old visibility
+differences and agree after the change. Three behavior regressions fail
+before and pass after. These controls do not establish complete camera,
+texture, vertical-arrow or installed HUD parity. The reported missing
+locator bar on its original server remains unmatched.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   6 +
- .../bedrock/hud/BedrockLocatorBar.java        | 121 ++++++++++++++++++
+ .../bedrock/hud/BedrockLocatorBar.java        | 122 ++++++++++++++++++
  .../bedrock/hud/LocatorBarImages.java         |  96 ++++++++++++++
  .../bedrock/hud/LocatorBarMotion.java         |  44 +++++++
  .../bedrock/hud/LocatorBarPayload.java        |  24 ++++
- .../bedrock/hud/LocatorBarProjection.java     |  35 +++++
+ .../bedrock/hud/LocatorBarProjection.java     |  52 ++++++++
  .../bedrock/hud/LocatorBarSession.java        |  33 +++++
  .../render/MixinBedrockHudVisibility.java     |  17 +++
  .../render/MixinMinecraftHudVisibility.java   |   2 +
  .../bedrock/hud/LocatorBarMotionTest.java     |  42 ++++++
- .../bedrock/hud/LocatorBarProjectionTest.java |  50 ++++++++
+ .../bedrock/hud/LocatorBarProjectionTest.java |  69 ++++++++++
  .../bedrock/hud/LocatorBarSessionTest.java    |  24 ++++
- 12 files changed, 494 insertions(+)
+ 12 files changed, 531 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotion.java
@@ -70,10 +84,10 @@ index 734c4bb..0b69037 100644
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
 new file mode 100644
-index 0000000..4925f87
+index 0000000..c03d8c5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,122 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -154,8 +168,9 @@ index 0000000..4925f87
 +            final float width = LocatorBarProjection.iconExtent(waypoint.size().width());
 +            final float height = LocatorBarProjection.iconExtent(waypoint.size().height());
 +            if (!Float.isFinite(width) || !Float.isFinite(height)) continue;
++            final var forward = camera.forwardVector();
 +            final var projection = LocatorBarProjection.project(target.x - observer.x, target.y - observer.y,
-+                    target.z - observer.z, camera.yRot(), camera.xRot(), WIDTH, HEIGHT, width, camera.getFov());
++                    target.z - observer.z, forward.x(), forward.z(), camera.xRot(), WIDTH, HEIGHT, width, camera.getFov());
 +            if (projection == null) continue;
 +            final float x = graphics.guiWidth() / 2F + projection.offset();
 +            final float y = graphics.guiHeight() - 27.5F;
@@ -379,10 +394,10 @@ index 0000000..c2dc2b5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjection.java
 new file mode 100644
-index 0000000..f676404
+index 0000000..9fb29fe
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjection.java
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,52 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -395,25 +410,42 @@ index 0000000..f676404
 +    private LocatorBarProjection() {}
 +
 +    static float iconExtent(final float size) {
-+        // Native 1.26.51.1 sizes the quad independently of the source texture.
++        // Native 1.26.60.5 sizes the quad independently of the source texture.
 +        return size * 5 + 2;
 +    }
 +
 +    static Placement project(final double dx, final double dy, final double dz,
-+                             final float yaw, final float pitch, final float width,
++                             final float cameraX, final float cameraZ, final float pitch, final float width,
 +                             final float barHeight, final float iconWidth, final float verticalFov) {
 +        if (!Double.isFinite(dx) || !Double.isFinite(dy) || !Double.isFinite(dz)
-+                || !Float.isFinite(yaw) || !Float.isFinite(pitch) || !Float.isFinite(width)
++                || !Float.isFinite(cameraX) || !Float.isFinite(cameraZ) || !Float.isFinite(pitch) || !Float.isFinite(width)
 +                || !Float.isFinite(barHeight) || !Float.isFinite(iconWidth)
 +                || !Float.isFinite(verticalFov) || verticalFov <= 0 || verticalFov >= 180) return null;
 +        final float limit = (float) Math.toRadians(60);
-+        final float bearing = (float) Math.atan2(-dx, dz) - (float) Math.toRadians(yaw);
-+        final float angle = (float) Math.IEEEremainder(bearing, Math.PI * 2);
++        // The native draw normalizes the complete direction before taking atan2(z, x).
++        // A vertical or near-coincident target therefore retains the native zero-vector bearing.
++        float x = (float) dx;
++        final float y = (float) dy;
++        float z = (float) dz;
++        final float length = (float) Math.sqrt(y * y + x * x + z * z);
++        if (length < 0.0001F) {
++            x = 0;
++            z = 0;
++        } else {
++            x /= length;
++            z /= length;
++        }
++        final float bearing = (float) Math.atan2(z, x) - (float) Math.atan2(cameraZ, cameraX);
++        final float pi = (float) Math.PI;
++        final float turn = pi * 2;
++        float angle = bearing % turn;
++        if (angle <= -pi) angle += turn;
++        else if (angle > pi) angle -= turn;
 +        if (Math.abs(angle) >= limit) return null;
 +        final double elevation = Math.atan2(dy, Math.hypot(dx, dz)) + Math.toRadians(pitch);
 +        final double threshold = Math.toRadians(verticalFov) * 0.5 * 0.85;
 +        final int arrow = elevation >= threshold ? 1 : elevation <= -threshold ? -1 : 0;
-+        return new Placement(angle / limit * (width - barHeight - iconWidth - 2) / 2, arrow);
++        return new Placement(angle / limit * 0.5F * (width - (barHeight + iconWidth + 2)), arrow);
 +    }
 +
 +    record Placement(float offset, int arrow) {}
@@ -580,10 +612,10 @@ index 0000000..48152ab
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjectionTest.java
 new file mode 100644
-index 0000000..d0425f9
+index 0000000..5ba6c36
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjectionTest.java
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,69 @@
 +package com.viaversion.viafabricplus.bedrock.hud;
 +
 +import org.junit.jupiter.api.Test;
@@ -606,33 +638,52 @@ index 0000000..d0425f9
 +    void headingWrapAndRangeFollowTheNativeBar() {
 +        final double sine = Math.sin(Math.toRadians(30)) * 40;
 +        final double cosine = Math.cos(Math.toRadians(30)) * 40;
-+        assertEquals(42F, LocatorBarProjection.project(-sine, 0, cosine, 0, 0, 182, 5, 7, 70).offset(), 0.0001F);
-+        assertEquals(-42F, LocatorBarProjection.project(sine, 0, cosine, 360, 0, 182, 5, 7, 70).offset(), 0.0001F);
-+        assertEquals(0F, LocatorBarProjection.project(0, 0, -40, 180, 0, 182, 5, 7, 70).offset(), 0.0001F);
-+        assertNull(LocatorBarProjection.project(-40, 0, 0, 0, 0, 182, 5, 7, 70));
-+        assertNull(LocatorBarProjection.project(0, 0, -40, 0, 0, 182, 5, 7, 70));
-+        assertNull(LocatorBarProjection.project(Double.NaN, 0, 40, 0, 0, 182, 5, 7, 70));
++        assertEquals(42F, LocatorBarProjection.project(-sine, 0, cosine, 0, 1, 0, 182, 5, 7, 70).offset(), 0.0001F);
++        assertEquals(-42F, LocatorBarProjection.project(sine, 0, cosine, 0, 1, 0, 182, 5, 7, 70).offset(), 0.0001F);
++        assertEquals(0F, LocatorBarProjection.project(0, 0, -40, 0, -1, 0, 182, 5, 7, 70).offset(), 0.0001F);
++        assertNull(LocatorBarProjection.project(-40, 0, 0, 0, 1, 0, 182, 5, 7, 70));
++        assertNull(LocatorBarProjection.project(0, 0, -40, 0, 1, 0, 182, 5, 7, 70));
++        assertNull(LocatorBarProjection.project(Double.NaN, 0, 40, 0, 1, 0, 182, 5, 7, 70));
 +    }
 +
 +    @Test
 +    void iconWidthAndCameraFovChangeTheNativeProjection() {
 +        final double sine = Math.sin(Math.toRadians(30)) * 40;
 +        final double cosine = Math.cos(Math.toRadians(30)) * 40;
-+        assertEquals(40.75F, LocatorBarProjection.project(-sine, 0, cosine, 0, 0, 182, 5, 12, 70).offset(), 0.0001F);
-+        assertEquals(1, LocatorBarProjection.project(0, 22, 40, 0, 0, 182, 5, 7, 60).arrow());
-+        assertEquals(0, LocatorBarProjection.project(0, 22, 40, 0, 0, 182, 5, 7, 90).arrow());
-+        assertNull(LocatorBarProjection.project(0, 0, 40, 60, 0, 182, 5, 7, 70));
++        assertEquals(40.75F, LocatorBarProjection.project(-sine, 0, cosine, 0, 1, 0, 182, 5, 12, 70).offset(), 0.0001F);
++        assertEquals(1, LocatorBarProjection.project(0, 22, 40, 0, 1, 0, 182, 5, 7, 60).arrow());
++        assertEquals(0, LocatorBarProjection.project(0, 22, 40, 0, 1, 0, 182, 5, 7, 90).arrow());
++        assertNull(LocatorBarProjection.project(0, 0, 40, -0.9063078F, 0.42261827F, 0, 182, 5, 7, 70));
 +    }
 +
 +    @Test
 +    void heightDirectionAccountsForCameraPitchAndHorizontalDistance() {
-+        assertEquals(0, LocatorBarProjection.project(0, 10, 40, 0, 0, 182, 5, 7, 70).arrow());
-+        assertEquals(1, LocatorBarProjection.project(0, 40, 40, 0, 0, 182, 5, 7, 70).arrow());
-+        assertEquals(-1, LocatorBarProjection.project(0, -40, 40, 0, 0, 182, 5, 7, 70).arrow());
-+        assertEquals(0, LocatorBarProjection.project(0, 40, 40, 0, -45, 182, 5, 7, 70).arrow());
-+        assertEquals(1, LocatorBarProjection.project(0, 0, 40, 0, 45, 182, 5, 7, 70).arrow());
-+        assertEquals(0, LocatorBarProjection.project(0, 10, 80, 0, 0, 182, 5, 7, 70).arrow());
++        assertEquals(0, LocatorBarProjection.project(0, 10, 40, 0, 1, 0, 182, 5, 7, 70).arrow());
++        assertEquals(1, LocatorBarProjection.project(0, 40, 40, 0, 1, 0, 182, 5, 7, 70).arrow());
++        assertEquals(-1, LocatorBarProjection.project(0, -40, 40, 0, 1, 0, 182, 5, 7, 70).arrow());
++        assertEquals(0, LocatorBarProjection.project(0, 40, 40, 0, 1, -45, 182, 5, 7, 70).arrow());
++        assertEquals(1, LocatorBarProjection.project(0, 0, 40, 0, 1, 45, 182, 5, 7, 70).arrow());
++        assertEquals(0, LocatorBarProjection.project(0, 10, 80, 0, 1, 0, 182, 5, 7, 70).arrow());
 +    }
++    @Test
++    void verticallyAlignedMarkersUseTheNativeFallbackBearing() {
++        assertNull(LocatorBarProjection.project(0, 40, 0, 0, 1, 0, 182, 5, 7, 70));
++        assertEquals(0F, LocatorBarProjection.project(0, 40, 0, 1, 0, 0, 182, 5, 7, 70).offset());
++        assertNull(LocatorBarProjection.project(0, 0, 0, 0, 1, 0, 182, 5, 7, 70));
++        assertEquals(0F, LocatorBarProjection.project(0, 0, 0, 1, 0, 0, 182, 5, 7, 70).offset());
++    }
++
++    @Test
++    void nearCoincidentMarkersApplyTheNativeDirectionCutoff() {
++        assertNull(LocatorBarProjection.project(0, 0, .00001, 0, 1, 0, 182, 5, 7, 70));
++        assertEquals(0F, LocatorBarProjection.project(0, 0, .0001, 0, 1, 0, 182, 5, 7, 70).offset());
++    }
++
++    @Test
++    void roundedBearingRetainsTheNativeBoundaryMarker() {
++        assertNotNull(LocatorBarProjection.project(-34.641016F, 0, 20F, 0, 1, 0, 182, 5, 7, 70));
++    }
++
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSessionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSessionTest.java
 new file mode 100644

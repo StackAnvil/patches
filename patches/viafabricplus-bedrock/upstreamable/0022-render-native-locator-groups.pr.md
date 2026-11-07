@@ -7,6 +7,15 @@ Height arrows use the camera FOV and fixed geometry. Nearby groups draw over dis
 Tests cover bearing, size, FOV, smoothing, and stale-session rejection.
 An isolated direct join verifies visible output, accepted textures, and positive, zero, and negative icon sizes.
 
+## Current bearing controls
+
+Bedrock 1.26.60.5 normalizes the complete marker direction before it computes horizontal bearing.
+The add-on now uses this float calculation and the camera forward vector.
+This preserves native visibility for vertical and near-coincident markers and at a rounded 60-degree boundary.
+Three regression tests fail on the previous implementation and pass after the change.
+Fifty-five controls execute the original draw instructions with supplied camera vectors and named math-library boundaries.
+They establish horizontal visibility for these inputs. They do not establish complete native camera, image, or HUD parity.
+
 ## Current player updates
 
 Official Bedrock 1.26.60.5 and BDS 1.26.60.6 provide protocol-2225 controls with a real remote player.
