@@ -75,6 +75,10 @@ The current native world-version parser retains wildcard and `beta`, normalizes 
 Under supplied registry storage, a typed world-version component takes precedence over the default. Missing, null and wrongly typed entries use the default.
 Parser controls supply regex matches, allocation and memory copying. Complete native regex execution, packet decoding and live world configuration remain unverified.
 
+Two original boat initialization paths write saved leash friction of `0.91F` from `1.21.90`, otherwise `1.0F`, after native version selection.
+Reinitialization replaces this value. The dry callback uses it while leashed, and water overrides it without changing the saved value.
+Private port controls preserve this coefficient across rewind. Active initialization and world-provider binding remain open.
+
 Native frames own a concrete snapshot. Buoyancy capture retains configuration, the double-valued phase and independent copies of liquid selectors. Restore also recovers recorded float-request flags. A separate visitor saves and restores the vehicle input component.
 General component history separately retains boat movement, paddle and buoyancy state. Original frame-producer and callback-list controls exercise this capture path with supplied ECS views.
 Refreshing that history clears saved presence bits before recapture. Restore preserves live components absent from the saved state.
