@@ -43,10 +43,19 @@ Selection components require a Byte enabled flag and Float origin/size lists. Cl
 
 Physical transformations require integer quarter turns and Float scale, translation, and pivot fields. Preserve the native missing-field defaults, quaternion reconstruction, matrix products, and paired AABB sums. Keep this path separate from model vertices. A missing physical component retains its Legacy fallback bounds.
 
-Compiled converter and metadata controls match original 1.26.60.5 decoding, typed component application, Block finalization, and primary bounds. They include all quarter-turn combinations and mixed scales, pivots, and translations. Component storage, tag IDs, empty property maps, unrelated cache values, and libc boundaries remain supplied inputs. Installed software-rendered BDS controls cover the transformed collision and selection metadata on direct and ViaProxy routes, including resource reload and dimension return. Full native world publication, nonbase shape providers, native picking and movement trajectories, and visual transformation parity remain open.
+Compiled converter and metadata controls match original 1.26.60.5 decoding, typed component application, Block finalization, and primary bounds. They include all quarter-turn combinations and mixed scales, pivots, and translations. Component storage, tag IDs, empty property maps, unrelated cache values, and libc boundaries remain supplied inputs. Installed software-rendered BDS controls cover the transformed collision and selection metadata on direct and ViaProxy routes, including resource reload and dimension return. Full native world publication, other shape providers, native picking and movement trajectories, and visual transformation parity remain open.
 
 The independent physical decoder and version-7 dictionary match nine original native description chains and all 36 primary-bound queries.
 Registration regressions retain geometry through pack refusal and unavailable visuals while leaving recognized nonbase classes unresolved.
 Installed direct and ViaProxy controls preserve the same bounds without visual definitions across state changes, resource reload, and dimension return.
+
+Hardcoded slab geometry follows the exact target registration family. Ordinary slabs select lower or upper primary bounds from the decoded half state.
+Double slabs use a full block for either half. Other classes and unresolved half values retain the existing provider.
+The provider feeds the same nonvisual world dictionary and accepted-level camera consumer.
+
+Original property construction, class factories, half-property admission, registry enumeration, and finalization reproduce all 244 slab state hashes.
+The built provider matches 1,462 native primary-bound queries after metadata encoding and decoding, including the installed grid positions and far float collapse.
+Installed direct and ViaProxy controls cover all 244 states through swaps, resource reload, and dimension return.
+The full core, add-on, and proxy builds pass. The whole main registration configuration and loaded native world remain outside the constructor controls.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
