@@ -76,6 +76,7 @@ It retains a separate quantity budget instead of picking that quantity up onto t
 Redistribution can return items to the original source while preserving items outside that budget.
 For a four-item selection from nine, three destinations receive one each and the source retains six.
 Repeated visits do not add a destination or transfer more items.
+Source-selection release clears the previous drawing destination while retaining the selected item source.
 The first drawing event retains its destination without transferring items.
 The second event enters distribution with that retained destination, then distributes to the current destination.
 An arrow hold blocks this entry but preserves the latest drawing destination.

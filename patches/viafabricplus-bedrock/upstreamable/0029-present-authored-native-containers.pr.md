@@ -341,7 +341,8 @@ The [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) de
 These controls use an admitted furnace fixture and do not establish default cooking-screen support.
 
 Original 1.26.60.5 component and controller controls execute source selection, drawing, and release for hotbar, inventory, and furnace ingredient sources.
-Six controls cover ordinary drawing and arrow-held admission through the native state machine and synchronous legacy inventory model.
+Twelve controls cover ordinary drawing, earlier source drawing, and arrow-held admission through the native state machine and synchronous legacy inventory model.
+Source-selection release clears an earlier drawing destination while retaining the selected item source.
 The first drawing event retains its destination. The second distributes across the retained and current destinations.
 Arrow-held events retain the latest destination without starting distribution.
 These controls keep the cursor empty and emit no cursor-drag start signal through the native sender.
