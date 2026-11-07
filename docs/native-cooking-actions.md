@@ -50,6 +50,8 @@ Drag distribution and held quantity selection have different lifetimes.
 Release over an empty recipe panel can retain the drag allocation.
 Pointer entry then redistributes items without a held mouse button.
 A delivered slot release or furnace-root reset retires that allocation.
+During a retained primary drag, a secondary press preserves the allocation.
+Its delivered slot release ends the original operation, even though another button started it.
 Use the delivered authored callback to resolve this boundary. Physical release alone does not establish a reset.
 
 Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
@@ -141,9 +143,10 @@ Native multiplayer transfer grouping and delayed or rejected native drag behavio
 Official 1.26.60.5 controls distinguish release over the empty recipe panel from release over the furnace root.
 After the recipe-panel release, an unheld pointer entry redistributes ten items from three stacks of three to four stacks of two.
 The cursor changes from one item to two. Read-only allocation fields and inspected screenshots agree.
-Installed direct and ViaProxy controls retain this behavior while replies wait and stop further visits after a delivered slot release.
+Installed direct and ViaProxy controls retain this behavior while replies wait.
+Both routes preserve the allocation during a secondary hold and stop further visits after its slot release.
 Each complete journal contains eleven successful transfers and preserves all ten items after reopening.
-Broader reset and source-selection behavior still need matching controls.
+Broader reset, source selection, and same-frame pointer and press admission still need matching controls.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.

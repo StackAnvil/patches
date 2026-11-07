@@ -269,7 +269,8 @@ The [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) de
 These controls use an admitted furnace fixture and do not establish default cooking-screen support.
 An unhandled release over an empty recipe panel retains drag ownership, including subsequent pointer entry without a held button.
 A delivered slot or reset callback ends the drag. Closing and fallback still retire it.
-The real-menu regression distinguishes unhandled release, unheld entry, delivered slot release, and close.
+The delivered slot release can come from another button. Pressing that button preserves the retained allocation.
+The real-menu regression covers both release buttons, duplicate release, unheld entry, and close.
 Installed direct and ViaProxy controls match the selected native allocation through delayed replies and preserve every item after reopening.
 Complete reset and source-selection dispatch remain unfinished.
 Native multiplayer request grouping and delayed or rejected native drag behavior remain unverified.
