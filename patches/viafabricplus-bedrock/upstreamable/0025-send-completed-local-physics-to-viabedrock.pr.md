@@ -95,7 +95,17 @@ Refreshing that history clears saved presence bits before recapture. Restore pre
 Under supplied ECS storage, the native lending kernel moves the player's replay ownership to a connected vehicle when the rider reference resolves in the same registry generation, clearing the old history. An unresolved reference creates fresh vehicle history.
 Rewind controls start at the first marked frame, run it and later retained frames, then clear replay markers. Active rider selection, populated-history lifetime and correction-packet admission remain unverified.
 
-The add-on retains Java boat physics. Native tick integration, complete block-friction inputs, shared random-state ownership, live scheduling, and matching trajectories remain open.
+Original Level construction publishes one random generator through a root component. Actor reference components resolve that shared generator within the registry generation.
+Coupled controls execute the original publication, reference producers, component storage, timer initialization, view membership, reference resolution and random draws.
+Two actors and an intervening consumer advance one continuous stream in both provider configurations across five supplied seeds.
+Ninety timer calls cover shared consumption, bobbing, mismatched generations, missing source components and missing movement markers.
+These controls supply registry allocation, context fields, motion inputs and the thread-local seed draw. Full world construction and live seed initialization remain unverified.
+
+Eight original position-request controls construct actor bounds with float arithmetic after subtracting the vertical offset from the position.
+Reset and state/motion requests produce equal bounds while retaining their separate motion behavior.
+The controls supply dimensions and offsets. Live boat offset selection, request production and tick integration remain unverified.
+
+The add-on retains Java boat physics. Native tick integration, complete block-friction inputs, live random consumers, scheduling, and matching trajectories remain open.
 
 Native and live controls establish selected movement, correction, and flight behavior. Uncommon mounts, network conditions, and mixed mechanics remain open.
 
