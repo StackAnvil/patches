@@ -91,7 +91,16 @@ Official 1.26.60.5 desktop controls also establish held quantity selection in ho
 A nine-item source produces a partial pickup during a hold and retains the remaining items in its original slot.
 Read-only observations of the live controller distinguish initial pickup, quantity selection, and completion on release or pointer exit.
 Core regressions cover delayed responses, renewed stack IDs, rejection recovery, source capacity, and opening retirement.
-The Java input controller and quantity preview do not yet reproduce this complete interaction.
+The Java desktop controller now retains an ordinary primary pickup through held quantity selection.
+It waits for a newer pickup snapshot and keeps the selected source through delayed replies.
+Source and cursor previews do not change the real menu items.
+Release or pointer exit submits the last displayed quantity through the inventory request owner.
+
+Installed direct and ViaProxy controls use an admitted authored furnace fixture with the normal admission guards.
+A short press picks up nine items. A 600-millisecond hold picks up three, and a longer hold picks up all nine.
+Pointer exit completes a partial pickup before physical release without another request on release.
+The hotbar and ingredient controls conserve all nine items through 18 successful inventory responses on each route.
+These controls do not establish default cooking-screen support or exact native frame timing.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.

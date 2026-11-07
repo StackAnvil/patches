@@ -1,4 +1,4 @@
-From 3c91c2244010c88ca177e93a54eb5a91e09f1f60 Mon Sep 17 00:00:00 2001
+From 865868d2ae5b6d8992cdfc4f42ea67db0de160c6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -1215,6 +1215,13 @@ host input ownership, not complete native screen/device parity.
 
 BREAKING CHANGE: Replace NativeUiViewport.pointer with pointerX or
 pointerY. Host input conversion is axis-specific.
+
+Retain the native View hold countdown separately from controller gesture time.
+Controller result bits start a binary32 0.3-second frame countdown, stop it,
+or suppress both updates. Expiry is strictly negative; event data retain the
+starting pointer and a strict five-unit displacement gate on each axis.
+Original Bedrock 1.26.60.5 countdown and result-composition controls establish
+these boundaries. Feature controllers own admission and completion.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -1287,6 +1294,7 @@ pointerY. Host input conversion is axis-specific.
  .../bedrock/screen/ui/NativeUiFocus.java      |  329 ++++++
  .../bedrock/screen/ui/NativeUiFont.java       |   80 ++
  .../bedrock/screen/ui/NativeUiGraphics.java   |   56 +
+ .../bedrock/screen/ui/NativeUiHold.java       |   42 +
  .../screen/ui/NativeUiHurtPayload.java        |   22 +
  .../bedrock/screen/ui/NativeUiImageCache.java |  229 ++++
  .../screen/ui/NativeUiImageRegions.java       |  132 +++
@@ -1393,7 +1401,7 @@ pointerY. Host input conversion is axis-specific.
  .../oreui/native-trailing-reserve-2225.json   |    1 +
  src/test/resources/oreui/nominal-advances.ttf |  Bin 0 -> 548 bytes
  .../resources/oreui/ordinary-advances.ttf     |  Bin 0 -> 668 bytes
- 177 files changed, 19359 insertions(+), 39 deletions(-)
+ 178 files changed, 19401 insertions(+), 39 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -1451,6 +1459,7 @@ pointerY. Host input conversion is axis-specific.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFocus.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiFont.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiGraphics.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiHold.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiHurtPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageRegions.java
@@ -8607,6 +8616,54 @@ index 0000000..24ce149
 +        super.entity(state, scale * this.viewport.renderScale(), translation, rotation, cameraRotation,
 +            this.viewport.pixel(left), this.viewport.pixel(top), this.viewport.pixel(right), this.viewport.pixel(bottom));
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiHold.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiHold.java
+new file mode 100644
+index 0000000..6e6af30
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiHold.java
+@@ -0,0 +1,42 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.ui;
++
++/** ScreenView's frame countdown is independent of the inventory quantity-selection clock. */
++public final class NativeUiHold {
++    private long frame;
++    private float remaining;
++    private float repeat;
++    private float startX, startY;
++    private boolean active;
++
++    public NativeUiHold(final long now) { this.frame = now; }
++
++    public void result(final int mask, final float x, final float y) {
++        if ((mask & 8) != 0) return;
++        if ((mask & 2) != 0) {
++            this.active = true;
++            this.startX = x;
++            this.startY = y;
++            this.remaining = .3F;
++            this.repeat = 0;
++        }
++        if ((mask & 4) != 0) this.active = false;
++    }
++
++    public Event frame(final long now, final float x, final float y) {
++        final float delta = (float) (now - this.frame) / 1_000_000_000F;
++        this.frame = now;
++        if (!this.active) return null;
++        this.remaining -= delta;
++        if (!(this.remaining < 0)) return null;
++        final float dx = this.startX - x, dy = this.startY - y;
++        this.remaining = this.repeat;
++        return new Event(this.startX, this.startY, dx, dy, Math.abs(dx) > 5F || Math.abs(dy) > 5F);
++    }
++
++    public record Event(float startX, float startY, float dx, float dy, boolean moved) { }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiHurtPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiHurtPayload.java
 new file mode 100644

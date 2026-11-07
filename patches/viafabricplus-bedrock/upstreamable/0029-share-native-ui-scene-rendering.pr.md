@@ -264,3 +264,8 @@ The full four-project build passes. These controls do not establish complete nat
 Cursor placement uses the resolved native anchor after grid layout and scrolling. Seventeen original Bedrock 1.26.60.5 controls establish local offsets, centering precedence, edge flips and zero-size hiding. Layout regressions cover actual grid-parent bounds, viewport clipping and unchanged authored offsets. Active tooltip sources, input actions and live pixels remain open.
 
 Factory creation IDs separate replacement clocks from binding refreshes. Completed named destruction queues the affected factory roots for host retirement. Ten original 1.26.60.5 instruction controls establish exact current-control and ancestor target lookup, expired-parent termination, and completion gating. Regressions cover replacement clocks, late retirement, and unrelated sibling preservation. These controls stop before native hierarchy removal and do not establish rendered parity.
+
+The shared View hold timer follows the native result flags, binary32 frame subtraction, and strict negative expiry.
+Its event retains the initial pointer and the native per-axis displacement gate.
+Cooking regressions cover the timer through [retained quantity selection](0029-present-authored-native-containers.pr.md).
+Controller admission, quantity timing, and completion remain owned by that feature.
