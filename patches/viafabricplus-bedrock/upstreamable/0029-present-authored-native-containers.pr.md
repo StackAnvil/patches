@@ -253,6 +253,9 @@ The optional bundle-result channel plays a sound only for the matching pending b
 Installed direct and ViaProxy controls each complete ten server-accepted requests, including five native bundle commands. Screen audits observe the shared sequence through both insertion/extraction directions and its reset under a new opening after reopening. The screens stay native throughout. Installed add-on hashes match the rebuilt artifact, and the proxy transport classes match the current core.
 
 Source regressions restore bundle hover after temporary source removal and retain independent selection.
+Matching hover exits prevent later item updates from opening a tooltip for a departed ordinary slot.
+Original Bedrock 1.26.60.5 exit callbacks clear exact hover in every tooltip mode after desktop bundle-alias cleanup.
+Regressions preserve unrelated hover, the selected source, and an open touch bundle.
 Real screen regressions preserve hover while pending commands suppress duplicate actions.
 Original Bedrock 1.26.60.5 source getter and update blocks cover 72 availability updates across desktop, touch, and gamepad profiles.
 Storage admission and intervening controller work remain supplied probe boundaries.
