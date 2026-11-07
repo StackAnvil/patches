@@ -245,4 +245,6 @@ Layout changes clear the shared hover context and prevent a stale bundle tooltip
 Installed direct and ViaProxy controls use an admitted authored furnace scene with the normal admission guards.
 Hover leaves the recipe unselected. A held recipe action retains selection after pointer exit, and release clears it.
 Both routes retain the same screen, menu, and presentation. Server replies confirm all nine cobblestone in the furnace input.
-Complete default cooking host input, screen admission, and native graphical parity remain unfinished.
+Official 1.26.60.5 desktop holds establish a partial pickup from both hotbar and furnace ingredient slots.
+Live controller observations retain a separate source and timer for quantity selection. Pointer exit can complete the pickup before physical release.
+The matching Java controller and inventory request path remain unfinished, along with default cooking host admission and native graphical parity.

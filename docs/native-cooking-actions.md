@@ -19,6 +19,10 @@ Input-mode differences affect focus, selection, and held-item admission.
 Do not replace those rules with a universal click handler.
 
 Keep selection, ingredient placement, repeated placement, and ingredient return as separate operations.
+Keep held quantity selection separate from the initial pickup and its source.
+Entering quantity selection retains a secondary source and starts its own timer.
+Pointer exit can finish the partial pickup before physical release.
+Route that completion through the inventory request owner before clearing the controller state.
 Keep hover separate from the selected source used by `#is_recipe_selected_slot`.
 Pointer entry and exit cannot replace or erase the selected-source snapshot.
 Native layout and tab callbacks clear hover while core retains ownership of the selected source.
@@ -75,6 +79,11 @@ Record both direct and ViaProxy results where the changed behavior crosses that 
 Official Bedrock 1.26.60.5 desktop controls establish search filtering, category transitions, clearing, and retention after reopening a furnace.
 Separate smoker text does not replace the furnace query.
 These private integrated-world controls do not establish controller input, exact timing, or retention across connections.
+
+Official 1.26.60.5 desktop controls also establish held quantity selection in hotbar and furnace ingredient slots.
+A nine-item source produces a partial pickup during a hold and retains the remaining items in its original slot.
+Read-only observations of the live controller distinguish initial pickup, quantity selection, and completion on release or pointer exit.
+The Java controller and request path do not yet reproduce this complete interaction.
 
 Earlier controlled references execute parts of Bedrock 1.26.51.1, build 51061372, protocol 2193.
 Those references establish their supplied boundaries and require a version check before reuse for 26.60.
