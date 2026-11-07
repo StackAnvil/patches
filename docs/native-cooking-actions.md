@@ -71,6 +71,15 @@ Rejection discards unaccepted visits and closes with reconciled items.
 A retired close cannot affect a replacement menu or opening.
 Unnegotiated clients and bundle extraction retain their existing paths.
 Drag distribution and held quantity selection have different lifetimes.
+Touch distribution retains the selected inventory slot as its source and keeps the cursor empty.
+It retains a separate quantity budget instead of picking that quantity up onto the cursor first.
+Redistribution can return items to the original source while preserving items outside that budget.
+For a four-item selection from nine, three destinations receive one each and the source retains six.
+Repeated visits do not add a destination or transfer more items.
+Native controller and legacy-model controls establish these results for hotbar, inventory, and furnace ingredient sources.
+They do not establish native multiplayer request grouping or complete touch input delivery.
+The negotiated Java drag path currently supports cursor-origin desktop distribution.
+Selected-source transport and its client input owner remain unfinished.
 Release over an empty recipe panel can retain the drag allocation.
 Pointer entry then redistributes items without a held mouse button.
 A delivered slot release or furnace-root reset retires that allocation.
