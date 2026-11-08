@@ -21,7 +21,9 @@ The prerequisite entries in `series.json` supply actor snapshots, block dictiona
 
 ## Validation and remaining limits
 
-Regression coverage includes `ActorMotionCommandTest`, `ActorSpatialCommandTest`, `CollisionContactTest`, `FlightMovementTest`.
+Regression coverage includes `ActorMotionCommandTest`, `ActorSpatialCommandTest`, `CollisionContactTest`, `FlightMovementTest`, and `MotionFrictionTest`.
+
+The shared motion-friction policy follows the full original 1.26.60.5 callback: cut each horizontal axis at `abs(velocity) <= 2^-23` before friction, retaining signed zero. A small-impulse sequence and boundary regressions cover continued drift below Java's threshold and its eventual stop. Flight uses the same policy. Ordinary vertical motion, liquid, glide and mounted stages remain separate.
 
 History, clock, correction, and ordering regressions cover retained-frame behavior. Native world history, mixed mechanics, network conditions, and broader replay parity remain open.
 

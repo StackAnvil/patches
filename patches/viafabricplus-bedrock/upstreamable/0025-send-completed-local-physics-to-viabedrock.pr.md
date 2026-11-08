@@ -18,7 +18,9 @@ Prerequisites:
 
 ## Validation and remaining limits
 
-Regression coverage includes `BedrockPhysicalMotionLifecycleTest`, `BedrockPlayerModesTest`, `BedrockVehiclePredictionsTest`, `VehiclePredictionPayloadTest`.
+Regression coverage includes `BedrockAirMovementTest`, `BedrockPhysicalMotionLifecycleTest`, `BedrockPlayerModesTest`, `BedrockVehiclePredictionsTest`, `VehiclePredictionPayloadTest`.
+
+Ordinary local ground and air movement defers Java's early motion cutoff, then applies the shared native per-axis cutoff after collision and before friction. Small horizontal impulses survive below Java's 0.003 threshold, and nonzero collision-resolved displacement survives Java's separate squared-length gate. Vertical motion stays separate. Original 1.26.60.5 friction instructions and captured wind-charge drift establish the boundary. Camera, connection and passenger gates remain explicit, and flight retains its separate finish stage. Liquids and gliding remain outside this ordinary-air binding. Installed direct and ViaProxy controls retain the small motion and actual horizontal steps through the cutoff, then settle with matching server positions and inventory counts. These controls do not establish sub-cutoff displacement or complete collision and trajectory parity.
 
 Water physics and player FOV share the native swim multiplier from the retained movement-effect timeline. Original 1.26.60.5 Dolphin Boost kernel controls include a zero-duration marker, which a duration-only query omits. Existing replay scope selects historical values without a second timer. Dynamic world comparisons at boost expiry remain open.
 
@@ -125,21 +127,12 @@ Native and live controls establish selected movement, correction, and flight beh
 
 Fresh Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover walking and falling through Survival, Spectator, and return transitions. Native keeps larger downward motion on Spectator entry and applies flight drag; the small grounded residue clears. Java 26.3's local player-list callback instead zeros vertical motion, producing a pause on both Java routes before correction. Suppress that callback's motion write for Bedrock and keep the native boundary in `BedrockPlayerModes`. Installed direct and proxy controls check retained fall motion, the grounded boundary, and eventual landing. Both native and Java receive corrections in these controls. Packet delivery, input, camera angle, and tick phases differ, so exact trajectories and transition timing remain unverified.
 
-Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover pearl-only, wind-only, and two pearl/wind angles.
-Both current Java routes produce the expected projectiles and settle after landing.
-Selected native, direct, and ViaProxy combinations also settle with 300 ms of incoming delivery delay, including combinations with held movement input.
-Native packets contain movement corrections after wind impulses, so correction counts alone do not identify the reported rollback loop.
-The selected moving controls place four server ticks between native uses, two on direct Java, and three through ViaProxy.
-Short native input attempts do not consistently produce both throws.
-Native local-world and callback controls establish the admission and continuation rules for a [local projectile input correction](0038-predict-held-trapdoor-placement.pr.md#evidence-and-validation). Installed direct and proxy controls cover its selected hold routes. A cooldown-release inventory discrepancy remains open in that owner.
-These controls do not establish equal trajectories or complete timing for individual presses.
-Read-only server controls identify wind-charge projectiles as targets in selected pearl entity impacts.
-An ordered outgoing packet burst admits both uses in the same server tick while both projectiles hit blocks and settle; matching server tick spacing does not establish the earlier origin-height collision path.
-Direct and ViaProxy controls also settle after ordered pauses of 600 ms, 2 s, and 4 s in incoming packets.
-Qualifying cases include held walking input, a pearl teleport, and a wind launch. Cases without a launch are excluded.
-Queued packets, including corrections, retain their bytes and order in the independent client recordings.
-These controls do not establish native timing or trajectory parity.
-The original persistent rollback report remains open.
+Bedrock 1.26.60.5 and BDS 1.26.60.6 controls cover separate throws and pearl/wind combinations, including held movement and delayed delivery. Current native, direct and ViaProxy controls identify pearl-to-wind collisions by the server's projectile and target IDs and settle afterward. Actor creation packets resolve IDs when a spawn callback runs after movement or removal. Original packet bytes and per-direction order survive the delayed controls.
+
+Native and Java movement-input modes and teleport acknowledgments agree in the inspected controls. Actual air-use spacing, server admission ticks, random projectile spread and contact geometry differ, so these results do not establish equal trajectories. Native packets can also contain movement corrections after wind impulses; correction counts alone do not identify the reported loop.
+
+The [local projectile input correction](0038-predict-held-trapdoor-placement.pr.md#evidence-and-validation) retains native admission and continuation. The [cooldown inventory owner](../../viabedrock/deferred/0016-synchronize-glide-rockets-with-auth-input.pr.md) records its consumption and reconciliation controls. The original persistent rollback report remains unmatched.
+
 The permanent `pearl-wind-charge-moving` case requires walking before either projectile moves the player.
 It also requires both uses and impacts, consumption, a wind launch, and a quiet landing.
 Its pearl landing must match the impact position, so walking away from the initial position cannot substitute for the teleport result.

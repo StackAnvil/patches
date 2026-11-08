@@ -1,4 +1,4 @@
-From 517ef86c47b36270a2f1beb0d9dd725ad44403d9 Mon Sep 17 00:00:00 2001
+From fd6f9121f3952eff2f43fe761056e3441a9b7a88 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -740,16 +740,27 @@ independently of Java resource-pack acceptance. Version the block channel
 with its bounds and offset payload. Preserve unresolved versus verified-empty
 states and retain the base-factory friction default when no explicit component
 replaces it.
+
+Share the native post-collision axis cutoff between ordinary movement and
+flight. Bedrock 1.26.60 protocol 2225 original friction instructions select
+zero at abs(velocity) <= 2^-23 before multiplying friction, preserving
+signed zero and leaving ordinary vertical motion to its separate stage.
+The packaged native client retains wind-charge drift below Java's 0.003
+threshold. Full original callback controls and a successive small-impulse
+sequence establish the boundary; focused regressions retain that coasting
+and the existing flight arithmetic. This does not establish liquid,
+glide, mount or full trajectory parity.
 ---
  build.gradle                                  |   29 +
  .../api/model/ActorMotionCommand.java         |   72 ++
  .../api/model/ActorSpatialCommand.java        |   80 ++
  .../api/model/CollisionContact.java           |   80 ++
- .../viabedrock/api/model/FlightMovement.java  |   83 ++
+ .../viabedrock/api/model/FlightMovement.java  |   79 ++
  .../api/model/FlightMovementContext.java      |   50 +
  .../viabedrock/api/model/FluidCurrent.java    |   57 +
  .../viabedrock/api/model/GeyserMovement.java  |   87 ++
  .../viabedrock/api/model/GlideMovement.java   |   64 +
+ .../viabedrock/api/model/MotionFriction.java  |   23 +
  .../api/model/MovementCollisionQuery.java     |  181 +++
  .../api/model/MovementCollisionWorld.java     |   74 ++
  .../api/model/MovementCorrectionTiming.java   |   56 +
@@ -806,6 +817,7 @@ replaces it.
  .../model/GeyserMovementReferenceTest.java    |   50 +
  .../api/model/GeyserMovementTest.java         |  131 ++
  .../api/model/GlideMovementTest.java          |  115 ++
+ .../api/model/MotionFrictionTest.java         |   38 +
  .../api/model/MovementCollisionQueryTest.java |   53 +
  .../api/model/MovementCollisionWorldTest.java |   54 +
  .../model/MovementControllerOrderTest.java    |   52 +
@@ -846,7 +858,7 @@ replaces it.
  .../packet/TickedMotionPacketTest.java        |  156 +++
  .../NativeBlockGeometryRegistrationTest.java  |    1 +
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 105 files changed, 9790 insertions(+), 96 deletions(-)
+ 107 files changed, 9847 insertions(+), 96 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
@@ -855,6 +867,7 @@ replaces it.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MotionFriction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionWorld.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java
@@ -887,6 +900,7 @@ replaces it.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MotionFrictionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionWorldTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
@@ -1218,10 +1232,10 @@ index 00000000..925b0654
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
 new file mode 100644
-index 00000000..1537f689
+index 00000000..46d96c04
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,79 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1293,15 +1307,11 @@ index 00000000..1537f689
 +            horizontal = context.legacyFriction() ? (friction * context.frictionModifier()) * 0.91F
 +                    : retainedFriction(friction, context.dragModifier()) * retainedFriction(0.91F, context.dragModifier());
 +        }
-+        return new Position3f(cutoff(motion.x(), horizontal), verticalDrag(motion.y(), context.dragModifier()), cutoff(motion.z(), horizontal));
++        return new Position3f(MotionFriction.apply(motion.x(), horizontal), verticalDrag(motion.y(), context.dragModifier()), MotionFriction.apply(motion.z(), horizontal));
 +    }
 +
 +    private static float retainedFriction(final float base, final float modifier) {
 +        return Math.max(0F, 1F - Math.max(0F, (1F - base) * modifier));
-+    }
-+
-+    private static float cutoff(final float velocity, final float friction) {
-+        return (Math.abs(velocity) <= 1.1920929E-7F ? 0F : friction) * velocity;
 +    }
 +
 +}
@@ -1584,6 +1594,35 @@ index 00000000..e3df1f47
 +            z += (lookZ * 1.5F - z) * 0.5F + lookZ * 0.1F;
 +        }
 +        return new Position3f(x * 0.99F, y * 0.98F, z * 0.99F);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MotionFriction.java b/src/main/java/net/raphimc/viabedrock/api/model/MotionFriction.java
+new file mode 100644
+index 00000000..801b152a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/MotionFriction.java
+@@ -0,0 +1,23 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++/** Native post-collision motion cutoff, before the retained friction is applied. */
++public final class MotionFriction {
++
++    private MotionFriction() {
++    }
++
++    public static boolean belowCutoff(final float velocity) {
++        return Math.abs(velocity) <= 0x1.0p-23F;
++    }
++
++    public static float apply(final float velocity, final float friction) {
++        // Select the multiplier first, retaining the native signed zero and NaN behavior.
++        return (belowCutoff(velocity) ? 0F : friction) * velocity;
 +    }
 +
 +}
@@ -5376,7 +5415,7 @@ index 23328682..afcc1205 100644
              clientPlayer.sendAttribute("minecraft:health"); // Java client always resets health on respawn, but Bedrock client keeps health when switching dimensions
              clientPlayer.sendEffects(); // Java client always resets effects on respawn. Resend them
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index 765cefd5..f995ffb3 100644
+index d596e6ff..5516de94 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 @@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.rewriter;
@@ -5387,7 +5426,7 @@ index 765cefd5..f995ffb3 100644
  import com.viaversion.nbt.tag.*;
  import com.viaversion.viaversion.api.connection.StorableObject;
  import com.viaversion.viaversion.libs.fastutil.ints.*;
-@@ -59,6 +60,7 @@ public class BlockStateRewriter implements StorableObject {
+@@ -60,6 +61,7 @@ public class BlockStateRewriter implements StorableObject {
      private final BlockItemStates blockItemStates;
      private final Set<BlockState> genericCustomStates = Collections.newSetFromMap(new IdentityHashMap<>());
      private final Map<BlockState, NativeBlockGeometry> customBlockGeometry = new IdentityHashMap<>();
@@ -5395,7 +5434,7 @@ index 765cefd5..f995ffb3 100644
      private final Map<BedrockBlockState, CompoundTag> customBlockComponents = new IdentityHashMap<>();
      private final Map<BedrockBlockState, Integer> customBlockItemOwners = new IdentityHashMap<>();
      private final Map<String, Integer> registeredBlockItemIds = new HashMap<>();
-@@ -78,6 +80,9 @@ public class BlockStateRewriter implements StorableObject {
+@@ -79,6 +81,9 @@ public class BlockStateRewriter implements StorableObject {
          final Set<String> bedrockBlockIdentifiers = bedrockBlockStates.stream().map(BedrockBlockState::namespacedIdentifier).collect(Collectors.toSet());
          final Set<String> nativeBlockIdentifiers = BedrockProtocol.MAPPINGS.getBedrockBlockStates().stream()
                  .map(BedrockBlockState::namespacedIdentifier).collect(Collectors.toSet());
@@ -5405,7 +5444,7 @@ index 765cefd5..f995ffb3 100644
          final List<BedrockBlockState> customBlockStates = new ArrayList<>();
          final Map<BlockState, BlockItemDescriptor> customDescriptors = new IdentityHashMap<>();
          final Map<BlockState, Integer> customJavaStates = new HashMap<>();
-@@ -242,6 +247,19 @@ public class BlockStateRewriter implements StorableObject {
+@@ -243,6 +248,19 @@ public class BlockStateRewriter implements StorableObject {
                  BedrockProtocol.MAPPINGS.getBedrockLegacyBlocks(), BedrockProtocol.MAPPINGS.getBedrockLegacyBlockStates());
      }
  
@@ -5543,7 +5582,7 @@ index e2f2db7f..6ab245b4 100644
              if (!names.isEmpty() && (names.size() == 256 || bytes + size > NativeBlockIdentifiers.MAX_DICTIONARY_BYTES)) {
                  this.sendNativeBlocks(new NativeBlockIdentifiers.Dictionary(this.dimension.ordinal(), names));
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 136722c7..d50c2799 100644
+index 0ca02d6e..86238ca5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 @@ -43,6 +43,7 @@ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
@@ -5554,7 +5593,7 @@ index 136722c7..d50c2799 100644
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorLinkType;
  import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
  import net.raphimc.viabedrock.protocol.model.EntityLink;
-@@ -331,6 +332,15 @@ public class EntityTracker extends StoredObject {
+@@ -332,6 +333,15 @@ public class EntityTracker extends StoredObject {
      public void markNativeActorsJoined() {
          this.nativeActorsJoined = true;
          this.sendNativeActorSnapshots();
@@ -5570,7 +5609,7 @@ index 136722c7..d50c2799 100644
      }
  
      public List<Entity> getEntities() {
-@@ -341,6 +351,22 @@ public class EntityTracker extends StoredObject {
+@@ -342,6 +352,22 @@ public class EntityTracker extends StoredObject {
          this.entities.values().forEach(entity -> entity.sendNativeActorSnapshot(true));
      }
  
@@ -5593,7 +5632,7 @@ index 136722c7..d50c2799 100644
      public void sendNativeCustomEntitySnapshot() {
          for (Entity entity : this.entities.values()) {
              if (entity instanceof CustomEntity customEntity) {
-@@ -384,6 +410,23 @@ public class EntityTracker extends StoredObject {
+@@ -385,6 +411,23 @@ public class EntityTracker extends StoredObject {
          return this.itemFramesByJavaId.get(javaId);
      }
  
@@ -6780,6 +6819,50 @@ index 00000000..be74f06d
 +
 +    private record Case(float x, float y, float z, float pitch, float yaw, float previousPitch, float previousYaw,
 +                        boolean slowFalling, int expectedX, int expectedY, int expectedZ) {
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MotionFrictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MotionFrictionTest.java
+new file mode 100644
+index 00000000..ce7ef0ca
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/MotionFrictionTest.java
+@@ -0,0 +1,38 @@
++package net.raphimc.viabedrock.api.model;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class MotionFrictionTest {
++
++    @Test
++    void smallKnockbackCoastsUntilTheNativeCutoff() {
++        final float friction = 0.6F * 0.91F;
++        float positive = 0.002F;
++        float negative = -0.002F;
++        for (int tick = 0; tick < 17; tick++) {
++            positive = MotionFriction.apply(positive, friction);
++            negative = MotionFriction.apply(negative, friction);
++            assertTrue(positive > 0F);
++            assertTrue(negative < 0F);
++        }
++        // Original 1.26.60 friction callback after seventeen retained steps.
++        assertEquals(865225741, Float.floatToRawIntBits(positive));
++        assertEquals(3012709389L, Integer.toUnsignedLong(Float.floatToRawIntBits(negative)));
++        assertEquals(0, Float.floatToRawIntBits(MotionFriction.apply(positive, friction)));
++        assertEquals(0x80000000, Float.floatToRawIntBits(MotionFriction.apply(negative, friction)));
++    }
++
++    @Test
++    void appliesTheInclusiveAxisCutoffBeforeFriction() {
++        final float epsilon = 0x1.0p-23F;
++        assertEquals(0, Float.floatToRawIntBits(MotionFriction.apply(epsilon, 0.91F)));
++        assertEquals(0x80000000, Float.floatToRawIntBits(MotionFriction.apply(-epsilon, 0.91F)));
++        assertTrue(MotionFriction.apply(Math.nextUp(epsilon), 0.91F) > 0F);
++        assertTrue(MotionFriction.apply(-Math.nextUp(epsilon), 0.91F) < 0F);
++        assertEquals(0F, MotionFriction.apply(Math.nextDown(epsilon), Float.NaN));
++        assertTrue(Float.isNaN(MotionFriction.apply(Float.NaN, 0.91F)));
 +    }
 +
 +}
@@ -12490,10 +12573,10 @@ index 00000000..caaa6306
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java
-index b4f0a27f..7d480e79 100644
+index d763dcee..80f59b25 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java
-@@ -63,6 +63,7 @@ class NativeBlockGeometryRegistrationTest {
+@@ -70,6 +70,7 @@ class NativeBlockGeometryRegistrationTest {
                          definition("probe:slab", "slab_block")}, true, storage);
                  final var physical = rewriter.blockGeometry(rewriter.bedrockId(BlockState.fromString("probe:shape")));
                  assertNotNull(physical);
@@ -12502,7 +12585,7 @@ index b4f0a27f..7d480e79 100644
                          physical.primaryBoundsAt(-17, -64, 93));
                  assertNull(rewriter.blockGeometry(rewriter.bedrockId(BlockState.fromString("probe:slab"))));
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
-index 77b9559d..1eb2c103 100644
+index 85498d35..3f21a65b 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 @@ -85,14 +85,14 @@ class EntityTrackerTest {
