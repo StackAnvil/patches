@@ -1,0 +1,704 @@
+From c022f88cf32180fc4541ae0f769df863c98881be Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 20:48:28 +0100
+Subject: [PATCH] fix(ui): retain Bedrock death screen lifetimes
+
+Update a retained death reason instead of re-entering the screen for each
+DeathInfo or visibility-rule update. Keep its existing button deadline and
+controls, and do not replace a confirmation or reopen the screen while a
+respawn is pending. Adopt the local death timer's already-open screen.
+Retire the retained screen when the player becomes alive, its object
+changes, or its connection ends. Ignore stale connection updates.
+
+The active OreUI death controller in Bedrock 1.26.60.5/protocol 2225 reads
+deathInfo as an observable view property. Its stage effects do not depend
+on that text. Executing the original shipped controller confirms that
+reason changes retain the button stage and pending respawn timers. Source
+gameplay-6de8e340eddced55490b.js SHA-256:
+9e7efe423b6cc8a1c1fa92756bd181675cffa51a4728bce386b0081cad1bb979.
+
+Share pending respawn requests between manual screen actions, Java's
+automatic null-screen path, and the combat-kill handler. Send once, wait 500 milliseconds, then enter
+the loading stage and retry once per second. Retain a pending manual
+screen through Java's automatic re-entry and disable both actions.
+Leaving the active route, becoming alive, or replacing the connection or
+player cancels its timer. Stale player actions cannot start a request.
+
+The combat-kill handler must also retain the immediate-respawn lifetime.
+An installed client previously sent another request 50 milliseconds after
+the first when a late reason packet entered that handler. Route the event
+through the same pending attempt before Java searches the entity index.
+The original OreUI controller retains its initial wait through a reason
+update in immediate mode, without another command.
+
+Executing the same original controller establishes the initial wait,
+retry spacing, route cancellation and reason retention. Late callbacks
+schedule their next wait from delivery; do not burst obsolete requests
+after a client stall. These controls supply observable hooks, query and
+command endpoints, and virtual time. They do not execute native network
+actions or the visual component.
+
+Headless regressions exercise real Java death timers and pending command
+counts through late text, automatic re-entry, delayed callbacks, active
+route changes, and connection/player replacement. The presentation remains
+Java. Native OreUI typography, layout, animation, loading presentation,
+menu routing and complete lifecycle parity remain unfinished.
+---
+ .../features/screen/DeathScreenAccess.java    |  24 ++
+ .../screen/MixinBedrockAutomaticRespawn.java  |  37 +++
+ .../MixinBedrockDeathScreenUpdates.java       |  54 ++++
+ .../screen/MixinBedrockRespawnScreen.java     |  38 +++
+ .../death/BedrockDeathScreenUpdates.java      | 134 ++++++++
+ .../viafabricplus-bedrock.mixins.json         |   4 +
+ .../death/BedrockDeathScreenUpdatesTest.java  | 303 ++++++++++++++++++
+ 7 files changed, 594 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/DeathScreenAccess.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockAutomaticRespawn.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenUpdates.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockRespawnScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/DeathScreenAccess.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/DeathScreenAccess.java
+new file mode 100644
+index 0000000..a6c8723
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/DeathScreenAccess.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen;
++
++import java.util.List;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.network.chat.Component;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Mutable;
++import org.spongepowered.asm.mixin.gen.Accessor;
++
++@Mixin(DeathScreen.class)
++public interface DeathScreenAccess {
++    @Accessor("player") LocalPlayer bedrockDeathPlayer();
++    @Accessor("hardcore") boolean bedrockDeathHardcore();
++    @Accessor("causeOfDeath") Component bedrockDeathReason();
++    @Mutable @Accessor("causeOfDeath") void bedrockDeathReason(Component reason);
++    @Accessor("exitButtons") List<Button> bedrockDeathButtons();
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockAutomaticRespawn.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockAutomaticRespawn.java
+new file mode 100644
+index 0000000..b054066
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockAutomaticRespawn.java
+@@ -0,0 +1,37 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen;
++
++import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.screen.death.BedrockDeathScreenUpdates;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.Gui;
++import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.player.LocalPlayer;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(Gui.class)
++public abstract class MixinBedrockAutomaticRespawn {
++    @WrapOperation(method = "setScreen", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/player/LocalPlayer;respawn()V"))
++    private void requestRespawn(final LocalPlayer player, final Operation<Void> original) {
++        if (!BedrockDeathScreenUpdates.requestRespawn(player, null)) original.call(player);
++    }
++
++    @ModifyExpressionValue(method = "setScreen", at = @At(value = "NEW", target =
++            "(Lnet/minecraft/network/chat/Component;ZLnet/minecraft/client/player/LocalPlayer;)Lnet/minecraft/client/gui/screens/DeathScreen;"))
++    private DeathScreen retainPendingScreen(final DeathScreen incoming) {
++        final var client = Minecraft.getInstance();
++        if (BedrockInputPermissions.isBedrockConnection() && client.getConnection() instanceof BedrockDeathScreenUpdates.Owner owner) {
++            return owner.bedrockDeathScreens().automaticScreen(client.getConnection(), client.player, incoming);
++        }
++        return incoming;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenUpdates.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenUpdates.java
+new file mode 100644
+index 0000000..c18730d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenUpdates.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.screen.death.BedrockDeathScreenUpdates;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.network.protocol.game.ClientboundPlayerCombatKillPacket;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ClientPacketListener.class)
++public abstract class MixinBedrockDeathScreenUpdates implements BedrockDeathScreenUpdates.Owner {
++    @Unique private final BedrockDeathScreenUpdates bedrockDeathScreens = new BedrockDeathScreenUpdates();
++
++    @Override
++    public BedrockDeathScreenUpdates bedrockDeathScreens() { return this.bedrockDeathScreens; }
++
++    @Inject(method = "handlePlayerCombatKill", at = @At(value = "INVOKE", target =
++        "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V",
++        shift = At.Shift.AFTER), cancellable = true)
++    private void updateReason(final ClientboundPlayerCombatKillPacket packet, final CallbackInfo ci) {
++        final var client = Minecraft.getInstance();
++        final var player = client.player;
++        if (!BedrockInputPermissions.isBedrockConnection() || player == null || !player.isDeadOrDying()
++                || player.getId() != packet.playerId()) return;
++        if (!player.shouldShowDeathScreen()) {
++            this.bedrockDeathScreens.respawn((ClientPacketListener) (Object) this, client.getConnection(), player, null);
++            ci.cancel();
++            return;
++        }
++        // A dead local player need not remain registered in the world's entity lookup.
++        final var incoming = new DeathScreen(packet.message(), client.level.getLevelData().isHardcore(), player);
++        if (!this.bedrockDeathScreens.receive((ClientPacketListener) (Object) this,
++                client.getConnection(), player, client.gui.screen(), incoming)) {
++            client.gui.setScreen(incoming);
++        }
++        ci.cancel();
++    }
++
++    @Inject(method = "tick", at = @At("HEAD"))
++    private void retireDeathScreen(final CallbackInfo ci) {
++        final var client = Minecraft.getInstance();
++        this.bedrockDeathScreens.tick(client.getConnection(), client.player, client.gui.screen());
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockRespawnScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockRespawnScreen.java
+new file mode 100644
+index 0000000..e8a88b5
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockRespawnScreen.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.screen.death.BedrockDeathScreenUpdates;
++import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.player.LocalPlayer;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(DeathScreen.class)
++public abstract class MixinBedrockRespawnScreen {
++    @WrapOperation(method = {"lambda$init$0", "lambda$handleExitToTitleScreen$0"}, at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/player/LocalPlayer;respawn()V"))
++    private void requestRespawn(final LocalPlayer player, final Operation<Void> original) {
++        if (!BedrockDeathScreenUpdates.requestRespawn(player, (DeathScreen) (Object) this)) original.call(player);
++    }
++
++    @Inject(method = {"init", "tick"}, at = @At("TAIL"))
++    private void retainPendingControls(final CallbackInfo ci) {
++        if (BedrockDeathScreenUpdates.respawning((DeathScreen) (Object) this)) {
++            ((DeathScreenAccess) this).bedrockDeathButtons().forEach(button -> button.active = false);
++        }
++    }
++
++    @Inject(method = "lambda$init$1", at = @At("HEAD"), cancellable = true)
++    private void retainPendingExit(final Button button, final CallbackInfo ci) {
++        if (BedrockDeathScreenUpdates.respawning((DeathScreen) (Object) this)) ci.cancel();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
+new file mode 100644
+index 0000000..cd8d3e6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
+@@ -0,0 +1,134 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.death;
++
++import com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen.DeathScreenAccess;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import java.util.function.LongSupplier;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.gui.screens.Screen;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.util.Util;
++
++/** One connection's death reason updates do not re-enter its screen or undo a pending respawn. */
++public final class BedrockDeathScreenUpdates {
++    private final LongSupplier clock;
++    private ClientPacketListener owner;
++    private LocalPlayer player;
++    private DeathScreen screen;
++    private boolean respawning;
++    private boolean loading;
++    private long deadline;
++
++    public BedrockDeathScreenUpdates() { this(Util::getMillis); }
++    BedrockDeathScreenUpdates(final LongSupplier clock) { this.clock = clock; }
++
++    /** The command and automatic GUI paths share one pending attempt per local death. */
++    public static boolean requestRespawn(final LocalPlayer player, final DeathScreen screen) {
++        final var client = Minecraft.getInstance();
++        if (!BedrockInputPermissions.isBedrockConnection() || !(client.getConnection() instanceof Owner owner)) return false;
++        if (player == client.player) {
++            owner.bedrockDeathScreens().respawn(client.getConnection(), client.getConnection(), player, screen);
++        }
++        return true;
++    }
++
++    public static boolean respawning(final DeathScreen screen) {
++        final var client = Minecraft.getInstance();
++        return client.getConnection() instanceof Owner owner
++                && owner.bedrockDeathScreens().pending(client.getConnection(), client.player, screen);
++    }
++
++    /** True consumes an update; false admits the supplied screen through the ordinary screen path. */
++    public boolean receive(final ClientPacketListener source, final ClientPacketListener current,
++                           final LocalPlayer player, final Screen foreground, final DeathScreen incoming) {
++        this.tick(current, player);
++        if (source != current || source == null || !source.getConnection().isConnected()) return true;
++        if (player == null || !player.isDeadOrDying() || !(incoming instanceof DeathScreenAccess next)
++                || next.bedrockDeathPlayer() != player) return false;
++
++        // Prefer the actual foreground if Java or another screen path replaced the retained instance.
++        if (foreground instanceof DeathScreen existing && existing instanceof DeathScreenAccess previous
++                && previous.bedrockDeathPlayer() == player
++                && previous.bedrockDeathHardcore() == next.bedrockDeathHardcore()) {
++            this.owner = source;
++            this.player = player;
++            this.screen = existing;
++        }
++        if (this.screen == null || this.owner != source || this.player != player
++                || ((DeathScreenAccess) this.screen).bedrockDeathHardcore() != next.bedrockDeathHardcore()) {
++            this.owner = source;
++            this.player = player;
++            this.screen = incoming;
++            return false;
++        }
++        ((DeathScreenAccess) this.screen).bedrockDeathReason(next.bedrockDeathReason());
++        return true;
++    }
++
++    public void tick(final ClientPacketListener current, final LocalPlayer player) {
++        if (this.owner != null && (this.owner != current || this.player != player
++                || player == null || !player.isDeadOrDying() || !this.owner.getConnection().isConnected())) {
++            this.owner = null;
++            this.player = null;
++            this.screen = null;
++            this.respawning = false;
++        }
++    }
++
++    public void tick(final ClientPacketListener current, final LocalPlayer player, final Screen foreground) {
++        this.tick(current, player);
++        if (!this.respawning) return;
++        // Leaving the active native route disposes its timer, including while a modal is visible.
++        if (foreground != this.screen) {
++            this.respawning = false;
++            return;
++        }
++        final long now = this.clock.getAsLong();
++        if (now < this.deadline) return;
++        if (!this.loading) {
++            this.loading = true;
++        } else {
++            this.player.respawn();
++        }
++        // Native setTimeout schedules from callback delivery. A stalled client must not catch up requests.
++        this.deadline = now + 1000;
++    }
++
++    public void respawn(final ClientPacketListener source, final ClientPacketListener current,
++                        final LocalPlayer player, final DeathScreen screen) {
++        this.tick(current, player);
++        if (source != current || source == null || !source.getConnection().isConnected()
++                || player == null || !player.isDeadOrDying() || this.respawning) return;
++        if (screen != null && (!(screen instanceof DeathScreenAccess access) || access.bedrockDeathPlayer() != player)) return;
++        this.owner = source;
++        this.player = player;
++        this.screen = screen;
++        this.respawning = true;
++        this.loading = false;
++        this.deadline = this.clock.getAsLong() + 500;
++        player.respawn();
++    }
++
++    /** Java's null-screen path must not replace a screen whose respawn is still pending. */
++    public DeathScreen automaticScreen(final ClientPacketListener current, final LocalPlayer player, final DeathScreen incoming) {
++        this.tick(current, player);
++        if (this.pending(current, player, this.screen) && this.screen != null
++                && incoming instanceof DeathScreenAccess next && next.bedrockDeathPlayer() == player
++                && next.bedrockDeathHardcore() == ((DeathScreenAccess) this.screen).bedrockDeathHardcore()) return this.screen;
++        return incoming;
++    }
++
++    private boolean pending(final ClientPacketListener current, final LocalPlayer player, final DeathScreen screen) {
++        return this.respawning && this.owner == current && this.player == player && this.screen == screen;
++    }
++
++    public interface Owner {
++        BedrockDeathScreenUpdates bedrockDeathScreens();
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 18a2d88..0081123 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -162,6 +162,10 @@
+     "features.render.MixinBedrockFirstPersonProjection",
+     "features.render.MixinBedrockCameraFov",
+     "features.render.MixinBedrockDeathCameraEffects",
++    "features.screen.DeathScreenAccess",
++    "features.screen.MixinBedrockDeathScreenUpdates",
++    "features.screen.MixinBedrockRespawnScreen",
++    "features.screen.MixinBedrockAutomaticRespawn",
+     "features.render.MixinBedrockCameraShake",
+     "features.render.MixinBedrockCameraPerspective",
+     "features.render.MixinBedrockFollowInput",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java
+new file mode 100644
+index 0000000..e982186
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java
+@@ -0,0 +1,303 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.death;
++
++import com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen.DeathScreenAccess;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import java.lang.reflect.Field;
++import java.util.List;
++import java.util.concurrent.atomic.AtomicBoolean;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.gui.screens.Screen;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.network.Connection;
++import net.minecraft.network.chat.Component;
++import net.minecraft.server.Bootstrap;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.BeforeEach;
++import org.mockito.MockedStatic;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class BedrockDeathScreenUpdatesTest {
++    private MockedStatic<Minecraft> singleton;
++
++    @BeforeEach
++    void client() {
++        final var client = mock(Minecraft.class);
++        this.singleton = mockStatic(Minecraft.class);
++        this.singleton.when(Minecraft::getInstance).thenReturn(client);
++    }
++
++    @AfterEach
++    void closeClient() { this.singleton.close(); }
++
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void reasonChangesKeepTheExistingButtonDeadlineAndEnabledControls() throws Exception {
++        final var fixture = new Fixture();
++        final var screen = fixture.screen("Initial reason");
++        final var button = mock(Button.class);
++        button.active = false;
++        screen.exitButtons().add(button);
++        assertFalse(fixture.receive(null, screen), "The first death must still open a screen");
++        for (int tick = 0; tick < 19; tick++) screen.tick();
++        assertTrue(fixture.receive(screen, fixture.screen("Late reason")));
++        assertEquals("Late reason", screen.bedrockDeathReason().getString());
++        assertFalse(button.active);
++        screen.tick();
++        assertTrue(button.active, "A text update must not restart the existing button deadline");
++        assertTrue(fixture.receive(screen, fixture.screen("")));
++        assertEquals("", screen.bedrockDeathReason().getString());
++        assertTrue(button.active, "Hiding the reason must retain enabled controls");
++    }
++
++    @Test
++    void lateTextUpdatesTheRetainedScreenWithoutReplacingAModalOrPendingRespawn() {
++        final var fixture = new Fixture();
++        final var screen = fixture.screen("Initial reason");
++        assertFalse(fixture.receive(null, screen));
++        final var confirmation = mock(Screen.class);
++        assertTrue(fixture.receive(confirmation, fixture.screen("While confirming")));
++        assertEquals("While confirming", screen.bedrockDeathReason().getString());
++        assertTrue(fixture.receive(null, fixture.screen("While respawning")));
++        assertEquals("While respawning", screen.bedrockDeathReason().getString());
++    }
++
++    @Test
++    void adoptsThePlayersAlreadyOpenDeathScreenBeforeTheFirstReasonPacket() throws Exception {
++        final var fixture = new Fixture();
++        final var automatic = fixture.screen("");
++        for (int tick = 0; tick < 9; tick++) automatic.tick();
++        assertTrue(fixture.receive(automatic, fixture.screen("First reason")));
++        assertEquals("First reason", automatic.bedrockDeathReason().getString());
++        assertEquals(9, automatic.field("delayTicker"));
++    }
++
++    @Test
++    void updatesTheVisibleReplacementInsteadOfAnOlderRetainedScreen() {
++        final var fixture = new Fixture();
++        final var old = fixture.screen("Original");
++        assertFalse(fixture.receive(null, old));
++        final var replacement = fixture.screen("Replacement");
++        assertTrue(fixture.receive(replacement, fixture.screen("Current reason")));
++        assertEquals("Current reason", replacement.bedrockDeathReason().getString());
++        assertEquals("Original", old.bedrockDeathReason().getString());
++    }
++
++    @Test
++    void respawnAndConnectionReplacementRetireOldReasonsEvenWhenPlayerIdsRepeat() {
++        final var fixture = new Fixture();
++        final var old = fixture.screen("Old death");
++        assertFalse(fixture.receive(null, old));
++        fixture.dead.set(false);
++        fixture.updates.tick(fixture.owner, fixture.player);
++        fixture.dead.set(true);
++        final var next = fixture.screen("Next death");
++        assertFalse(fixture.receive(null, next));
++        assertEquals("Old death", old.bedrockDeathReason().getString());
++
++        final var replacementOwner = fixture.listener();
++        final var replacementPlayer = mock(LocalPlayer.class);
++        when(replacementPlayer.isDeadOrDying()).thenReturn(true);
++        when(replacementPlayer.getId()).thenReturn(7);
++        fixture.updates.tick(replacementOwner, replacementPlayer);
++        assertTrue(fixture.updates.receive(fixture.owner, replacementOwner, replacementPlayer, null,
++            new TestDeathScreen("Stale packet", replacementPlayer)));
++        final var current = new TestDeathScreen("Current death", replacementPlayer);
++        assertFalse(fixture.updates.receive(replacementOwner, replacementOwner, replacementPlayer, null, current));
++        assertEquals("Next death", next.bedrockDeathReason().getString());
++        assertTrue(fixture.updates.receive(replacementOwner, replacementOwner, replacementPlayer, current,
++            new TestDeathScreen("Current update", replacementPlayer)));
++        assertEquals("Current update", current.bedrockDeathReason().getString());
++    }
++
++    @Test
++    void automaticRespawnSendsOnceThenWaitsForTheLoadingStageAndRetryDeadline() {
++        final var fixture = new Fixture();
++        fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, null);
++        for (int time = 0; time < 500; time += 50) {
++            fixture.tick(time, null);
++            fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, null);
++        }
++        verify(fixture.player).respawn();
++        fixture.tick(500, null);
++        fixture.tick(1499, null);
++        verify(fixture.player).respawn();
++        fixture.tick(1500, null);
++        verify(fixture.player, times(2)).respawn();
++        fixture.tick(2499, null);
++        verify(fixture.player, times(2)).respawn();
++        fixture.tick(2500, null);
++        verify(fixture.player, times(3)).respawn();
++    }
++
++    @Test
++    void pendingManualRespawnRetainsTheScreenReasonAndDeadlineThroughJavaReentry() {
++        final var fixture = new Fixture();
++        final var screen = fixture.screen("Initial reason");
++        fixture.receive(null, screen);
++        fixture.time = 1000;
++        fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, screen);
++        fixture.tick(1250, screen);
++        assertTrue(fixture.receive(screen, fixture.screen("Late reason")));
++        fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, screen);
++        assertSame(screen, fixture.updates.automaticScreen(fixture.owner, fixture.player, fixture.screen("")));
++        assertEquals("Late reason", screen.bedrockDeathReason().getString());
++        fixture.tick(1500, screen);
++        fixture.tick(2499, screen);
++        verify(fixture.player).respawn();
++        fixture.tick(2500, screen);
++        verify(fixture.player, times(2)).respawn();
++    }
++
++    @Test
++    void delayedTimerDeliveryDoesNotBurstObsoleteRespawnRequests() {
++        final var fixture = new Fixture();
++        fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, null);
++        fixture.tick(5000, null);
++        fixture.tick(5999, null);
++        verify(fixture.player).respawn();
++        fixture.tick(6000, null);
++        verify(fixture.player, times(2)).respawn();
++        fixture.tick(10000, null);
++        fixture.tick(10999, null);
++        verify(fixture.player, times(3)).respawn();
++        fixture.tick(11000, null);
++        verify(fixture.player, times(4)).respawn();
++    }
++
++    @Test
++    void alivePlayerDisconnectedOwnerReplacementAndHiddenRouteCancelRetries() {
++        for (int boundary = 0; boundary < 5; boundary++) {
++            final var fixture = new Fixture();
++            fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, null);
++            fixture.tick(500, null);
++            fixture.time = 1500;
++            switch (boundary) {
++                case 0 -> {
++                    fixture.dead.set(false);
++                    fixture.updates.tick(fixture.owner, fixture.player, null);
++                }
++                case 1 -> {
++                    when(fixture.owner.getConnection().isConnected()).thenReturn(false);
++                    fixture.updates.tick(fixture.owner, fixture.player, null);
++                }
++                case 2 -> fixture.updates.tick(fixture.listener(), fixture.player, null);
++                case 3 -> fixture.updates.tick(fixture.owner, mock(LocalPlayer.class), null);
++                case 4 -> fixture.updates.tick(fixture.owner, fixture.player, mock(Screen.class));
++            }
++            fixture.tick(10000, null);
++            verify(fixture.player, description("Boundary " + boundary)).respawn();
++        }
++        final var fixture = new Fixture();
++        fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, null);
++        fixture.dead.set(false);
++        fixture.tick(500, null);
++        fixture.dead.set(true);
++        fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, null);
++        verify(fixture.player, times(2)).respawn();
++    }
++
++    @Test
++    void commandBridgeDropsOldPlayerActionsAndLeavesJavaSessionsToTheirOriginalPath() {
++        final var fixture = new Fixture();
++        final var client = Minecraft.getInstance();
++        client.player = fixture.player;
++        when(client.getConnection()).thenReturn(fixture.owner);
++        final var oldPlayer = mock(LocalPlayer.class);
++        try (final var permissions = mockStatic(BedrockInputPermissions.class)) {
++            permissions.when(BedrockInputPermissions::isBedrockConnection).thenReturn(true);
++            assertTrue(BedrockDeathScreenUpdates.requestRespawn(oldPlayer, null));
++            verifyNoInteractions(oldPlayer);
++            verify(fixture.player, never()).respawn();
++            assertTrue(BedrockDeathScreenUpdates.requestRespawn(fixture.player, null));
++            verify(fixture.player).respawn();
++            permissions.when(BedrockInputPermissions::isBedrockConnection).thenReturn(false);
++            assertFalse(BedrockDeathScreenUpdates.requestRespawn(fixture.player, null));
++            verify(fixture.player).respawn();
++        }
++    }
++
++    private static final class Fixture {
++        private long time;
++        private final BedrockDeathScreenUpdates updates = new BedrockDeathScreenUpdates(() -> this.time);
++        private final ClientPacketListener owner = this.listener();
++        private final LocalPlayer player = mock(LocalPlayer.class);
++        private final AtomicBoolean dead = new AtomicBoolean(true);
++
++        private Fixture() {
++            when(this.player.isDeadOrDying()).thenAnswer(call -> this.dead.get());
++            when(this.player.getId()).thenReturn(7);
++        }
++
++        private ClientPacketListener listener() {
++            final var listener = mock(ClientPacketListener.class, withSettings().extraInterfaces(BedrockDeathScreenUpdates.Owner.class));
++            when(((BedrockDeathScreenUpdates.Owner) listener).bedrockDeathScreens()).thenReturn(this.updates);
++            final var connection = mock(Connection.class);
++            when(listener.getConnection()).thenReturn(connection);
++            when(connection.isConnected()).thenReturn(true);
++            return listener;
++        }
++
++        private TestDeathScreen screen(final String reason) { return new TestDeathScreen(reason, this.player); }
++
++        private boolean receive(final Screen foreground, final TestDeathScreen incoming) {
++            return this.updates.receive(this.owner, this.owner, this.player, foreground, incoming);
++        }
++
++        private void tick(final long time, final Screen foreground) {
++            this.time = time;
++            this.updates.tick(this.owner, this.player, foreground);
++        }
++    }
++
++    /** Headless bridge for the fields supplied by DeathScreenAccess in the installed client. */
++    private static final class TestDeathScreen extends DeathScreen implements DeathScreenAccess {
++        private TestDeathScreen(final String reason, final LocalPlayer player) {
++            super(Component.literal(reason), false, player);
++        }
++
++        private Object field(final String name) {
++            try {
++                final Field field = DeathScreen.class.getDeclaredField(name);
++                field.setAccessible(true);
++                return field.get(this);
++            } catch (ReflectiveOperationException error) {
++                throw new AssertionError(error);
++            }
++        }
++
++        @SuppressWarnings("unchecked")
++        private List<Button> exitButtons() { return (List<Button>) this.field("exitButtons"); }
++
++        @Override public List<Button> bedrockDeathButtons() { return this.exitButtons(); }
++        @Override public LocalPlayer bedrockDeathPlayer() { return (LocalPlayer) this.field("player"); }
++        @Override public boolean bedrockDeathHardcore() { return (boolean) this.field("hardcore"); }
++        @Override public Component bedrockDeathReason() { return (Component) this.field("causeOfDeath"); }
++        @Override public void bedrockDeathReason(final Component reason) {
++            try {
++                final Field field = DeathScreen.class.getDeclaredField("causeOfDeath");
++                field.setAccessible(true);
++                field.set(this, reason);
++            } catch (ReflectiveOperationException error) {
++                throw new AssertionError(error);
++            }
++        }
++    }
++}
+-- 
+2.56.0

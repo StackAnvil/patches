@@ -123,6 +123,28 @@ In Bedrock 1.26.60.5, Escape first removes the search highlight. A second Escape
 Typing after Escape or a blank-area click resumes editing. Selecting another recipe or inventory slot stops search input.
 Retain the editor and its selection through screen rebuilds, viewport changes, and GUI-scale changes.
 An inactive editor must stay inactive after opening or resizing.
+An authored search hover temporarily admits text without selecting the editor.
+A first character starts editing. Leaving before typing retires the temporary text input.
+The inventory key enters text while search is hovered and closes the screen outside an inactive editor.
+Escape closes an inactive editor without starting a text session.
+
+Pointer cursor drops follow the authored host bindings.
+Primary input drops the carried stack. Secondary input drops one carried item per press.
+Holding secondary input does not repeat the drop. Blank recipe panels retain the cursor.
+Player pointer and keyboard drops share the ordinary inventory request owner.
+Empty cursors, pending native commands, and the transition into Help do not start a cursor-drop request.
+Admitted cooking pointer hosts use this same path. Partial container scopes retain ordinary controls when they require cursor drops.
+Installed direct and ViaProxy E-key controls each receive three successful replies: pickup of nine, secondary drop of one, and primary drop of eight.
+Both routes retain the same screen, menu, and presentation, conserve all nine ingots on the server, and send no further requests with an empty cursor.
+
+Bedrock 1.26.60.5 desktop drop keys follow the authored bindings for recipe, Creative catalog, and real inventory slots.
+With a held stack, Q and Shift+Q drop one carried item. Ctrl+Q leaves the cursor and pointed slot unchanged.
+With an empty cursor, Q drops one item from a real slot and Ctrl+Q drops its whole stack.
+Empty-cursor drops over recipe or catalog rows do nothing.
+Plain panels and areas outside controls ignore these keys.
+
+A held drop key acts once until release.
+Search editing and pending native commands suppress these actions.
 
 Native 1.26.60.5 classic-screen controls distinguish recipe selection from crafting.
 A normal recipe click fills the grid. Taking its output sends a separate craft request.
@@ -216,6 +238,10 @@ Typed overrides and RGB conversion match selected native instruction controls. C
 Storage bars read a native weight snapshot independently of Java bundle contents.
 Unknown storage snapshots restore ordinary controls.
 Player and workbench screens route selected desktop bundle gestures through the native input transport. Local regressions cover insertion and default extraction with either cursor or clicked roots, filled hover views, moved sources, stale snapshots, rejection rollback, and serialized search edits. Matching bundle replies route operation sounds through current native resources and captions. Stale commands and locally unsuccessful extraction attempts stay silent.
+Retained bundle navigation uses padded display cells. Directional callbacks stop at row edges, while previous and next callbacks wrap over item cells.
+A separate optional channel carries selected-cell extraction against the published source snapshot. Core resolves the physical slot and rejects padding, overflow labels, and stale contents.
+Physical input bindings remain unfinished. Installed selected-cell extraction remains unverified.
+Cooking uses the same transfer owner with its [complete source contract](native-cooking-actions.md).
 Installed direct and ViaProxy controls each complete fourteen server-accepted item requests. They insert and extract iron ingots with the bundle in either the clicked slot or the cursor, retain a filled bundle after reopening, and reject insertion into a full bundle without an item request. Screen audits distinguish native commands from ordinary Java clicks. Sound audits observe seven matching level events and decoded PCM channel starts on each route.
 Bundle hover survives temporary source removal and returns when the source becomes available, without another pointer event.
 Source regressions cover independent selection and touch behavior. Screen regressions retain hover while a pending command blocks duplicate actions.

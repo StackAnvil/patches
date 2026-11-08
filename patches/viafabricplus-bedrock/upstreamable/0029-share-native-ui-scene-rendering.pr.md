@@ -10,6 +10,95 @@ GUI camera overrides retain their existing yaw values. World player queries use 
 
 Share authored scene, layout, image, text, actor, and focus primitives. Preserve same-pack bitmap metadata, legacy layouts, native atlas sampling, and GUI raster coverage.
 
+Host pointer conversion uses the actual rounded Java GUI width and height separately from drawing scale. Click, release, movement, drag, scroll, and extraction retain the same native coordinate space. A real authored-action regression covers edge clicks on both rounded axes and a HiDPI host. Complete native input-device and viewport parity remains open.
+
+Installed direct and ViaProxy controls using the rebuilt tracked stack target the last inside column of the authored inventory close button at 1276 × 720 and Java GUI scale 3. Both routes close the menu and send a Bedrock close request. The pre-fix direct control with the private consumer falls back to Java controls without closing. These runs use a declared server inventory-open acknowledgment and read-only GUI entry observations. Early-join admission, native server admission, and complete input parity remain unverified.
+
+OreUI text retains its own font engine, shaping size, cache images, distance fields, atlas, and float tint pipeline.
+It remains separate from classic JSON UI typography.
+Default preparation follows the target Windows host's ordinary outline-font settings: bitmap below 10 display pixels or for a face that opts out, otherwise the 52-pixel CPU distance cache.
+Sixteen original mode/size controls establish this selection. Eight executions of the shipped GUI-scale component establish five root pixels per scale unit.
+Body text therefore crosses the default threshold from 8 to 16 pixels at GUI scales 1 and 2.
+The image regression covers the threshold, face opt-out, independent shaping size, and distance-cache reuse.
+Installed automatic and explicitly resolved modes produce identical pixels in seven regions under both filters, including the 8- and 10-pixel probes.
+Active Bedrock 1.26.60.5 death labels confirm automatic mode and the 52-pixel CPU distance cache at display sizes 16, 20, and 32.
+Retained native records match Java bearings and image dimensions for all 76 compared glyph instances.
+Seventy-four positions match bit for bit. Two reason-glyph instances differ by one float rounding step.
+Thirteen distinct Ten/Seven button-glyph distance images match the original native parser, rasterizer, and distance converter byte for byte, including row padding.
+For Respawn and Game menu, all 176 coordinate components of 88 native vertex-upload records match the current Java quad calculation at captured native origins.
+Coverage values and native UV extents also match. These supplied origins do not establish complete consumer layout.
+The acquired Noto Sans SC ideograph also matches original grayscale and 52-pixel CPU distance images byte for byte.
+This comparison covers glyph images, not complete CJK screen pixels.
+Three native redraws bind the glyph atlas to texture slot 2 of the Standard material.
+The retained resource is a 1024 × 1024 R8 texture. Its captured sampler translates to host filter key `0x15`, consistent with [linear filtering](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_filter).
+Actual atlas texels, addressing, and final GPU compositing remain unverified.
+Original Bedrock 1.26.60.5 controls establish selected shaping, raster, distance, ordinary run coverage, and supplied-position arithmetic.
+Prepared runs retain vertical face metrics independently of the glyph cache size.
+Native line boxes preserve negative leading and fractional content origins.
+Content boxes apply borders and padding before optional node-selected snapping.
+The Java content bounds match all 20 original native controls bit for bit. Six policy controls establish the supplied style/global flag combinations.
+The active native death view enables snapping for the title, reason, Respawn label, and Game menu label.
+The live paint wrapper centers each intrinsic text box before snapping its origin, then adds the cached baseline offset.
+At 1280 × 720, the button label boxes start 10 and 12 pixels below their respective button tops.
+Complete CSS cascade and other active view flags remain unverified.
+The Java calculation matches all 72 original native font-span and baseline controls bit for bit.
+Eight style-height controls and 14 rectangle/fragment controls establish separate height resolution and placement boundaries.
+Regressions cover explicit and normal line heights, negative half ties, real font metrics, atlas lifetimes, and Minecraft vertex emission.
+
+`OreUiCharacters` retains source UTF-16 offsets through native CR/LF policies and normal/nowrap whitespace collapse.
+It keeps nonbreaking Unicode spaces and preserves whitespace in preformatted modes.
+The trailing-space fitting reserve stays separate from displayed characters.
+Target-version native controls match scalar arrays, offsets, and float reserves in 195 cases.
+Regressions also map a wrapped line back to its original source. Java rejects unpaired UTF-16 surrogates before UTF-8 encoding.
+These controls supply the newline and CSS whitespace policies. They do not establish policy selection, invalid native UTF-8 handling, or complete screen integration.
+
+Ordinary text measurement keeps a separate native feature profile from drawing.
+It selects nominal advances, space-excluding legacy kerning, or GPOS from the face and character count.
+Original 1.26.60.5 dispatch, feature records, and FreeType/HarfBuzz controls establish the tested paths.
+Authored regressions preserve per-scalar advances and drawing substitutions across measurement calls.
+Installed Ten advances match original controls for `fi`, `office`, and `Respawn`.
+Ten selected draw regions retain identical pixels across measurement and mode return.
+Ordinary font assignment fills unresolved scalar ranges in the caller's ordered face list and preserves their measurement context.
+Eligible interior whitespace uses its neighbors' shared font while retaining its advance and omitting its draw glyph.
+Eighteen original constructor controls cover ownership and advances through the line-builder boundary, with supplied font interfaces.
+A separate target-native parser control and a packaged-engine regression cover the authored disjoint-coverage fallback face.
+Regular gameplay faces follow the shipped locale-dependent fallback order after the caller's primary family.
+Thirteen selector, original font-parser, and assignment controls match packaged-engine glyph ownership while preserving primary Latin glyphs.
+The API accepts native-case locale identifiers and resolves registered 400-weight normal faces, including unavailable slots.
+Complete CSS family matching, weight/style substitution, complex-script/bidi dispatch, and final multi-font drawing remain unverified.
+Ordinary lines consume measured advances and preserve nonfinal tracking, whitespace ranges, explicit endings, soft wraps, and float alignment.
+Font identity separates fragments and can cause a wrap within a word. Alias slots that share an identity keep one fragment.
+Each fragment retains its own baseline. Row height uses the greatest fragment advance, including zero-width whitespace fragments.
+Twenty-two single-font construction/alignment controls and 37 mixed-font controls establish the compared native geometry.
+One hundred additional mixed-font sequences and 100 retained single-font sequences match Java fragment records, row geometry, and extents bit for bit.
+The controls supply the font map, metrics, advances, and style flags; original layout helpers execute.
+Regressions retain 24 mixed-font boundary controls and connect packaged-engine fallback coverage and per-face metrics to line construction.
+Collapsed trailing whitespace can reserve row width before alignment without changing fragment advances.
+Twenty-six original adjustment controls establish full, partial and rejected reserves, first-row indentation, negative values, and the native float tolerance.
+These controls cover geometry. Measurement-cache ownership and fitting policy selection remain unverified.
+Installed single-font paragraph ranges and placement match original native results at three supplied widths. Eleven selected draw regions remain unchanged across preparation modes and return.
+The complete measurement wrapper/cache, CSS text policies, bidi, ellipsis, parent CSS sizing, and complete mixed-font screen rendering remain unverified.
+
+The full tracked add-on stack passes, including software font GPU checks.
+An installed software-rendered Minecraft 26.3 diagnostic submits four labels and a `drawLine` probe through the production font engine, atlas, GUI extraction, and shaders.
+Four executions of the shipped death and button components establish shadows on the title, reason, and enabled hero label. The disabled hero and secondary label omit them.
+Five complete original zero-blur shadow controls establish reverse paint order, offset arithmetic, inherited color, and parent-color restoration. The shadow paint flag's downstream interpretation remains unverified.
+The diagnostic applies the shipped black shadows through the unchanged font backend. Colored and blurred shadows remain outside this comparison.
+Bitmap and distance-field modes each run with nearest and linear filters at 1280 × 720.
+All five regions remain unchanged after returning to the original mode. Installed artifact hashes match the tested build.
+The eight nearest-filtered label crops differ from the CPU raster reference by at most one color byte.
+Linear-filtered crops differ from that idealized reference by up to 13 color bytes. Exact native sampling remains unverified.
+The diagnostic uses production measurement and line construction. It supplies outer boxes, insets, spacing, colors, font modes, and node snap choices.
+The diagnostic centers intrinsic text boxes before node snapping, matching the observed native order.
+Fixed comparisons with the saved native frame give 98.5% to 100% foreground-mask overlap across four label regions at three thresholds each, without position fitting.
+Final sampling, colors, complete button styling, and complete screen pixels remain unverified. Complete OreUI screen consumers, CSS layout and fallback, reloads, and input remain unfinished.
+
+The acquired OreUI bundle also registers the original loading GIF and retains all previous font, stylesheet, and translation bytes.
+The decoder preserves frame durations, transparency, and disposal within a 16 MiB decoded-frame limit.
+Five regressions cover image ownership, invalid registrations, decoded limits, frame disposal, and the acquired spinner.
+The original spinner has ten 28 × 28 frames at 100ms each. Independent ImageIO and Pillow decodes agree on all ten frames.
+These checks establish software decoding. Installed animation sampling and the complete death-screen consumer remain unfinished.
+
 Prerequisites:
 
 - viabedrock/0095-share-native-ui-programs-and-resources.patch: Publish shared UI scene and program contracts before the client renderer.
@@ -175,3 +264,8 @@ The full four-project build passes. These controls do not establish complete nat
 Cursor placement uses the resolved native anchor after grid layout and scrolling. Seventeen original Bedrock 1.26.60.5 controls establish local offsets, centering precedence, edge flips and zero-size hiding. Layout regressions cover actual grid-parent bounds, viewport clipping and unchanged authored offsets. Active tooltip sources, input actions and live pixels remain open.
 
 Factory creation IDs separate replacement clocks from binding refreshes. Completed named destruction queues the affected factory roots for host retirement. Ten original 1.26.60.5 instruction controls establish exact current-control and ancestor target lookup, expired-parent termination, and completion gating. Regressions cover replacement clocks, late retirement, and unrelated sibling preservation. These controls stop before native hierarchy removal and do not establish rendered parity.
+
+The shared View hold timer follows the native result flags, binary32 frame subtraction, and strict negative expiry.
+Its event retains the initial pointer and the native per-axis displacement gate.
+Cooking regressions cover the timer through [retained quantity selection](0029-present-authored-native-containers.pr.md).
+Controller admission, quantity timing, and completion remain owned by that feature.

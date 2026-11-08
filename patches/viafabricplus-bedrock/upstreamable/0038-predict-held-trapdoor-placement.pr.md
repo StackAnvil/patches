@@ -3,13 +3,13 @@
 Coordinate food retries and block placement through one client input owner.
 Inventory consumption and completion remain server-owned.
 
-Food and the first block-item air phase share a strict 200 ms monotonic deadline.
+Every admitted main-hand air phase records a strict 200 ms monotonic deadline.
 Release retains the air deadline, but fresh block dispatch does not wait for it.
 Fresh entity admission still waits for that deadline.
 A consumed-click call resets the previous mode, path, and core session.
 Tick and frame continuation retain that ownership.
 Empty-hand rejection also continues from frames, including a fresh press after stack exhaustion.
-A suppressed initial food/block air phase keeps untimed block continuation until release.
+A suppressed initial air phase keeps untimed block continuation until release.
 Frame repeats run after camera input and require an already owned mode.
 The queued click establishes initial ownership, so a frame cannot preempt it.
 Select food from its transported component, including custom items carried as paper.
@@ -21,6 +21,7 @@ Already admitted air use retains its route after hunger fills or the selected it
 Block continuation bypasses the air deadline and cannot fall through to eating.
 Offhand fallback cannot take over an owned hold.
 Release and screens retire the mode; the connection retains its air deadline until replacement.
+Use-key releases also stop the current local cycle through the ordinary game mode. Handle the key update before a repress can erase the release between game ticks. The frame refresh also checks the released state; an already stopped cycle sends no duplicate release.
 Missing optional block-use channels do not clear the air-use hold or deadline.
 
 Placement has a separate strict delay: 300 ms before a line is established and 200 ms afterward.
@@ -52,6 +53,13 @@ The client retains format 2 for older cores, which cannot honor the new admissio
 Use the active Bedrock connection for native outlines and occlusion, including ViaProxy sessions with a local Java protocol target.
 The visible raycast remains unchanged.
 
+For current item metadata, every admitted main-hand air callback records the strict 200 ms deadline before dispatch.
+The initial continuation uses active native use or retained stack count and native item predicates, independently of the callback result.
+A fresh press rejected by the clock retains block continuation and cannot start air use later during that hold.
+The older-core fallback retains its previous behavior when native predicate metadata is absent.
+
+When negotiated, ordinary use also reports its actual local stack consumption before the concluding Java packet. The snapshot compares native item identity and quantity, including an emptied final stack. A cooldown-refused callback reports no consumption. This report does not select the air route or refresh its clock.
+
 ## Evidence and validation
 
 Official Bedrock 1.26.60.5 and BDS 1.26.60.6 establish the selected behavior on protocol 2225.
@@ -67,7 +75,7 @@ The cursor keeps its original world location, yielding a negative relative Z coo
 Player-collision failures retain the next cell.
 Returning to the old aim stops those attempts; a fresh press after release can use the top face.
 
-Fourteen input-state regressions cover ownership, hand/target routing, initial rejection, clocks, last-stack placement, release, connection reset, and rollover.
+Nineteen input-state regressions cover ownership, hand/target routing, projectile continuation, initial rejection, clocks, last-stack placement, release, connection reset, and rollover.
 Eight path regressions cover native float points, rejection, advancement, all six axes, release, line delays, precision limits, and failed-attempt history.
 Five trapdoor regressions cover orientation, materials, independent properties, targets, frozen hits, and ordinary blocks.
 Unit cases for all axes do not establish live native parity in every direction.
@@ -82,21 +90,46 @@ Activation leaves air admission available, and the last stack creates no air dea
 The direct boundary supplement uses the same installed JAR as its full session.
 Both routes also retain the six timed/refused-food controls, three earlier hold-mode controls, release/Pause, and eleven food-admission cases.
 The [food-use validation](../../viabedrock/deferred/0008-signal-sustained-bedrock-item-use.pr.md) records admission and use-cycle limits.
-The full four-project build passes 3,308 tests, with 325 skipped and no failures or errors.
+The earlier four-project build and installed controls predate the projectile admission correction.
 Installed JAR checksums match the build.
 
 Earlier trapdoor fixtures cover camera and material changes, cancellation, reconciliation, and specific rejection histories.
 Fresh native and proxy sessions match repeated rejection followed by rotation without consumption.
 After a preceding successful hold, both can instead place a neighbor and consume one item.
 
+Seventy scoped original admitted-air outcomes match the compiled Java state.
+The controls supply component lookup and callback boundaries for original Ender Pearl and ComponentItem predicates.
+A complete protocol-2225 journal checks seven registry definitions, including Snowball's constructor default and Wind Charge's network component.
+Native local-world controls distinguish cooldown retries from a failed initial sword use.
+A pearl hold retains air use after selecting Stone. Release permits fresh Stone placement.
+A failed sword hold suppresses a newly selected pearl but permits later Stone placement.
+
+Installed direct and ViaProxy controls suppress an early fresh wind hold, admit an uninterrupted pearl-to-wind hold, and repeat pearl attempts through cooldown. They retain 64 Stone during a pearl hold and throw no pearl after a failed sword hold. Fresh Stone placement, food-to-Stone, and block-to-food retain their independent routes.
+
+Consumption-report controls cover late acceptance under a declared incoming delay and final pearl/wind-charge removal. Held-item counts agree with BDS after settlement. The [air-use prediction owner](../../viabedrock/deferred/0016-synchronize-glide-rockets-with-auth-input.pr.md) records the native action boundary, exact installed artifact scope, older-client quantity fallback, build results, and remaining limits.
+
+A native bread control releases after half a second and represses after 20 ms. It cancels the first cycle and restarts at the full duration. Earlier Java frame observations saw both key states in one game tick, retained 22 use ticks, and consumed one bread. The configured-key release correction stops that cycle before a repress.
+
+Current direct and ViaProxy clients each complete six food controls in a 120-second recording. Short holds, split holds, rapid pulses, and repressing after a completion match the selected native bread counts and hunger endpoints. Local callback observations verify one ordinary release per active key-up and no consumption during that release. Long controls retain normal consumption. The full add-on build passes 1,416 tests, with 154 skipped, including five software font GPU checks. The complete 44-patch replay matches the build.
+
 ## Remaining limits
 
 Live build-height limits, moving placement, and air/entity target dispatch need more native comparisons.
-Other initial use families, mixed-use state, and complete input phases also remain open.
+
+Older clients without consumption reports retain the quantity-publication fallback and its temporary count changes on rejected retries.
+Exact release timing, conditional Education predicates, and the original persistent rollback remain unverified.
+
+The native projectile controls use an owned local world with an embedded observer, separate from the existing BDS recordings.
+Controls without a debugger confirm the rejected hold, an admitted uninterrupted hold, and a widely separated pair.
+The shorter separate-press controls do not consistently admit both projectiles, including a press scheduled after the deadline.
+Debugger traces establish the admitted and rejected callback paths, without proving complete physical input timing.
+No current native network comparison is claimed from failed NetherNet joins.
+
+Other initial use families, mixed-use state, and complete input phases remain open.
 An unchanged stack does not prove repeat-timing parity.
 Frame cadence changes retry and instant-food counts, so these controls do not establish equal coordinates or complete scheduling parity.
 A native fresh callback dispatches rejected block use about 27 ms before the air deadline, with no second air transaction.
 Short native input spans still miss some physical edges and do not establish full edge parity.
 Dynamic capability changes and legacy fallback need broader installed controls.
-Short food presses while Java still owns an active use cycle need separate native comparisons.
+The native 80 ms control has no start/stop callback, so matching endpoints do not establish its initial admission. Exact edge timing and other active-use families still need comparisons.
 The original intermittent animation-without-feeding report remains open.

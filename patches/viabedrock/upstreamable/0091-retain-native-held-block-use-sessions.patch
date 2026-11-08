@@ -1,4 +1,4 @@
-From eb7c9aec7d7bef63fa4a757a3e94c5ce23de41f9 Mon Sep 17 00:00:00 2001
+From 45d52a142a7d88df8b6c4be151ecae003e584c2a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 03:34:25 +0100
 Subject: [PATCH] feat(interaction): retain native held block-use sessions
@@ -55,27 +55,42 @@ its existing channel for older clients, with its prior air default.
 Withdraw either prediction capability through the existing held owner.
 Tests cover the legacy wire fixture, the suppressed-air codec, sequence
 ownership and build success independently from the air decision.
+
+Pair ordinary item-use consumption prediction with its concluding Java
+sequence. Keep one optional report and retire it after that packet or
+capability withdrawal. A skipped sequence must not leak its prediction
+into a later use. Sequence numbering can restart with a new client level.
+
+Native Bedrock1.26.60.5 records an inventory action only when local use
+changes the stack. Cooldown-refused pearl callbacks dispatch without
+a debit or legacy slot declaration. Publish that distinction before the
+ordinary Java packet so inventory translation can retain native behavior
+without using Java carrier classes or changing air-route ownership.
 ---
  .../api/model/BlockUsePrediction.java         |  90 +++++++++++++
+ .../api/model/ItemUsePrediction.java          |  42 ++++++
  .../viabedrock/api/model/PlayerBlockUse.java  |  35 +++++
  .../container/player/InventoryContainer.java  |   2 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/packet/ClientPlayerPackets.java  |   2 +-
  .../protocol/packet/InteractionPackets.java   | 120 +++++++++++-------
- .../protocol/packet/MultiStatePackets.java    |  35 +++++
+ .../protocol/packet/MultiStatePackets.java    |  50 ++++++++
  .../protocol/storage/BlockUseStorage.java     |  83 ++++++++++++
  .../protocol/storage/InventoryTracker.java    |   6 +
- .../protocol/storage/PlayerInputStorage.java  |   4 +-
+ .../protocol/storage/PlayerInputStorage.java  |  20 ++-
  .../api/model/BlockUsePredictionTest.java     |  70 ++++++++++
  .../packet/BlockItemUseTransactionTest.java   |  96 ++++++++++++++
  .../protocol/storage/BlockUseStorageTest.java | 120 ++++++++++++++++++
- 13 files changed, 618 insertions(+), 46 deletions(-)
+ .../storage/PlayerInputStorageTest.java       |  38 ++++++
+ 15 files changed, 729 insertions(+), 46 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ItemUsePrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerBlockUse.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/BlockUsePredictionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/BlockItemUseTransactionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/BlockUseStorageTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorageTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/BlockUsePrediction.java
 new file mode 100644
@@ -170,6 +185,54 @@ index 00000000..8183b1e0
 +            };
 +        }
 +
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/ItemUsePrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/ItemUsePrediction.java
+new file mode 100644
+index 00000000..e476713c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/ItemUsePrediction.java
+@@ -0,0 +1,42 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++/** Local stack consumption paired with the concluding ordinary Java item-use packet. */
++public record ItemUsePrediction(int sequence, boolean consumed) {
++
++    public static final String CHANNEL = "viabedrock:item_use_prediction";
++    public static final Type<ItemUsePrediction> TYPE = new Type<>(ItemUsePrediction.class) {
++        @Override
++        public ItemUsePrediction read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported item-use prediction");
++            }
++            return new ItemUsePrediction(Types.VAR_INT.readPrimitive(buffer), buffer.readBoolean());
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final ItemUsePrediction value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, value.sequence());
++            buffer.writeBoolean(value.consumed());
++        }
++    };
++
++    public ItemUsePrediction {
++        if (sequence < 0) {
++            throw new IllegalArgumentException("Negative item-use prediction sequence");
++        }
 +    }
 +
 +}
@@ -449,20 +512,21 @@ index 0acee785..223db3d9 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 29541609..8210c4cc 100644
+index 29541609..d3ecbb9c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -53,6 +53,9 @@ import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
+@@ -53,6 +53,10 @@ import net.raphimc.viabedrock.api.model.NativeActorPickingMessage;
  import net.raphimc.viabedrock.api.model.NativeActorAttack;
  import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
  import net.raphimc.viabedrock.api.model.PlayerInput;
 +import net.raphimc.viabedrock.api.model.PlayerBlockUse;
 +import net.raphimc.viabedrock.api.model.BlockUsePrediction;
++import net.raphimc.viabedrock.api.model.ItemUsePrediction;
 +import net.raphimc.viabedrock.protocol.storage.BlockUseStorage;
  import net.raphimc.viabedrock.api.model.PlayerPrediction;
  import net.raphimc.viabedrock.api.model.VehiclePrediction;
  import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
-@@ -250,6 +253,11 @@ public final class MultiStatePackets {
+@@ -250,6 +254,14 @@ public final class MultiStatePackets {
          if (channel.equals("minecraft:unregister")) {
              final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
              wrapper.user().get(ChannelStorage.class).removeChannels(channels);
@@ -471,13 +535,27 @@ index 29541609..8210c4cc 100644
 +                    || channels.contains(PlayerInputPermissions.CHANNEL)) {
 +                InteractionPackets.stopBlockUse(wrapper.user());
 +            }
++            if (channels.contains(ItemUsePrediction.CHANNEL) || channels.contains(PlayerInputPermissions.CHANNEL)) {
++                wrapper.user().get(PlayerInputStorage.class).clearItemUsePrediction();
++            }
              if (channels.contains(NativeSkinFragment.CHANNEL) || channels.contains(NativeSkinChange.Result.CHANNEL)) {
                  SkinChangeStorage.refreshCapability(wrapper.user());
              }
-@@ -300,6 +308,33 @@ public final class MultiStatePackets {
+@@ -300,6 +312,44 @@ public final class MultiStatePackets {
              }
              return;
          }
++        if (channel.equals(ItemUsePrediction.CHANNEL)) {
++            if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
++                    && wrapper.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
++                final ItemUsePrediction prediction = wrapper.read(ItemUsePrediction.TYPE);
++                if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
++                    throw new IllegalArgumentException("Unexpected item-use prediction fields");
++                }
++                wrapper.user().get(PlayerInputStorage.class).recordItemUsePrediction(prediction);
++            }
++            return;
++        }
 +        if (channel.equals(BlockUsePrediction.CHANNEL) || channel.equals(BlockUsePrediction.AIR_CHANNEL)) {
 +            if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
 +                    && wrapper.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
@@ -622,24 +700,52 @@ index 84f976c9..7472880e 100644
          if (containerId == this.inventoryContainer.containerId()) {
              return this.inventoryContainer;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
-index f8bf20f8..91374668 100644
+index f8bf20f8..4f2019a7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
-@@ -11,6 +11,8 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+@@ -11,6 +11,9 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
  import com.viaversion.viaversion.api.type.Types;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
  import net.raphimc.viabedrock.api.model.PlayerInput;
++import net.raphimc.viabedrock.api.model.ItemUsePrediction;
 +import net.raphimc.viabedrock.api.model.PlayerBlockUse;
 +import net.raphimc.viabedrock.api.model.BlockUsePrediction;
  import net.raphimc.viabedrock.api.model.PlayerPrediction;
  import net.raphimc.viabedrock.api.model.VehiclePrediction;
  import net.raphimc.viabedrock.api.model.VehiclePredictionContext;
-@@ -112,7 +114,7 @@ public final class PlayerInputStorage extends StoredObject {
+@@ -31,11 +34,26 @@ public final class PlayerInputStorage extends StoredObject {
+     private PlayerInput rawInput = PlayerInput.NONE;
+     private int pressed;
+     private int released;
++    private ItemUsePrediction itemUsePrediction;
+ 
+     public PlayerInputStorage(final UserConnection user) {
+         super(user);
+     }
+ 
++    public void recordItemUsePrediction(final ItemUsePrediction prediction) {
++        this.itemUsePrediction = prediction;
++    }
++
++    public ItemUsePrediction takeItemUsePrediction(final int sequence) {
++        final ItemUsePrediction prediction = this.itemUsePrediction;
++        this.itemUsePrediction = null;
++        return prediction != null && prediction.sequence() == sequence ? prediction : null;
++    }
++
++    public void clearItemUsePrediction() {
++        this.itemUsePrediction = null;
++    }
++
+     public PlayerInputPermissions permissions() {
+         return this.permissions;
+     }
+@@ -112,7 +130,7 @@ public final class PlayerInputStorage extends StoredObject {
          register.write(Types.STRING, "minecraft:register");
          final String vehicleChannel = this.user().get(ChannelStorage.class).hasChannel(VehiclePredictionContext.CHANNEL)
                  ? "\0" + VehiclePrediction.CHANNEL : "";
 -        register.write(Types.REMAINING_BYTES, (PlayerInput.CHANNEL + "\0" + PlayerPrediction.CHANNEL + vehicleChannel).getBytes(StandardCharsets.UTF_8));
-+        register.write(Types.REMAINING_BYTES, (PlayerInput.CHANNEL + "\0" + PlayerPrediction.CHANNEL + "\0" + PlayerBlockUse.CHANNEL + "\0" + BlockUsePrediction.CHANNEL + "\0" + BlockUsePrediction.AIR_CHANNEL + vehicleChannel).getBytes(StandardCharsets.UTF_8));
++        register.write(Types.REMAINING_BYTES, (PlayerInput.CHANNEL + "\0" + PlayerPrediction.CHANNEL + "\0" + PlayerBlockUse.CHANNEL + "\0" + BlockUsePrediction.CHANNEL + "\0" + BlockUsePrediction.AIR_CHANNEL + "\0" + ItemUsePrediction.CHANNEL + vehicleChannel).getBytes(StandardCharsets.UTF_8));
          register.send(BedrockProtocol.class);
          final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
          packet.write(Types.STRING, PlayerInputPermissions.CHANNEL);
@@ -944,6 +1050,50 @@ index 00000000..25cfe501
 +        assertTrue(use.begin(2, position, cursor).airAllowed());
 +        use.predict(new BlockUsePrediction(3, BlockUsePrediction.Result.PLACED, cursor, false));
 +        assertTrue(use.begin(4, position, cursor).airAllowed());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorageTest.java
+new file mode 100644
+index 00000000..04fc7a4a
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorageTest.java
+@@ -0,0 +1,38 @@
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.ItemUsePrediction;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.mock;
++
++final class PlayerInputStorageTest {
++
++    @Test
++    void itemPredictionIsConsumedOnceAndCannotLeakBetweenSequences() {
++        final PlayerInputStorage input = new PlayerInputStorage(mock(UserConnection.class));
++        final ByteBuf payload = Unpooled.buffer();
++        try {
++            ItemUsePrediction.TYPE.write(payload, new ItemUsePrediction(7, false));
++            input.recordItemUsePrediction(ItemUsePrediction.TYPE.read(payload));
++            assertFalse(input.takeItemUsePrediction(7).consumed());
++            assertNull(input.takeItemUsePrediction(7));
++        } finally {
++            payload.release();
++        }
++        input.recordItemUsePrediction(new ItemUsePrediction(8, true));
++        assertNull(input.takeItemUsePrediction(9));
++        assertNull(input.takeItemUsePrediction(8));
++        input.recordItemUsePrediction(new ItemUsePrediction(0, true));
++        assertTrue(input.takeItemUsePrediction(0).consumed());
++        input.recordItemUsePrediction(new ItemUsePrediction(1, true));
++        input.clearItemUsePrediction();
++        assertNull(input.takeItemUsePrediction(1));
 +    }
 +
 +}

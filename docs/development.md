@@ -7,6 +7,8 @@ Use this guide to build the four patch targets with pinned ViaFabricPlus and sta
 Install Bun, Git, JDK 17, and JDK 25. ViaBedrock, ViaProxy, and the Bedrock add-on require Java 25. CubeConverter still builds with JDK 17.
 
 Set `STACKANVIL_JAVA_17` and `STACKANVIL_JAVA_25` if the JDKs are not in the standard paths.
+Prepare the six [OreUI shaping libraries](../native/oreui-shaper/README.md) before building the add-on.
+The CI and release workflows build these libraries automatically.
 
 Install Xvfb, `xauth`, and `pactl` for focus free local tests. On Fedora, the packages include `xorg-x11-server-Xvfb`, `xorg-x11-xauth`, and `pulseaudio-utils`. Then run:
 
@@ -35,11 +37,21 @@ ViaProxy includes it through its core dependency. The Fabric add-on includes it 
 The stack build verifies its version, checksum, required templates, textures, and referenced font faces.
 Missing or incomplete assets stop the build. Each finished JAR must contain the exact verified bundle before publication.
 
+The add-on also embeds `assets/viafabricplus-bedrock/builtin_oreui.zip` for the OreUI screen port.
+It contains the gameplay stylesheet, OpenType and TrueType faces, animation images, and OreUI translations from the same game version.
+Its generated `oreui.json` records the stylesheet's font families, variants, and explicit `coh-font-sdf:off` declarations.
+Faces without that property retain `default` in the descriptor.
+The descriptor also lists the acquired GIF paths. Image access requires a registered path and returns a copy of its bytes.
+These resources remain separate from classic JSON UI font registrations and their display transform.
+The build verifies the bundle's checksum, referenced faces, and languages before and after packaging.
+See [compatibility status](bedrock-coverage.md) for rendering support.
+
 To regenerate the bundle from a matching installed game, run:
 
 ```bash
 bun scripts/bundle-bedrock-assets.ts /path/to/bedrock-game 1.26.60.5
 bun scripts/bundle-bedrock-ui.ts /path/to/bedrock-game 1.26.60.5 .stackanvil/builtin_ui.zip
+bun scripts/bundle-bedrock-oreui.ts /path/to/bedrock-game 1.26.60.5 .stackanvil/builtin_oreui.zip
 ```
 
 The game directory must contain `data/resource_packs/`.
@@ -51,6 +63,11 @@ The UI extractor requires a fresh output path and writes a checksum manifest bes
 After reviewing the output, replace both tracked files under `assets/bedrock/1.26.60.5/assets/viabedrock/`.
 Keep the native copyright notice in the ZIP. Commit both files with changes to the version pin.
 
+The OreUI extractor also reads `data/gui/dist/hbui/` and `data/resource_packs/oreui/`.
+It keeps the original font, stylesheet, animation, and language bytes and prefers loose language files over archive entries.
+Review its preview and copy the ZIP and checksum manifest to `assets/bedrock/1.26.60.5/assets/viafabricplus-bedrock/`.
+It uses the same requirement for fresh output paths as the JSON UI extractor.
+
 The normal stack build also derives an image-only bundle from the verified add-on archives.
 It writes `builtin_images.zip` under `.stackanvil/builtin-images/<version>/` and embeds it in the core.
 ViaProxy receives the same native images through that dependency.
@@ -61,6 +78,7 @@ Generated image bundles remain outside Git.
 
 The normal stack build passes the resource directory to Gradle.
 For a direct add-on Gradle build, pass `-PbedrockBuiltinAssets=/absolute/path/to/assets/bedrock/1.26.60.5`.
+Also pass `-PbedrockOreUiShaper=/absolute/path/to/combined-resources` for the [OreUI shaping libraries](../native/oreui-shaper/README.md).
 For a direct core Gradle build, pass `-PbedrockBuiltinUi=/absolute/path/to/assets/bedrock/1.26.60.5/assets/viabedrock/builtin_ui.zip`.
 To include the required image bundle in a direct core Gradle build, also pass `-PbedrockBuiltinImages=/absolute/path/to/builtin_images.zip`.
 When changing the target Bedrock version, regenerate the bundle and update the pin together.

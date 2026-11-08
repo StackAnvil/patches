@@ -16,6 +16,8 @@ Prerequisites:
 
 Regression coverage includes `EntityPropertyRenderTest`, `PlayerCrawlingPoseTest`, `EntityPropertyListTest`, `ActorFlagsMappingTest`.
 
+Physical dimensions use the [shared native scale calculation](0064-evaluate-named-actor-properties.pr.md#validation-and-remaining-limits), including its collapsed-box behavior.
+
 Remote player updates emit their resolved Java pose even without an earlier crawling transition. Name-only updates do not synthesize posture before native flags arrive. The local player retains prediction outside the existing crawling correction. Regressions cover sneak/stand, sparse flag words, other established posture mappings, and local ownership.
 
 A synthetic colored classic-skin peer uses Bedrock 1.26.60.5/BDS 1.26.60.6 on protocol 2225. Native crouches when its sneaking flag changes; the pre-fix direct Java client remains standing. Slim/wide/slim skin replacements isolate posture from texture changes. These controls do not establish movement simulation, complete body rotation, or the original local custom-skin report.

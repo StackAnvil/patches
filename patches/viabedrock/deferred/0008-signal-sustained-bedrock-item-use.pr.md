@@ -17,9 +17,15 @@ Consume effects and canonical inventory counts remain server-owned.
 Admitted food sets `StartUsingItem` even without an optional food tag.
 
 `COMPLETED_USING_ITEM` supplies a signed item ID and a use method.
-Matching held-item completions produce Java's `USE_ITEM_COMPLETE` event without changing canonical inventory counts.
-Replaced items and methods outside zero through sixteen cannot complete the current use.
-The patch body retains the versioned completion-handler evidence and current admission rationale.
+Core forwards matching held-item notifications as Java's `USE_ITEM_COMPLETE` event without changing canonical inventory counts.
+It rejects replaced items and methods outside zero through sixteen.
+The integrated Bedrock client completes its local cycle independently and ignores that translated notification.
+The [client lifecycle evidence](../../viafabricplus-bedrock/upstreamable/0025-send-completed-local-physics-to-viabedrock.pr.md) covers inventory refreshes, suppressed and late acknowledgments, release, and zero-duration food.
+The patch body retains the versioned handler evidence and admission rationale.
+
+Native 1.26.60.5 consumes food without packet 142 and continues local use attempts while server authority is delayed.
+Its packet handler resolves the item registry and emits an actor-use notification independently of the selected inventory slot.
+These declared controls establish acknowledgment independence. They do not establish the cause of the original live report or ordinary transport loss.
 
 ## Native evidence
 
@@ -46,7 +52,6 @@ Native controls establish the combined behavior for these fixtures; they do not 
 
 Seventeen focused tests cover installed component retention, constructor-specific admission, Java component wire properties, difficulty changes, food-use flags, offhand resynchronization, and completion boundaries.
 Admission tests retain the held quantity and verify refused-use payloads with `StartUsingItem` clear.
-The full four-project build passes 3,299 tests, with 325 skipped and no failures or errors.
 
 Installed direct and ViaProxy controls cover eleven cases each.
 Both routes match the selected native admission, hunger, timed consumption, and zero-duration outcomes.
@@ -70,7 +75,7 @@ Other initial use families and live entity transitions still need native compari
 Presence of `StartUsingItem` is verified; exact packet phase counts and complete cycle timing remain open.
 
 Competing non-food use handlers, other consumable animations and effects, ability exceptions, and all inventory authority modes need further comparison.
-Late completion for a new use of the same item also needs verification.
+The selected one-second late acknowledgment control passes on both integrated Java routes. The [client input evidence](../../viafabricplus-bedrock/upstreamable/0038-predict-held-trapdoor-placement.pr.md) also covers short release/repress controls and the correction for a release missed between game ticks. Broader consumable timing still needs comparison.
 The original intermittent animation-without-feeding report remains open.
 
 This patch remains deferred behind [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
@@ -80,3 +85,10 @@ The current timed-to-instant custom-food switch cancels the old definition inste
 Early switches consume none of the old food; late switches retain one completion.
 The long-hold control retains three completions and reaches full hunger.
 The client input sidecar records the remaining placement timing and dispatch gaps.
+
+Server inventory `Use` completion is separate from packet 142.
+Native 1.26.60.5 applies that callback to a new active cycle, but skips the local countdown's hunger feedback.
+Send a negotiated stop notification after authoritative inventory actions. Preserve the existing path for clients without the channel.
+The packet regression covers negotiation, Release versus Use, legacy rejection, counts, and notification ordering.
+Native attribute-omission controls retain five hunger and seven bread after one local completion and a server callback with 31 ticks remaining.
+The client movement sidecar records installed verification and remaining timing limits.

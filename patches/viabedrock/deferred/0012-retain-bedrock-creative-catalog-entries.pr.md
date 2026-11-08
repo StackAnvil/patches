@@ -99,7 +99,9 @@ Player snapshots include both real Help graphs and their translations.
 The current native callback selects How to Play topic 5 for Survival and Encyclopedia topic 47 for Creative.
 A physical 1.26.60.5 capture confirms the Survival Your First Craft topic.
 Translated Help paragraphs replace both plain text and rendered components, preserving the native color palette.
-Program round trips retain these components and navigation labels from authored topic and category variables. Full installed Help lifetimes and glyph appearance remain unverified.
+Program round trips retain these components and navigation labels from authored topic and category variables.
+Player inventory delegates export and resolution to the [shared Help contract](../upstreamable/0095-share-native-ui-programs-and-resources.pr.md).
+Complete glyph appearance and broader Help lifetimes remain unverified.
 Complete installed action and screen parity remain unfinished. The Survival bulk validation below covers selected recipe boundaries.
 
 The retained model exposes output quantity separately from availability and action admission.
@@ -153,6 +155,8 @@ Native 1.26.60.5 and BDS 1.26.60.6 controls establish capacity admission before 
 With one free inventory item-space, native drops an incompatible or full held stack after partial placement and takes the remainder.
 Request/state regressions cover descriptors, changed-slot references, grid sources, capacity, cursor preservation, and rejection rollback.
 A placeholder-recipe regression retains the following valid plan and leaves the source inventory unchanged.
+Output quantity counting also skips zero-slot and all-empty placeholders, preserving later valid candidates instead of interrupting recipe-cell construction.
+The quantity regression fails with the previous unguarded counter call.
 Ordinary named ingredients retain resolved recipe metadata. Tag and Molang ingredients use the selected source descriptor.
 A real registry regression covers named wildcard logs and sticks alongside concrete tag-selected planks.
 Installed direct and ViaProxy controls each complete 11 server-accepted requests with matching normalized structures across routes.
@@ -179,3 +183,11 @@ The native bundle action session resolves current server-owned roots and physica
 Desktop state 1 uses separate bundle predicates from touch state 45. Original controls cover 288 transition cases and 24 insertion-handler cases for input modes 1/3, tooltip modes 0/2, and absent retained primary sources. They establish activation entry and cursor/clicked source ownership with supplied model and admission services. The session exposes default extraction separately and tests its Take request, partial cursor merge, authoritative response, and full-cursor no-op. These instruction controls do not establish complete controller composition or rendering parity.
 
 The optional bundle-input channel accepts a displayed collection/index and input kind against the current opening, generation, revision, and shared recipe-command sequence. All item data and physical container references come from retained server state. Source, nested-content, and owner changes refresh the publication even when recipe previews stay unchanged. Boundary regressions cover stale inputs, late dynamic-container arrival, shared replay protection, and sparse workbench request slots with rejection rollback. Twenty-four additional original state-1 controls establish empty-cursor secondary extraction in tooltip mode 2; supplied admission and model services remain explicit limits. Installed direct/proxy controls verify selected desktop gestures; see the [inventory reference](../../../docs/native-player-inventory.md) for scope. The optional bundle-result reply preserves the original v1 player-result format for older clients. It distinguishes an attempted insertion failure from stale or unavailable input, so only the former requests failure audio. Successful insertion and default extraction request their native events; failed extraction stays silent. Protocol 2225 metadata supplies explicit binary values 446 (`bundle.insert`), 447 (`bundle.remove_one`), and 533 (`bundle.insert_fail`). Original Bedrock 1.26.60.5 handler, sound-helper, and position-helper controls establish level dispatch at the actor AABB center. Packet regressions cover negotiation and unavailable, failed, and successful outcomes. Installed direct and ViaProxy controls each observe seven matching native level events and decoded PCM channel starts, including a full-bundle insertion failure. Their fourteen submitted item requests receive successful server responses; the local capacity rejection submits no item request. Audible comparison, live server rejection rollback, and complete controller composition remain unverified.
+
+Selected extraction uses a separately negotiated version-2 channel. The original version-1 input remains unchanged.
+Core resolves the displayed cell through the published bundle layout and retains physical slot identities through the existing request owner.
+Regressions cover sparse slots, padding, the hidden-items label, full-grid cells beyond index 63, stale contents, and rejection recovery.
+Cooking bundle commands retain the complete six-field source and share search, recipe, and hold request ordering.
+Station aliases resolve physical slots without admitting crafting collections. Dynamic bundle contents retire old publications.
+Regressions cover all source fields, rejection restoration, replacement openings, request replay, and replies that retain current authority.
+Installed selected-cell extraction and native multiplayer grouping remain unverified.

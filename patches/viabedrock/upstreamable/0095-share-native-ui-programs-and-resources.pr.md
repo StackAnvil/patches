@@ -14,6 +14,13 @@ Prerequisites:
 
 ## Validation and remaining limits
 
+Official Bedrock 1.26.60.5 desktop controls open Encyclopedia topic 31, Furnace, from all three cooking families.
+Furnace and blast-furnace controls retain carried items after returning from Help.
+Language data distinguishes encyclopedia topic labels from Survival guide title keys.
+Regressions retain the selected topic, localized heading, body text, and cooking payload bound across program transport.
+Player inventory uses the same Help resolver with its existing guide choice.
+Native multiplayer Help traffic and complete visual parity remain unverified.
+
 Storage programs export and resolve the complete host graph, including backdrop, close controls, and animation tracks.
 Synthetic screen fixtures declare their content controls explicitly.
 The bundled-family regression retains authoritative slots and the host hurt policy across program transport.
@@ -141,3 +148,25 @@ The local diagnostic control disables authored-form capability without changing 
 The original reported dialog remains unmatched.
 
 Collection-details bindings now populate each control event bag without requiring binding_name. Named lookups, zero fallback, prefixes and unnamed scope maps match fifteen original Bedrock 1.26.60.5 execution controls; eight parser controls establish the binding type. Local regressions cover evaluated property replacement, control-local bags and export/import. Full controller input and installed parity remain separate gates.
+
+Optional cooking query contracts retain raw text and bind edits to the displayed opening, snapshot, and request sequence.
+Codec regressions retain Unicode and embedded NUL text and reject malformed source lengths, trailing fields, and invalid result flags.
+The backend owns filtering and execution. Complete default cooking screen admission remains unfinished.
+
+Optional held-quantity messages retain the starting frame, source slot, phase, and ordered request identity.
+Results report local phase admission; inventory responses retain final authority.
+Codec regressions cover round trips, source identity, bounds, and trailing data.
+
+Native 1.26.60.5 property-value controls preserve hash-prefixed names in property data and expand dollar variables without converting the result into a binding lookup.
+Regressions cover direct and variable-supplied property bags, explicit binding updates, and exported cooking editors for all three station families.
+Cooking clear-button visibility follows raw search text, including whitespace.
+These controls do not establish complete loader or cooking-screen parity.
+
+Current 1.26.60.5 original-instruction controls cover both layout callbacks across 384 supplied controller states, including forced layouts and inline or heap hover text.
+Leaving Inventory with retention enabled saves Inventory tab 5 independently of the selected recipe category.
+The downstream settings refresh is an observed boundary. These controls do not establish physical input or full cooking-screen parity.
+
+Desktop held-quantity progress retains the original source total and the selected item count.
+Forty original Bedrock 1.26.60.5 getter controls establish these values and visibility under supplied item and input services.
+An exported cooking-program regression resolves active progress and clears it after selection ends.
+Touch visibility policy and complete native pixels remain unverified.

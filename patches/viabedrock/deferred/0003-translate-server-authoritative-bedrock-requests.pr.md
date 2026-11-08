@@ -61,3 +61,19 @@ Transfers reject missing network IDs before changing predicted items or selectio
 The new sparse request sequences still need installed server controls and a matching native capture.
 
 The [owning patch](0003-translate-server-authoritative-bedrock-requests.patch) retains implementation rationale and versioned evidence.
+
+Held quantity selection uses ordinary Place and explicit-count Take requests with the existing prediction and response owner.
+Transfers validate source permissions, cursor contents, capacity, and network stack IDs before prediction.
+Packet/state regressions cover renewed IDs and rejected partial pickup without item loss.
+
+Negotiated ordinary-stack drags retain destinations and an original budget independently of the live cursor.
+Each visit uses the existing transfer prediction and response owner. Later transfers use renewed stack IDs.
+A close retains earlier inputs until their replies settle and rejects subsequent input or a new player opening.
+Rejection closes with reconciled items. An old close cannot affect a replacement menu, including one with the same Java ID.
+Regressions cover queued pickup, delayed and reordered responses, rejection, capacity, bundle compatibility, and opening replacement.
+A 36-destination regression covers chest slots and player slots appended to a furnace.
+Queued revisits preserve first-visit order. Release and a new press keep consecutive gestures separate.
+Installed direct and ViaProxy controls retain three-slot and full-inventory distributions through Escape while held and delayed replies.
+The full-inventory control reconciles every destination before closing and conserves all 64 items after reopening.
+Native multiplayer grouping and delayed or rejected native behavior remain unverified.
+See the [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) for the versioned visible control and host limits.

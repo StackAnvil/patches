@@ -12,6 +12,11 @@ Resolve native ingredient descriptors and connection-owned item definitions befo
 
 Regression coverage includes `NativeFurnaceOptionsTest`, `CookingRecipeAvailabilityTest`, `CookingRecipeInputsTest`, `CookingRecipeSourcesTest`, `CraftingCursorTest`, and `InventoryTransferBatchTest`.
 
+Registered zero-slot and all-empty recipe templates are excluded before availability reads source collections.
+They preserve selected-output fallback and later valid candidates without accessing retired inventory sources.
+The regression fails before the guard. Existing 1.26.51.1 executable availability fixtures retain their valid-recipe results.
+This defensive Java admission does not establish new 1.26.60 live availability or screen parity.
+
 Official Bedrock 1.26.60.5/BDS 1.26.60.6 captures establish manual output pickup and Shift-click behavior for planks, cake, and honey blocks.
 Manual requests keep CraftResults times one, select primary output before returned containers, and use Take for cursor output.
 Right-click crafts once. Shift-click fills inventory through linked stack-sized requests in one packet.
@@ -35,3 +40,15 @@ Ghidra connects these fields to their named NBT keys, controller reads, and pack
 Four original-instruction controls reproduce the writes and retain surrounding bytes.
 Java filter edits preserve the native tabs and automatic layouts.
 Later packets retain their explicit raw values.
+
+Cooking search retains raw text per station family and filters only the Search tab through native item names.
+Optional query messages share recipe request ordering and reject stale openings, snapshots, and withdrawn capabilities without transfers.
+Core regressions cover filtered publication, repeated edits, category lists, clearing, reopening, family independence, and old recipe authority.
+Official Bedrock 1.26.60.5 integrated-world desktop controls establish the observed search and retention behavior.
+Other input modes, cross-connection query lifetime, and complete installed cooking screens remain unverified.
+
+Held quantity selection retains its source across the initial pickup, cursor return, and partial pickup.
+Core waits for pending inventory responses and uses the confirmed stack IDs for each transfer.
+Regressions cover delayed initial and return replies, rejection, capacity, reopening, and explicit retirement.
+The full core build passes 2,173 tests with 177 skipped tests.
+Client hold timing, previews, and installed direct/proxy controls remain unfinished.

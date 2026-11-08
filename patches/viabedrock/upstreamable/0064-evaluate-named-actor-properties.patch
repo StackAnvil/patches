@@ -1,4 +1,4 @@
-From 65270a670c7eb36fbbe343fe3ce5b8a3c265fda6 Mon Sep 17 00:00:00 2001
+From fb6df91983f54f5050998acec0f56ffb90515d5c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -357,6 +357,12 @@ changes, including pure white at index zero. The matching color-mask
 shader uses texture alpha to select tint strength, unlike ordinary
 cutout shading. Transport supplies raw inputs, not frontend dye colors;
 shader and visible rendering acceptance remain separate work.
+
+Original 1.26.60.5 float metadata construction and admission retain
+finite negative Scale (38). The complete native size updater clamps the
+scaled product before its upper-bound check, including negative overflow.
+Keep these physical dimensions available to collision, camera and
+portrait consumers. Preserve unavailable base-dimension handling.
 ---
  .../api/model/NativeActorBoundsMessage.java   |  75 ++++
  .../api/model/NativeActorIntegerQueries.java  |  36 ++
@@ -372,7 +378,7 @@ shader and visible rendering acceptance remain separate work.
  .../protocol/packet/WorldPackets.java         |   1 +
  .../protocol/storage/EntityTracker.java       |  25 ++
  .../model/NativeActorBoundsMessageTest.java   |  82 ++++
- .../api/model/NativeActorEntityTest.java      | 118 ++++++
+ .../api/model/NativeActorEntityTest.java      | 141 +++++++
  .../model/NativeActorIntegerQueriesTest.java  |  30 ++
  .../api/model/NativeActorMessageTest.java     | 371 ++++++++++++++++++
  .../api/model/NativeActorStatesTest.java      | 162 ++++++++
@@ -383,7 +389,7 @@ shader and visible rendering acceptance remain separate work.
  .../CustomEntityModelSelectionTest.java       |  15 +-
  .../api/model/entity/EntityColorsTest.java    |  36 ++
  .../api/model/entity/EntityScaleTest.java     | 178 +++++++++
- 25 files changed, 2560 insertions(+), 15 deletions(-)
+ 25 files changed, 2583 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorIntegerQueries.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
@@ -405,7 +411,7 @@ shader and visible rendering acceptance remain separate work.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
 new file mode 100644
-index 00000000..17de51b8
+index 00000000..1b12ea63
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorBoundsMessage.java
 @@ -0,0 +1,75 @@
@@ -473,14 +479,14 @@ index 00000000..17de51b8
 +
 +    /** Retain raw metadata in transport; only physical bounds apply scale and the native collapsed-box clamp. */
 +    public static float scaledDimension(final Float base, final float scale) {
-+        if (base == null || !Float.isFinite(base) || base < 0 || !Float.isFinite(scale) || scale < 0) {
++        if (base == null || !Float.isFinite(base) || base < 0 || !Float.isFinite(scale)) {
 +            throw new IllegalArgumentException("Native actor dimension is unavailable");
 +        }
-+        final float value = base * scale;
++        final float value = Math.max(.005F, base * scale);
 +        if (!Float.isFinite(value) || value >= 1E9F) {
 +            throw new IllegalArgumentException("Invalid native actor dimension");
 +        }
-+        return Math.max(.005F, value);
++        return value;
 +    }
 +
 +}
@@ -1885,10 +1891,10 @@ index 00000000..46619f01
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java
 new file mode 100644
-index 00000000..4029172e
+index 00000000..f9aa3812
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,141 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1905,6 +1911,7 @@ index 00000000..4029172e
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.Map;
++import java.util.Optional;
 +import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -1967,6 +1974,28 @@ index 00000000..4029172e
 +        actor.entityData().put(ActorDataIds.RESERVED_053, new EntityData(53, EntityDataTypesBedrock.INT, 1));
 +        assertNull(actor.nativeActorBounds().width());
 +        assertNotEquals(before.lifetime(), new Entity(null, 1, 2, "minecraft:npc", 3, actor.javaUuid(), EntityTypes26_3.INTERACTION).nativeActorBounds().lifetime());
++    }
++
++    @Test
++    void negativeScaleCollapsesBoundsWithoutDiscardingMetadata() {
++        final Entity actor = new Entity(null, 1, 2, "minecraft:boat", 3, UUID.randomUUID(), EntityTypes26_3.OAK_BOAT);
++        actor.entityData().put(ActorDataIds.RESERVED_053, new EntityData(53, EntityDataTypesBedrock.FLOAT, 1.4F));
++        actor.entityData().put(ActorDataIds.RESERVED_054, new EntityData(54, EntityDataTypesBedrock.FLOAT, .455F));
++        for (float scale : new float[]{-.5F, -2F, -Float.MAX_VALUE, -0F}) {
++            actor.entityData().put(ActorDataIds.RESERVED_038, new EntityData(38, EntityDataTypesBedrock.FLOAT, scale));
++            final var snapshot = actor.nativeActorSnapshot();
++            final var bounds = actor.nativeActorBounds();
++            assertEquals(scale, snapshot.scale());
++            assertEquals(1.4F, bounds.width());
++            assertEquals(.455F, bounds.height());
++            assertEquals(Optional.of(.005F), actor.boundingBoxDimensions().width());
++            assertEquals(Optional.of(.005F), actor.boundingBoxDimensions().height());
++            assertEquals(.005F, NativeActorBoundsMessage.scaledDimension(bounds.width(), snapshot.scale()));
++            assertEquals(.005F, NativeActorBoundsMessage.scaledDimension(bounds.height(), snapshot.scale()));
++        }
++        actor.entityData().put(ActorDataIds.RESERVED_038, new EntityData(38, EntityDataTypesBedrock.FLOAT, 2F));
++        assertEquals(Optional.of(2.8F), actor.boundingBoxDimensions().width());
++        assertEquals(Optional.of(.91F), actor.boundingBoxDimensions().height());
 +    }
 +
 +    @Test

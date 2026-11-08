@@ -1,0 +1,327 @@
+From 4f61f7500b4e85ef004846aa91bf72578b1c5155 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 12:09:43 +0100
+Subject: [PATCH] feat(ui): retain native death text source
+
+Retain the translated DeathInfo source before conversion to Java text
+components. The acquired gameplay formatter needs original code spelling
+and boundaries: it preserves internal boundary spaces, ignores bold and
+italic codes, masks UTF-16 units for obfuscation and assigns opaque
+palette-colored shadows. Java style projection cannot retain this input.
+
+Send a bounded, versioned raw-text payload before the matching ordinary
+Java death message when the client registers both the new channel and
+native actor state. Bind it to the local actor lifetime and include the
+plain Java projection for association. Existing clients and oversized
+sources keep the ordinary Java path. The visibility rule hides both
+native fields while retaining the cached source for a later rule change.
+
+The original 1.26.60.5 gameplay component selects FormattingCodes for the
+death-info node. Executions of its unchanged formatter establish the
+listed transformations, including literal uppercase/unknown codes.
+Script SHA-256:
+9e7efe423b6cc8a1c1fa92756bd181675cffa51a4728bce386b0081cad1bb979.
+This is a negotiated translation bridge, not a new Bedrock wire packet.
+
+Packet regressions retain exact codes and whitespace, decode the payload
+and Java projection in order, cover visibility restoration and channel
+removal, and preserve the Java projection without actor negotiation or
+for an oversized source. Complete native client policy, layout, input
+and visual parity remain separate work.
+---
+ .../viabedrock/api/model/NativeDeathText.java | 57 +++++++++++++
+ .../viabedrock/api/util/PacketFactory.java    | 13 +++
+ .../protocol/packet/HudPackets.java           |  4 +-
+ .../protocol/storage/GameSessionStorage.java  |  9 +++
+ .../packet/DeathMessagePacketsTest.java       | 81 ++++++++++++++++++-
+ 5 files changed, 161 insertions(+), 3 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeDeathText.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeDeathText.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeDeathText.java
+new file mode 100644
+index 00000000..70a5b0fc
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeDeathText.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.StringType;
++import io.netty.buffer.ByteBuf;
++import java.util.Objects;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++/** Translated native source before Java formatting conversion, paired with its ordinary projection. */
++public record NativeDeathText(UUID lifetime, String source, String projected) {
++
++    public static final String CHANNEL = "viabedrock:native_death_text_v1";
++    public static final int MAX_TEXT_LENGTH = 32768;
++    private static final StringType TEXT = new StringType(MAX_TEXT_LENGTH);
++    public static final Type<NativeDeathText> TYPE = new Type<>(NativeDeathText.class) {
++        @Override
++        public NativeDeathText read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > MAX_TEXT_LENGTH * 8 + 32 || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native death text");
++            }
++            final var text = new NativeDeathText(Types.UUID.read(buffer), TEXT.read(buffer), TEXT.read(buffer));
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing native death text data");
++            }
++            return text;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeDeathText text) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.UUID.write(buffer, text.lifetime);
++            TEXT.write(buffer, text.source);
++            TEXT.write(buffer, text.projected);
++        }
++    };
++
++    public NativeDeathText {
++        Objects.requireNonNull(lifetime);
++        if (!canEncode(source, projected)) {
++            throw new IllegalArgumentException("Native death text exceeds limits");
++        }
++    }
++
++    public static boolean canEncode(final String source, final String projected) {
++        return source != null && projected != null && source.length() <= MAX_TEXT_LENGTH && projected.length() <= MAX_TEXT_LENGTH;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
+index f9fec82b..bdea523c 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
++++ b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
+@@ -28,6 +28,8 @@ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+ import com.viaversion.viaversion.libs.gson.JsonNull;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.NativeDeathText;
+ import net.raphimc.viabedrock.api.model.container.Container;
+ import net.raphimc.viabedrock.api.model.entity.Entity;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -41,6 +43,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.CustomChatCompl
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.GameRulesStorage;
+ import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+@@ -54,6 +57,16 @@ public final class PacketFactory {
+             return;
+         }
+         final boolean showReason = Boolean.TRUE.equals(user.get(GameRulesStorage.class).getGameRule("showDeathMessages"));
++        final var channels = user.get(ChannelStorage.class);
++        final String source = user.get(GameSessionStorage.class).getDeathMessageSource();
++        final String projected = showReason ? message.asUnformattedString() : "";
++        if (channels != null && channels.hasChannel(NativeDeathText.CHANNEL) && NativeActorMessage.hasStateChannel(channels::hasChannel)
++                && NativeDeathText.canEncode(source, projected)) {
++            final PacketWrapper nativeText = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++            nativeText.write(Types.STRING, NativeDeathText.CHANNEL);
++            nativeText.write(NativeDeathText.TYPE, new NativeDeathText(player.nativeActorSnapshot().lifetime(), showReason ? source : "", projected));
++            nativeText.send(BedrockProtocol.class);
++        }
+         final PacketWrapper death = PacketWrapper.create(ClientboundPackets26_3.PLAYER_COMBAT_KILL, user);
+         death.write(Types.VAR_INT, player.javaId()); // entity id
+         death.write(Types.TAG, showReason ? TextUtil.textComponentToNbt(message) : TextUtil.stringToNbt("")); // message
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index 4cb81aa6..5339fe66 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -501,7 +501,9 @@ public final class HudPackets {
+             final String[] parameters = wrapper.read(BedrockTypes.STRING_ARRAY); // parameters
+ 
+             final Function<String, String> translator = wrapper.user().get(ResourcePackStorage.class).getTexts().lookup();
+-            gameSession.setDeathMessage(TextUtil.stringToTextComponent(BedrockTranslator.translate(message, translator, parameters)));
++            final String translated = BedrockTranslator.translate(message, translator, parameters);
++            gameSession.setDeathMessageSource(translated);
++            gameSession.setDeathMessage(TextUtil.stringToTextComponent(translated));
+             PacketFactory.sendJavaDeathMessage(wrapper.user());
+         });
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
+index 814adc90..4fdf1508 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
+@@ -61,6 +61,7 @@ public class GameSessionStorage extends StoredObject {
+ 
+     private boolean immutableWorld;
+     private TextComponent deathMessage;
++    private String deathMessageSource;
+ 
+     public GameSessionStorage(final UserConnection user) {
+         super(user);
+@@ -237,6 +238,14 @@ public class GameSessionStorage extends StoredObject {
+         this.immutableWorld = immutableWorld;
+     }
+ 
++    public String getDeathMessageSource() {
++        return this.deathMessageSource;
++    }
++
++    public void setDeathMessageSource(final String deathMessageSource) {
++        this.deathMessageSource = deathMessageSource;
++    }
++
+     public TextComponent getDeathMessage() {
+         return this.deathMessage;
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java
+index 20c41ece..b678584f 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java
+@@ -20,9 +20,12 @@ import java.lang.reflect.Field;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Map;
++import java.util.UUID;
+ import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.function.Consumer;
+ import java.util.function.Function;
++import net.raphimc.viabedrock.api.model.NativeActorMessage;
++import net.raphimc.viabedrock.api.model.NativeDeathText;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+ import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -79,6 +82,42 @@ final class DeathMessagePacketsTest {
+         }
+     }
+ 
++    @Test
++    void retainsRawFormattingBeforeTheMatchingJavaProjectionAndVisibilityChanges() throws Exception {
++        try (var fixture = new Fixture()) {
++            fixture.nativeChannel(true);
++            final String source = "§c  Native §lreason§r  ";
++            fixture.info(source);
++            assertTrue(fixture.nativeTexts.isEmpty());
++            fixture.death();
++            assertEquals(new NativeDeathText(fixture.lifetime, source, "  Native reason  "), fixture.nativeTexts.getFirst());
++            fixture.showReason(false);
++            assertEquals(new NativeDeathText(fixture.lifetime, "", ""), fixture.nativeTexts.getLast());
++            assertEquals(source, fixture.session.getDeathMessageSource());
++            fixture.showReason(true);
++            assertEquals(new NativeDeathText(fixture.lifetime, source, "  Native reason  "), fixture.nativeTexts.getLast());
++            assertEquals(List.of("native", "java", "native", "java", "native", "java"), fixture.emitted);
++            assertEquals(List.of("  Native reason  ", "", "  Native reason  "), fixture.messages);
++            fixture.channels.removeChannels(List.of(NativeDeathText.CHANNEL));
++            fixture.showReason(false);
++            assertEquals(3, fixture.nativeTexts.size());
++            assertEquals("", fixture.messages.getLast());
++        }
++    }
++
++    @Test
++    void retainsJavaDeathMessagesWithoutNativeActorNegotiationOrForOversizedSource() throws Exception {
++        for (final boolean oversized : List.of(false, true)) {
++            try (var fixture = new Fixture()) {
++                fixture.nativeChannel(oversized);
++                fixture.info(oversized ? "§l".repeat(20000) + "a" : "a");
++                fixture.death();
++                assertEquals(List.of("a"), fixture.messages);
++                assertTrue(fixture.nativeTexts.isEmpty());
++            }
++        }
++    }
++
+     private static GameRulesStorage rules(final UserConnection user) throws Exception {
+         final Field defaults = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("bedrockGameRules");
+         defaults.setAccessible(true);
+@@ -97,6 +136,10 @@ final class DeathMessagePacketsTest {
+         private final GameSessionStorage session = mock(GameSessionStorage.class, CALLS_REAL_METHODS);
+         private final AtomicBoolean dead = new AtomicBoolean();
+         private GameRulesStorage rules;
++        private final ChannelStorage channels = new ChannelStorage();
++        private final UUID lifetime = UUID.fromString("42424242-1111-2222-3333-121212121212");
++        private final List<NativeDeathText> nativeTexts = new ArrayList<>();
++        private final List<String> emitted = new ArrayList<>();
+         private final List<String> messages = new ArrayList<>();
+         private final MockedStatic<PacketWrapper> packets = mockStatic(PacketWrapper.class);
+         private final TestProtocol protocol = new TestProtocol();
+@@ -111,7 +154,7 @@ final class DeathMessagePacketsTest {
+             final var texts = mock(TextDefinitions.class);
+             final Map<Class<?>, Object> storage = Map.of(EntityTracker.class, entities,
+                     GameSessionStorage.class, this.session, GameRulesStorage.class, this.rules,
+-                    ResourcePackStorage.class, resources, ChannelStorage.class, new ChannelStorage());
++                    ResourcePackStorage.class, resources, ChannelStorage.class, this.channels);
+             when(this.user.get(any())).thenAnswer(call -> storage.get(call.getArgument(0)));
+             when(entities.getClientPlayer()).thenReturn(this.player);
+             when(entities.getEntityByRid(42L)).thenReturn(this.player);
+@@ -124,6 +167,25 @@ final class DeathMessagePacketsTest {
+                     .when(this.player).setHealth(anyFloat());
+             when(resources.getTexts()).thenReturn(texts);
+             when(texts.lookup()).thenReturn(Function.identity());
++            this.packets.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user))
++                    .thenAnswer(call -> {
++                        final var output = spy(new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, null, this.user));
++                        doAnswer(send -> {
++                            final var buffer = Unpooled.buffer();
++                            try {
++                                output.writeToBuffer(buffer);
++                                assertEquals(ClientboundPackets26_3.CUSTOM_PAYLOAD.getId(), Types.VAR_INT.readPrimitive(buffer));
++                                assertEquals(NativeDeathText.CHANNEL, Types.STRING.read(buffer));
++                                this.nativeTexts.add(NativeDeathText.TYPE.read(buffer));
++                                assertFalse(buffer.isReadable());
++                                this.emitted.add("native");
++                            } finally {
++                                buffer.release();
++                            }
++                            return null;
++                        }).when(output).send(BedrockProtocol.class);
++                        return output;
++                    });
+             this.packets.when(() -> PacketWrapper.create(ClientboundPackets26_3.PLAYER_COMBAT_KILL, this.user))
+                     .thenAnswer(call -> {
+                         final var output = spy(new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_COMBAT_KILL, null, this.user));
+@@ -134,6 +196,7 @@ final class DeathMessagePacketsTest {
+                                 assertEquals(ClientboundPackets26_3.PLAYER_COMBAT_KILL.getId(), Types.VAR_INT.readPrimitive(buffer));
+                                 assertEquals(7, Types.VAR_INT.readPrimitive(buffer));
+                                 final Tag reason = Types.TAG.read(buffer);
++                                this.emitted.add("java");
+                                 this.messages.add(ProtocolConstants.JAVA_TEXT_COMPONENT_SERIALIZER
+                                         .deserializeNbtTree(reason).asUnformattedString());
+                                 assertFalse(buffer.isReadable());
+@@ -146,13 +209,27 @@ final class DeathMessagePacketsTest {
+                     });
+         }
+ 
++        private void nativeChannel(final boolean actorState) {
++            this.channels.addChannels(List.of(NativeDeathText.CHANNEL));
++            if (actorState) {
++                this.channels.addChannels(List.of(NativeActorMessage.CHANNEL));
++                final var snapshot = mock(NativeActorMessage.Snapshot.class);
++                when(snapshot.lifetime()).thenReturn(this.lifetime);
++                when(this.player.nativeActorSnapshot()).thenReturn(snapshot);
++            }
++        }
++
+         private void showReason(final boolean show) {
+             this.rules.updateGameRules(new GameRule[]{new GameRule("showDeathMessages", false, show)});
+         }
+ 
+         private void info() throws Exception {
++            this.info("Controlled death reason");
++        }
++
++        private void info(final String source) throws Exception {
+             this.receive(ClientboundBedrockPackets.DEATH_INFO, buffer -> {
+-                BedrockTypes.STRING.write(buffer, "Controlled death reason");
++                BedrockTypes.STRING.write(buffer, source);
+                 BedrockTypes.STRING_ARRAY.write(buffer, new String[0]);
+             });
+         }
+-- 
+2.56.0

@@ -1,4 +1,4 @@
-From 31a60bc7458a65a9996fa179f44258fc6fcbf723 Mon Sep 17 00:00:00 2001
+From bc4fb87ba7418d395f50fbfc0d6349f0e553d049 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate Bedrock loom inventories in core
@@ -15,19 +15,42 @@ CraftResults actions, consumption of the banner and dye, and placement of
 CreatedOutput slot 50 into the cursor. Native hh and cre crafts succeed.
 Close returns inputs and the cursor before sending ContainerClose using
 the shared acknowledged input-container lifecycle.
+
+Project shield Base and Patterns through the same item-data path as banners.
+Map Bedrock dye IDs to Java base_color and ordered banner_patterns without
+changing the retained native stack. Leave plain shields without a dyed base.
+
+An owned 1.26.60.6 BDS fixture supplies Base int 1 and a white bottom stripe
+to official Bedrock 1.26.60.5/protocol 2225. Native shows the red patterned
+front and restores the plain appearance when the tags are removed. Both
+Java routes previously received those tags with no base_color and empty
+banner_patterns. Three regressions exercise the actual item-data handler,
+registry order, native-tag preservation, ordinary banners, plain shields,
+unrelated items and invalid base colors. Native atlas/material rendering
+remains a separate add-on responsibility.
+
+Current 1.26.60.5 native functions 141aefa60, 146e9bcc0 and 146e9c960
+establish the shield-specific decoding rules: inspect the first six NBT
+pattern entries, resolve unknown patterns as base, treat Base -1 as white,
+use black when Base is absent, and map out-of-range byte color IDs to
+purple. Preserve those rules in the shield projection while retaining the
+existing banner API. Native registry and read-only draw observations
+supply the pattern names and colors independently of Java components.
 ---
  .../model/container/block/LoomContainer.java  | 219 ++++++++++++++++++
  .../model/container/block/LoomPatterns.java   |  89 +++++++
  .../generated/bedrock/CustomBlockTags.java    |   2 +
  .../protocol/packet/InventoryPackets.java     |   1 +
- .../protocol/rewriter/ItemDataRewriter.java   |  27 +++
+ .../protocol/rewriter/ItemDataRewriter.java   |  42 ++++
  .../viabedrock/data/custom/block_tags.json    |   3 +
  .../assets/viabedrock/data/java/tags.nbt      | Bin 20287 -> 19725 bytes
  .../container/block/LoomPatternsTest.java     | 177 ++++++++++++++
- 8 files changed, 518 insertions(+)
+ .../protocol/rewriter/ShieldItemDataTest.java | 146 ++++++++++++
+ 9 files changed, 679 insertions(+)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomPatterns.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/LoomPatternsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ShieldItemDataTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomContainer.java
 new file mode 100644
@@ -380,7 +403,7 @@ index 207470d4..05c17d96 100644
                          container =
                                          new StonecutterContainer(
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-index 1baab221..cf4d3aa8 100644
+index 19799a9c..23d8e3d3 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 @@ -26,6 +26,9 @@ import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
@@ -393,20 +416,28 @@ index 1baab221..cf4d3aa8 100644
  import com.viaversion.viaversion.api.minecraft.item.data.DyedColor;
  import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
  import com.viaversion.viaversion.api.minecraft.item.data.EnumTypes;
-@@ -237,6 +240,24 @@ public final class ItemDataRewriter {
+@@ -238,6 +241,32 @@ public final class ItemDataRewriter {
          };
      }
  
 +    public static BannerPatternLayer[] bannerPatterns(final CompoundTag tag, final CompoundTag registry,
 +                                                     final Map<String, String> mappings) {
++        return bannerPatterns(tag, registry, mappings, false);
++    }
++
++    private static BannerPatternLayer[] bannerPatterns(final CompoundTag tag, final CompoundTag registry,
++                                                       final Map<String, String> mappings, final boolean shield) {
 +        final ListTag<CompoundTag> patterns = tag.getListTag("Patterns", CompoundTag.class);
 +        if (patterns == null) {
 +            return new BannerPatternLayer[0];
 +        }
 +        final List<BannerPatternLayer> result = new ArrayList<>();
-+        for (final CompoundTag layer : patterns) {
-+            final String name = mappings.get(layer.getString("Pattern", ""));
-+            final DyeColor color = DyeColor.getByBedrockId(layer.getInt("Color", DyeColor.BLACK.bedrockId()));
++        for (int index = 0; index < (shield ? Math.min(6, patterns.size()) : patterns.size()); index++) {
++            final CompoundTag layer = patterns.get(index);
++            final String code = layer.getString("Pattern", "");
++            final String name = shield ? mappings.getOrDefault(code, "minecraft:base") : mappings.get(code);
++            final int value = layer.getInt("Color", DyeColor.BLACK.bedrockId());
++            final DyeColor color = shield ? DyeColor.getByBedrockId(value & 255, DyeColor.PURPLE) : DyeColor.getByBedrockId(value);
 +            final int id = name == null ? -1 : registryIndex(registry, name);
 +            if (id >= 0 && color != null) {
 +                result.add(new BannerPatternLayer(Holder.of(id), color.javaId()));
@@ -418,14 +449,21 @@ index 1baab221..cf4d3aa8 100644
      // BedrockTag can be null
      public static void handleItem(final UserConnection user, final String identifier, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
  
-@@ -266,6 +287,12 @@ public final class ItemDataRewriter {
+@@ -267,6 +296,19 @@ public final class ItemDataRewriter {
                  }
              }
  
-+            if (identifier.equals("minecraft:banner")) {
++            if (identifier.equals("minecraft:banner") || identifier.equals("minecraft:shield")) {
 +                javaItem.dataContainer().set(StructuredDataKey.BANNER_PATTERNS,
 +                        bannerPatterns(bedrockTag, BedrockProtocol.MAPPINGS.getJavaRegistries().getCompoundTag(RegistryKeys.BANNER_PATTERN),
-+                                BedrockProtocol.MAPPINGS.getBedrockToJavaBannerPatterns()));
++                                BedrockProtocol.MAPPINGS.getBedrockToJavaBannerPatterns(), identifier.equals("minecraft:shield")));
++                final var patterns = bedrockTag.getListTag("Patterns", CompoundTag.class);
++                if (identifier.equals("minecraft:shield") && (bedrockTag.get("Base") instanceof IntTag
++                        || patterns != null && !patterns.isEmpty())) {
++                    final int base = bedrockTag.getInt("Base", 0);
++                    final DyeColor color = DyeColor.getByBedrockId(base == -1 ? 15 : base & 255, DyeColor.PURPLE);
++                    javaItem.dataContainer().set(StructuredDataKey.BASE_COLOR, (int) color.javaId());
++                }
 +            }
 +
              if (DYED_LEATHER_ARMOR_ITEMS.contains(identifier)
@@ -1395,6 +1433,158 @@ index 00000000..ab6bc3cb
 +        registry.put("probe:first", new CompoundTag());
 +        registry.put("probe:second", new CompoundTag());
 +        return registry;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ShieldItemDataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ShieldItemDataTest.java
+new file mode 100644
+index 00000000..ab93628f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ShieldItemDataTest.java
+@@ -0,0 +1,146 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.google.common.collect.ImmutableBiMap;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.viaversion.api.data.FullMappings;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Proxy;
++import java.util.LinkedHashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class ShieldItemDataTest {
++
++    private final Map<Field, Object> previousMappings = new LinkedHashMap<>();
++
++    @BeforeEach
++    void installRegistry() throws Exception {
++        final CompoundTag patterns = new CompoundTag();
++        patterns.put("minecraft:stripe_top", new CompoundTag());
++        patterns.put("minecraft:stripe_bottom", new CompoundTag());
++        patterns.put("minecraft:base", new CompoundTag());
++        final CompoundTag registries = new CompoundTag();
++        registries.put("minecraft:banner_pattern", patterns);
++        this.mapping("javaRegistries", registries);
++        this.mapping("bedrockToJavaBannerPatterns", ImmutableBiMap.of(
++                "bs", "minecraft:stripe_bottom", "ts", "minecraft:stripe_top"));
++    }
++
++    @AfterEach
++    void restoreRegistry() throws Exception {
++        for (final var entry : this.previousMappings.entrySet()) {
++            entry.getKey().set(BedrockProtocol.MAPPINGS, entry.getValue());
++        }
++    }
++
++    @Test
++    void shieldCarriesItsBaseColorAndOrderedPatternsWithoutChangingNativeData() throws Exception {
++        // The 1.26.60.5 native fixture shows a red front with a white bottom stripe.
++        final CompoundTag tag = patternedTag();
++        final CompoundTag before = tag.copy();
++        final Item result = convert("minecraft:shield", tag);
++        assertEquals(14, result.dataContainer().get(StructuredDataKey.BASE_COLOR));
++        final var layers = result.dataContainer().get(StructuredDataKey.BANNER_PATTERNS);
++        assertEquals(2, layers.length);
++        assertEquals(1, layers[0].pattern().id());
++        assertEquals(0, layers[0].dyeColor());
++        assertEquals(0, layers[1].pattern().id());
++        assertEquals(11, layers[1].dyeColor());
++        assertEquals(before, tag);
++    }
++
++    @Test
++    void plainShieldsAndUnrelatedItemsKeepTheirUndyedBase() throws Exception {
++        assertNull(convert("minecraft:shield", null).dataContainer().get(StructuredDataKey.BASE_COLOR));
++        final Item plain = convert("minecraft:shield", new CompoundTag());
++        assertNull(plain.dataContainer().get(StructuredDataKey.BASE_COLOR));
++        assertEquals(0, plain.dataContainer().get(StructuredDataKey.BANNER_PATTERNS).length);
++        final Item other = convert("minecraft:stone", patternedTag());
++        assertNull(other.dataContainer().get(StructuredDataKey.BASE_COLOR));
++        assertNull(other.dataContainer().get(StructuredDataKey.BANNER_PATTERNS));
++        final Item banner = convert("minecraft:banner", patternedTag());
++        assertNull(banner.dataContainer().get(StructuredDataKey.BASE_COLOR));
++        assertEquals(2, banner.dataContainer().get(StructuredDataKey.BANNER_PATTERNS).length);
++    }
++
++    @Test
++    void matchesNativeSentinelDefaultAndInvalidColorsBeforeLimitingSourcePatterns() throws Exception {
++        final CompoundTag tag = patternedTag();
++        tag.putInt("Base", -1);
++        assertEquals(0, convert("minecraft:shield", tag).dataContainer().get(StructuredDataKey.BASE_COLOR));
++        tag.putInt("Base", 16);
++        assertEquals(10, convert("minecraft:shield", tag).dataContainer().get(StructuredDataKey.BASE_COLOR));
++        tag.remove("Base");
++        assertEquals(15, convert("minecraft:shield", tag).dataContainer().get(StructuredDataKey.BASE_COLOR));
++        final ListTag<CompoundTag> patterns = new ListTag<>(CompoundTag.class);
++        for (int i = 0; i < 7; i++) {
++            final var layer = new CompoundTag();
++            layer.putString("Pattern", i == 0 ? "unknown" : "bs");
++            layer.putInt("Color", i == 0 ? 16 : 15);
++            patterns.add(layer);
++        }
++        tag.put("Patterns", patterns);
++        final var layers = convert("minecraft:shield", tag).dataContainer().get(StructuredDataKey.BANNER_PATTERNS);
++        assertEquals(6, layers.length);
++        assertEquals(2, layers[0].pattern().id());
++        assertEquals(10, layers[0].dyeColor());
++        for (int i = 1; i < layers.length; i++) {
++            assertEquals(1, layers[i].pattern().id());
++            assertEquals(0, layers[i].dyeColor());
++        }
++    }
++
++    private void mapping(final String name, final Object value) throws Exception {
++        final Field field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField(name);
++        field.setAccessible(true);
++        this.previousMappings.put(field, field.get(BedrockProtocol.MAPPINGS));
++        field.set(BedrockProtocol.MAPPINGS, value);
++    }
++
++    private static Item convert(final String identifier, final CompoundTag tag) throws Exception {
++        final StructuredDataContainer data = new StructuredDataContainer();
++        final FullMappings mappings = (FullMappings) Proxy.newProxyInstance(FullMappings.class.getClassLoader(),
++                new Class<?>[]{FullMappings.class}, (proxy, method, arguments) -> 0);
++        final Field lookup = StructuredDataContainer.class.getDeclaredField("lookup");
++        lookup.setAccessible(true);
++        lookup.set(data, mappings);
++        final Item result = new StructuredItem(1, 1, data);
++        ItemDataRewriter.handleItem(null, identifier, new BedrockItem(358, (short) 0, (byte) 1, tag), tag, result);
++        return result;
++    }
++
++    private static CompoundTag patternedTag() {
++        final CompoundTag tag = new CompoundTag();
++        tag.putInt("Base", 1);
++        final ListTag<CompoundTag> layers = new ListTag<>(CompoundTag.class);
++        final CompoundTag bottom = new CompoundTag();
++        bottom.putString("Pattern", "bs");
++        bottom.putInt("Color", 15);
++        layers.add(bottom);
++        final CompoundTag top = new CompoundTag();
++        top.putString("Pattern", "ts");
++        top.putInt("Color", 4);
++        layers.add(top);
++        tag.put("Patterns", layers);
++        return tag;
 +    }
 +
 +}

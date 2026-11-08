@@ -21,6 +21,10 @@ Prerequisites:
 
 - viabedrock/0085-resolve-server-effects-relative-to-their-actor.patch: Publish native animation-controller command snapshots consumed by the shared graph runtime.
 
+- viabedrock/0078-preserve-native-identifiers-in-java-item-data.patch: Provide the optional native air-continuation item field consumed by the shared metadata cache.
+
+The immutable item cache retains the optional native air-use predicate. Missing metadata selects the older-core fallback; explicit false selects the current native policy. Replacing custom data changes the predicate without mutating cached snapshots. `BedrockItemMetadataTest` covers this boundary.
+
 ## Validation and remaining limits
 
 Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTest`, `BedrockActorRenderSelectionTest`, `BedrockActorScaleTest`, and `BedrockActorPickingStateTest`.
@@ -65,6 +69,14 @@ Releasing the controls restores the resting shield transform.
 These controls do not reproduce the reported extreme shield pose.
 Exact native movement and hit-animation timing, patterned shields, and third-party mod combinations remain open.
 
+Native Bedrock 1.26.60.5 clears current and previous actor angles before evaluating the hand graph.
+Fifteen original instruction controls establish that `query.head_x_rotation(0)` returns zero in that scope.
+The hand frame now clears inherited head pitch while preserving the camera-pitch variable and the world frame.
+The authored-arm regression fails before the correction with 37 degrees instead of zero.
+Installed direct and ViaProxy controls each retain the corrected query and camera variable across five view angles from -64 to 80 degrees.
+The full add-on build passes with 1,416 tests and 154 optional skips. A fresh saved-stack replay reproduces the tested tree.
+These controls cover the head-pitch binding. Other rotation queries, complete hand pixels, and the original shield/custom-skin reports remain open.
+
 Animation timelines retain the remaining animation when an individual Molang string has a syntax error.
 The failed script keeps a zero-valued entry at its authored time. Structural validation and resource limits still reject invalid input.
 A native Bedrock 1.26.60.5 local-world control places MegaSMP's captured invalid string between valid assignments.
@@ -85,5 +97,13 @@ The helmet and return GPU frames use the captured body texture and face-frame by
 These controls cover one headwear item. Observer FOV effects and idle-pose differences prevent a pixel-parity claim.
 Full skin geometry, lighting, and account parity remain open.
 The full add-on suite passes: 1,464 tests, 153 optional skips, and no failures. A fresh full-stack replay reproduces the tested source tree.
+
+Physical geometry queries use the accepted level owner and the authoritative native block mirror.
+They do not require a Java carrier or compiled visual. Unknown geometry keeps the existing camera fallback.
+A regression rejects another level owner and clears geometry with the world mirror.
+
+Complete installed direct and ViaProxy controls receive physical geometry while both visual-definition maps remain empty.
+They preserve the accepted level lifetime through resource reload and an Overworld, Nether, and return sequence.
+The full add-on build and fresh stack replay pass. Broader native world and actor lifecycles remain open.
 
 The [owning patch](0008-share-native-actor-and-resource-runtime.patch) retains implementation rationale and versioned evidence.

@@ -14,6 +14,10 @@ Prerequisites:
 
 - viabedrock/0054-render-native-block-state-geometry-and-materials.patch: Land canonical block auxiliary descriptors and restriction lookup before native subtype-aware merge checks.
 
+- viabedrock/0078-preserve-native-identifiers-in-java-item-data.patch: Provide immutable native item predicates and their Java item-context transport.
+
+Native item predicates belong to the constructed receiver. Built-in Snowballs retain their constructor-installed throwable component when declarations omit it. Data-driven replacement of that name starts from its new class. Numeric lookup and retained definitions remain separate during item-ID collisions. `ItemRegistryAirUseTest` covers these boundaries.
+
 ## Validation and remaining limits
 
 Regression coverage includes `NativeItemNamesTest`, `NativeItemStackingTest`, `NativeContainerLegacyActionsTest`, `NativeContainerTransferTest`.
@@ -34,6 +38,11 @@ Registry regressions cover packet mutation, numeric-ID collisions, absent update
 The full stack supplies descriptor binding and request execution in [deferred patch 0012](../deferred/0012-retain-bedrock-creative-catalog-entries.patch). Effective expression version context and controller delivery remain unfinished.
 
 Packet, menu-lifetime, and action tests cover supported adapters. Complete installed player/cooking controllers and live native parity remain unfinished.
+
+Selected-item presentation retains an immutable source/count snapshot independently of the real cursor.
+Explicit selected-item bindings take precedence over enclosing slot and recipe collections.
+Scene regressions check the original selected icon and count controls, source retirement, and oversized quantities.
+Installed selected-source validation and its limits are recorded in the [cooking reference](../../../docs/native-cooking-actions.md#validation).
 
 Action-form dialog labels use the accepted pack translator, as the title and body already do.
 `ModalFormTransitionTest` covers translated and literal buttons without authored JSON UI.

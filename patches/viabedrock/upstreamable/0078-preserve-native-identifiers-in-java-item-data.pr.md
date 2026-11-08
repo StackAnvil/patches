@@ -8,9 +8,11 @@ Retain the original Bedrock identifier after Java item translation so client int
 
 Keep original native identifiers, descriptors, and component ownership alongside Java mappings. Preserve unrelated custom data and distinguish aliases that share a Java item.
 
+Carry explicit native air-continuation metadata alongside the item identity. Component presence and built-in subclass defaults differ from Java carrier types. Preserve an explicit false value when replacing an earlier stack's context.
+
 ## Validation and remaining limits
 
-Regression coverage includes `NativeItemStackDataTest`, `ItemAnimationDataTest`, `ItemUseDurationTest`, `ItemIdentityTest`.
+Regression coverage includes `NativeItemStackDataTest`, `ItemAnimationDataTest`, `ItemUseDurationTest`, `ItemIdentityTest`, and `ItemAirUsePropertiesTest`.
 
 Construction, merge, naming, and descriptor regressions cover the implemented boundaries. Arbitrary custom definitions and complete native recipe admission remain open.
 

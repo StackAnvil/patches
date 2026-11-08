@@ -11,12 +11,18 @@ import { sync } from "./stack.ts";
 import { prepareViaFabricPlus } from "./viafabricplus.ts";
 import { verifyBuiltinUi, verifyEmbeddedBuiltinUi, builtinUiResource } from "./bedrock-ui.ts";
 import {
+  builtinOreUiResource,
+  verifyBuiltinOreUi,
+  verifyEmbeddedBuiltinOreUi,
+} from "./bedrock-oreui.ts";
+import {
   verifyBuiltinAssets,
   verifyEmbeddedBuiltinAssets,
   builtinAssetsResource,
 } from "./bedrock-assets.ts";
 
 import { prepareBuiltinImages, verifyEmbeddedBuiltinImages } from "./bedrock-images.ts";
+import { oreUiShaperArguments, verifyEmbeddedOreUiShaper } from "./oreui-shaper.ts";
 
 interface Coordinates {
   group: string;
@@ -25,6 +31,9 @@ interface Coordinates {
 }
 
 const localRepo = join(root, ".stackanvil", "maven");
+const oreUiShaperDirectory = (repository = root) =>
+  process.env.STACKANVIL_OREUI_SHAPER_RESOURCES ??
+  join(repository, ".stackanvil", "tools", "oreui-shaper-resources");
 
 export async function builtinAssetArguments(id: string, repository = root): Promise<string[]> {
   if (id !== "viafabricplus-bedrock" && id !== "viabedrock") return [];
@@ -46,7 +55,15 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     return [`-PbedrockBuiltinUi=${path}`, `-PbedrockBuiltinImages=${images}`];
   }
   await verifyBuiltinAssets(join(directory, builtinAssetsResource), version);
-  return [`-PbedrockBuiltinAssets=${directory}`];
+  await verifyBuiltinOreUi(join(directory, builtinOreUiResource), version);
+  return [
+    `-PbedrockBuiltinAssets=${directory}`,
+    ...(await oreUiShaperArguments(
+      id,
+      oreUiShaperDirectory(repository),
+      join(repository, "native", "oreui-shaper"),
+    )),
+  ];
 }
 
 async function javaHome(version: string): Promise<string> {
@@ -152,6 +169,14 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
       ),
     );
     if (id === "viafabricplus-bedrock") {
+      yield* Effect.promise(() => verifyEmbeddedOreUiShaper(artifact, oreUiShaperDirectory()));
+      yield* Effect.promise(() =>
+        verifyEmbeddedBuiltinOreUi(
+          artifact,
+          join(root, "assets", "bedrock", version, builtinOreUiResource),
+          version,
+        ),
+      );
       yield* Effect.promise(() =>
         verifyEmbeddedBuiltinAssets(
           artifact,
