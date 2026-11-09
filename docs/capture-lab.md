@@ -9,6 +9,10 @@ They apply permissions before writing journals, exported packs, keys, or render 
 Unsupported filesystems stop recording. Existing journals remain protected against accidental overwrite.
 The command orchestrator still requires the host's private virtual display; guest recorders can run inside their own platform harness.
 
+Lab and integration entry points compose native Effect programs. SIGINT and SIGTERM interrupt the command and wait for its cleanup. Each QMP operation owns a socket and a deadline. Pointer release runs when a held click ends or is interrupted.
+
+Integration scopes stop owned process groups before releasing copied server dependencies and the private display. If a process survives shutdown, cleanup retains those resources. Lab services transfer ownership to the persistent process registry after startup, so they remain available after the command exits.
+
 ## Prepare the clients
 
 Install Rust 1.85 or newer with Cargo for the X11 capture helper.

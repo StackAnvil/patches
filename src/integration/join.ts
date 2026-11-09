@@ -1,3 +1,5 @@
+import { Clock, Effect } from "effect";
+import { labIO, LabError } from "../lab/effect-runtime.ts";
 import { stripVTControlCharacters } from "node:util";
 
 export type JoinRoute = "java-java" | "java-bedrock" | "bedrock-bedrock" | "java-geyser";
@@ -49,43 +51,62 @@ export function joinedPlayer(route: JoinRoute, log: string): string | undefined 
   return /Player Spawned:\s*(.+?)\s+xuid:/.exec(log)?.[1];
 }
 
-export async function waitForJoin(probe: JoinProbe): Promise<string> {
-  const started = Date.now();
+export const waitForJoinEffect = Effect.fn("Integration.waitForJoin")(function* (probe: JoinProbe) {
+  const started = yield* Clock.currentTimeMillis;
   let joinedAt: number | undefined;
   let player: string | undefined;
-  while (Date.now() - started < probe.timeoutMs) {
-    const [serverOutput, client, connection] = await Promise.all([
-      probe.serverLog(),
-      probe.clientLog(),
-      probe.connectionLog?.() ?? Promise.resolve(""),
-    ]);
+  while ((yield* Clock.currentTimeMillis) - started < probe.timeoutMs) {
+    const [serverOutput, client, connection] = yield* Effect.all(
+      [
+        labIO("read server log", () => probe.serverLog()),
+        labIO("read client log", () => probe.clientLog()),
+        probe.connectionLog
+          ? labIO("read connection log", () => probe.connectionLog!())
+          : Effect.succeed(""),
+      ],
+      { concurrency: 3 },
+    );
     const server = stripVTControlCharacters(serverOutput);
     if (
       /\b(?:ReportedException|ClassCastException|Crash report saved to|Exception in thread)\b/.test(
         client,
       )
     ) {
-      throw new Error(`Client crashed on ${probe.route}.`);
+      return yield* new LabError({
+        operation: "join probe",
+        message: `Client crashed on ${probe.route}.`,
+      });
     }
     if (!probe.clientAlive())
-      throw new Error(`Client exited before the ${probe.route} stability check finished.`);
+      return yield* new LabError({
+        operation: "join probe",
+        message: `Client exited before the ${probe.route} stability check finished.`,
+      });
     const earlyFailure = connectionFailure(probe.route, undefined, server, connection);
-    if (earlyFailure) throw new Error(earlyFailure);
+    if (earlyFailure)
+      return yield* new LabError({ operation: "join probe", message: earlyFailure });
     const current = joinedPlayer(probe.route, server);
-    if (current && !joinedAt) {
-      joinedAt = Date.now();
+    if (current && joinedAt === undefined) {
+      joinedAt = yield* Clock.currentTimeMillis;
       player = current;
-      await probe.onJoin?.(current);
+      if (probe.onJoin) yield* labIO("on join", async () => probe.onJoin!(current));
     }
-    if (joinedAt && player) {
+    if (joinedAt !== undefined && player) {
       const postJoin = server.slice(
         server.search(javaBackend(probe.route) ? /joined the game/ : /Player Spawned:/),
       );
       const failure = connectionFailure(probe.route, player, postJoin);
-      if (failure) throw new Error(failure);
-      if (Date.now() - joinedAt >= probe.dwellMs) return player;
+      if (failure) return yield* new LabError({ operation: "join probe", message: failure });
+      if ((yield* Clock.currentTimeMillis) - joinedAt >= probe.dwellMs) return player;
     }
-    await Bun.sleep(probe.pollMs ?? 1000);
+    yield* Effect.sleep(probe.pollMs ?? 1000);
   }
-  throw new Error(`${probe.route} did not complete a join within ${probe.timeoutMs / 1000}s.`);
+  return yield* new LabError({
+    operation: "join probe",
+    message: `${probe.route} did not complete a join within ${probe.timeoutMs / 1000}s.`,
+  });
+});
+
+export function waitForJoin(probe: JoinProbe): Promise<string> {
+  return Effect.runPromise(waitForJoinEffect(probe));
 }
