@@ -1,4 +1,4 @@
-From c9f6da69928c09c5afcb03f12d3c2553c7aa42cf Mon Sep 17 00:00:00 2001
+From 891db445a591c8253bcfaf4c1aa13818134e3d73 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -843,6 +843,32 @@ magnitude and allow nonzero resolved movement for the same ordinary local
 Bedrock actor. Native wind-charge traces continue through those steps;
 the intermediate installed build retained velocity but still lost their
 displacement. Keep the ordinary Java comparison and all collision work.
+
+Apply the ordinary ground and air input impulse in the native operation
+order. The original 1.26.60.5 protocol 2225 helper sums float
+squares as z*z + (x*x + y*y) and leaves motion untouched below 1e-4,
+admitting equality. It divides speed by max(1, sqrt), scales each input
+before rotation, converts yaw with the float 0.017453292 constant, calls
+CRT sinf and cosf, and adds the impulse to float motion. Java 26.3
+Entity.getInputVector cuts off below a double 1e-7, uses the Mth sine
+table and adds in double. Inputs between the two cutoffs, such as analog
+or strongly item-slowed movement, otherwise accelerate only on Java.
+
+Wrap moveRelative inside handleRelativeFrictionAndCalculateMovement for
+the same controlled local actor as the small-motion stage. Flight, liquid,
+glide, mounted and ordinary Java paths keep their existing calls. A
+rejected impulse retains the entering doubles; an admitted one rounds the
+entering motion to float, as native stores it. Speed selection and the
+yaw source stay with Java.
+
+Fourteen controls execute the original instructions up to the first
+coefficient store with supplied input, speed, yaw, motion and trig
+results. The helper matches every motion bit for the thirteen cases
+with supplied host trig; marker values identify the sine and cosine
+terms. Java Math.sin and Math.cos are continuous but are not measured
+against the Windows CRT, so last-bit trig parity remains open. Native
+speed production, component admission, scheduling and live trajectories
+are not established by these controls.
 ---
  build.gradle.kts                              |   2 +-
  .../bedrock/ViaFabricPlusBedrock.java         |  23 +
@@ -870,7 +896,7 @@ displacement. Keep the ordinary Java comparison and all collision work.
  .../movement/MixinGameModePhysicsReplay.java  |  29 +
  .../movement/MixinHorsePhysicsState.java      |  63 ++
  .../movement/MixinLevelPhysicsReplay.java     |  25 +
- .../features/movement/MixinLivingEntity.java  | 200 +++++++
+ .../features/movement/MixinLivingEntity.java  | 209 +++++++
  .../movement/MixinLivingPhysicsState.java     | 145 +++++
  .../features/movement/MixinLocalPlayer.java   | 413 +++++++++++++-
  .../movement/MixinMobEffectPhysicsState.java  |  18 +
@@ -902,7 +928,7 @@ displacement. Keep the ordinary Java comparison and all collision work.
  .../VehiclePredictionContextPayload.java      |  24 +
  .../input/VehiclePredictionPayload.java       |  24 +
  .../input/VehiclePredictionSession.java       |  91 +++
- .../bedrock/movement/BedrockAirMovement.java  |  31 +
+ .../bedrock/movement/BedrockAirMovement.java  |  51 ++
  .../movement/BedrockClimbingPhysics.java      |  43 ++
  .../movement/BedrockCollisionContacts.java    | 102 ++++
  .../movement/BedrockFlightPhysics.java        |  61 ++
@@ -937,7 +963,7 @@ displacement. Keep the ordinary Java comparison and all collision work.
  .../PhysicalCorrectionSchedulingTest.java     | 190 ++++++
  .../input/VehiclePredictionPayloadTest.java   |  75 +++
  .../input/VehiclePredictionSessionTest.java   | 284 +++++++++
- .../movement/BedrockAirMovementTest.java      |  16 +
+ .../movement/BedrockAirMovementTest.java      |  64 +++
  .../movement/BedrockClimbingPhysicsTest.java  |  53 ++
  .../BedrockCollisionContactsTest.java         |  95 +++
  .../movement/BedrockFlightPhysicsTest.java    | 130 +++++
@@ -959,7 +985,7 @@ displacement. Keep the ordinary Java comparison and all collision work.
  .../replay/PhysicalWorldCollisionTest.java    | 111 ++++
  .../render/PhysicalColliderSourcesTest.java   | 151 +++++
  .../render/PhysicalReplayLifetimeTest.java    | 151 +++++
- 115 files changed, 9256 insertions(+), 72 deletions(-)
+ 115 files changed, 9333 insertions(+), 72 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockTeleportTravel.java
@@ -2357,10 +2383,10 @@ index 0000000..b6ee81c
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index cb89991..5081b26 100644
+index cb89991..6e74218 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,227 @@
+@@ -21,27 +21,236 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2426,6 +2452,15 @@ index cb89991..5081b26 100644
 +                    player.input.keyPresses.jump(), player.isShiftKeyDown()), javaMotion.z);
 +        }
 +        return javaMotion;
++    }
++
++    @WrapOperation(method = "handleRelativeFrictionAndCalculateMovement", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;moveRelative(FLnet/minecraft/world/phys/Vec3;)V"), require = 1, allow = 1)
++    private void applyNativeGroundAndAirAcceleration(final LivingEntity entity, final float speed, final Vec3 input, final Operation<Void> original) {
++        if (entity instanceof LocalPlayer player && BedrockAirMovement.applies(player)) {
++            player.setDeltaMovement(BedrockAirMovement.accelerate(player.getDeltaMovement(), input, speed, player.getYRot()));
++        } else {
++            original.call(entity, speed, input);
++        }
 +    }
 +
 +    @WrapOperation(method = "handleRelativeFrictionAndCalculateMovement", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;onClimbable()Z"))
@@ -5329,10 +5364,10 @@ index 0000000..949adc6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java
 new file mode 100644
-index 0000000..64bd1a6
+index 0000000..15a5edb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,51 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5349,6 +5384,9 @@ index 0000000..64bd1a6
 +
 +/** Ordinary ground and air motion; liquid, glide, flight and mounted paths have separate stages. */
 +public final class BedrockAirMovement {
++    private static final float IMPULSE_CUTOFF_SQUARED = 1.0E-4F;
++    private static final float DEGREES_TO_RADIANS = 0.017453292F;
++
 +    private BedrockAirMovement() {
 +    }
 +
@@ -5356,6 +5394,23 @@ index 0000000..64bd1a6
 +        return BedrockInputPermissions.isBedrockConnection() && !player.getAbilities().flying
 +                && !player.isPassenger() && !player.isFallFlying() && !player.isInWater() && !player.isInLava()
 +                && PhysicalReplayContext.camera(Minecraft.getInstance().getCameraEntity()) == player;
++    }
++
++    /** Adds the relative input impulse in the native float operation order. */
++    public static Vec3 accelerate(final Vec3 motion, final Vec3 input, final float speed, final float yaw) {
++        final float x = (float) input.x, y = (float) input.y, z = (float) input.z;
++        final float lengthSquared = z * z + (x * x + y * y);
++        if (IMPULSE_CUTOFF_SQUARED > lengthSquared) {
++            // Native leaves its motion untouched here, so the entering doubles survive.
++            return motion;
++        }
++        final float scale = speed / Math.max(1F, (float) Math.sqrt(lengthSquared));
++        final float scaledX = x * scale, scaledY = y * scale, scaledZ = z * scale;
++        // Native calls CRT sinf/cosf. Java's continuous functions avoid the Mth table; CRT bit parity is unmeasured.
++        final float radians = yaw * DEGREES_TO_RADIANS;
++        final float sin = (float) Math.sin(radians), cos = (float) Math.cos(radians);
++        return new Vec3((float) motion.x + (scaledX * cos - sin * scaledZ), (float) motion.y + scaledY,
++                (scaledX * sin + scaledZ * cos) + (float) motion.z);
 +    }
 +
 +    public static Vec3 afterCollision(final Vec3 motion) {
@@ -8810,10 +8865,10 @@ index 0000000..eac5b9e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java
 new file mode 100644
-index 0000000..ba6f5ef
+index 0000000..a3ea025
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,64 @@
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
 +import net.minecraft.world.phys.Vec3;
@@ -8828,6 +8883,54 @@ index 0000000..ba6f5ef
 +        assertEquals(Double.doubleToRawLongBits(-0D), Double.doubleToRawLongBits(motion.x));
 +        assertEquals(0.002D, motion.y);
 +        assertEquals(0.002D, motion.z);
++    }
++
++    // Expected bits come from the original 1.26.60.5 helper instructions with supplied trig results.
++    @Test
++    void retainsEnteringMotionWhenInputIsBelowNativeSquaredCutoffThatJavaAccepts() {
++        final Vec3 motion = new Vec3(0.1D, -0.0784D, 0.003D);
++        assertSame(motion, BedrockAirMovement.accelerate(motion, new Vec3(0.001F, 0.001F, 0.0012F), 0.1F, 0F));
++        assertSame(motion, BedrockAirMovement.accelerate(motion, new Vec3(0.005F, 0F, 0F), 0.1F, 0F));
++        assertSame(motion, BedrockAirMovement.accelerate(motion, new Vec3(0F, 0F, Math.nextDown(0.01F)), 0.1F, 0F));
++    }
++
++    @Test
++    void admitsInputWhoseSquaredLengthEqualsNativeCutoff() {
++        assertMotion(0x00000000, 0x00000000, 0x3A83126F,
++                BedrockAirMovement.accelerate(Vec3.ZERO, new Vec3(0F, 0F, 0.01F), 0.1F, 0F));
++    }
++
++    @Test
++    void normalizesOnlyInputLongerThanOneBeforeScaling() {
++        assertMotion(0x3D90D0C3, 0x00000000, 0x3D90D0C3,
++                BedrockAirMovement.accelerate(Vec3.ZERO, new Vec3(1F, 0F, 1F), 0.1F, 0F));
++        assertMotion(0x3CF5C290, 0x00000000, 0x3CF5C290,
++                BedrockAirMovement.accelerate(Vec3.ZERO, new Vec3(0.3F, 0F, 0.3F), 0.1F, 0F));
++        assertMotion(0x3D77B03A, 0x3C8D8946, 0x3D9F3A6E,
++                BedrockAirMovement.accelerate(Vec3.ZERO, new Vec3(0.7F, 0.2F, 0.9F), 0.1F, 0F));
++    }
++
++    @Test
++    void rotatesScaledInputByContinuousYawAndAddsFloatMotion() {
++        assertMotion(0x3D9B67F9, 0xBDA0902E, 0x3D9CDC94,
++                BedrockAirMovement.accelerate(new Vec3(0.05F, -0.0784F, -0.02F), new Vec3(0.98F, 0F, 0.98F), 0.1F, 30F));
++        assertMotion(0x3DE92F10, 0x3E99999A, 0x3DB06A8A,
++                BedrockAirMovement.accelerate(new Vec3(0.1F, 0.3F, 0.1F), new Vec3(0F, 0F, 0.98F), 0.02F, -135F));
++        assertMotion(0xB19630F2, 0x00000000, 0x3DCCCCCD,
++                BedrockAirMovement.accelerate(Vec3.ZERO, new Vec3(1F, 0F, 0F), 0.1F, 90F));
++    }
++
++    @Test
++    void roundsImpulseIntoLargerEnteringMotionAsFloat() {
++        // Double-valued entering motion rounds to float before the add, as native stores float motion.
++        assertMotion(0x3FC0DC81, 0x3ED70A3D, 0xC02E6488,
++                BedrockAirMovement.accelerate(new Vec3(1.5D, 0.42D, -2.75D), new Vec3(0.98F, 0F, 0.98F), 0.026F, 30F));
++    }
++
++    private static void assertMotion(final int x, final int y, final int z, final Vec3 motion) {
++        assertEquals(Float.intBitsToFloat(x), motion.x);
++        assertEquals(Float.intBitsToFloat(y), motion.y);
++        assertEquals(Float.intBitsToFloat(z), motion.z);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysicsTest.java
