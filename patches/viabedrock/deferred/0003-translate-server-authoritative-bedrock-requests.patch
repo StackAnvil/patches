@@ -1,4 +1,4 @@
-From 593e8c19f41df44ca8595707d97a9cdb32e7d273 Mon Sep 17 00:00:00 2001
+From 9dfbfe6916a35fcb2b4d579e9699eeec6b8dbf65 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -882,13 +882,21 @@ Compare complete copied item state while tolerating acknowledgement-driven
 network ID renewal and the pickup marker. Keep destination admission and
 occupied-slot merging unchanged. Regress an unstackable cursor transfer
 and rejection after its item data changes.
+
+Keep a server-assigned stack identity when an authoritative slot or
+content update repeats the same stack without a network ID. Lifeboat
+answers a 2x2 craft with the leftover bone at network ID 12, then sends an
+InventorySlot for the same bone without an ID. Any changed stack still
+takes the update as sent. Take, place and swap clicks on a stack whose
+identity is still unknown now send no request and let the click roll back,
+instead of unboxing a null ID and disconnecting.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
  .../api/model/PlayerInventoryScreenReady.java |   46 +
  .../model/PlayerInventoryScreenRequest.java   |   53 +
  .../api/model/container/ChestContainer.java   |   66 +-
- .../api/model/container/Container.java        | 1528 +++-
+ .../api/model/container/Container.java        | 1562 ++++-
  .../model/container/ContainerOpenContext.java |   19 +
  .../api/model/container/HorseContainer.java   |  239 +
  .../NativeContainerActionBackend.java         |   85 +
@@ -938,7 +946,7 @@ and rejection after its item data changes.
  .../protocol/model/recipe/ItemRecipeKey.java  |   35 +
  .../protocol/packet/ClientPlayerPackets.java  |   60 +-
  .../protocol/packet/InteractionPackets.java   |   51 +-
- .../protocol/packet/InventoryPackets.java     | 1549 ++++-
+ .../protocol/packet/InventoryPackets.java     | 1555 ++++-
  .../protocol/packet/JoinPackets.java          |    3 +-
  .../protocol/packet/MultiStatePackets.java    |   40 +-
  .../protocol/packet/WorldPackets.java         |   12 +
@@ -958,7 +966,7 @@ and rejection after its item data changes.
  .../data/bedrock/item_registry.json           | 6168 ++++++++++++++---
  .../data/bedrock/saved_item_ids.json          |  331 +
  .../viabedrock/data/custom/block_tags.json    |   14 +
- .../api/model/container/ContainerTest.java    |  198 +
+ .../api/model/container/ContainerTest.java    |  229 +
  .../model/container/HorseContainerTest.java   |  187 +
  .../container/NativeArmorPermissionsTest.java |  100 +
  .../NativeContainerActionSessionTest.java     |  132 +
@@ -1023,7 +1031,7 @@ and rejection after its item data changes.
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 140 files changed, 30523 insertions(+), 2052 deletions(-)
+ 140 files changed, 30594 insertions(+), 2052 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
@@ -1381,7 +1389,7 @@ index 913255f8..d535541b 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f17241..8640ccd1 100644
+index 26f17241..487b5307 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -21,18 +21,56 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -1483,7 +1491,7 @@ index 26f17241..8640ccd1 100644
          this.user = user;
          this.containerId = containerId;
          this.type = type;
-@@ -59,9 +118,1146 @@ public abstract class Container {
+@@ -59,9 +118,1148 @@ public abstract class Container {
          this.position = position;
          this.items = items;
          this.validBlockTags = validBlockTags;
@@ -1517,9 +1525,8 @@ index 26f17241..8640ccd1 100644
 +                this.cancelQuickCraft();
 +            }
 +        }
-     }
- 
--    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++    }
++
 +    private boolean handleClickRequest(final int revision, final short javaSlot, final byte button, final ContainerInput action) {
 +        if (javaSlot == -1) {
 +            return false;
@@ -1729,7 +1736,8 @@ index 26f17241..8640ccd1 100644
 +    private ItemStackRequestAction handlePickupTake(
 +            final ClickContext clickContext, final Container container, final int bedrockSlot,
 +            final int amountToTake, final BedrockItem item) {
-+        if (!container.canTakeItem(bedrockSlot, amountToTake)) {
++        // A request must name the source stack. Leave stacks without a known identity untouched.
++        if (item.netId() == null || !container.canTakeItem(bedrockSlot, amountToTake)) {
 +            return null;
 +        }
 +
@@ -1759,7 +1767,7 @@ index 26f17241..8640ccd1 100644
 +                        : Math.min(
 +                                container.maxStackSize(bedrockSlot, item) - item.amount(),
 +                                amt);
-+        if (amountToPlace <= 0 || !container.canPlaceItem(bedrockSlot, cursorItem, amountToPlace)
++        if (amountToPlace <= 0 || cursorItem.netId() == null || !container.canPlaceItem(bedrockSlot, cursorItem, amountToPlace)
 +                || !clickContext.inventoryTracker.getHudContainer().canTakeItem(0, amountToPlace)) {
 +            return null;
 +        }
@@ -1791,7 +1799,8 @@ index 26f17241..8640ccd1 100644
 +            final BedrockItem cursorItem,
 +            final BedrockItem item) {
 +        final Container cursor = clickContext.inventoryTracker.getHudContainer();
-+        if (!container.canPlaceItem(bedrockSlot, cursorItem, cursorItem.amount())
++        if (cursorItem.netId() == null || item.netId() == null
++                || !container.canPlaceItem(bedrockSlot, cursorItem, cursorItem.amount())
 +                || !cursor.canPlaceItem(0, item, item.amount())
 +                || !container.canTakeItem(bedrockSlot, item.amount())
 +                || !cursor.canTakeItem(0, cursorItem.amount())) {
@@ -2000,8 +2009,9 @@ index 26f17241..8640ccd1 100644
 +    /** A retired source publication must not cancel a later cursor-origin gesture. */
 +    public boolean hasSelectedSourceDrag() {
 +        return this.nativeDrag != null && !this.nativeDrag.cursorSource;
-+    }
-+
+     }
+ 
+-    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
 +    public boolean supportsIncrementalDrag() {
 +        return this.incrementalDragEnabled()
 +                && !this.user.get(ItemRewriter.class).isBundle(this.user.get(InventoryTracker.class).getHudContainer().getItem(0));
@@ -2631,7 +2641,7 @@ index 26f17241..8640ccd1 100644
          return false;
      }
  
-@@ -76,11 +1272,62 @@ public abstract class Container {
+@@ -76,41 +1274,270 @@ public abstract class Container {
      }
  
      public Item[] getJavaItems() {
@@ -2696,9 +2706,41 @@ index 26f17241..8640ccd1 100644
      }
  
      public BedrockItem[] getItems() {
-@@ -88,29 +1335,175 @@ public abstract class Container {
+         return Arrays.copyOf(this.items, this.items.length);
      }
  
++    /**
++     * Keeps a server-assigned stack identity when an authoritative update repeats the same stack
++     * without one. Some servers follow a crafting response with a slot update that omits the
++     * network ID the response just assigned. Any other change takes the update as sent.
++     */
++    public void retainStackIdentity(final int slot, final BedrockItem incoming) {
++        this.retainIdentityAt(this.itemIndex(slot), incoming);
++    }
++
++    public void retainStackIdentities(final BedrockItem[] incoming) {
++        if (incoming.length == this.items.length) {
++            for (int index = 0; index < incoming.length; index++) {
++                this.retainIdentityAt(index, incoming[index]);
++            }
++        }
++    }
++
++    private void retainIdentityAt(final int itemIndex, final BedrockItem incoming) {
++        if (incoming.isEmpty() || incoming.netId() != null || itemIndex < 0 || itemIndex >= this.items.length) {
++            return;
++        }
++        final BedrockItem current = this.items[itemIndex];
++        if (current.netId() == null || current.netId() <= 0) {
++            return;
++        }
++        final BedrockItem anonymous = current.copy();
++        anonymous.setNetId(null);
++        if (anonymous.equals(incoming)) {
++            incoming.setNetId(current.netId());
++        }
++    }
++
      public boolean setItem(final int slot, final BedrockItem item) {
 -        if (slot < 0 || slot >= this.items.length) {
 -            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Tried to set item for " + this.type + ", but slot was out of bounds (" + slot + ")");
@@ -2879,7 +2921,7 @@ index 26f17241..8640ccd1 100644
      public int javaSlot(final int slot) {
          return slot;
      }
-@@ -123,6 +1516,10 @@ public abstract class Container {
+@@ -123,6 +1550,10 @@ public abstract class Container {
          return this.items.length;
      }
  
@@ -2890,7 +2932,7 @@ index 26f17241..8640ccd1 100644
      public byte containerId() {
          return this.containerId;
      }
-@@ -139,6 +1536,28 @@ public abstract class Container {
+@@ -139,6 +1570,28 @@ public abstract class Container {
          return this.position;
      }
  
@@ -2919,7 +2961,7 @@ index 26f17241..8640ccd1 100644
      public boolean isValidBlockTag(final String tag) {
          if (tag == null) {
              return false;
-@@ -147,7 +1566,90 @@ public abstract class Container {
+@@ -147,7 +1600,90 @@ public abstract class Container {
          }
      }
  
@@ -10279,7 +10321,7 @@ index 223db3d9..d8e307df 100644
              }
              chunkTracker.trackBlockPrediction(sequence, position, placedPosition);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index c6ad9edb..fba27088 100644
+index c6ad9edb..2a387ef0 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -17,27 +17,32 @@
@@ -10514,7 +10556,7 @@ index c6ad9edb..fba27088 100644
              wrapper.cancel();
          }
      }
-@@ -209,347 +326,858 @@ public final class InventoryPackets {
+@@ -209,347 +326,864 @@ public final class InventoryPackets {
      }
  
      public static void register(final BedrockProtocol protocol) {
@@ -10900,6 +10942,9 @@ index c6ad9edb..fba27088 100644
 +                    final Container container =
 +                            inventoryTracker.getContainerClientbound(
 +                                    (byte) containerId, containerName, storageItem);
++                    if (container != null) {
++                        container.retainStackIdentities(items);
++                    }
 +                    if (container != null && container.setItems(items)) {
 +                        container.markServerUpdate();
 +                        wrapper.user().get(InventoryRequestTracker.class)
@@ -10935,6 +10980,9 @@ index c6ad9edb..fba27088 100644
 +                    final Container container =
 +                            inventoryTracker.getContainerClientboundSlot(
 +                                    (byte) containerId, slot, containerName, storageItem);
++                    if (container != null) {
++                        container.retainStackIdentity(slot, item);
++                    }
 +                    if (container != null && container.setItem(slot, item)) {
 +                        container.markServerUpdate();
 +                        wrapper.user().get(InventoryRequestTracker.class)
@@ -11681,7 +11729,7 @@ index c6ad9edb..fba27088 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.EDIT_BOOK,
                  null,
-@@ -600,33 +1228,55 @@ public final class InventoryPackets {
+@@ -600,33 +1234,55 @@ public final class InventoryPackets {
                      updatedTag.put("pages", updatedPages);
                      book.setTag(updatedTag);
                  });
@@ -11759,7 +11807,7 @@ index c6ad9edb..fba27088 100644
          if (type == ContainerType.CONTAINER && actor != null) {
              final String filtered = actorTitle(actor, ActorDataIds.FILTERED_NAME);
              final String name = filtered.isEmpty() ? actorTitle(actor, ActorDataIds.NAME) : filtered;
-@@ -638,7 +1288,7 @@ public final class InventoryPackets {
+@@ -638,7 +1294,7 @@ public final class InventoryPackets {
              final String raw = customName.getValue();
              return new ContainerTitle(TextUtil.stringToTextComponent(user.get(ResourcePackStorage.class).getTexts().translate(raw)), raw, false);
          }
@@ -11768,7 +11816,7 @@ index c6ad9edb..fba27088 100644
      }
  
      private static String actorTitle(final Entity actor, final ActorDataIds field) {
-@@ -664,21 +1314,23 @@ public final class InventoryPackets {
+@@ -664,21 +1320,23 @@ public final class InventoryPackets {
              case HOPPER, MINECART_HOPPER -> size == 5 ? ContainerUi.Kind.HOPPER : null;
              case DISPENSER -> size == 9 ? ContainerUi.Kind.DISPENSER : null;
              case DROPPER -> size == 9 ? ContainerUi.Kind.DROPPER : null;
@@ -11796,7 +11844,7 @@ index c6ad9edb..fba27088 100644
              return;
          }
          final var resources = wrapper.user().get(ResourcePackStorage.class);
-@@ -687,22 +1339,33 @@ public final class InventoryPackets {
+@@ -687,22 +1345,33 @@ public final class InventoryPackets {
          }
          final var state = wrapper.user().get(NativeContainerUiState.class);
          final var ui = resources.getContainerUi();
@@ -11834,7 +11882,7 @@ index c6ad9edb..fba27088 100644
      private static Dialog createFormDialog(final UserConnection user, final int id, final Form form,
              final ServerFormUi.Presentation presentation) {
          final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
-@@ -993,13 +1656,148 @@ public final class InventoryPackets {
+@@ -993,13 +1662,148 @@ public final class InventoryPackets {
          }
      }
  
@@ -11985,7 +12033,7 @@ index c6ad9edb..fba27088 100644
                  for (String line : BedrockTextUtils.split(text, "\n")) {
                      final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(line));
                      textInput.setMaxLength(Integer.MAX_VALUE);
-@@ -1007,14 +1805,53 @@ public final class InventoryPackets {
+@@ -1007,14 +1811,53 @@ public final class InventoryPackets {
                      dialog.getInputs().add(new Input("dummy", textInput));
                  }
              } else { // VB compatibility
@@ -30636,10 +30684,10 @@ index edc8beb1..a02f9294 100644
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
 new file mode 100644
-index 00000000..b8466b5b
+index 00000000..cd89a5f0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,229 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -30702,6 +30750,37 @@ index 00000000..b8466b5b
 +        container.setItems(new BedrockItem[]{renewedId, BedrockItem.empty()});
 +        assertEquals(List.of(0), container.changedSlots);
 +        assertEquals(87, container.getItem(0).netId());
++    }
++
++    @Test
++    void slotUpdateWithoutNetworkIdKeepsTheIdentityOfTheSameRemainingStack() {
++        final SnapshotContainer grid = new SnapshotContainer();
++        final BedrockItem remaining = new BedrockItem(418);
++        remaining.setNetId(12);
++        grid.setItem(0, remaining);
++
++        // Lifeboat follows the crafting response with the same leftover stack and no network ID.
++        final BedrockItem repeated = new BedrockItem(418);
++        grid.retainStackIdentity(0, repeated);
++        assertEquals(12, repeated.netId());
++
++        final BedrockItem changed = new BedrockItem(418);
++        changed.setAmount(2);
++        grid.retainStackIdentity(0, changed);
++        assertNull(changed.netId());
++
++        final BedrockItem renewed = new BedrockItem(418);
++        renewed.setNetId(13);
++        grid.retainStackIdentity(0, renewed);
++        assertEquals(13, renewed.netId());
++
++        final BedrockItem predicted = new BedrockItem(418);
++        predicted.setNetId(-7);
++        grid.setItem(1, predicted);
++        final BedrockItem[] contents = {new BedrockItem(418), new BedrockItem(418)};
++        grid.retainStackIdentities(contents);
++        assertEquals(12, contents[0].netId());
++        assertNull(contents[1].netId());
 +    }
 +
 +    @Test

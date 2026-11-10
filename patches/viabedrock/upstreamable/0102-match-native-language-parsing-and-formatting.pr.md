@@ -47,3 +47,7 @@ Native precision zero retains a zero digit, and unsigned conversions honor sign 
 The Java formatter matches 810 original integer-format controls and the 18 remainder-format overrides in the shulker matrix.
 The native formatter's Microsoft-specific `I32` diagnostic reaches an unresolved native/CRT path; it does not provide a verified result.
 That extension is outside the implemented format grammar.
+
+## Nested rawtext arguments
+
+Translations inside rawtext `with` arguments now receive the parent's lookup in chat, titles and item rawtext. Lifeboat sends `death.attack.mob` with a nested `entity.skeleton.name`, which previously stayed a raw key. A unit test covers the nested key and keeps a literal text argument untranslated. This part depends on the item rawtext resolver from 0028.

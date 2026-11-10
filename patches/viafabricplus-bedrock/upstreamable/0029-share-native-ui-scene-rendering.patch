@@ -1,4 +1,4 @@
-From ef541924edd204c7ea194874abecb4a5c4443fc9 Mon Sep 17 00:00:00 2001
+From d3a229cf811cd2f648e46dc0b52503a60c585049 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): share native scene rendering and GUI actors
@@ -1235,6 +1235,12 @@ keeping expired creation identities until the next bounded refresh. A
 new notification must not restart an older notification's clock or revive
 controls already destroyed by their authored animations. Disconnect and
 explicit clear still release the retained scene.
+
+Choose the image decoder from the file signature, not the path extension.
+Native 1.26.60.5 links stb_image's content-sniffing loader, and MegaSMP
+ships JPEG bytes as textures/gui/teamtab.png. Decode PNG signatures with
+NativeImage and other bounded input through ImageIO, which rejects
+unknown formats. The encoded-size and dimension limits apply to both.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |    4 +
  .../appearance/BedrockBoneAnimation.java      |    3 +
@@ -1311,7 +1317,7 @@ explicit clear still release the retained scene.
  .../screen/ui/NativeUiHurtPayload.java        |   22 +
  .../bedrock/screen/ui/NativeUiImageCache.java |  229 ++++
  .../screen/ui/NativeUiImageRegions.java       |  132 +++
- .../bedrock/screen/ui/NativeUiImages.java     |  193 ++++
+ .../bedrock/screen/ui/NativeUiImages.java     |  203 ++++
  .../bedrock/screen/ui/NativeUiInput.java      |  248 ++++
  .../screen/ui/NativeUiInputRouter.java        |   72 ++
  .../screen/ui/NativeUiJpegTexture.java        |   83 ++
@@ -1378,7 +1384,7 @@ explicit clear still release the retained scene.
  .../bedrock/screen/ui/NativeUiFontTest.java   |  149 +++
  .../screen/ui/NativeUiImageCacheTest.java     |  142 +++
  .../screen/ui/NativeUiImageRegionsTest.java   |  217 ++++
- .../bedrock/screen/ui/NativeUiImagesTest.java |  166 +++
+ .../bedrock/screen/ui/NativeUiImagesTest.java |  197 ++++
  .../screen/ui/NativeUiInputRouterTest.java    |  125 ++
  .../bedrock/screen/ui/NativeUiInputTest.java  |  200 ++++
  .../screen/ui/NativeUiJpegTextureTest.java    |   83 ++
@@ -1414,7 +1420,7 @@ explicit clear still release the retained scene.
  .../oreui/native-trailing-reserve-2225.json   |    1 +
  src/test/resources/oreui/nominal-advances.ttf |  Bin 0 -> 548 bytes
  .../resources/oreui/ordinary-advances.ttf     |  Bin 0 -> 668 bytes
- 178 files changed, 19474 insertions(+), 39 deletions(-)
+ 178 files changed, 19515 insertions(+), 39 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockGuiActorAppearance.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiActorRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockGuiScissor.java
@@ -1572,7 +1578,7 @@ explicit clear still release the retained scene.
  create mode 100644 src/test/resources/oreui/ordinary-advances.ttf
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index b129aaa..c05c123 100644
+index eb2fbaa..c5a1e30 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -101,6 +101,8 @@ import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
@@ -9097,10 +9103,10 @@ index 0000000..3f3e908
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImages.java
 new file mode 100644
-index 0000000..b106fad
+index 0000000..82693fa
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImages.java
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,203 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9109,9 +9115,11 @@ index 0000000..b106fad
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.mojang.blaze3d.platform.NativeImage;
++import java.io.ByteArrayInputStream;
 +import java.io.IOException;
 +import java.net.http.HttpClient;
 +import java.time.Duration;
++import java.util.Arrays;
 +import java.util.HashMap;
 +import java.util.LinkedHashMap;
 +import java.util.Map;
@@ -9133,6 +9141,7 @@ index 0000000..b106fad
 +/** Draws accepted pack textures and bounded public HTTPS images. */
 +public final class NativeUiImages implements AutoCloseable {
 +    private static final int MAX_PACK_IMAGES = 256;
++    private static final byte[] PNG_SIGNATURE = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
 +    private static final ExecutorService DOWNLOADS = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS,
 +        new ArrayBlockingQueue<>(256), Thread.ofPlatform().daemon().name("Bedrock UI images-", 0).factory(),
 +        new ThreadPoolExecutor.AbortPolicy());
@@ -9241,8 +9250,11 @@ index 0000000..b106fad
 +        if (cached != null && cached.source == resource.source()) return cached;
 +        try (final var input = resource.open()) {
 +            final Image image;
-+            if (id.getPath().endsWith(".jpg")) {
-+                final var decoded = NativeUiJpegTexture.decode(input);
++            final byte[] bytes = input.readNBytes(UiTextureLimits.MAX_ENCODED_BYTES + 1);
++            if (bytes.length > UiTextureLimits.MAX_ENCODED_BYTES) throw new IOException("Native UI texture exceeds byte limits");
++            // Native packs load images by content, so a .png path can hold JPEG bytes.
++            if (!isPng(bytes)) {
++                final var decoded = NativeUiJpegTexture.decode(new ByteArrayInputStream(bytes));
 +                final var textureResource = new NativeUiJpegTexture(id, decoded);
 +                try {
 +                    Minecraft.getInstance().getTextureManager().registerAndLoad(id, textureResource);
@@ -9252,7 +9264,7 @@ index 0000000..b106fad
 +                }
 +                image = new Image(id, decoded.getWidth(), decoded.getHeight(), resource.source());
 +            } else {
-+                try (final NativeImage pixels = NativeImage.read(input)) {
++                try (final NativeImage pixels = NativeImage.read(new ByteArrayInputStream(bytes))) {
 +                    if (!UiTextureLimits.supportsDimensions(pixels.getWidth(), pixels.getHeight()))
 +                        throw new IOException("Native UI texture exceeds size limits");
 +                    image = new Image(id, pixels.getWidth(), pixels.getHeight(), resource.source());
@@ -9268,6 +9280,10 @@ index 0000000..b106fad
 +            this.failed = true;
 +            throw new IllegalArgumentException("Invalid native UI texture: " + id, error);
 +        }
++    }
++
++    private static boolean isPng(final byte[] bytes) {
++        return bytes.length >= PNG_SIGNATURE.length && Arrays.equals(bytes, 0, PNG_SIGNATURE.length, PNG_SIGNATURE, 0, PNG_SIGNATURE.length);
 +    }
 +
 +    public void draw(final GuiGraphicsExtractor graphics, final NativeUiLayout.Box box, final int color, final NativeUiAnimations animations) {
@@ -9628,7 +9644,7 @@ index 0000000..8c0c6f6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiJpegTexture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiJpegTexture.java
 new file mode 100644
-index 0000000..a0dfa44
+index 0000000..cd38787
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiJpegTexture.java
 @@ -0,0 +1,83 @@
@@ -9652,7 +9668,7 @@ index 0000000..a0dfa44
 +import net.minecraft.server.packs.resources.ResourceManager;
 +import net.raphimc.viabedrock.api.resourcepack.ui.UiTextureLimits;
 +
-+/** Native JPEG resources keep their encoding in the pack and decode only when displayed. */
++/** Non-PNG resources, such as JPEG, keep their encoding in the pack and decode only when displayed. */
 +final class NativeUiJpegTexture extends ReloadableTexture {
 +    private BufferedImage prepared;
 +
@@ -12854,7 +12870,7 @@ index 8e8672c..288cc7a 100644
 +accessible field net/minecraft/client/gui/GuiGraphicsExtractor scissorStack Lnet/minecraft/client/gui/GuiGraphicsExtractor$ScissorStack;
 +accessible field net/minecraft/client/gui/GuiGraphicsExtractor$ScissorStack stack Ljava/util/Deque;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index fc4fb65..f357e72 100644
+index ab20edf..0b463ee 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -6,6 +6,7 @@
@@ -12879,7 +12895,7 @@ index fc4fb65..f357e72 100644
      "features.input.MixinKeyboardInput",
      "features.input.MixinLocalPlayerInput",
      "features.input.MixinClientInput",
-@@ -207,7 +215,13 @@
+@@ -209,7 +217,13 @@
      "features.render.MixinBedrockCameraFade",
      "features.entities.MixinClientEntityTracking",
      "features.entities.MixinMinecraftProjectileOwners",
@@ -17938,10 +17954,10 @@ index 0000000..d0b8045
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImagesTest.java
 new file mode 100644
-index 0000000..b8db9b4
+index 0000000..27585bc
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImagesTest.java
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,197 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -17951,14 +17967,18 @@ index 0000000..b8db9b4
 +
 +import com.google.gson.JsonObject;
 +import com.mojang.blaze3d.platform.NativeImage;
++import java.awt.image.BufferedImage;
 +import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
 +import java.io.InputStream;
 +import java.io.IOException;
 +import java.util.List;
 +import java.util.Optional;
++import javax.imageio.ImageIO;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.gui.GuiGraphicsExtractor;
 +import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.client.renderer.texture.TextureManager;
 +import net.minecraft.resources.Identifier;
 +import net.minecraft.server.packs.PackResources;
 +import net.minecraft.server.packs.resources.Resource;
@@ -17972,6 +17992,8 @@ index 0000000..b8db9b4
 +import static org.mockito.Mockito.*;
 +
 +final class NativeUiImagesTest {
++    private static final byte[] PNG_SIGNATURE = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
++
 +    @Test
 +    void drawsNineSliceInteriorsThatSampleOneTexturePointButSkipsEmptyDestinations() {
 +        // The native 1.26.60.5 Black texture is 2x2 with one-pixel borders and a 2x2 base.
@@ -18008,7 +18030,7 @@ index 0000000..b8db9b4
 +        when(game.getResourceManager()).thenReturn(resources);
 +        when(resources.getResource(any())).thenReturn(Optional.of(resource));
 +        when(resource.source()).thenReturn(originalSource);
-+        when(resource.open()).thenAnswer(_ -> new ByteArrayInputStream(new byte[0]));
++        when(resource.open()).thenAnswer(_ -> new ByteArrayInputStream(PNG_SIGNATURE));
 +        final var pixels = mock(NativeImage.class);
 +        when(pixels.getWidth()).thenReturn(width);
 +        when(pixels.getHeight()).thenReturn(height);
@@ -18071,7 +18093,7 @@ index 0000000..b8db9b4
 +            when(pixels.getWidth()).thenReturn(16);
 +            when(pixels.getHeight()).thenReturn(12);
 +            when(resource.source()).thenReturn(mock(PackResources.class));
-+            doAnswer(_ -> new ByteArrayInputStream(new byte[0])).when(resource).open();
++            doAnswer(_ -> new ByteArrayInputStream(PNG_SIGNATURE)).when(resource).open();
 +            decoder.when(() -> NativeImage.read(any(InputStream.class))).thenReturn(pixels);
 +            final var restored = images.image(texture(0));
 +            assertNotNull(restored);
@@ -18089,7 +18111,7 @@ index 0000000..b8db9b4
 +        when(game.getResourceManager()).thenReturn(resources);
 +        when(resources.getResource(any())).thenReturn(Optional.of(resource));
 +        when(resource.source()).thenReturn(mock(PackResources.class));
-+        when(resource.open()).thenAnswer(_ -> new ByteArrayInputStream(new byte[0]));
++        when(resource.open()).thenAnswer(_ -> new ByteArrayInputStream(PNG_SIGNATURE));
 +        final var pixels = mock(NativeImage.class);
 +        when(pixels.getWidth()).thenReturn(width);
 +        when(pixels.getHeight()).thenReturn(height);
@@ -18101,6 +18123,31 @@ index 0000000..b8db9b4
 +            assertThrows(IllegalArgumentException.class, () -> images.image(texture(0)));
 +            assertTrue(images.failed());
 +            verify(pixels).close();
++        }
++    }
++
++    @Test
++    void decodesJpegBytesStoredUnderAPngPathInsteadOfFailingTheScene() throws Exception {
++        final var image = new BufferedImage(5, 3, BufferedImage.TYPE_INT_RGB);
++        final var encoded = new ByteArrayOutputStream();
++        assertTrue(ImageIO.write(image, "jpg", encoded));
++        final var game = mock(Minecraft.class);
++        final var resources = mock(ResourceManager.class);
++        final var resource = mock(Resource.class);
++        when(game.getResourceManager()).thenReturn(resources);
++        when(game.getTextureManager()).thenReturn(mock(TextureManager.class));
++        when(resources.getResource(any())).thenReturn(Optional.of(resource));
++        when(resource.source()).thenReturn(mock(PackResources.class));
++        when(resource.open()).thenAnswer(_ -> new ByteArrayInputStream(encoded.toByteArray()));
++        try (final var singleton = mockStatic(Minecraft.class);
++             final var decoder = mockStatic(NativeImage.class);
++             final var images = new NativeUiImages()) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            final var decoded = images.image(texture(0));
++            assertEquals(5, decoded.width());
++            assertEquals(3, decoded.height());
++            assertFalse(images.failed());
++            decoder.verify(() -> NativeImage.read(any(InputStream.class)), never());
 +        }
 +    }
 +

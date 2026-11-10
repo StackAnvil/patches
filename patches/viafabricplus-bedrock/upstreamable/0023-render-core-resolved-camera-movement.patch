@@ -1,4 +1,4 @@
-From 626aa644277b87a80fe8c03671aa4a089eb88c50 Mon Sep 17 00:00:00 2001
+From 9fc43da22422d9d8f0cb0e353482cbcf1cb496b5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(camera): render core-resolved server camera movement
@@ -183,8 +183,13 @@ Two native death recordings at sliders 60 and 30 show the same settled
 view. The profile-derived pose predicts both marker rectangles within one
 pixel in nine native stills without fitting camera coordinates. Broader
 activation timing, collision and non-default death contexts remain open.
+
+Fabric runs the play disconnect event from Netty's channelInactive as well
+as from the client tick. Run the camera clears on the client thread, which
+owns and iterates this state each frame; a transport failure otherwise
+cleared the follow-camera map during rendering and crashed the client.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  44 ++++
+ .../bedrock/ViaFabricPlusBedrock.java         |  45 ++++
  .../camera/BedrockCameraAimAssist.java        |  70 ++++++
  .../bedrock/camera/BedrockCameraFade.java     |  40 ++++
  .../bedrock/camera/BedrockCameraFov.java      |  68 ++++++
@@ -216,7 +221,7 @@ activation timing, collision and non-default death contexts remain open.
  .../camera/BedrockCameraPositionTest.java     |  68 ++++++
  .../camera/BedrockDeathCameraTest.java        | 113 +++++++++
  .../bedrock/camera/BedrockPlayerFovTest.java  |  85 +++++++
- 32 files changed, 1471 insertions(+), 1 deletion(-)
+ 32 files changed, 1472 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraAimAssist.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
@@ -246,7 +251,7 @@ activation timing, collision and non-default death contexts remain open.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/camera/BedrockPlayerFovTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 0b69037..6d7f012 100644
+index 0b69037..7368bdb 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -64,6 +64,19 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
@@ -269,22 +274,23 @@ index 0b69037..6d7f012 100644
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
  import com.viaversion.viafabricplus.bedrock.hud.LocatorBarPayload;
-@@ -172,6 +185,37 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -172,6 +185,38 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(LocatorBarPayload.TYPE,
                  (payload, context) -> BedrockLocatorBar.accept(listener.getConnection(), payload.snapshot())));
 +        PayloadTypeRegistry.clientboundPlay().register(CameraFadePayload.TYPE, CameraFadePayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraFadePayload.TYPE,
 +            (payload, context) -> BedrockCameraFade.accept(payload.state()));
-+        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraFade.clear());
++        // Disconnect can fire on Netty. Camera state belongs to the render thread, which iterates it per frame.
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> client.execute(BedrockCameraFade::clear));
 +        PayloadTypeRegistry.clientboundPlay().register(CameraShakePayload.TYPE, CameraShakePayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraShakePayload.TYPE,
 +            (payload, context) -> BedrockCameraShake.accept(payload.state()));
-+        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraShake.clear());
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> client.execute(BedrockCameraShake::clear));
 +        PayloadTypeRegistry.clientboundPlay().register(CameraFovPayload.TYPE, CameraFovPayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraFovPayload.TYPE,
 +            (payload, context) -> BedrockCameraFov.accept(payload.state()));
-+        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraFov.clear());
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> client.execute(BedrockCameraFov::clear));
 +        PayloadTypeRegistry.clientboundPlay().register(CameraPositionPayload.TYPE, CameraPositionPayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraPositionPayload.TYPE,
 +            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
@@ -299,11 +305,11 @@ index 0b69037..6d7f012 100644
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(CameraAimAssistPayload.TYPE,
 +                (payload, context) -> BedrockCameraAimAssist.accept(listener.getConnection(), payload.message())));
-+        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraAimAssist.clear());
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> client.execute(BedrockCameraAimAssist::clear));
 +        PayloadTypeRegistry.clientboundPlay().register(CameraFollowPayload.TYPE, CameraFollowPayload.CODEC);
 +        ClientPlayNetworking.registerGlobalReceiver(CameraFollowPayload.TYPE,
 +            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
-+        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraPosition.clear());
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> client.execute(BedrockCameraPosition::clear));
          this.settings = new BedrockSettings();
          this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
@@ -1659,7 +1665,7 @@ index eadb404..b83cf42 100644
    "bedrock_settings.viafabricplus.hide_own_captions": "Hide captions for your sounds",
    "bedrock_settings.viafabricplus.hide_ambient_captions": "Hide ambient and weather captions",
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 549dc2b..0bf601f 100644
+index 41254ed..ee36cd1 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -141,6 +141,11 @@
@@ -1674,10 +1680,10 @@ index 549dc2b..0bf601f 100644
      "features.render.MixinBedrockHandItemLifecycle",
      "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
-@@ -165,11 +170,13 @@
-     "features.sound.MixinBedrockSoundManager",
-     "features.sound.MixinBedrockSoundCaptions",
+@@ -167,11 +172,13 @@
      "features.sound.MixinBedrockSoundEngine",
+     "features.sound.JOrbisStaticCodeBookAccess",
+     "features.sound.MixinJOrbisCodeBook",
 +    "features.sound.MixinBedrockCameraListener",
      "features.particle.MixinBedrockParticleEngine",
      "features.particle.MixinBedrockParticlePipelines",

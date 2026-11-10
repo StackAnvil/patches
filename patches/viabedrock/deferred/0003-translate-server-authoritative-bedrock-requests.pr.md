@@ -84,3 +84,5 @@ An installed Enchanted protocol-2225 trace isolates that guard. Regressions cove
 Network-ID renewal and the pickup marker do not replace the retained item; destination policy and merge rules remain unchanged.
 
 The rebuilt add-on equips leggings on live Enchanted. Both pickup and placement receive successful ItemStackResponses, and the armor slot retains the leggings after closing and reopening inventory. The final check runs without the diagnostic agent and uses the hash-verified built artifact.
+
+Identity-less slot updates: Lifeboat answers a 2x2 bone meal craft with the leftover bone at network ID 12, then sends an `InventorySlot` for the same bone without an ID (decoded from a private journal). Picking up the bone then unboxed a null ID and disconnected. A unit test covers retained, changed, renewed and predicted identities. The live Lifeboat flow has not been rerun after this change.

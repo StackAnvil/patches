@@ -1,4 +1,4 @@
-From 76abc235c5e38f341a6bd28a110b795693b408b6 Mon Sep 17 00:00:00 2001
+From c023c42645b790d6af684220b3b668a31aaba9c7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 10:11:46 +0200
 Subject: [PATCH] fix(text): match native language parsing and formatting
@@ -33,6 +33,13 @@ native typed integer printf preserves embedded NUL and malformed bytes,
 retains zero at precision zero, and honors sign flags on unsigned values.
 Match the original formatter across 810 ordinary, boundary and precision
 controls; keep unsupported Microsoft length extensions outside the grammar.
+
+Give translations nested in rawtext "with" arguments the same lookup as
+their parent. RootBedrockComponent.forEach does not visit translation
+arguments, so a death.attack.mob message with a nested
+entity.skeleton.name kept the raw key in chat, titles and item rawtext.
+The native 1.26.60.5 English table maps that key to Skeleton. Literal
+text arguments stay literal.
 ---
  .../api/resourcepack/content/Content.java     |  16 +-
  .../resourcepack/definition/LanguageFile.java | 117 +++++++++++
@@ -40,6 +47,9 @@ controls; keep unsupported Microsoft length extensions outside the grammar.
  .../definition/LanguageLookup.java            |  53 +++++
  .../definition/LanguageTranslations.java      | 140 ++++++++++++++
  .../definition/TextDefinitions.java           |  39 +++-
+ .../raphimc/viabedrock/api/util/TextUtil.java |  28 ++-
+ .../protocol/packet/ChatPackets.java          |   7 +-
+ .../protocol/packet/HudPackets.java           |   8 +-
  .../protocol/packet/JoinPackets.java          |   4 +-
  .../protocol/packet/MultiStatePackets.java    |  10 +-
  .../content/ContentLanguageCacheTest.java     |   7 +-
@@ -48,8 +58,9 @@ controls; keep unsupported Microsoft length extensions outside the grammar.
  .../definition/LanguageLookupTest.java        |  82 ++++++++
  .../definition/LanguageTranslationsTest.java  | 127 ++++++++++++
  .../definition/TextDefinitionsTest.java       |  76 ++++++++
+ .../api/util/TextUtilRawTextTest.java         |  32 ++++
  .../protocol/model/ItemPrimaryNameTest.java   | 181 ++++++++++++++++++
- 15 files changed, 1057 insertions(+), 28 deletions(-)
+ 19 files changed, 1115 insertions(+), 45 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageFile.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageIntegerFormat.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookup.java
@@ -59,6 +70,7 @@ controls; keep unsupported Microsoft length extensions outside the grammar.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageLookupTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/LanguageTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextDefinitionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/TextUtilRawTextTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemPrimaryNameTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
@@ -611,6 +623,114 @@ index 95d2d5b3..fc7688fb 100644
 +    }
 +
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
+index 005e5b05..e160e4e7 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
++++ b/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
+@@ -29,7 +29,9 @@ import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
+ import com.viaversion.viaversion.libs.mcstructs.text.TextFormatting;
+ import com.viaversion.viaversion.libs.mcstructs.text.serializer.LegacyStringDeserializer;
+ import com.viaversion.viaversion.libs.mcstructs.text.utils.TextUtils;
++import net.lenni0451.mcstructs_bedrock.text.BedrockComponent;
+ import net.lenni0451.mcstructs_bedrock.text.BedrockTextFormatting;
++import net.lenni0451.mcstructs_bedrock.text.components.RootBedrockComponent;
+ import net.lenni0451.mcstructs_bedrock.text.components.TranslationBedrockComponent;
+ import net.lenni0451.mcstructs_bedrock.text.serializer.BedrockComponentSerializer;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+@@ -70,6 +72,26 @@ public final class TextUtil {
+         }).orElse(null);
+     };
+ 
++    /**
++     * Give every translation its lookup, including translations nested in rawtext "with" arguments.
++     * RootBedrockComponent.forEach does not visit those arguments, which left keys such as
++     * entity.skeleton.name untranslated inside death.attack.mob. Literal text stays literal.
++     */
++    public static void setTranslator(final BedrockComponent component, final Function<String, String> translator) {
++        if (component instanceof RootBedrockComponent root) {
++            for (final BedrockComponent child : root.getComponents()) {
++                setTranslator(child, translator);
++            }
++        } else if (component instanceof TranslationBedrockComponent translation) {
++            translation.setTranslator(translator);
++            for (final Object argument : translation.getArgs()) {
++                if (argument instanceof BedrockComponent nested) {
++                    setTranslator(nested, translator);
++                }
++            }
++        }
++    }
++
+     /** Resolve item rawtext while keeping ordinary and malformed text literal. */
+     public static String resolveRawText(final String value, final Function<String, String> translator) {
+         if (!value.stripLeading().startsWith("{")) {
+@@ -81,11 +103,7 @@ public final class TextUtil {
+                 return value;
+             }
+             final var root = BedrockComponentSerializer.deserialize(value);
+-            root.forEach(component -> {
+-                if (component instanceof TranslationBedrockComponent translation) {
+-                    translation.setTranslator(translator);
+-                }
+-            });
++            setTranslator(root, translator);
+             return root.asString();
+         } catch (final RuntimeException malformed) {
+             return value;
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ChatPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ChatPackets.java
+index a3fb494d..c0d3b4fa 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ChatPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ChatPackets.java
+@@ -28,7 +28,6 @@ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
+ import net.lenni0451.mcstructs_bedrock.text.components.RootBedrockComponent;
+-import net.lenni0451.mcstructs_bedrock.text.components.TranslationBedrockComponent;
+ import net.lenni0451.mcstructs_bedrock.text.serializer.BedrockComponentSerializer;
+ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
+ import net.lenni0451.mcstructs_bedrock.text.utils.TranslatorOptions;
+@@ -121,11 +120,7 @@ public final class ChatPackets {
+                             case textObjectWhisper, textObject, textObjectAnnouncement -> {
+                                 String message = originalMessage = wrapper.read(BedrockTypes.STRING); // message
+                                 final RootBedrockComponent rootComponent = BedrockComponentSerializer.deserialize(message);
+-                                rootComponent.forEach(c -> {
+-                                    if (c instanceof TranslationBedrockComponent) {
+-                                        ((TranslationBedrockComponent) c).setTranslator(translator);
+-                                    }
+-                                });
++                                TextUtil.setTranslator(rootComponent, translator);
+                                 message = rootComponent.asString();
+                                 if (localize) {
+                                     message = BedrockTranslator.translate(message, translator, new Object[0]);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index fc9dac1c..c7375e06 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -34,10 +34,10 @@ import java.util.UUID;
+ import java.util.function.Function;
+ import java.util.logging.Level;
+ import net.lenni0451.mcstructs_bedrock.text.components.RootBedrockComponent;
+-import net.lenni0451.mcstructs_bedrock.text.components.TranslationBedrockComponent;
+ import net.lenni0451.mcstructs_bedrock.text.serializer.BedrockComponentSerializer;
+ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.util.TextUtil;
+ import net.raphimc.viabedrock.api.model.NativeHudMessage;
+ import net.raphimc.viabedrock.api.model.entity.Entity;
+ import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardEntry;
+@@ -292,11 +292,7 @@ public final class HudPackets {
+             try {
+                 if (type.getValue() >= SetTitlePacket_TitleType.TitleTextObject.getValue() && type.getValue() <= SetTitlePacket_TitleType.ActionbarTextObject.getValue()) {
+                     final RootBedrockComponent rootComponent = BedrockComponentSerializer.deserialize(text);
+-                    rootComponent.forEach(c -> {
+-                        if (c instanceof TranslationBedrockComponent) {
+-                            ((TranslationBedrockComponent) c).setTranslator(translator);
+-                        }
+-                    });
++                    TextUtil.setTranslator(rootComponent, translator);
+                     text = rootComponent.asString();
+                 }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 index 7f036e50..6203d834 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
@@ -1169,6 +1289,44 @@ index 00000000..4e8d5804
 +                + "\",\"version\":[1,0,0],\"name\":\"Language producer control\"}}");
 +        content.put("texts/en_US.lang", raw);
 +        return new ResourcePack(content);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/util/TextUtilRawTextTest.java b/src/test/java/net/raphimc/viabedrock/api/util/TextUtilRawTextTest.java
+new file mode 100644
+index 00000000..0240c438
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/util/TextUtilRawTextTest.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import java.util.Map;
++import java.util.function.Function;
++import net.lenni0451.mcstructs_bedrock.text.serializer.BedrockComponentSerializer;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class TextUtilRawTextTest {
++
++    private static final Function<String, String> ENGLISH = key -> Map.of(
++            "death.attack.mob", "%1$s was slain by %2$s",
++            "entity.skeleton.name", "Skeleton",
++            "Player", "Translated literal").getOrDefault(key, key);
++
++    @Test
++    void nestedRawTextTranslationsUseTheSameLookupAndLiteralTextStaysLiteral() {
++        final String message = """
++                {"rawtext":[{"translate":"death.attack.mob","with":{"rawtext":[{"text":"Player"},{"translate":"entity.skeleton.name"}]}}]}""";
++        final var root = BedrockComponentSerializer.deserialize(message);
++        TextUtil.setTranslator(root, ENGLISH);
++        assertEquals("Player was slain by Skeleton", root.asString());
++        assertEquals("Player was slain by Skeleton", TextUtil.resolveRawText(message, ENGLISH));
 +    }
 +
 +}

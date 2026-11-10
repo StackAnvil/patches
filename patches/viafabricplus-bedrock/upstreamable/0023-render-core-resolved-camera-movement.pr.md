@@ -45,3 +45,5 @@ The produced native projection matrices match JOML in 62 comparisons across both
 Exact death activation timing, varied angles, collision and postures, non-default death contexts, and native death-screen UI remain open. Other fluid effects, portrait scaling, input-frame expiry, complete transition timing, aim assistance, and visual composition remain partial. These controls do not establish complete camera or pixel parity.
 
 The [owning patch](0023-render-core-resolved-camera-movement.patch) retains implementation rationale and versioned evidence.
+
+Disconnect thread ownership: a Dimension Clash session crashed with `ConcurrentModificationException` in `CameraFollowRuntime.advance` one second after its NetherNet transport failed. Fabric API 6.3.8 fires the play disconnect event from Netty's `channelInactive`. The camera clears now run on the client thread. No deterministic unit test covers this race; a live transport failure with an active follow camera has not been repeated.
