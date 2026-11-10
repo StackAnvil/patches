@@ -1,4 +1,4 @@
-From 3656c0a996df68173054a44bba90b35a012332ea Mon Sep 17 00:00:00 2001
+From 593e8c19f41df44ca8595707d97a9cdb32e7d273 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -870,13 +870,25 @@ nothing. The original 1.26.60.5 count-selector instructions distinguish all,
 half and one modes; secondary source placement requests exactly one item,
 independently of a retained partial quantity. Keep the source and target
 snapshots for rejection recovery without inventing a cursor pickup.
+
+Validate retained drag snapshots independently of occupied-slot merge
+eligibility. Armor and other unstackable items cannot merge with their own
+copies. Using that predicate cancelled the first destination visit before
+an inventory request was emitted on Enchanted protocol 2225. A bounded
+installed trace confirms phase zero succeeds and phase one fails at the
+snapshot guard, with an unchanged cursor and no outstanding request.
+
+Compare complete copied item state while tolerating acknowledgement-driven
+network ID renewal and the pickup marker. Keep destination admission and
+occupied-slot merging unchanged. Regress an unstackable cursor transfer
+and rejection after its item data changes.
 ---
  build.gradle                                  |    3 +-
  .../api/model/PlayerInventoryScreenClose.java |   46 +
  .../api/model/PlayerInventoryScreenReady.java |   46 +
  .../model/PlayerInventoryScreenRequest.java   |   53 +
  .../api/model/container/ChestContainer.java   |   66 +-
- .../api/model/container/Container.java        | 1521 +++-
+ .../api/model/container/Container.java        | 1528 +++-
  .../model/container/ContainerOpenContext.java |   19 +
  .../api/model/container/HorseContainer.java   |  239 +
  .../NativeContainerActionBackend.java         |   85 +
@@ -993,7 +1005,7 @@ snapshots for rejection recovery without inventing a cursor pickup.
  .../storage/BundleHolderPacketTest.java       |  450 ++
  .../storage/BundleInventoryActionTest.java    |  679 ++
  .../CraftedItemSynchronizationTest.java       |  287 +
- .../storage/IncrementalInventoryDragTest.java |  659 ++
+ .../storage/IncrementalInventoryDragTest.java |  699 ++
  .../InventoryContainerGenerationTest.java     |  118 +
  .../storage/InventoryMergeActionTest.java     |  837 +++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
@@ -1011,7 +1023,7 @@ snapshots for rejection recovery without inventing a cursor pickup.
  .../item/NetworkItemConstructionTest.java     |  171 +
  .../types/item/NetworkItemCountTest.java      |   35 +-
  .../types/item/NetworkItemStackFixtures.java  |   69 +
- 140 files changed, 30476 insertions(+), 2052 deletions(-)
+ 140 files changed, 30523 insertions(+), 2052 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenClose.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenReady.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInventoryScreenRequest.java
@@ -1369,7 +1381,7 @@ index 913255f8..d535541b 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f17241..1ba16ef3 100644
+index 26f17241..8640ccd1 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -21,18 +21,56 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -1471,7 +1483,7 @@ index 26f17241..1ba16ef3 100644
          this.user = user;
          this.containerId = containerId;
          this.type = type;
-@@ -59,9 +118,1139 @@ public abstract class Container {
+@@ -59,9 +118,1146 @@ public abstract class Container {
          this.position = position;
          this.items = items;
          this.validBlockTags = validBlockTags;
@@ -1505,8 +1517,9 @@ index 26f17241..1ba16ef3 100644
 +                this.cancelQuickCraft();
 +            }
 +        }
-+    }
-+
+     }
+ 
+-    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
 +    private boolean handleClickRequest(final int revision, final short javaSlot, final byte button, final ContainerInput action) {
 +        if (javaSlot == -1) {
 +            return false;
@@ -2238,8 +2251,15 @@ index 26f17241..1ba16ef3 100644
 +
 +    private boolean matchesDragItem(final SlotRef slot, final BedrockItem expected) {
 +        final var item = slot.container().getItem(slot.bedrockSlot());
-+        return expected.isEmpty() ? item.isEmpty() : !item.isEmpty() && item.amount() == expected.amount()
-+                && this.user.get(ItemRewriter.class).canMerge(item, expected);
++        if (expected.isEmpty()) {
++            return item.isEmpty();
++        }
++        // Server acknowledgements renew network IDs without replacing the held item.
++        // Merge admission cannot identify snapshots: unstackable items reject even themselves.
++        final BedrockItem snapshot = expected.copy();
++        snapshot.setNetId(item.netId());
++        snapshot.setWasPickedUp(item.wasPickedUp());
++        return item.equals(snapshot);
 +    }
 +
 +    private boolean handleQuickCraftPhase(final short javaSlot, final byte button) {
@@ -2605,14 +2625,13 @@ index 26f17241..1ba16ef3 100644
 +                bundle.toggleSelectedItem(selectedItem);
 +            }
 +        }
-     }
- 
--    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++    }
++
 +    public boolean handleButtonClick(final int button) {
          return false;
      }
  
-@@ -76,11 +1265,62 @@ public abstract class Container {
+@@ -76,11 +1272,62 @@ public abstract class Container {
      }
  
      public Item[] getJavaItems() {
@@ -2677,7 +2696,7 @@ index 26f17241..1ba16ef3 100644
      }
  
      public BedrockItem[] getItems() {
-@@ -88,29 +1328,175 @@ public abstract class Container {
+@@ -88,29 +1335,175 @@ public abstract class Container {
      }
  
      public boolean setItem(final int slot, final BedrockItem item) {
@@ -2860,7 +2879,7 @@ index 26f17241..1ba16ef3 100644
      public int javaSlot(final int slot) {
          return slot;
      }
-@@ -123,6 +1509,10 @@ public abstract class Container {
+@@ -123,6 +1516,10 @@ public abstract class Container {
          return this.items.length;
      }
  
@@ -2871,7 +2890,7 @@ index 26f17241..1ba16ef3 100644
      public byte containerId() {
          return this.containerId;
      }
-@@ -139,6 +1529,28 @@ public abstract class Container {
+@@ -139,6 +1536,28 @@ public abstract class Container {
          return this.position;
      }
  
@@ -2900,7 +2919,7 @@ index 26f17241..1ba16ef3 100644
      public boolean isValidBlockTag(final String tag) {
          if (tag == null) {
              return false;
-@@ -147,7 +1559,90 @@ public abstract class Container {
+@@ -147,7 +1566,90 @@ public abstract class Container {
          }
      }
  
@@ -7131,7 +7150,7 @@ index bdea523c..8ed1d090 100644
          wrapper.write(Types.BOOLEAN, false); // override limiter
          wrapper.write(Types.BOOLEAN, false); // always show
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index 2ee3c97c..1da66f23 100644
+index f36c756c..853f1c19 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -32,16 +32,18 @@ import com.viaversion.viaversion.protocols.base.ClientboundLoginPackets;
@@ -7248,7 +7267,7 @@ index 2ee3c97c..1da66f23 100644
      }
  
      @Override
-@@ -189,6 +201,9 @@ public class BedrockProtocol
+@@ -190,6 +202,9 @@ public class BedrockProtocol
          user.put(new ScoreboardTracker());
          user.put(new InventoryTracker(user));
          user.put(new NpcDialogueStorage());
@@ -7258,7 +7277,7 @@ index 2ee3c97c..1da66f23 100644
          user.put(new BreakingTracker(user));
  
          user.put(new InventoryTransactionRewriter(user));
-@@ -202,13 +217,23 @@ public class BedrockProtocol
+@@ -203,13 +218,23 @@ public class BedrockProtocol
      }
  
      @Override
@@ -7285,7 +7304,7 @@ index 2ee3c97c..1da66f23 100644
                  throw CancelException.generate();
              }
              final WorldPacketBuffer worldPackets = wrapper.user().get(WorldPacketBuffer.class);
-@@ -231,14 +256,22 @@ public class BedrockProtocol
+@@ -232,14 +257,22 @@ public class BedrockProtocol
                      && BEFORE_PLAY_STATE_WHITELIST.contains(
                              packet)) { // Bedrock client can skip the login state
                  ViaBedrock.getPlatform().getLogger().warning("Skipping LOGIN state");
@@ -7311,7 +7330,7 @@ index 2ee3c97c..1da66f23 100644
                  throw CancelException.generate();
              }
          }
-@@ -260,18 +293,26 @@ public class BedrockProtocol
+@@ -261,18 +294,26 @@ public class BedrockProtocol
          kickForIllegalState(user, reason, null);
      }
  
@@ -10260,10 +10279,10 @@ index 223db3d9..d8e307df 100644
              }
              chunkTracker.trackBlockPrediction(sequence, position, placedPosition);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 7b3138e1..fdc8fd76 100644
+index c6ad9edb..fba27088 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-@@ -17,26 +17,31 @@
+@@ -17,27 +17,32 @@
   */
  package net.raphimc.viabedrock.protocol.packet;
  
@@ -10272,6 +10291,7 @@ index 7b3138e1..fdc8fd76 100644
  
  import com.viaversion.viaversion.libs.gson.JsonParser;
  import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
+ import net.raphimc.viabedrock.api.resourcepack.ui.FormText;
  import net.raphimc.viabedrock.api.model.NativeFormMessage;
  import net.raphimc.viabedrock.api.model.NativeContainerMessage;
 +import net.raphimc.viabedrock.api.model.NativeContainerData;
@@ -10297,7 +10317,7 @@ index 7b3138e1..fdc8fd76 100644
  import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
  import com.viaversion.viaversion.libs.mcstructs.converter.impl.v1_21_5.NbtConverter_v1_21_5;
  import com.viaversion.viaversion.libs.mcstructs.core.Identifier;
-@@ -58,6 +63,9 @@ import com.viaversion.viaversion.libs.mcstructs.text.components.StringComponent;
+@@ -59,6 +64,9 @@ import com.viaversion.viaversion.libs.mcstructs.text.components.StringComponent;
  import com.viaversion.viaversion.libs.mcstructs.text.components.TranslationComponent;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
@@ -10307,7 +10327,7 @@ index 7b3138e1..fdc8fd76 100644
  import net.lenni0451.mcstructs_bedrock.forms.Form;
  import net.lenni0451.mcstructs_bedrock.forms.elements.*;
  import net.lenni0451.mcstructs_bedrock.forms.serializer.FormSerializer;
-@@ -66,14 +74,16 @@ import net.lenni0451.mcstructs_bedrock.forms.types.CustomForm;
+@@ -67,14 +75,16 @@ import net.lenni0451.mcstructs_bedrock.forms.types.CustomForm;
  import net.lenni0451.mcstructs_bedrock.forms.types.ModalForm;
  import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTextUtils;
  import net.raphimc.viabedrock.ViaBedrock;
@@ -10327,7 +10347,7 @@ index 7b3138e1..fdc8fd76 100644
  import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
  import net.raphimc.viabedrock.api.model.entity.Entity;
  import net.raphimc.viabedrock.api.util.PacketFactory;
-@@ -81,18 +91,28 @@ import net.raphimc.viabedrock.api.util.TextUtil;
+@@ -82,18 +92,28 @@ import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -10357,7 +10377,7 @@ index 7b3138e1..fdc8fd76 100644
  
  import java.util.ArrayList;
  import java.util.List;
-@@ -102,11 +122,95 @@ public final class InventoryPackets {
+@@ -103,11 +123,95 @@ public final class InventoryPackets {
  
      private static final int DIALOG_BUTTON_WIDTH = 200;
      private static final int DIALOG_FAKE_BUTTON_WIDTH = 300;
@@ -10456,7 +10476,7 @@ index 7b3138e1..fdc8fd76 100644
  
          final CommandBlockSession command = wrapper.user().get(CommandBlockSession.class);
          if (command != null && command.matches((byte) (int) wrapper.get(Types.VAR_INT, 0))) {
-@@ -116,20 +220,33 @@ public final class InventoryPackets {
+@@ -117,20 +221,33 @@ public final class InventoryPackets {
              return;
          }
  
@@ -10494,7 +10514,7 @@ index 7b3138e1..fdc8fd76 100644
              wrapper.cancel();
          }
      }
-@@ -208,347 +325,858 @@ public final class InventoryPackets {
+@@ -209,347 +326,858 @@ public final class InventoryPackets {
      }
  
      public static void register(final BedrockProtocol protocol) {
@@ -11661,7 +11681,7 @@ index 7b3138e1..fdc8fd76 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.EDIT_BOOK,
                  null,
-@@ -599,33 +1227,55 @@ public final class InventoryPackets {
+@@ -600,33 +1228,55 @@ public final class InventoryPackets {
                      updatedTag.put("pages", updatedPages);
                      book.setTag(updatedTag);
                  });
@@ -11739,7 +11759,7 @@ index 7b3138e1..fdc8fd76 100644
          if (type == ContainerType.CONTAINER && actor != null) {
              final String filtered = actorTitle(actor, ActorDataIds.FILTERED_NAME);
              final String name = filtered.isEmpty() ? actorTitle(actor, ActorDataIds.NAME) : filtered;
-@@ -637,7 +1287,7 @@ public final class InventoryPackets {
+@@ -638,7 +1288,7 @@ public final class InventoryPackets {
              final String raw = customName.getValue();
              return new ContainerTitle(TextUtil.stringToTextComponent(user.get(ResourcePackStorage.class).getTexts().translate(raw)), raw, false);
          }
@@ -11748,7 +11768,7 @@ index 7b3138e1..fdc8fd76 100644
      }
  
      private static String actorTitle(final Entity actor, final ActorDataIds field) {
-@@ -663,21 +1313,23 @@ public final class InventoryPackets {
+@@ -664,21 +1314,23 @@ public final class InventoryPackets {
              case HOPPER, MINECART_HOPPER -> size == 5 ? ContainerUi.Kind.HOPPER : null;
              case DISPENSER -> size == 9 ? ContainerUi.Kind.DISPENSER : null;
              case DROPPER -> size == 9 ? ContainerUi.Kind.DROPPER : null;
@@ -11776,7 +11796,7 @@ index 7b3138e1..fdc8fd76 100644
              return;
          }
          final var resources = wrapper.user().get(ResourcePackStorage.class);
-@@ -686,22 +1338,33 @@ public final class InventoryPackets {
+@@ -687,22 +1339,33 @@ public final class InventoryPackets {
          }
          final var state = wrapper.user().get(NativeContainerUiState.class);
          final var ui = resources.getContainerUi();
@@ -11814,7 +11834,7 @@ index 7b3138e1..fdc8fd76 100644
      private static Dialog createFormDialog(final UserConnection user, final int id, final Form form,
              final ServerFormUi.Presentation presentation) {
          final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
-@@ -992,13 +1655,148 @@ public final class InventoryPackets {
+@@ -993,13 +1656,148 @@ public final class InventoryPackets {
          }
      }
  
@@ -11965,7 +11985,7 @@ index 7b3138e1..fdc8fd76 100644
                  for (String line : BedrockTextUtils.split(text, "\n")) {
                      final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(line));
                      textInput.setMaxLength(Integer.MAX_VALUE);
-@@ -1006,14 +1804,53 @@ public final class InventoryPackets {
+@@ -1007,14 +1805,53 @@ public final class InventoryPackets {
                      dialog.getInputs().add(new Input("dummy", textInput));
                  }
              } else { // VB compatibility
@@ -38470,10 +38490,10 @@ index 00000000..628f6ced
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java
 new file mode 100644
-index 00000000..d3a62ca2
+index 00000000..9ac62a26
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java
-@@ -0,0 +1,659 @@
+@@ -0,0 +1,699 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -38481,6 +38501,7 @@ index 00000000..d3a62ca2
 + */
 +package net.raphimc.viabedrock.protocol.storage;
 +
++import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.viaversion.api.connection.ProtocolInfo;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.protocol.packet.State;
@@ -38518,6 +38539,45 @@ index 00000000..d3a62ca2
 +import static org.mockito.Mockito.*;
 +
 +class IncrementalInventoryDragTest {
++
++    @Test
++    void unstackableCursorMovesIntoEmptySlots() {
++        try (var f = new Fixture()) {
++            f.inventory.getHudContainer().setItem(0, item(1, 11));
++            final var items = f.user.get(ItemRewriter.class);
++            doReturn(false).when(items).canMerge(any(), any());
++            assertTrue(f.click(-999, 0));
++            assertTrue(f.click(9, 1));
++            assertEquals(1, f.sent.size());
++            final var place = assertInstanceOf(ItemStackRequestAction.PlaceAction.class,
++                    f.batch.getFirst().actions().getFirst());
++            assertEquals(1, place.count());
++            assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
++            f.accept();
++            assertEquals(1, f.menu.getItem(9).amount());
++            assertTrue(f.inventory.getHudContainer().getItem(0).isEmpty());
++        }
++    }
++
++    @Test
++    void changedUnstackableCursorCancelsDrawingWithoutMovingItems() {
++        try (var f = new Fixture()) {
++            f.inventory.getHudContainer().setItem(0, item(1, 11));
++            final var items = f.user.get(ItemRewriter.class);
++            doReturn(false).when(items).canMerge(any(), any());
++            assertTrue(f.click(-999, 0));
++            final var changed = item(1, 11);
++            final var tag = new CompoundTag();
++            tag.putString("name", "Changed item");
++            changed.setTag(tag);
++            f.inventory.getHudContainer().setItem(0, changed);
++            assertFalse(f.click(9, 1));
++            assertFalse(f.menu.hasIncrementalDrag());
++            assertTrue(f.sent.isEmpty());
++            assertTrue(f.menu.getItem(9).isEmpty());
++            assertEquals(changed, f.inventory.getHudContainer().getItem(0));
++        }
++    }
 +
 +    @ParameterizedTest
 +    @CsvSource({"9,0,9", "4,0,4", "1,0,1", "9,60,4", "4,64,0"})

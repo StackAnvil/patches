@@ -107,3 +107,5 @@ They preserve the accepted level lifetime through resource reload and an Overwor
 The full add-on build and fresh stack replay pass. Broader native world and actor lifecycles remain open.
 
 The [owning patch](0008-share-native-actor-and-resource-runtime.patch) retains implementation rationale and versioned evidence.
+
+Sound sample iteration follows the original Bedrock 1.26.60.5 JSON iterator: arrays contribute elements, objects contribute values in byte-sorted key order, and scalars contribute none. String entries and object sample descriptors remain supported; invalid entries are skipped. A bounded failure in one event no longer discards the remaining actor, equipment and UI sound libraries. Native-backed iterator controls and regression tests cover these shapes. The full asset-aware build passes, and a live SoulSteel join no longer logs the original sound-library exception. Full audible comparison remains unverified.

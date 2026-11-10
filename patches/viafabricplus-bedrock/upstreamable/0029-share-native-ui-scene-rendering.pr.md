@@ -269,3 +269,7 @@ The shared View hold timer follows the native result flags, binary32 frame subtr
 Its event retains the initial pointer and the native per-axis displacement gate.
 Cooking regressions cover the timer through [retained quantity selection](0029-present-authored-native-containers.pr.md).
 Controller admission, quantity timing, and completion remain owned by that feature.
+
+Empty native scissors remain empty through GUI conversion and window clipping. The draw is culled before Java's scissor call. A regression covers subpixel empty clips and off-window bounds. Live Enchanted checks close the popup and return from Box PvP to its hub without the former scissor crash.
+
+Chat notifications use an independent HUD lifetime. Expired creation identities survive non-restarting refreshes, so an older notification cannot restart when another arrives. A regression consumes the shared core producer's scene, expires the first notification and appends a second. Explicit clear and disconnect release retained state. These checks do not establish full native animation parity.

@@ -79,3 +79,9 @@ The same controlled classic-player scene passes full transport and rendering gat
 Each route samples four bundled emotes and installs all three expected complete skin records.
 The direct observer retains the unresolved camera-icon reason while ordinary rendering passes.
 These plain software controls do not establish complete native camera, emote, skin or shader parity.
+
+## Complete-stack replacement
+
+Each Java conversion contains the full accepted Bedrock stack and custom-block supplements. Remove previous Java server packs before pushing its replacement. Retired UUID replies and discard acknowledgements cannot finish the destination's resource negotiation.
+
+A live Mineville-to-Zeqa transfer loads its custom items and HUD glyphs after this change. The previous route retained both server conversions, overflowed the item atlas and rolled back the reload; the destination packs match a working direct join. Packet regressions verify replacement order and reply ownership. Complete resource parity across other transfers remains unverified.

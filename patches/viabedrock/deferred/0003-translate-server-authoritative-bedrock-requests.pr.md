@@ -77,3 +77,10 @@ Installed direct and ViaProxy controls retain three-slot and full-inventory dist
 The full-inventory control reconciles every destination before closing and conserves all 64 items after reopening.
 Native multiplayer grouping and delayed or rejected native behavior remain unverified.
 See the [cooking reference](../../../docs/native-cooking-actions.md#recipe-input) for the versioned visible control and host limits.
+
+Retained drag snapshots use item identity independently of stacking admission.
+Armor rejects occupied-slot merging even against its own copy; using that predicate as a snapshot check cancelled the first visit before sending any request.
+An installed Enchanted protocol-2225 trace isolates that guard. Regressions cover an unstackable cursor transfer and cancellation when its item data changes.
+Network-ID renewal and the pickup marker do not replace the retained item; destination policy and merge rules remain unchanged.
+
+The rebuilt add-on equips leggings on live Enchanted. Both pickup and placement receive successful ItemStackResponses, and the armor slot retains the leggings after closing and reopening inventory. The final check runs without the diagnostic agent and uses the hash-verified built artifact.

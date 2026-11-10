@@ -65,3 +65,7 @@ Progress and style updates reach only shown bars, and a removed actor leaves the
 On CubeCraft, this removes the raw `cc_hotbar_text…` name and purple bar shown during the Free For All queue, kit selection, arena spawn and Skyblock introduction.
 `NativeHudBossBarsTest` covers add, hide, rename and return transitions. Clients without the negotiated native HUD root channel retain their Java bars. Late channel registration reconciles existing bars with the authored HUD; a regression also covers restoring the fallback when that capability is absent.
 Offline replay of a captured CubeCraft Skyblock introduction shows the Introduction boss bar at the top and the authored "Hold sneak to skip panorama" text above the hotbar; the raw `cc_hotbar_text` bar no longer appears. No live CubeCraft recheck ran for this change.
+
+Form captions accept RawMessage objects as well as strings. Resolution uses the accepted language stack before form decoding and preserves IDs, content ordering and response shape. A packet-to-state regression covers a translated label-only story form. A live SoulSteel join now displays the translated opening story without the former decoder exception. Continued connection and story progression remain under investigation.
+
+Negotiated chat notifications retain bounded creation history independently of ordinary Java chat. Refreshes preserve existing factory identities; missing capability or unsupported presentation retains the Java path. Regressions cover history eviction, fallback and scene updates.
