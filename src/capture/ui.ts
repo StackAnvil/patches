@@ -91,8 +91,12 @@ export function createCaptureUi(
         : /^minecraft\*?\s/i.test(window.title),
     );
     if (matches.length === 1) return matches[0]!;
+    if (matches.length === 0)
+      throw new Error(
+        `No visible ${client} window is open on this display. Check that the client is still running and read its log.`,
+      );
     throw new Error(
-      `Select the ${client} window with --window-id <id>. Run bun run capture ui list.`,
+      `${matches.length} ${client} windows match (${matches.map((window) => window.id).join(", ")}). Select one with --window-id <id>. Run bun run capture ui list.`,
     );
   }
 

@@ -71,6 +71,17 @@ test("invalid input bounds and ambiguous windows never emit input", async () => 
   expect(f.calls.filter(call => call.args[0] === "key")).toHaveLength(0);
 });
 
+test("a closed client window is reported separately from an ambiguous selection", async () => {
+  const f = fixture(isolated);
+  f.replaceWindows([{ ...window, id: "0x789", title: "Prism Launcher" }]);
+  await expect(f.ui.command(["ui", "pixel", "0.5", "0.5", "--client", "java"]))
+    .rejects.toThrow("No visible java window is open");
+  f.replaceWindows([window, { ...window, id: "0x456" }]);
+  await expect(f.ui.command(["ui", "pixel", "0.5", "0.5", "--client", "java"]))
+    .rejects.toThrow("2 java windows match (0x123, 0x456)");
+  expect(f.calls.filter(call => call.args[0] === "pixel")).toHaveLength(0);
+});
+
 test("drag sends the complete ordered path in one native call on the bound private display", async () => {
   const f = fixture(isolated);
   await f.ui.drag([{ x: 0, y: 0 }, { x: 0.5, y: 0.25 }, { x: 1, y: 1 }], "left", 120, window.id, "java");
