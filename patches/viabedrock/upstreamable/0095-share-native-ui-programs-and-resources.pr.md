@@ -170,3 +170,24 @@ Desktop held-quantity progress retains the original source total and the selecte
 Forty original Bedrock 1.26.60.5 getter controls establish these values and visibility under supplied item and input services.
 An exported cooking-program regression resolves active progress and clears it after selection ends.
 Touch visibility policy and complete native pixels remain unverified.
+
+Accepted HUD decorations can bind to the native `boss_bars` collection.
+`HudRootUi` publishes each active bar as a row with `#bossName` and `#bar_visible`, plus the HUD controller values those decorations reference.
+The client draws native boss bars itself, so an unchanged native collection grid stays out of the decoration root.
+The same rows evaluate the authored `hud.boss_health_grid` for each bar, so packet integration can hide a Java bar whose authored panel draws nothing.
+CubeCraft's accepted pack (Bedrock 1.26.60, protocol 2225) presents `cc_hotbar_text*NNN` boss bars as text above the hotbar this way.
+Its colored-bar predicates close one group too many between conjunctions.
+The evaluator now treats an unmatched closing parenthesis as the end of every open operation and continues with that value.
+This keeps the authored prefix checks in effect. It is inferred from the pack's working native presentation; the native parser was not inspected.
+Synthetic regressions cover the expression form, per-bar panel visibility, the authored hotbar text grid, and the native grid exclusion.
+The resource-pack UI suite passes (215 tests) with the bundled native UI.
+The captured CubeCraft pack, evaluated locally and not committed, hides the hotbar-text bar, keeps the Skyblock introduction bar, and resolves the hotbar label `New Event`.
+The native `#exp_bar_and_text_offset_y` value is not reported by the Java client and stays at its rest value 0.
+
+Bindings with `resolve_sibling_scope` now resolve their `source_control_name` among the binding control's parent: the first earlier sibling or descendant with that name, otherwise the control itself.
+Previously a global last-named lookup could return a control from another button.
+On Galaxite's game selector, the image panel and its child are both named `image`, and the panel shows only when `(not (#texture = ''))`.
+The first tiles after textureless buttons read an empty texture, so BlasterWars, Alien Blast, Melvin's Prison and the Alien Blast Survival tile stayed black.
+A JFR exception capture during offline replay showed no download attempt for those URLs; HTTP fetches and decoding of the same images succeed.
+The captured forms now resolve every tile image with its HTTPS URL. `ServerFormUiTest` covers a pictured tile after a tile without an image.
+Offline replay of the captured selector downloads all six visible tile images. A live Galaxite selector shows the BlasterWars, Alien Blast and Melvin's Prison thumbnails.

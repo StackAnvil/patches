@@ -1,4 +1,4 @@
-# Finish transport-initiated RakNet disconnects
+# Complete the RakNet disconnect lifecycle
 
 ## Cause and implementation
 
@@ -16,6 +16,13 @@ The [NetworkCompatible 1.7.0 session source](https://github.com/Kas-tle/NetworkC
 The resolved Cloudburst session codec follows the same order.
 Runtime inspection establishes that the pinned VFP client loads NetworkCompatible 1.7.0.
 The implementation uses their shared public event type.
+
+After a local close or a transport disconnect, the handler releases inbound application packets instead of passing them on.
+RakNet keeps delivering ordered datagrams while it finishes the disconnect, and ViaVersion stops translating once the channel closes.
+Without this, those packets reach the Java decoder as raw Bedrock bytes.
+The batch codec emits one packet per decode call and stops once the session is closed.
+Netty then hands each packet to the application before splitting the next one, so a Disconnect that closes the session synchronously also ends its own batch.
+Packets read before the close pass through unchanged. Each connection gets a new handler, so reconnects start with a clean state.
 
 Declare the Cloudburst repository and RakNet compile/test dependencies explicitly. Current upstream removes its unused transport dependencies. The setup compatibility patch retains unchanged legacy codecs for the pinned hosts and capture tooling; it remains outside upstream PRs.
 
@@ -37,3 +44,14 @@ The rebuilt ViaProxy route opens the native cartography screen over Java TCP.
 The client retains its application timeout handler.
 Pausing the Bedrock backend closes the proxy connection at the configured 30-second RakNet timeout.
 The Java client then displays its disconnect screen.
+
+### Late packets after a server disconnect
+
+A live Galaxite session on Bedrock 1.26.60 (protocol 2225) ended with a server Disconnect.
+Fifteen more packets arrived 4 ms later. The first, a 20-byte PlayerList (ID 63), was decoded as a Java pong response with 11 extra bytes.
+Fourteen more Java decoder errors followed before the disconnect screen appeared.
+Embedded transport tests now cover packets that arrive while RakNet finishes a local close, after a transport disconnect, and after a Disconnect in the same batch.
+The complete core suite passes: 2,447 tests, no failures, 177 skipped.
+Offline replay does not run recorded disconnects, so the fix was checked live.
+With only the handler guard, a live repeat of the same Galaxite kick still logged two decoder errors from the rest of the Disconnect's batch.
+With the batch guard, a third repeat shows the disconnect screen with no decoder errors.

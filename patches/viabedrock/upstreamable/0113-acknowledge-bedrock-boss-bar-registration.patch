@@ -1,0 +1,230 @@
+From 01f36840fb53fb2698b01be76f47d331e7f513c6 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 11:33:01 +0100
+Subject: [PATCH] fix(hud): acknowledge Bedrock boss bar registration
+
+The Bedrock client replies to each boss bar Add and Remove with a
+serverbound BossEvent of type PlayerAdded or PlayerRemoved for the same
+actor. ViaBedrock cancelled these events without a reply. Galaxite uses
+the exchange as a load check when it switches a player into
+BlasterWars: it sends Add then Remove for the local player's unique ID
+about every 0.25 seconds, pins the player with MovePlayer corrections,
+withholds the game items, and kicks with "could not finish loading"
+after about 60 seconds.
+
+Evidence, Bedrock 1.26.60 (protocol 2225), official client through the
+StackAnvil recording relay on 2026-11-10: the client answered both the
+hub probe and the BlasterWars probe within 30 ms, received the
+Repeater within 23 seconds and stayed connected. Each reply copies the
+actor ID, name, filtered name and percent from the request and carries
+color BLUE (1) and overlay PROGRESS (0), although the request carried
+PINK (0). The regression test replays those exact request and reply
+bytes.
+
+The reply is sent only for Add and Remove of an actor the translator
+tracks. The captures cover requests that target the local player; the
+same reply for other boss actors follows the documented update types
+but has no native capture yet.
+---
+ .../protocol/packet/HudPackets.java           |  25 +++-
+ .../packet/BossEventAcknowledgementTest.java  | 131 ++++++++++++++++++
+ 2 files changed, 155 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/BossEventAcknowledgementTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index c49dce2c..827b1f55 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -47,6 +47,7 @@ import net.raphimc.viabedrock.api.resourcepack.ui.JsonUiProgram;
+ import net.raphimc.viabedrock.api.util.*;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.IdentityDefinition_Type;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.ObjectiveAction;
+@@ -96,6 +97,25 @@ public final class HudPackets {
+         packet.send(BedrockProtocol.class);
+     }
+ 
++    /**
++     * The Bedrock client answers each boss bar it adds or removes with PlayerAdded or PlayerRemoved for the same
++     * actor. Servers can wait for these replies before finishing a load, and repeat the request until they arrive.
++     * Native 1.26.60 replies echo the name, filtered name and percent and always carry BLUE and PROGRESS.
++     */
++    private static void acknowledgeBossEvent(final UserConnection user, final long bossEntityUniqueId, final BossEventUpdateType request,
++                                     final String name, final String filteredName, final float healthPercent) {
++        final PacketWrapper reply = PacketWrapper.create(ServerboundBedrockPackets.BOSS_EVENT, user);
++        reply.write(BedrockTypes.VAR_LONG, bossEntityUniqueId); // boss entity unique id
++        reply.write(Types.BYTE, (byte) (request == BossEventUpdateType.Add
++                ? BossEventUpdateType.PlayerAdded : BossEventUpdateType.PlayerRemoved).getValue()); // update type
++        reply.write(BedrockTypes.STRING, name); // boss name
++        reply.write(BedrockTypes.STRING, filteredName); // filtered boss name
++        reply.write(BedrockTypes.FLOAT_LE, healthPercent); // health percent
++        reply.write(Types.BYTE, (byte) BossBarColor.BLUE.getValue()); // color
++        reply.write(Types.BYTE, (byte) BossBarOverlay.PROGRESS.getValue()); // overlay
++        reply.sendToServer(BedrockProtocol.class);
++    }
++
+     /**
+      * Native boss bars are rows of the HUD's boss_bars collection. An accepted HUD can present a row through
+      * its own controls and hide it from the native boss panel, so the Java bar follows that authored panel.
+@@ -523,7 +543,7 @@ public final class HudPackets {
+             }
+ 
+             final String bossName = wrapper.read(BedrockTypes.STRING);
+-            wrapper.read(BedrockTypes.STRING); // filtered boss name
++            final String filteredBossName = wrapper.read(BedrockTypes.STRING); // filtered boss name
+             final float healthPercent = wrapper.read(BedrockTypes.FLOAT_LE);
+             final int color = MathUtil.getOrFallback(wrapper.read(Types.BYTE), 0, 5, 0);
+             final int overlay = wrapper.read(Types.BYTE);
+@@ -533,6 +553,9 @@ public final class HudPackets {
+             if (entity == null) {
+                 return;
+             }
++            if (updateType == BossEventUpdateType.Add || updateType == BossEventUpdateType.Remove) {
++                acknowledgeBossEvent(user, bossEntityUniqueId, updateType, bossName, filteredBossName, healthPercent);
++            }
+             final NativeHudBossBars bossBars = user.get(NativeHudBossBars.class);
+             final NativeHudBossBars.Bar bar = bossBars.get(bossEntityUniqueId);
+             switch (updateType) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/BossEventAcknowledgementTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/BossEventAcknowledgementTest.java
+new file mode 100644
+index 00000000..161e1d07
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/BossEventAcknowledgementTest.java
+@@ -0,0 +1,131 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.packet.mapping.PacketMapping;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.Unpooled;
++import java.util.ArrayList;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Map;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.NativeHudBossBars;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class BossEventAcknowledgementTest {
++
++    private static final long LOCAL_PLAYER = 36357902279722580L;
++    // Galaxite's 1.26.60 load probe for the local player, and the official client's replies.
++    private static final String ADD = "a899caa2b9d49581010003c2a77203c2a772000000000000";
++    private static final String REMOVE = "a899caa2b9d4958101020000000000000000";
++    private static final String PLAYER_ADDED = "a899caa2b9d49581010103c2a77203c2a772000000000100";
++    private static final String PLAYER_REMOVED = "a899caa2b9d4958101030000000000000100";
++    private static final String UPDATE_PERCENT = "a899caa2b9d49581010400000000003f0000";
++
++    @Test
++    void answersAddAndRemoveWithTheNativeRegistrationReplies() throws Exception {
++        final var fixture = new Fixture(LOCAL_PLAYER);
++        fixture.receive(ADD);
++        fixture.receive(REMOVE);
++        assertEquals(List.of(PLAYER_ADDED, PLAYER_REMOVED), fixture.sent);
++    }
++
++    @Test
++    void sendsNoReplyForUpdatesOrUnknownActors() throws Exception {
++        final var tracked = new Fixture(LOCAL_PLAYER);
++        tracked.receive(ADD);
++        tracked.sent.clear();
++        tracked.receive(UPDATE_PERCENT);
++        assertTrue(tracked.sent.isEmpty());
++
++        final var untracked = new Fixture(LOCAL_PLAYER + 1);
++        untracked.receive(ADD);
++        untracked.receive(REMOVE);
++        assertTrue(untracked.sent.isEmpty());
++    }
++
++    private static final class Fixture {
++
++        private final List<String> sent = new ArrayList<>();
++        private final UserConnection user = mock(UserConnection.class);
++        private final TestProtocol protocol = new TestProtocol();
++
++        private Fixture(final long trackedActor) {
++            final var tracker = mock(EntityTracker.class);
++            when(tracker.getEntityByUid(trackedActor)).thenReturn(mock(Entity.class));
++            final Map<Class<?>, Object> storage = Map.of(
++                    EntityTracker.class, tracker,
++                    NativeHudBossBars.class, new NativeHudBossBars(),
++                    ChannelStorage.class, new ChannelStorage());
++            when(this.user.get(any())).thenAnswer(call -> storage.get(call.getArgument(0)));
++            when(this.user.has(any())).thenAnswer(call -> storage.containsKey(call.getArgument(0)));
++            final var info = mock(ProtocolInfo.class);
++            when(info.getClientState()).thenReturn(State.PLAY);
++            when(this.user.getProtocolInfo()).thenReturn(info);
++        }
++
++        private void receive(final String payload) throws Exception {
++            try (var wrappers = mockStatic(PacketWrapper.class)) {
++                wrappers.when(() -> PacketWrapper.create(ServerboundBedrockPackets.BOSS_EVENT, this.user)).thenAnswer(call -> {
++                    final var reply = spy(new PacketWrapperImpl(ServerboundBedrockPackets.BOSS_EVENT, null, this.user));
++                    doAnswer(send -> {
++                        final var buffer = Unpooled.buffer();
++                        try {
++                            reply.writeToBuffer(buffer);
++                            assertEquals(ServerboundBedrockPackets.BOSS_EVENT.getId(), Types.VAR_INT.readPrimitive(buffer));
++                            final byte[] bytes = new byte[buffer.readableBytes()];
++                            buffer.readBytes(bytes);
++                            this.sent.add(HexFormat.of().formatHex(bytes));
++                        } finally {
++                            buffer.release();
++                        }
++                        return null;
++                    }).when(reply).sendToServer(BedrockProtocol.class);
++                    return reply;
++                });
++                final var input = Unpooled.wrappedBuffer(HexFormat.of().parseHex(payload));
++                try {
++                    final var packet = new PacketWrapperImpl(ClientboundBedrockPackets.BOSS_EVENT, input, this.user);
++                    final var mapping = this.protocol.mapping(packet);
++                    mapping.applyType(packet);
++                    mapping.handler().handle(packet);
++                    assertTrue(packet.isCancelled());
++                    assertFalse(input.isReadable());
++                } finally {
++                    input.release();
++                }
++            }
++        }
++
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++
++        private TestProtocol() {
++            HudPackets.register(this);
++        }
++
++        private PacketMapping mapping(final PacketWrapper packet) {
++            return this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++        }
++
++    }
++
++}
+-- 
+2.56.0
+

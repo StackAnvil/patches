@@ -58,3 +58,10 @@ Bundle snapshots retain physical slots, view limits, native names, and localized
 `NativeBundleTransferPlanTest` compares 47 original 1.26.60.5 mutation controls and checks owned item snapshots.
 The controls cover weights, filters, nesting, partial extraction, holes, and interleaved merges.
 Desktop default extraction uses a separate single-Take path. Twelve original native helper controls and four generic-transfer controls establish last physical selection, partial merging, rejection, empty vectors, and zero-count retained definitions. Local regressions preserve this distinction from selected-cell extraction and its compaction. The full stack supplies trusted policy and request adapters in deferred patch 0012; live controller calls remain unfinished.
+
+Boss events keep native collection order and resend the HUD root only when it changes.
+Each Java boss bar follows the accepted boss panel: a bar the pack presents elsewhere leaves the Java boss overlay and returns if a later name makes it visible.
+Progress and style updates reach only shown bars, and a removed actor leaves the collection.
+On CubeCraft, this removes the raw `cc_hotbar_text…` name and purple bar shown during the Free For All queue, kit selection, arena spawn and Skyblock introduction.
+`NativeHudBossBarsTest` covers add, hide, rename and return transitions. Clients without the negotiated native HUD root channel retain their Java bars. Late channel registration reconciles existing bars with the authored HUD; a regression also covers restoring the fallback when that capability is absent.
+Offline replay of a captured CubeCraft Skyblock introduction shows the Introduction boss bar at the top and the authored "Hold sneak to skip panorama" text above the hotbar; the raw `cc_hotbar_text` bar no longer appears. No live CubeCraft recheck ran for this change.

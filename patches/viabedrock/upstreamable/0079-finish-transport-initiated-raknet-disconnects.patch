@@ -1,7 +1,7 @@
-From f130f3fc7f0ae874dc41314f7f11275a57747b44 Mon Sep 17 00:00:00 2001
+From 45440c758582675f40514a3e7e38c1c7780d87f3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
-Subject: [PATCH] fix(network): finish transport-initiated RakNet disconnects
+Subject: [PATCH] fix(network): complete RakNet disconnect lifecycle
 
 RakNet emits a disconnect reason before closing its application pipeline.
 Treat that event as an already initiated disconnect so the core close handler
@@ -13,7 +13,23 @@ but the repeated disconnect never completes. This affects the shared handler
 used by direct connections and ViaProxy. Local closes still send one orderly
 disconnect, and transport events continue to downstream handlers.
 
-Embedded transport tests cover every RakNet reason and local close completion.
+Discard inbound application packets once the application closes the
+session or the transport reports a disconnect. The batch codec now emits
+one packet per decode call and stops once the session is closed: a
+Disconnect handled synchronously can close the channel while the rest of
+its batch is still being split. RakNet keeps delivering
+ordered datagrams that were already in flight, and ViaVersion stops
+translating when the channel closes. On a live Bedrock 1.26.60 server
+(protocol 2225), a Disconnect was followed 4 ms later by 15 queued packets.
+They reached the Java decoder untranslated: a Bedrock PlayerList (ID 63)
+decoded as a Java pong response, followed by 14 more decoder errors. The
+native client also stops handling a session after it disconnects. Packets
+read before the close still pass through unchanged, and each new
+connection uses a new handler.
+
+Embedded transport tests cover every RakNet reason, local close completion,
+packets that arrive while RakNet finishes or after a transport
+disconnect, and packets after a Disconnect in the same batch.
 The resolved Cloudburst and VFP runtime session codecs both emit the event
 before closing; no runtime-library reflection or client workaround is needed.
 
@@ -23,10 +39,11 @@ This handler still consumes the transport disconnect reason enum.
 The same repository supplies later independently maintained signaling
 code; its build prerequisite is recorded in the patch series.
 ---
- build.gradle                                  | 12 +++
- .../viabedrock/netty/DisconnectHandler.java   | 13 +++-
- .../netty/DisconnectHandlerTest.java          | 74 +++++++++++++++++++
- 3 files changed, 97 insertions(+), 2 deletions(-)
+ build.gradle                                  |  12 ++
+ .../viabedrock/netty/BatchLengthCodec.java    |  20 ++-
+ .../viabedrock/netty/DisconnectHandler.java   |  34 +++-
+ .../netty/DisconnectHandlerTest.java          | 161 ++++++++++++++++++
+ 4 files changed, 217 insertions(+), 10 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -59,17 +76,49 @@ index 9d621901..79f3bbca 100644
  
      api("io.netty:netty-codec-http:4.2.19.Final") {
          transitive = false
+diff --git a/src/main/java/net/raphimc/viabedrock/netty/BatchLengthCodec.java b/src/main/java/net/raphimc/viabedrock/netty/BatchLengthCodec.java
+index ae2aa73a..bb26952e 100644
+--- a/src/main/java/net/raphimc/viabedrock/netty/BatchLengthCodec.java
++++ b/src/main/java/net/raphimc/viabedrock/netty/BatchLengthCodec.java
+@@ -36,14 +36,18 @@ public class BatchLengthCodec extends ByteToMessageCodec<ByteBuf> {
+ 
+     @Override
+     protected void decode(final ChannelHandlerContext ctx, final ByteBuf in, final List<Object> out) {
+-        while (in.isReadable()) {
+-            final int length = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(in);
+-            if (in.isReadable(length)) {
+-                out.add(in.readRetainedSlice(length));
+-            } else { // Bedrock client drops the packet if the length is invalid
+-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Dropping packet with invalid length: " + length + " (readable bytes: " + in.readableBytes() + ")");
+-                in.skipBytes(in.readableBytes());
+-            }
++        // Emit one packet per call so each is handled before the next is split. A packet such as Disconnect
++        // can close the session, and the rest of its batch must not reach the application afterwards.
++        if (DisconnectHandler.isClosed(ctx)) {
++            in.skipBytes(in.readableBytes());
++            return;
++        }
++        final int length = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(in);
++        if (in.isReadable(length)) {
++            out.add(in.readRetainedSlice(length));
++        } else { // Bedrock client drops the packet if the length is invalid
++            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Dropping packet with invalid length: " + length + " (readable bytes: " + in.readableBytes() + ")");
++            in.skipBytes(in.readableBytes());
+         }
+     }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java b/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
-index 3302236b..36ba2656 100644
+index 3302236b..d18e57d6 100644
 --- a/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
 +++ b/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
-@@ -18,15 +18,24 @@
+@@ -18,17 +18,47 @@
  package net.raphimc.viabedrock.netty;
  
  import io.netty.channel.ChannelHandlerContext;
 -import io.netty.channel.ChannelOutboundHandlerAdapter;
 +import io.netty.channel.ChannelDuplexHandler;
  import io.netty.channel.ChannelPromise;
++import io.netty.util.ReferenceCountUtil;
 +import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason;
  
 -public class DisconnectHandler extends ChannelOutboundHandlerAdapter {
@@ -78,32 +127,60 @@ index 3302236b..36ba2656 100644
      public static final String NAME = "viabedrock-disconnect-handler";
  
      private boolean calledDisconnect = false;
- 
++    private boolean closed = false;
++
++    /** Whether the session behind this pipeline was closed locally or by its transport. */
++    public static boolean isClosed(final ChannelHandlerContext ctx) {
++        final DisconnectHandler handler = ctx.pipeline().get(DisconnectHandler.class);
++        return !ctx.channel().isOpen() || handler != null && handler.closed;
++    }
++
++    @Override
++    public void channelRead(final ChannelHandlerContext ctx, final Object msg) throws Exception {
++        // RakNet keeps delivering ordered datagrams while it finishes a disconnect. The application has
++        // already left the Bedrock session, and Via stops translating once the channel closes.
++        if (this.closed || !ctx.channel().isOpen()) {
++            ReferenceCountUtil.release(msg);
++            return;
++        }
++        super.channelRead(ctx, msg);
++    }
++
 +    @Override
 +    public void userEventTriggered(final ChannelHandlerContext ctx, final Object event) throws Exception {
 +        if (event instanceof RakDisconnectReason) {
 +            this.calledDisconnect = true;
++            this.closed = true;
 +        }
 +        super.userEventTriggered(ctx, event);
 +    }
-+
+ 
      @Override
      public void close(final ChannelHandlerContext ctx, final ChannelPromise promise) throws Exception {
++        this.closed = true;
          if (ctx.channel().isActive() && !this.calledDisconnect) {
+             this.calledDisconnect = true;
+             ctx.disconnect(promise); // Send disconnect notification to the server and close the channel
 diff --git a/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java b/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java
 new file mode 100644
-index 00000000..c227bed1
+index 00000000..2416f1fc
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,161 @@
 +package net.raphimc.viabedrock.netty;
 +
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
 +import io.netty.channel.ChannelHandlerContext;
++import io.netty.channel.ChannelInboundHandlerAdapter;
 +import io.netty.channel.ChannelOutboundHandlerAdapter;
 +import io.netty.channel.ChannelPromise;
 +import io.netty.channel.embedded.EmbeddedChannel;
 +import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason;
 +import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -142,6 +219,87 @@ index 00000000..c227bed1
 +        } finally {
 +            channel.finishAndReleaseAll();
 +        }
++    }
++
++    @Test
++    void packetsKeepFlowUntilTheApplicationClosesTheSession() {
++        final var application = new Application();
++        final var channel = new EmbeddedChannel(true, true, new PendingDisconnectTransport(), new DisconnectHandler(), application);
++        final ByteBuf queued = Unpooled.wrappedBuffer(new byte[]{63, 0, 0});
++        try {
++            channel.pipeline().fireChannelRead(Unpooled.wrappedBuffer(new byte[]{5}));
++            assertEquals(1, application.received.size());
++
++            channel.close();
++            assertTrue(channel.isOpen(), "RakNet is still finishing the disconnect handshake");
++            channel.pipeline().fireChannelRead(queued);
++
++            assertEquals(1, application.received.size());
++            assertEquals(0, queued.refCnt());
++        } finally {
++            application.received.forEach(ByteBuf::release);
++            channel.finishAndReleaseAll();
++        }
++    }
++
++    @Test
++    void packetsAfterTransportDisconnectAreReleased() {
++        final var application = new Application();
++        final var channel = new EmbeddedChannel(true, true, new Transport(), new DisconnectHandler(), application);
++        final ByteBuf queued = Unpooled.wrappedBuffer(new byte[]{63, 0, 0});
++        try {
++            channel.pipeline().fireUserEventTriggered(RakDisconnectReason.TIMED_OUT);
++            channel.pipeline().fireChannelRead(queued);
++
++            assertTrue(application.received.isEmpty());
++            assertEquals(0, queued.refCnt());
++        } finally {
++            channel.finishAndReleaseAll();
++        }
++    }
++
++    @Test
++    void packetsAfterDisconnectInTheSameBatchAreDiscarded() {
++        final Application application = new Application() {
++            @Override
++            public void channelRead(final ChannelHandlerContext ctx, final Object msg) {
++                super.channelRead(ctx, msg);
++                if (((ByteBuf) msg).getByte(0) == 5) {
++                    ctx.channel().close(); // The Java client leaves the session when it handles Disconnect.
++                }
++            }
++        };
++        final var channel = new EmbeddedChannel(true, true, new PendingDisconnectTransport(), new DisconnectHandler(),
++                new BatchLengthCodec(), application);
++        final ByteBuf batch = Unpooled.wrappedBuffer(new byte[]{1, 9, 1, 5, 3, 63, 0, 0, 1, 14});
++        try {
++            channel.pipeline().fireChannelRead(batch);
++            assertEquals(List.of(9, 5), application.received.stream().map(packet -> (int) packet.getByte(0)).toList());
++            application.received.forEach(ByteBuf::release);
++            assertEquals(0, batch.refCnt(), "The discarded remainder is released");
++        } finally {
++            channel.finishAndReleaseAll();
++        }
++    }
++
++    private static class Application extends ChannelInboundHandlerAdapter {
++
++        private final List<ByteBuf> received = new ArrayList<>();
++
++        @Override
++        public void channelRead(final ChannelHandlerContext ctx, final Object msg) {
++            this.received.add((ByteBuf) msg);
++        }
++
++    }
++
++    private static final class PendingDisconnectTransport extends ChannelOutboundHandlerAdapter {
++
++        @Override
++        public void disconnect(final ChannelHandlerContext ctx, final ChannelPromise promise) {
++            // RakNet completes the promise after the peer acknowledges or the session times out.
++        }
++
 +    }
 +
 +    private static final class Transport extends ChannelOutboundHandlerAdapter {
