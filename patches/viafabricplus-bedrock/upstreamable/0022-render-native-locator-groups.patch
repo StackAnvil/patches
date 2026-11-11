@@ -1,4 +1,4 @@
-From eada3477864737df04d9debba1f2ab5851bdbbb3 Mon Sep 17 00:00:00 2001
+From 6c8b30931d31f8d822d91116179dddd1f54b9acd Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(hud): render native locator groups
@@ -34,6 +34,15 @@ differences and agree after the change. Three behavior regressions fail
 before and pass after. These controls do not establish complete camera,
 texture, vertical-arrow or installed HUD parity. The reported missing
 locator bar on its original server remains unmatched.
+
+Serve converted UI images that the converter shared with an identical
+image. When no pack provides a requested server UI image, the namespace
+resource manager reads the alias table and returns the shared bytes from
+the pack that wrote the table, under the requested identifier. Textures
+therefore load through their normal UI identifier, a direct override of
+that identifier still wins, and overriding the unrelated shared target
+cannot change UI pixels. Each resource manager generation owns its table
+cache, so a reload discards it with the old packs.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   6 +
  .../bedrock/hud/BedrockLocatorBar.java        | 122 ++++++++++++++++++
@@ -44,19 +53,26 @@ locator bar on its original server remains unmatched.
  .../bedrock/hud/LocatorBarSession.java        |  33 +++++
  .../render/MixinBedrockHudVisibility.java     |  17 +++
  .../render/MixinMinecraftHudVisibility.java   |   2 +
+ .../render/MixinServerUiTextureResources.java |  36 ++++++
+ .../render/BedrockServerUiTextures.java       |  57 ++++++++
+ .../viafabricplus-bedrock.mixins.json         |   1 +
  .../bedrock/hud/LocatorBarMotionTest.java     |  42 ++++++
  .../bedrock/hud/LocatorBarProjectionTest.java |  69 ++++++++++
  .../bedrock/hud/LocatorBarSessionTest.java    |  24 ++++
- 12 files changed, 531 insertions(+)
+ .../render/BedrockServerUiTexturesTest.java   |  83 ++++++++++++
+ 16 files changed, 708 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSession.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinServerUiTextureResources.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockServerUiTextures.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarProjectionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarSessionTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockServerUiTexturesTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 734c4bb..0b69037 100644
@@ -562,6 +578,123 @@ index 9f4d7b5..7262fda 100644
      }
  
  }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinServerUiTextureResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinServerUiTextureResources.java
+new file mode 100644
+index 0000000..661ad66
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinServerUiTextureResources.java
+@@ -0,0 +1,36 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockServerUiTextures;
++import java.util.Optional;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.PackType;
++import net.minecraft.server.packs.resources.FallbackResourceManager;
++import net.minecraft.server.packs.resources.Resource;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++/** Resolves shared converted UI images where every texture and UI lookup reads one namespace's packs. */
++@Mixin(FallbackResourceManager.class)
++public abstract class MixinServerUiTextureResources {
++    @Shadow @Final private PackType type;
++    @Unique private final BedrockServerUiTextures viafabricplusbedrock$uiTextures = new BedrockServerUiTextures();
++
++    @Inject(method = "getResource", at = @At("RETURN"), cancellable = true)
++    private void resolveSharedUiTexture(final Identifier id, final CallbackInfoReturnable<Optional<Resource>> cir) {
++        if (this.type != PackType.CLIENT_RESOURCES) return;
++        final Optional<Resource> found = cir.getReturnValue();
++        final Optional<Resource> resolved = this.viafabricplusbedrock$uiTextures.lookup(id, found,
++            ((FallbackResourceManager) (Object) this)::getResource);
++        if (resolved != found) cir.setReturnValue(resolved);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockServerUiTextures.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockServerUiTextures.java
+new file mode 100644
+index 0000000..d1a9ba8
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockServerUiTextures.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.util.Map;
++import java.util.Optional;
++import java.util.function.Function;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.PackResources;
++import net.minecraft.server.packs.PackType;
++import net.minecraft.server.packs.resources.IoSupplier;
++import net.minecraft.server.packs.resources.Resource;
++import net.raphimc.viabedrock.api.resourcepack.ui.UiTextureAliases;
++
++/**
++ * Serves converted UI images that the server pack shares with an identical image.
++ * The converter removes the duplicate UI file and records its identifier in an alias table. This lookup returns the
++ * shared bytes under the requested UI identifier, read from the same pack that wrote the table, so textures load
++ * through their normal identifier and another pack's override of the shared target cannot change UI pixels.
++ * One instance belongs to one resource manager generation and is discarded with it on reload.
++ */
++public final class BedrockServerUiTextures {
++    private static final Identifier ALIASES = Identifier.fromNamespaceAndPath("viabedrock", UiTextureAliases.RESOURCE);
++    private static final int MAX_BYTES = 8 * 1024 * 1024;
++    private PackResources source;
++    private Map<String, String> aliases = Map.of();
++
++    /** Returns the found resource unchanged; only an absent server UI image can resolve through the alias table. */
++    public synchronized Optional<Resource> lookup(final Identifier id, final Optional<Resource> found,
++                                                  final Function<Identifier, Optional<Resource>> resources) {
++        if (found.isPresent() || !id.getNamespace().equals("viabedrock") || !id.getPath().startsWith("textures/server_ui/")) return found;
++        final Resource table = resources.apply(ALIASES).orElse(null);
++        if (table == null) return found;
++        final PackResources pack = table.source();
++        if (pack != this.source) {
++            Map<String, String> loaded;
++            try (final InputStream input = table.open()) {
++                final byte[] bytes = input.readNBytes(MAX_BYTES + 1);
++                loaded = bytes.length > MAX_BYTES ? Map.of() : UiTextureAliases.read(bytes);
++            } catch (final IOException | RuntimeException invalid) {
++                loaded = Map.of();
++            }
++            this.source = pack;
++            this.aliases = loaded;
++        }
++        final String target = this.aliases.get(id.getPath());
++        final Identifier shared = target == null ? null : Identifier.tryBuild("viabedrock", target);
++        if (shared == null) return found;
++        final IoSupplier<InputStream> bytes = pack.getResource(PackType.CLIENT_RESOURCES, shared);
++        return bytes == null ? found : Optional.of(new Resource(pack, bytes));
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 41254ed..d3e4e8c 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -118,6 +118,7 @@
+     "features.render.MixinBedrockNameTagRenderer",
+     "features.render.MixinBedrockScoreboardSidebar",
+     "features.render.MixinBedrockRenderingResources",
++    "features.render.MixinServerUiTextureResources",
+     "features.render.MixinBedrockRenderingConnection",
+     "features.render.MixinBedrockRenderingSession",
+     "features.render.MixinBedrockVignette",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarMotionTest.java
 new file mode 100644
 index 0000000..48152ab
@@ -713,6 +846,95 @@ index 0000000..f90d989
 +        final var empty = new LocatorBarSnapshot(Map.of());
 +        assertTrue(state.accept(state.generation(), empty));
 +        assertSame(empty, state.snapshot());
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockServerUiTexturesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockServerUiTexturesTest.java
+new file mode 100644
+index 0000000..b6a2a7a
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockServerUiTexturesTest.java
+@@ -0,0 +1,83 @@
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.io.ByteArrayInputStream;
++import java.io.InputStream;
++import java.lang.reflect.Proxy;
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.Optional;
++import java.util.function.Function;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.PackResources;
++import net.minecraft.server.packs.PackType;
++import net.minecraft.server.packs.resources.IoSupplier;
++import net.minecraft.server.packs.resources.Resource;
++import net.raphimc.viabedrock.api.resourcepack.ui.UiTextureAliases;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockServerUiTexturesTest {
++    private static final Identifier SHARED = Identifier.fromNamespaceAndPath("viabedrock", "textures/server_ui/shared.png");
++    private static final Identifier PIG = Identifier.fromNamespaceAndPath("viabedrock", "textures/item/entities/pig.png");
++    private static final Identifier TABLE = Identifier.fromNamespaceAndPath("viabedrock", UiTextureAliases.RESOURCE);
++    private static final String PIG_ALIAS = "{\"format\":1,\"aliases\":{\"textures/server_ui/shared.png\":\"textures/item/entities/pig.png\"}}";
++
++    @Test
++    void sharedUiImagesKeepTheServerPacksPixelsUnderTheirRequestedIdentifier() throws Exception {
++        final BedrockServerUiTextures textures = new BedrockServerUiTextures();
++        final PackResources server = pack(Map.of(TABLE, PIG_ALIAS, PIG, "server pig"));
++        final PackResources override = pack(Map.of(PIG, "override pig", SHARED, "override ui"));
++
++        // Another pack overrides only the shared target; the UI image still reads the server pack's bytes.
++        final Resource shared = textures.lookup(SHARED, Optional.empty(),
++            resources(Map.of(TABLE, resource(server, TABLE), PIG, resource(override, PIG)))).orElseThrow();
++        assertSame(server, shared.source());
++        assertEquals("server pig", read(shared));
++
++        // An explicit pack override of the requested UI identifier still wins.
++        final Optional<Resource> direct = Optional.of(resource(override, SHARED));
++        assertSame(direct, textures.lookup(SHARED, direct, resources(Map.of(TABLE, resource(server, TABLE)))));
++    }
++
++    @Test
++    void lookupsWithoutAUsableAliasLeaveTheResultUnchanged() {
++        final BedrockServerUiTextures textures = new BedrockServerUiTextures();
++        final Identifier unique = Identifier.fromNamespaceAndPath("viabedrock", "textures/server_ui/unique.png");
++        final PackResources server = pack(Map.of(TABLE, PIG_ALIAS, PIG, "server pig"));
++        assertTrue(textures.lookup(unique, Optional.empty(), resources(Map.of(TABLE, resource(server, TABLE)))).isEmpty());
++        assertTrue(textures.lookup(SHARED, Optional.empty(), id -> Optional.empty()).isEmpty());
++        final PackResources invalid = pack(Map.of(TABLE, "not json", PIG, "server pig"));
++        assertTrue(textures.lookup(SHARED, Optional.empty(), resources(Map.of(TABLE, resource(invalid, TABLE)))).isEmpty());
++        // A replacement server pack replaces the cached table.
++        final PackResources replacement = pack(Map.of(TABLE, PIG_ALIAS, PIG, "replacement pig"));
++        assertSame(replacement, textures.lookup(SHARED, Optional.empty(), resources(Map.of(TABLE, resource(replacement, TABLE)))).orElseThrow().source());
++    }
++
++    private static Function<Identifier, Optional<Resource>> resources(final Map<Identifier, Resource> available) {
++        final Map<Identifier, Resource> copy = new HashMap<>(available);
++        return id -> Optional.ofNullable(copy.get(id));
++    }
++
++    private static PackResources pack(final Map<Identifier, String> files) {
++        return (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class<?>[]{PackResources.class},
++            (proxy, method, args) -> switch (method.getName()) {
++                case "equals" -> proxy == args[0];
++                case "hashCode" -> System.identityHashCode(proxy);
++                case "getResource" -> args.length == 2 && args[0] == PackType.CLIENT_RESOURCES && files.containsKey(args[1])
++                    ? (IoSupplier<InputStream>) () -> new ByteArrayInputStream(files.get(args[1]).getBytes(StandardCharsets.UTF_8)) : null;
++                default -> null;
++            });
++    }
++
++    private static Resource resource(final PackResources pack, final Identifier id) {
++        return new Resource(pack, pack.getResource(PackType.CLIENT_RESOURCES, id));
++    }
++
++    private static String read(final Resource resource) throws Exception {
++        try (final InputStream input = resource.open()) {
++            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
++        }
 +    }
 +}
 -- 

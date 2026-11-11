@@ -11,8 +11,15 @@ Transport shared authored programs and resources before domain-specific adapters
 Prerequisites:
 
 - viabedrock/0015-transport-native-resources-and-sound-commands.patch: Land accepted native resource transport before loading shared UI programs.
+- viabedrock/0001-cache-converted-resource-packs.patch: Provide converted-pack futures and bounded resource preparation before warming UI programs on cache hits.
+
+Converted UI images can share an identical image elsewhere in the same Java pack. Controls keep their path-derived identifiers, because bindings choose paths at runtime. The pack drops the duplicate and maps its identifier in `server_ui_textures.json`. A shared target uses the same format and has no `.mcmeta` sidecar. The add-on serves the shared bytes under the requested identifier from the pack that wrote the table, so overrides of the shared target do not change UI pixels. The current Galaxite conversion removes 2,895 duplicate UI images, including 2,290 shared with non-UI exports. All removed images resolve to the same bytes as the previous build, saving 7,680,755 bytes of duplicate encoded images. `UiTextureAliasesTest` covers format, sidecar, determinism and malformed-table cases.
+
+Cache hits skip converters, so prepare the immutable UI program on the bounded resource workers in parallel with the converted-pack lookup. Wait for both before advertising the pack. The first HUD packet can then reuse the program without initializing it on the event loop. Publication keeps the current connection and accepted-storage guard.
 
 ## Validation and remaining limits
+
+The final populated-disk recording initializes UI on a preparation worker in 1.28 seconds while both converted packs hit cache. The same-JVM reconnect initializes its new UI snapshot on a worker in 0.77 seconds. The earlier disk-hit control spent 1.05 seconds in this getter on Netty. These timings establish thread placement, not reduced UI CPU work.
 
 Official Bedrock 1.26.60.5 desktop controls open Encyclopedia topic 31, Furnace, from all three cooking families.
 Furnace and blast-furnace controls retain carried items after returning from Help.

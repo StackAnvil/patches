@@ -12,11 +12,15 @@ Resolve physical collision separately from visual compilation and Java pack acce
 
 Reuse decoded terrain images and alpha summaries within each compilation or conversion pass. Release these caches after the pass. Shared PNG resources use content hashes, while models retain their material flags and particle references. Bulk raster rows preserve the existing alpha thresholds. The custom-visual cache identity excludes older packs that contain a separate texture copy for each carrier.
 
+Build the block-state rewriter on the bounded resource pack workers once Java has loaded the server pack. A holding buffer queues every later clientbound packet in arrival order while the worker runs. The result publishes on the event loop only for the same active connection, buffer and accepted storage. After publication, pre-play packets resume in order and world packets wait for the supplemental pack. A full worker queue fails the join through the existing error path; the event loop never builds the rewriter. The supplemental conversion reuses the native resource archive from the first conversion through a per-storage stage cache with a shared 128 MiB budget.
+
+Serialize culling directions in enum order so equivalent states retain the same disk-cache identity across JVMs. Include canonical texture bindings and pixel-method definitions in the supplemental fingerprint; two runtime dictionaries that select different pixels must not share a cached pack. Regressions cover both boundaries and insertion-order independence.
+
 ## Validation and remaining limits
 
-The four-project build passes 3,943 tests with 336 optional skips and no failures. Four new regressions cover image reuse, pack precedence, material pixels and shared sprite references.
+The four-project build passes 3,968 tests with 336 optional skips and no failures. Four new regressions cover image reuse, pack precedence, material pixels and shared sprite references.
 
-A paired cold Galaxite replay reduces block-state setup from 4.44 seconds to 1.04 seconds. The following conversion, including ZIP output, falls from 5.07 seconds to 1.11 seconds. Its texture worker falls from 4.49 seconds to 0.49 seconds. These are measured StackAnvil stages, not a predicted live join duration. The replay preserves recorded packet timing and chunk reply gates.
+An earlier paired cold Galaxite replay reduced block-state setup from 4.44 seconds to 1.04 seconds. The following conversion, including ZIP output, falls from 5.07 seconds to 1.11 seconds. Its texture worker falls from 4.49 seconds to 0.49 seconds. These are measured StackAnvil stages, not a predicted live join duration. The replay preserves recorded packet timing and chunk reply gates.
 
 The final pack retains all 2,220 carrier models with the same geometry, material flags, particle pixels and physical metadata. The comparison resolves sprite references to PNG byte hashes and treats culling direction sets as unordered. Shared texture output uses 173 PNGs instead of 2,220 copies. Both replays pass complete-payload transport checks. Existing unresolved mappings still fail rendering verification, so this comparison does not establish complete native appearance.
 
@@ -71,5 +75,7 @@ The compiled provider matches 34,530 original bounds queries across 8,495 states
 Installed direct and ViaProxy controls cover all 18 fixed profiles, representative empty states, an inherited slab, and an unresolved fence.
 These controls retain the bounds through swaps, resource reload, and dimension return. Full core, add-on, and proxy builds pass.
 Other shape providers, loaded native world publication, full camera trajectories, and mounted movement parity remain unverified.
+
+`BlockStatePreparationTest`, `WorldPacketBufferTest` and `ResourcePackStageCacheTest` cover queue rejection, stale publication, held packet order, isolated stage outputs and budget eviction. The final cold Galaxite replay moves block-state setup from the previous pushed build's 1.54 seconds on Netty to 1.19 seconds on a preparation worker. The native archive is encoded once instead of twice; supplemental rewriting plus ZIP output takes 0.69 seconds versus 1.10 seconds. A fresh JVM with a populated disk cache hits both converted packs in 99 ms and 94 ms, with no rewriting, archive encoding or converted ZIP output. The same-JVM reconnect also skips those stages and builds block states on a worker in 0.84 seconds. All final runs pass complete-payload transport checks. These build comparisons include the other performance patches and main's HUD/audio fixes; one replay per condition and captured packet pacing do not establish a statistical end-to-end speedup. Existing unresolved mappings still fail broad rendering checks.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.

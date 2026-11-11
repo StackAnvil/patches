@@ -25,6 +25,8 @@ Prerequisites:
 
 The immutable item cache retains the optional native air-use predicate. Missing metadata selects the older-core fallback; explicit false selects the current native policy. Replacing custom data changes the predicate without mutating cached snapshots. `BedrockItemMetadataTest` covers this boundary.
 
+Bundled assets build their resource library once. Validation uses the same library that the loader publishes, and every version, manifest, required-resource and persona check still runs before publication. The removed second build took 348 ms in a cold Galaxite trace.
+
 ## Validation and remaining limits
 
 Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTest`, `BedrockActorRenderSelectionTest`, `BedrockActorScaleTest`, and `BedrockActorPickingStateTest`.

@@ -67,6 +67,10 @@ These measurements cover prepared packaging and the recorded replay.
 They do not establish current network latency, licensed acquisition speed, native rendering parity or live server frame time.
 Raw packs, licensed images, recordings and profiles remain private.
 
+## Stored compressed media
+
+The ZIP writer stores PNG, JPEG and OGG entries instead of compressing them again. Raw TGA, JSON and language files still use deflate, and explicit entry hints still apply. A separate ZIP format revision in the conversion fingerprint replaces cached packs with the old layout. On the prepared 21,508-entry Galaxite pack, packaging fell from 383 ms to 163 ms and the archive grew by 0.69%. Every payload read back equal. Proxy users pay that small bandwidth increase.
+
 ## Item atlas output invalidation
 
 Advance the resource fingerprint when item conversion stops exporting unresolved sprite models.

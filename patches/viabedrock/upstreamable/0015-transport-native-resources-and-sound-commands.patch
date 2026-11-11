@@ -1,4 +1,4 @@
-From 8aa6e2e8064f13ba8905a68f167e55439a28f651 Mon Sep 17 00:00:00 2001
+From d7e59df4930c6965a5c3cc8ea83d51ded8454518 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
@@ -173,6 +173,12 @@ The regression test exercises all four liquid identifiers across 16
 mapped depths, full secondary-only sections, dense fluid/non-air counts
 and individual removals. Introduce the existing Mockito test dependency
 at this first use; later feature patches reuse it.
+
+Index caption locale files without parsing them during resource preparation.
+Resolve each requested locale once with thread-safe publication, preserve
+pack overrides and inherited-locale-before-English fallback, and snapshot
+input bytes so deferred reads retain the eager parser ownership contract.
+Use a literal newline splitter to avoid regular-expression parsing work.
 ---
  build.gradle                                  |   7 +
  .../api/model/NativeBlockIdentifiers.java     | 236 +++++++++++++++++
@@ -182,7 +188,7 @@ at this first use; later feature patches reuse it.
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
  .../api/resourcepack/NativeActorLibrary.java  | 136 ++++++++++
  .../resourcepack/NativeResourceArchive.java   | 153 +++++++++++
- .../api/resourcepack/SoundTranslations.java   |  70 +++++
+ .../api/resourcepack/SoundTranslations.java   |  85 ++++++
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++
  .../http/ConvertedResourcePackCache.java      |   2 +-
  .../protocol/packet/MultiStatePackets.java    |   6 +
@@ -196,12 +202,12 @@ at this first use; later feature patches reuse it.
  .../api/model/SoundCaptionsTest.java          |  80 ++++++
  .../resourcepack/NativeActorLibraryTest.java  | 186 +++++++++++++
  .../NativeResourceArchiveTest.java            |  51 ++++
- .../resourcepack/SoundTranslationsTest.java   |  64 +++++
+ .../resourcepack/SoundTranslationsTest.java   | 103 ++++++++
  .../api/resourcepack/WaveSoundTest.java       | 182 +++++++++++++
  .../protocol/packet/SoundUpdateTest.java      |   5 +
  .../storage/NativeBlockSectionTest.java       |  60 +++++
  .../storage/NativeFluidLayersTest.java        | 113 ++++++++
- 27 files changed, 2514 insertions(+), 10 deletions(-)
+ 27 files changed, 2568 insertions(+), 10 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
@@ -222,10 +228,10 @@ at this first use; later feature patches reuse it.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeFluidLayersTest.java
 
 diff --git a/build.gradle b/build.gradle
-index abde84d0..82d1b53d 100644
+index 6b200bc6..3142bd8c 100644
 --- a/build.gradle
 +++ b/build.gradle
-@@ -125,6 +125,7 @@ dependencies {
+@@ -126,6 +126,7 @@ dependencies {
      testImplementation "io.netty:netty-handler:4.2.18.Final"
      testImplementation "org.junit.jupiter:junit-jupiter:6.1.3"
      testImplementation sourceSets.tool.output
@@ -233,7 +239,7 @@ index abde84d0..82d1b53d 100644
      testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.1.3"
  }
  
-@@ -174,3 +175,9 @@ registerToolTask("sortJson", "net.raphimc.viabedrock.tool.JsonSorter",
+@@ -175,3 +176,9 @@ registerToolTask("sortJson", "net.raphimc.viabedrock.tool.JsonSorter",
      "Sorts data asset json files in place. Options: --file (required), --deep")
  registerToolTask("convertResourcePack", "net.raphimc.viabedrock.test.ResourcePackConverterTest",
      "Converts a bedrock .mcpack to a java resource pack. Options: --input (required), --output")
@@ -1271,10 +1277,10 @@ index 00000000..8b528490
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
 new file mode 100644
-index 00000000..8c40620c
+index 00000000..d5afc57a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,85 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1283,15 +1289,18 @@ index 00000000..8c40620c
 +package net.raphimc.viabedrock.api.resourcepack;
 +
 +import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Locale;
 +import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
 +
 +/** Pack-ordered caption translations with English fallback and case-independent locale codes. */
 +public final class SoundTranslations {
 +
-+    private final Map<String, Map<String, String>> languages = new HashMap<>();
++    private final Map<String, List<byte[]>> sources;
++    private final Map<String, Map<String, String>> languages = new ConcurrentHashMap<>();
 +    private final SoundTranslations inherited;
 +
 +    public SoundTranslations(final List<Map<String, byte[]>> packs) {
@@ -1300,28 +1309,19 @@ index 00000000..8c40620c
 +
 +    private SoundTranslations(final SoundTranslations inherited, final List<Map<String, byte[]>> packs) {
 +        this.inherited = inherited;
++        final Map<String, List<byte[]>> sources = new HashMap<>();
 +        for (final Map<String, byte[]> pack : packs) {
 +            for (final Map.Entry<String, byte[]> entry : pack.entrySet()) {
 +                final String path = entry.getKey();
 +                if (!path.startsWith("texts/") || !path.endsWith(".lang") || path.indexOf('/', 6) >= 0) {
 +                    continue;
 +                }
-+                final Map<String, String> translations = this.languages.computeIfAbsent(
-+                        path.substring(6, path.length() - 5).toLowerCase(Locale.ROOT), ignored -> new HashMap<>());
-+                for (final String rawLine : new String(entry.getValue(), StandardCharsets.UTF_8).split("\\n")) {
-+                    String line = rawLine;
-+                    final int comment = line.indexOf("##");
-+                    if (comment >= 0) {
-+                        line = line.substring(0, comment);
-+                    }
-+                    line = line.trim();
-+                    final int separator = line.indexOf('=');
-+                    if (separator > 0) {
-+                        translations.put(line.substring(0, separator), line.substring(separator + 1));
-+                    }
-+                }
++                sources.computeIfAbsent(path.substring(6, path.length() - 5).toLowerCase(Locale.ROOT),
++                        ignored -> new ArrayList<>()).add(entry.getValue().clone());
 +            }
 +        }
++        sources.replaceAll((locale, files) -> List.copyOf(files));
++        this.sources = Map.copyOf(sources);
 +    }
 +
 +    public SoundTranslations withOverrides(final List<Map<String, byte[]>> packs) {
@@ -1340,8 +1340,29 @@ index 00000000..8c40620c
 +    }
 +
 +    private String lookup(final String key, final String locale) {
-+        final String translated = this.languages.getOrDefault(locale, Map.of()).get(key);
++        // Cache only locales present in this snapshot, never arbitrary client locale strings.
++        final String translated = this.sources.containsKey(locale)
++                ? this.languages.computeIfAbsent(locale, this::readLanguage).get(key) : null;
 +        return translated != null || this.inherited == null ? translated : this.inherited.lookup(key, locale);
++    }
++
++    private Map<String, String> readLanguage(final String locale) {
++        final Map<String, String> translations = new HashMap<>();
++        for (final byte[] bytes : this.sources.get(locale)) {
++            for (final String rawLine : new String(bytes, StandardCharsets.UTF_8).split("\n")) {
++                String line = rawLine;
++                final int comment = line.indexOf("##");
++                if (comment >= 0) {
++                    line = line.substring(0, comment);
++                }
++                line = line.trim();
++                final int separator = line.indexOf('=');
++                if (separator > 0) {
++                    translations.put(line.substring(0, separator), line.substring(separator + 1));
++                }
++            }
++        }
++        return Map.copyOf(translations);
 +    }
 +
 +}
@@ -1580,13 +1601,13 @@ index 00000000..415730f3
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 2da10cda..db5e690b 100644
+index dce24ced..1c8710c6 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-@@ -53,7 +53,7 @@ import java.util.logging.Level;
- 
+@@ -54,7 +54,7 @@ import java.util.logging.Level;
  public class ConvertedResourcePackCache {
  
+     private static final int ZIP_FORMAT_VERSION = 1;
 -    private static final String CONVERSION_VERSION = "resolved-model-textures-and-appearance-6";
 +    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-and-offsets-8";
      // Advance when the set or format of emitted resources changes independently of converter profiles.
@@ -2644,10 +2665,10 @@ index 00000000..3c77ca2d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
 new file mode 100644
-index 00000000..de4a1c64
+index 00000000..08341724
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,103 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2659,13 +2680,52 @@ index 00000000..de4a1c64
 +import org.junit.jupiter.api.Test;
 +
 +import java.io.ByteArrayInputStream;
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
 +import java.util.UUID;
 +import java.util.List;
 +import java.util.Map;
++import java.util.concurrent.Callable;
++import java.util.concurrent.Executors;
++import java.util.stream.IntStream;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class SoundTranslationsTest {
++
++    @Test
++    void deferredLocalesKeepTheirSnapshotWhenTheInputChanges() {
++        final byte[] german = "key=original".getBytes(StandardCharsets.UTF_8);
++        final Map<String, byte[]> pack = new HashMap<>(Map.of("texts/de_DE.lang", german));
++        final var translations = new SoundTranslations(List.of(pack));
++        java.util.Arrays.fill(german, (byte) 'x');
++        pack.clear();
++        assertEquals("original", translations.translate("key", "de_DE"));
++    }
++
++    @Test
++    void concurrentLocaleChangesKeepOverridesAndEnglishFallbacksIsolated() throws Exception {
++        final var lower = new SoundTranslations(List.of(Map.of(
++                "texts/en_US.lang", "fallback=english\nkey=base".getBytes(StandardCharsets.UTF_8),
++                "texts/de_DE.lang", "key=deutsch".getBytes(StandardCharsets.UTF_8))));
++        final var upper = lower.withOverrides(List.of(Map.of(
++                "texts/fr_FR.lang", "key=français\nempty=".getBytes(StandardCharsets.UTF_8),
++                "texts/en_US.lang", "key=override".getBytes(StandardCharsets.UTF_8))));
++        try (var executor = Executors.newFixedThreadPool(4)) {
++            final var calls = IntStream.range(0, 60).mapToObj(index -> (Callable<String>) () -> switch (index % 3) {
++                case 0 -> upper.translate("key", "de_DE");
++                case 1 -> upper.translate("key", "FR_fr");
++                default -> upper.translate("key", "unknown");
++            }).toList();
++            final var results = executor.invokeAll(calls);
++            for (int index = 0; index < results.size(); index++) {
++                assertEquals(List.of("deutsch", "français", "override").get(index % 3), results.get(index).get());
++            }
++        }
++        assertEquals("english", upper.translate("fallback", "fr_FR"));
++        assertEquals("", upper.translate("empty", "fr_FR"));
++        assertEquals("base", lower.translate("key", "unknown"));
++    }
 +
 +    @Test
 +    void resolvesLocaleOverridesAndFallbacksFromTheSharedArchive() throws Exception {

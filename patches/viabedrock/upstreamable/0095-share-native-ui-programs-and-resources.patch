@@ -1,4 +1,4 @@
-From eb139502061a72c98098dde9ff33923b5ffc5e2c Mon Sep 17 00:00:00 2001
+From 6126ca8c74415a0506dfd62bc620ba54c62c6f03 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -883,6 +883,27 @@ and <gems> markers. Vanilla anims arrays contain only @references and the
 native meaning of the inline object is unverified, so skip that entry and
 leave the control static. The earlier offline control used different row
 text and so missed this; the recorded rows reproduce the failure.
+
+Share converted UI images with byte-identical images in the same Java
+pack. UI controls keep their path-derived identifiers, because bindings
+can select any texture path at runtime. The pack instead removes the
+duplicate UI image and records the identifier in
+server_ui_textures.json. A target must use the same format and have no
+.mcmeta sidecar, so both identifiers load and sample the same image. In a
+recorded Galaxite pack, 2,428 UI images duplicated entity, attachable and
+item textures, and 657 more duplicated other UI images. The UI conversion
+identity advances so cached packs adopt the shared layout.
+
+Group candidates by format and SHA-256 so each image is hashed once, then
+confirm a match by comparing bytes. Many same-size images therefore cost
+linear time, and a digest alone never decides that two images are equal.
+
+Prepare the shared UI program on bounded resource workers alongside the
+converted-pack lookup, and require both before advertising the Java pack.
+A disk-cache hit bypasses the converter that normally initializes UI, so
+the first HUD packet otherwise spends about a second normalizing images
+on the network event loop. Retain the existing current-storage publication
+guard and failure path for both preparations.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   94 +
@@ -942,11 +963,13 @@ text and so missed this; the recorded rows reproduce the failure.
  .../api/resourcepack/ui/UiFontGlyphs.java     |  235 ++
  .../api/resourcepack/ui/UiFonts.java          |  395 +++
  .../resourcepack/ui/UiRetainedBindings.java   |   49 +
+ .../api/resourcepack/ui/UiTextureAliases.java |  136 ++
  .../api/resourcepack/ui/UiTextureLimits.java  |   24 +
  .../api/resourcepack/ui/UiTextures.java       |  101 +
  .../viabedrock/api/util/NativeSort.java       |  168 ++
  .../protocol/packet/EntityPackets.java        |    9 +
- .../rewriter/ResourcePackRewriter.java        |    2 +
+ .../protocol/packet/ResourcePackPackets.java  |   36 +-
+ .../rewriter/ResourcePackRewriter.java        |    9 +-
  .../GlyphSheetResourceRewriter.java           |   64 +-
  .../resourcepack/JsonUiResourceRewriter.java  |   36 +
  .../protocol/storage/ResourcePackStorage.java |   42 +-
@@ -998,10 +1021,11 @@ text and so missed this; the recorded rows reproduce the failure.
  .../ui/UiFactoryInstancesTest.java            |   56 +
  .../api/resourcepack/ui/UiFontGlyphsTest.java |   60 +
  .../api/resourcepack/ui/UiFontsTest.java      |  311 +++
+ .../resourcepack/ui/UiTextureAliasesTest.java |   77 +
  .../api/resourcepack/ui/UiTexturesTest.java   |  231 ++
  .../ui/native-inventory-item-filter.json      |  311 +++
  .../generator/SearchUnicodeDataGenerator.java |  126 +
- 117 files changed, 18815 insertions(+), 60 deletions(-)
+ 120 files changed, 19053 insertions(+), 78 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerItems.java
@@ -1058,6 +1082,7 @@ text and so missed this; the recorded rows reproduce the failure.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontGlyphs.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiRetainedBindings.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliases.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureLimits.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/NativeSort.java
@@ -1110,6 +1135,7 @@ text and so missed this; the recorded rows reproduce the failure.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFactoryInstancesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontGlyphsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliasesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
  create mode 100644 src/test/resources/ui/native-inventory-item-filter.json
  create mode 100644 src/tool/java/net/raphimc/viabedrock/tool/generator/SearchUnicodeDataGenerator.java
@@ -3196,21 +3222,21 @@ index 00000000..f7b0cb2a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index cd3d6f34..40e589fc 100644
+index 38699007..c3718694 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-@@ -17,6 +17,7 @@
-  */
+@@ -18,6 +18,7 @@
  package net.raphimc.viabedrock.api.resourcepack.http;
  
+ import com.viaversion.viaversion.libs.gson.JsonObject;
 +import net.raphimc.viabedrock.api.resourcepack.ui.JsonUiProgram;
  import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.CustomBlockProperties;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
- import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
-@@ -53,9 +54,9 @@ import java.util.logging.Level;
- 
+@@ -56,9 +57,9 @@ import java.util.logging.Level;
  public class ConvertedResourcePackCache {
  
+     private static final int ZIP_FORMAT_VERSION = 1;
 -    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-and-offsets-11";
 +    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-offsets-and-forms-17";
      // Advance when the set or format of emitted resources changes independently of converter profiles.
@@ -3219,7 +3245,7 @@ index cd3d6f34..40e589fc 100644
  
      private final Path directory;
      private final String conversionVersion;
-@@ -317,6 +318,7 @@ public class ConvertedResourcePackCache {
+@@ -321,6 +322,7 @@ public class ConvertedResourcePackCache {
              identity.append("\nshared-custom-block-textures:1");
          }
          identity.append("\nbase-game:").append(storage.getBaseGameVersion());
@@ -5727,7 +5753,7 @@ index 00000000..5dfbb3f8
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 00000000..07723556
+index 00000000..f3816a6f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 @@ -0,0 +1,2170 @@
@@ -6725,8 +6751,8 @@ index 00000000..07723556
 +    }
 +
 +    public static String builtinIdentity() {
-+        // Include image and font conversion revisions in the converted-pack cache identity.
-+        return "8:" + Builtins.IDENTITY;
++        // Include image, font and shared-image conversion revisions in the converted-pack cache identity.
++        return "9:" + Builtins.IDENTITY;
 +    }
 +
 +    public static String textureId(final String path) {
@@ -11582,6 +11608,148 @@ index 00000000..a8d43d9e
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliases.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliases.java
+new file mode 100644
+index 00000000..ced611c2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliases.java
+@@ -0,0 +1,136 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.*;
++
++/**
++ * Shares converted UI images with byte-identical images elsewhere in the same Java pack.
++ * UI controls keep their path-derived identifiers, because bindings select paths at runtime.
++ * Clients resolve a removed identifier through the alias table in the same pack.
++ */
++public final class UiTextureAliases {
++
++    /** Resource path in the {@code viabedrock} namespace. */
++    public static final String RESOURCE = "server_ui_textures.json";
++    private static final String ASSETS = "assets/viabedrock/";
++    private static final String TEXTURES = ASSETS + "textures/";
++    private static final String UI_TEXTURES = TEXTURES + "server_ui/";
++    private static final int FORMAT = 1;
++
++    private UiTextureAliases() {
++    }
++
++    /**
++     * Returns the pack without UI images whose exact bytes exist at another texture path with the same format.
++     * A target must have no animation or sampling sidecar, so both identifiers draw identically.
++     */
++    public static Content share(final Content content) {
++        final Map<ContentKey, List<String>> targets = new HashMap<>();
++        final List<String> ui = new ArrayList<>();
++        final List<String> paths = new ArrayList<>(content.getFilesDeep(TEXTURES, ""));
++        Collections.sort(paths);
++        for (final String path : paths) {
++            final String format = format(path);
++            if (format == null || content.contains(path + ".mcmeta")) {
++                continue;
++            }
++            if (path.startsWith(UI_TEXTURES)) {
++                ui.add(path);
++            } else {
++                targets.computeIfAbsent(ContentKey.of(format, content.get(path)), key -> new ArrayList<>()).add(path);
++            }
++        }
++
++        final Map<String, String> aliases = new TreeMap<>();
++        for (final String path : ui) {
++            final byte[] bytes = content.get(path);
++            final List<String> candidates = targets.computeIfAbsent(ContentKey.of(format(path), bytes), key -> new ArrayList<>());
++            String target = null;
++            for (final String candidate : candidates) {
++                // The digest only groups candidates; equal bytes decide sharing.
++                if (Arrays.equals(bytes, content.get(candidate))) {
++                    target = candidate;
++                    break;
++                }
++            }
++            if (target != null) {
++                aliases.put(path.substring(ASSETS.length()), target.substring(ASSETS.length()));
++            } else {
++                // Later identical UI images share the first exported one.
++                candidates.add(path);
++            }
++        }
++        if (aliases.isEmpty()) {
++            return content;
++        }
++
++        final Content shared = new InMemoryContent();
++        for (final String path : content.getFilesDeep("", "")) {
++            if (path.startsWith(UI_TEXTURES) && aliases.containsKey(path.substring(ASSETS.length()))) {
++                continue;
++            }
++            if (content.isStored(path)) {
++                shared.putStored(path, content.get(path));
++            } else {
++                shared.put(path, content.get(path));
++            }
++        }
++        final JsonObject table = new JsonObject();
++        aliases.forEach(table::addProperty);
++        final JsonObject root = new JsonObject();
++        root.addProperty("format", FORMAT);
++        root.add("aliases", table);
++        shared.putJson(ASSETS + RESOURCE, root);
++        return shared;
++    }
++
++    /** Reads an alias table. Invalid or unknown entries are ignored, so the identifier stays unchanged. */
++    public static Map<String, String> read(final byte[] json) {
++        final JsonElement parsed = JsonParser.parseString(new String(json, StandardCharsets.UTF_8));
++        if (!parsed.isJsonObject() || !parsed.getAsJsonObject().has("aliases")
++                || !Objects.equals(parsed.getAsJsonObject().get("format"), new JsonPrimitive(FORMAT))
++                || !parsed.getAsJsonObject().get("aliases").isJsonObject()) {
++            return Map.of();
++        }
++        final Map<String, String> aliases = new HashMap<>();
++        for (final var entry : parsed.getAsJsonObject().getAsJsonObject("aliases").entrySet()) {
++            if (entry.getKey().startsWith("textures/server_ui/") && entry.getValue().isJsonPrimitive()
++                    && entry.getValue().getAsString().startsWith("textures/") && JsonUiProgram.safePath(entry.getValue().getAsString())) {
++                aliases.put(entry.getKey(), entry.getValue().getAsString());
++            }
++        }
++        return Map.copyOf(aliases);
++    }
++
++    private static String format(final String path) {
++        return path.endsWith(".png") ? "png" : path.endsWith(".jpg") ? "jpg" : null;
++    }
++
++    /** Hashes each image once, so unrelated images of the same size are never compared byte by byte. */
++    private record ContentKey(String format, int length, String digest) {
++
++        static ContentKey of(final String format, final byte[] bytes) {
++            try {
++                return new ContentKey(format, bytes.length, HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
++            } catch (final NoSuchAlgorithmException impossible) {
++                throw new IllegalStateException(impossible);
++            }
++        }
++
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureLimits.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureLimits.java
 new file mode 100644
 index 00000000..cc526d4c
@@ -11920,11 +12088,58 @@ index efe4871a..8a8c6f74 100644
              switch (event) {
                  case HURT -> {
                      final CompoundTag damageTypeRegistry = gameSession.getJavaRegistries().getCompoundTag(RegistryKeys.DAMAGE_TYPE);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
+index 2f7e23c4..601bcc9a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
+@@ -301,22 +301,26 @@ public final class ResourcePackPackets {
+                     user.remove(ResourcePackLoadStateTracker.class);
+                     user.put(storage);
+                     if (shouldTranslate(user)) {
+-                        ViaBedrock.getResourcePackServer().prepare(storage).whenCompleteAsync((pack, conversionError) -> {
+-                            if (!user.getChannel().isActive() || user.get(ResourcePackStorage.class) != storage) {
+-                                return;
+-                            }
+-                            if (conversionError != null) {
+-                                BedrockProtocol.kickForIllegalState(user, "Failed to convert the server resource packs.", conversionError);
+-                                return;
+-                            }
+-                            try {
+-                                final UUID httpToken = UUID.randomUUID();
+-                                ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
+-                                sendJavaResourcePack(user, pack, httpToken);
+-                            } catch (final Throwable publicationError) {
+-                                BedrockProtocol.kickForIllegalState(user, "Failed to advertise the server resource packs.", publicationError);
+-                            }
+-                        }, user.getChannel().eventLoop());
++                        // A converted-pack cache hit skips UI conversion. Prime its shared program on bounded workers
++                        // before advertising the pack, so the first HUD packet cannot initialize it on the event loop.
++                        ViaBedrock.getResourcePackServer().prepare(storage)
++                                .thenCombine(ViaBedrock.getResourcePackServer().prepareResources(storage::getJsonUiProgram), (pack, ui) -> pack)
++                                .whenCompleteAsync((pack, conversionError) -> {
++                                    if (!user.getChannel().isActive() || user.get(ResourcePackStorage.class) != storage) {
++                                        return;
++                                    }
++                                    if (conversionError != null) {
++                                        BedrockProtocol.kickForIllegalState(user, "Failed to convert the server resource packs.", conversionError);
++                                        return;
++                                    }
++                                    try {
++                                        final UUID httpToken = UUID.randomUUID();
++                                        ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
++                                        sendJavaResourcePack(user, pack, httpToken);
++                                    } catch (final Throwable publicationError) {
++                                        BedrockProtocol.kickForIllegalState(user, "Failed to advertise the server resource packs.", publicationError);
++                                    }
++                                }, user.getChannel().eventLoop());
+                     } else {
+                         sendStackFinished(user);
+                     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-index 245bb449..88eb0f0c 100644
+index 245bb449..abc6e303 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-@@ -17,6 +17,7 @@
+@@ -17,9 +17,11 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter;
  
@@ -11932,7 +12147,11 @@ index 245bb449..88eb0f0c 100644
  import com.viaversion.viaversion.libs.gson.JsonObject;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
  import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
-@@ -43,6 +44,7 @@ public final class ResourcePackRewriter {
++import net.raphimc.viabedrock.api.resourcepack.ui.UiTextureAliases;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResourceRewriter;
+@@ -43,6 +45,7 @@ public final class ResourcePackRewriter {
      static {
          REWRITERS.add(new GlyphSheetResourceRewriter());
          REWRITERS.add(new ScoreboardUiResourceRewriter());
@@ -11940,6 +12159,21 @@ index 245bb449..88eb0f0c 100644
          REWRITERS.add(new CustomItemTextureResourceRewriter());
          REWRITERS.add(new CustomBlockResourceRewriter());
          REWRITERS.add(new CustomAttachableResourceRewriter());
+@@ -68,10 +71,12 @@ public final class ResourcePackRewriter {
+             throw new RuntimeException("Resource pack rewriting tasks did not complete within the timeout");
+         }
+ 
+-        final Content javaContent = new InMemoryContent();
++        final Content merged = new InMemoryContent();
+         for (CompletableFuture<Content> task : tasks) {
+-            javaContent.putAll(task.getNow(null));
++            merged.putAll(task.getNow(null));
+         }
++        // Rewriters run independently, so UI images can share other outputs only after every output exists.
++        final Content javaContent = UiTextureAliases.share(merged);
+         javaContent.putJson("pack.mcmeta", createPackManifest());
+         final JsonObject rendering = new JsonObject();
+         rendering.addProperty("format", 1);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/GlyphSheetResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/GlyphSheetResourceRewriter.java
 index a1c8999f..12598aaf 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/GlyphSheetResourceRewriter.java
@@ -12069,7 +12303,7 @@ index 00000000..cf15ee7a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-index cd340fd1..22628440 100644
+index 3f060f10..d7c8ded1 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 @@ -17,6 +17,10 @@
@@ -12083,7 +12317,7 @@ index cd340fd1..22628440 100644
  import com.viaversion.viaversion.api.connection.StorableObject;
  import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
  import net.raphimc.viabedrock.api.model.CustomBlockVisual;
-@@ -46,6 +50,10 @@ public class ResourcePackStorage implements StorableObject {
+@@ -48,6 +52,10 @@ public class ResourcePackStorage implements StorableObject {
      private final TextDefinitions texts;
      private final TextFormattingDefinitions textFormatting;
      private final ScoreboardUiDefinitions scoreboardUi;
@@ -12094,7 +12328,7 @@ index cd340fd1..22628440 100644
      private final BlockDefinitions blocks;
      private final BlockCullingDefinitions blockCulling;
      private VoxelShapeRegistry.Snapshot voxelShapes = new VoxelShapeRegistry.Snapshot(List.of(), Map.of(), 0);
-@@ -82,7 +90,11 @@ public class ResourcePackStorage implements StorableObject {
+@@ -84,7 +92,11 @@ public class ResourcePackStorage implements StorableObject {
          for (ResourcePack builtinImages : selectedBuiltins) {
              for (String path : builtinImages.content().getFilesDeep("", "")) {
                  if (!path.equals("manifest.json") && !path.equals("textures/item_texture.json") && !path.equals("textures/terrain_texture.json") && !(path.startsWith("textures/")
@@ -12107,7 +12341,7 @@ index cd340fd1..22628440 100644
                          && !(path.startsWith("materials/") && path.endsWith(".material"))
                          && !(path.endsWith(".json") && List.of("attachables/", "models/", "animations/",
                                  "animation_controllers/", "render_controllers/").stream().anyMatch(path::startsWith))) {
-@@ -202,6 +214,34 @@ public class ResourcePackStorage implements StorableObject {
+@@ -214,6 +226,34 @@ public class ResourcePackStorage implements StorableObject {
          return this.textFormatting;
      }
  
@@ -20879,6 +21113,89 @@ index 00000000..e94582bb
 +        bytes.putShort(68, (short) ascent);
 +        bytes.putShort(70, (short) descent);
 +        return bytes.array();
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliasesTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliasesTest.java
+new file mode 100644
+index 00000000..023ac32d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliasesTest.java
+@@ -0,0 +1,77 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import org.junit.jupiter.api.Test;
++
++import java.nio.charset.StandardCharsets;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class UiTextureAliasesTest {
++
++    private static final String UI = "assets/viabedrock/textures/server_ui/";
++
++    @Test
++    void duplicateUiImagesResolveToOneExportedImageWithTheSameFormatAndSampling() {
++        final Content pack = new InMemoryContent();
++        pack.putStored("assets/viabedrock/textures/item/entities/pig.png", png(1));
++        pack.putStored("assets/viabedrock/textures/item/animated.png", png(2));
++        pack.put("assets/viabedrock/textures/item/animated.png.mcmeta", "{}".getBytes(StandardCharsets.UTF_8));
++        pack.putStored("assets/viabedrock/textures/item/photo.png", jpeg(3));
++        pack.putStored(UI + "pig.png", png(1));
++        // Same size and format as the pig texture, differing only in its last byte.
++        pack.putStored(UI + "near.png", png(5));
++        pack.putStored(UI + "animated.png", png(2));
++        pack.putStored(UI + "first.png", png(4));
++        pack.putStored(UI + "second.png", png(4));
++        pack.putStored(UI + "photo.jpg", jpeg(3));
++        pack.put("assets/viabedrock/textures/server_ui/unchanged.json", "{}".getBytes(StandardCharsets.UTF_8));
++
++        final Content shared = UiTextureAliases.share(pack);
++        final Map<String, String> aliases = UiTextureAliases.read(shared.get("assets/viabedrock/" + UiTextureAliases.RESOURCE));
++
++        assertEquals(Map.of(
++                "textures/server_ui/pig.png", "textures/item/entities/pig.png",
++                "textures/server_ui/second.png", "textures/server_ui/first.png"), aliases);
++        assertFalse(shared.contains(UI + "pig.png"));
++        assertFalse(shared.contains(UI + "second.png"));
++        assertArrayEquals(png(5), shared.get(UI + "near.png"));
++        // A sidecar can animate or filter the other image, and a JPEG UI identifier must stay a JPEG resource.
++        assertArrayEquals(png(2), shared.get(UI + "animated.png"));
++        assertArrayEquals(jpeg(3), shared.get(UI + "photo.jpg"));
++        assertTrue(shared.isStored(UI + "first.png"));
++        assertTrue(shared.contains("assets/viabedrock/textures/server_ui/unchanged.json"));
++        assertArrayEquals(UiTextureAliases.share(pack).get("assets/viabedrock/" + UiTextureAliases.RESOURCE),
++                shared.get("assets/viabedrock/" + UiTextureAliases.RESOURCE));
++    }
++
++    @Test
++    void packsWithoutDuplicatesKeepTheirContentAndClientsIgnoreUnsafeAliases() {
++        final Content pack = new InMemoryContent();
++        pack.putStored(UI + "unique.png", png(1));
++        assertSame(pack, UiTextureAliases.share(pack));
++
++        final Map<String, String> aliases = UiTextureAliases.read(("{\"format\":1,\"aliases\":{"
++                + "\"textures/server_ui/a.png\":\"textures/item/a.png\","
++                + "\"textures/server_ui/b.png\":\"../outside.png\","
++                + "\"textures/item/c.png\":\"textures/item/a.png\"}}").getBytes(StandardCharsets.UTF_8));
++        assertEquals(Map.of("textures/server_ui/a.png", "textures/item/a.png"), aliases);
++        assertEquals(Map.of(), UiTextureAliases.read("{\"format\":2,\"aliases\":{}}".getBytes(StandardCharsets.UTF_8)));
++    }
++
++    private static byte[] png(final int marker) {
++        return new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', (byte) marker};
++    }
++
++    private static byte[] jpeg(final int marker) {
++        return new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) marker};
 +    }
 +
 +}
