@@ -1,4 +1,4 @@
-From ad58beb13348554710ddbcc5169dc232ec366488 Mon Sep 17 00:00:00 2001
+From 36877137a755b6e53d7b524e9616ae9f46b86741 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -521,6 +521,30 @@ the custom-block conversion fingerprint. Source pack bytes and generic
 model slot references alone do not distinguish StartGame dictionaries
 that choose different textures or alpha cutoffs. Serialize both binding
 maps canonically so insertion order does not force another conversion.
+
+Reuse immutable custom-block visual compilation by converter/resource content
+identity, the exact typed StartGame definitions in registration order, protocol
+version and the complete Java carrier list. The resolved pack stack already
+contains only native layers admitted for the world's version. Keep runtime
+palettes, NBT component snapshots, item ownership and mutable Java mappings
+local to each rewriter. Restore the visual and state dictionaries before the
+supplemental conversion so existing metadata side effects still run.
+
+Bound compiled snapshots to 32 MiB estimated memory, 128 MiB disk and eight
+entries. Version and checksum each persisted snapshot, publish atomically,
+and fall back to normal compilation on corruption or unavailable storage.
+Disabled pack caching skips this cache as well. Cache records contain only
+immutable models, material bindings, shape boxes and offset values.
+
+A faster join exposed a direct-client keepalive race: ViaVersion can report
+matching protocol states while Minecraft has temporarily removed its outbound
+encoder. Let native adapters report actual outbound readiness and defer the
+synthetic keepalive until it is configured. Proxy/default adapters remain
+ready by default. Extend the transition regression to cover this boundary.
+
+Cache regressions verify reopened-disk equivalence, immutable snapshots,
+source ownership, typed definition/resource/carrier invalidation, eviction,
+corruption recovery and unavailable storage.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -544,7 +568,7 @@ maps canonically so insertion order does not force another conversion.
  .../definition/CustomBlockDefinition.java     |   73 ++
  .../definition/ModelDefinitions.java          |    7 +
  .../definition/TextureDefinitions.java        |   85 +-
- .../http/ConvertedResourcePackCache.java      |   26 +-
+ .../http/ConvertedResourcePackCache.java      |   29 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   26 +-
  .../protocol/model/BlockProperties.java       |   10 +
  .../protocol/model/BlockTraitStates.java      |  195 +++
@@ -552,13 +576,15 @@ maps canonically so insertion order does not force another conversion.
  .../protocol/packet/JoinPackets.java          |  116 +-
  .../protocol/packet/ResourcePackPackets.java  |   55 +
  .../protocol/packet/VoxelShapePackets.java    |   35 +
- .../protocol/rewriter/BlockStateRewriter.java |  310 +++--
+ .../provider/NettyPipelineProvider.java       |    5 +
+ .../protocol/rewriter/BlockStateRewriter.java |  322 +++--
  .../rewriter/ResourcePackRewriter.java        |    2 +
  .../CustomBlockCullingCompiler.java           |  162 +++
  .../resourcepack/CustomBlockModel.java        |  561 +++++++++
  .../CustomBlockResourceRewriter.java          |  250 ++++
  .../CustomBlockStateDefinitions.java          |  225 ++++
  .../resourcepack/CustomBlockTextures.java     |   95 ++
+ .../resourcepack/CustomBlockVisualCache.java  |  261 ++++
  .../resourcepack/NativeBlockCollision.java    |   82 ++
  .../resourcepack/NativeBlockSelection.java    |   54 +
  .../resourcepack/NativeBlockTransform.java    |  189 +++
@@ -568,7 +594,7 @@ maps canonically so insertion order does not force another conversion.
  .../protocol/storage/ResourcePackStorage.java |   56 +-
  .../protocol/storage/VoxelShapeRegistry.java  |  125 ++
  .../protocol/storage/WorldPacketBuffer.java   |  105 ++
- .../protocol/task/KeepAliveTask.java          |   10 +-
+ .../protocol/task/KeepAliveTask.java          |   12 +-
  .../META-INF/licenses/cloudburst-data.txt     |  201 +++
  .../data/bedrock/block_item_states.json       | 1121 +++++++++++++++++
  .../data/bedrock/block_property_values.json   |  979 ++++++++++++++
@@ -601,12 +627,13 @@ maps canonically so insertion order does not force another conversion.
  .../CustomBlockMaterialVisibilityTest.java    |  106 ++
  .../CustomBlockStateDefinitionsTest.java      |  286 +++++
  .../CustomBlockTextureReuseTest.java          |  175 +++
+ .../CustomBlockVisualCacheTest.java           |  117 ++
  .../protocol/storage/ChunkTrackerTest.java    |   41 +-
  .../storage/CustomBlockPackStorageTest.java   |   31 +
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  255 ++++
- .../protocol/task/KeepAliveTaskTest.java      |   78 ++
- 84 files changed, 12060 insertions(+), 155 deletions(-)
+ .../protocol/task/KeepAliveTaskTest.java      |   89 ++
+ 87 files changed, 12470 insertions(+), 156 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -633,6 +660,7 @@ maps canonically so insertion order does not force another conversion.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextures.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockCollision.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
@@ -670,6 +698,7 @@ maps canonically so insertion order does not force another conversion.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java
@@ -2991,7 +3020,7 @@ index ba8c2db5..5c6717be 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 1c8710c6..9dc9c9fc 100644
+index 1c8710c6..4de62dac 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -17,7 +17,9 @@
@@ -3013,7 +3042,17 @@ index 1c8710c6..9dc9c9fc 100644
                  this.prepare(key, storage).thenApply(pack -> {
                      storage.getConverterData().putAll(pack.converterData());
                      return pack;
-@@ -294,6 +296,28 @@ public class ConvertedResourcePackCache {
+@@ -269,7 +271,8 @@ public class ConvertedResourcePackCache {
+         }
+     }
+ 
+-    static String fingerprint(final Collection<ResourcePack> packs) {
++    /** Content and converter identity shared by resource-only preparation caches. */
++    public static String fingerprint(final Collection<ResourcePack> packs) {
+         final MessageDigest digest = digest("SHA-256");
+         try (var output = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
+             writeString(output, ViaBedrock.IMPL_VERSION);
+@@ -294,6 +297,28 @@ public class ConvertedResourcePackCache {
          return HexFormat.of().formatHex(digest.digest());
      }
  
@@ -3704,11 +3743,27 @@ index 00000000..9c9d6637
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/NettyPipelineProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/NettyPipelineProvider.java
+index 550e64c0..b39052b4 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/provider/NettyPipelineProvider.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/NettyPipelineProvider.java
+@@ -25,6 +25,11 @@ import javax.crypto.SecretKey;
+ 
+ public abstract class NettyPipelineProvider implements Provider {
+ 
++    /** Direct clients can temporarily remove their outbound Java encoder while changing protocol state. */
++    public boolean isJavaOutboundReady(final UserConnection user) {
++        return true;
++    }
++
+     /**
+      * Enables compression/decompression for the given user. May get called multiple times for the same user.
+      *
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index a4ce7054..96735ac4 100644
+index a4ce7054..f668c145 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-@@ -17,23 +17,36 @@
+@@ -17,23 +17,37 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter;
  
@@ -3743,13 +3798,14 @@ index a4ce7054..96735ac4 100644
 +import net.raphimc.viabedrock.protocol.model.CustomBlockStates;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResourceRewriter;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockVisualCache;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockTextures;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.NativeBlockCollision;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  
  import java.util.*;
  import java.util.logging.Level;
-@@ -43,23 +56,45 @@ public class BlockStateRewriter implements StorableObject {
+@@ -43,23 +57,45 @@ public class BlockStateRewriter implements StorableObject {
  
      private final Int2IntMap blockStateIdMappings = new Int2IntOpenHashMap(); // Bedrock -> Java
      private final Int2IntMap legacyBlockStateIdMappings = new Int2IntOpenHashMap(); // Bedrock -> Bedrock
@@ -3799,7 +3855,7 @@ index a4ce7054..96735ac4 100644
          for (BlockProperties blockProperty : blockProperties) {
              final String identifier = blockProperty.name().toLowerCase(Locale.ROOT);
              if (bedrockBlockIdentifiers.contains(identifier)) {
-@@ -67,102 +102,115 @@ public class BlockStateRewriter implements StorableObject {
+@@ -67,102 +103,82 @@ public class BlockStateRewriter implements StorableObject {
              }
  
              if (!effectiveBlockProperties.containsKey(identifier)) {
@@ -3833,24 +3889,8 @@ index a4ce7054..96735ac4 100644
 -                            propertiesMap.put(name, values);
 -                        }
 -                    }
-+            this.registeredBlockItemIds.put(blockProperty.getKey(), BlockItemDescriptor.numericItemId(blockProperty.getValue().legacyId()));
-+            final boolean generic = !(blockProperty.getValue().properties().getCompoundTag("vanilla_block_data").get("block_archetype") instanceof CompoundTag);
-+            for (final CustomBlockStates.State state : CustomBlockStates.expandWithMetadata(blockProperty.getValue().properties())) {
-+                final CompoundTag blockStateTag = new CompoundTag();
-+                blockStateTag.putString("name", blockProperty.getKey());
-+                blockStateTag.put("states", state.properties());
-+                blockStateTag.putInt("network_id", BlockStateHasher.hash(blockStateTag));
-+
-+                final BedrockBlockState blockState = BedrockBlockState.fromNbt(blockStateTag);
-+                customBlockStates.add(blockState);
-+                if (!nativeBlockIdentifiers.contains(blockProperty.getKey()) && NativeBlockCollision.usesBaseFactory(blockProperty.getValue().properties())) {
-+                    this.genericCustomStates.add(blockState);
-+                }
-+                this.customBlockItemOwners.put(blockState, BlockItemDescriptor.numericItemId(blockProperty.getValue().legacyId()));
-+                if (generic) {
-+                    customDescriptors.put(blockState, new BlockItemDescriptor(blockProperty.getValue().legacyId(), state.metadata()));
-                 }
-             }
+-                }
+-            }
 -            final ListTag<CompoundTag> traits = blockProperty.getValue().getListTag("traits", CompoundTag.class);
 -            if (traits != null) { // https://wiki.bedrock.dev/blocks/block-traits.html
 -                for (CompoundTag trait : traits) {
@@ -3860,8 +3900,7 @@ index a4ce7054..96735ac4 100644
 -                        if (traitStateProperties == null) {
 -                            throw new RuntimeException("Missing block trait state properties for " + name);
 -                        }
-+        }
- 
+-
 -                        if (trait.get("enabled_states") instanceof CompoundTag enabledStatesTag) {
 -                            for (Map.Entry<String, Tag> tag : enabledStatesTag) {
 -                                final String key = Key.namespaced(tag.getKey());
@@ -3883,7 +3922,53 @@ index a4ce7054..96735ac4 100644
 -                        } else {
 -                            throw new RuntimeException("Missing enabled_states tag for trait " + name);
 -                        }
-+        bedrockBlockStates.addAll(customBlockStates);
+-                    }
+-                }
+-            }
+-
+-            final List<CompoundTag> combinations = CombinationUtil.generateCombinations(propertiesMap).stream()
+-                .map(stringTagMap -> {
+-                    final CompoundTag combination = new CompoundTag();
+-                    for (Map.Entry<String, Tag> entry : stringTagMap.entrySet()) {
+-                        combination.put(entry.getKey(), entry.getValue().copy());
+-                    }
+-                    return combination;
+-                }).collect(Collectors.toList());
+-            if (combinations.isEmpty()) {
+-                combinations.add(new CompoundTag());
+-            }
+-
+-            for (CompoundTag combination : combinations) {
++            this.registeredBlockItemIds.put(blockProperty.getKey(), BlockItemDescriptor.numericItemId(blockProperty.getValue().legacyId()));
++            final boolean generic = !(blockProperty.getValue().properties().getCompoundTag("vanilla_block_data").get("block_archetype") instanceof CompoundTag);
++            for (final CustomBlockStates.State state : CustomBlockStates.expandWithMetadata(blockProperty.getValue().properties())) {
+                 final CompoundTag blockStateTag = new CompoundTag();
+                 blockStateTag.putString("name", blockProperty.getKey());
+-                blockStateTag.put("states", combination);
++                blockStateTag.put("states", state.properties());
+                 blockStateTag.putInt("network_id", BlockStateHasher.hash(blockStateTag));
+ 
+-                customBlockStates.add(BedrockBlockState.fromNbt(blockStateTag));
++                final BedrockBlockState blockState = BedrockBlockState.fromNbt(blockStateTag);
++                customBlockStates.add(blockState);
++                if (!nativeBlockIdentifiers.contains(blockProperty.getKey()) && NativeBlockCollision.usesBaseFactory(blockProperty.getValue().properties())) {
++                    this.genericCustomStates.add(blockState);
++                }
++                this.customBlockItemOwners.put(blockState, BlockItemDescriptor.numericItemId(blockProperty.getValue().legacyId()));
++                if (generic) {
++                    customDescriptors.put(blockState, new BlockItemDescriptor(blockProperty.getValue().legacyId(), state.metadata()));
++                }
+             }
+         }
+ 
+         bedrockBlockStates.addAll(customBlockStates);
+-        bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
+-
+-        for (int i = 0; i < bedrockBlockStates.size(); i++) {
+-            final BedrockBlockState bedrockBlockState = bedrockBlockStates.get(i);
+-            int bedrockId = hashedRuntimeBlockIds ? bedrockBlockState.blockStateTag().getIntTag("network_id").asInt() : i;
+-            if (hashedRuntimeBlockIds && this.blockStateMappings.containsValue(bedrockId)) {
+-                bedrockId++; // Bedrock client increments the hash in case a collision occurs
 +        this.blockItemDescriptors = new BlockItemDescriptors(bedrockBlockStates, customDescriptors);
 +        // Gameplay and visual consumers share one resolved snapshot, independent of Java pack loading.
 +        final Map<String, CustomBlockDefinition> compiledDefinitions = new HashMap<>();
@@ -3903,86 +3988,26 @@ index a4ce7054..96735ac4 100644
 +                    if (this.genericCustomStates.contains(state)) {
 +                        this.customBlockGeometry.put(state, new NativeBlockGeometry(NativeBlockCollision.decode(components),
 +                                CustomBlockOffset.fromComponent(components.getCompoundTag("minecraft:random_offset"))));
-                     }
-+                } catch (final Exception e) {
-+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to resolve custom block " + state.toBlockStateString(), e);
-                 }
-             }
--
--            final List<CompoundTag> combinations = CombinationUtil.generateCombinations(propertiesMap).stream()
--                .map(stringTagMap -> {
--                    final CompoundTag combination = new CompoundTag();
--                    for (Map.Entry<String, Tag> entry : stringTagMap.entrySet()) {
--                        combination.put(entry.getKey(), entry.getValue().copy());
-+        }
-+        if (resourcePackStorage.isLoadedOnJavaClient()) {
-+            final List<Integer> carriers = CustomBlockResourceRewriter.availableStates();
-+            final Map<Integer, CustomBlockVisual> visuals = new LinkedHashMap<>();
-+            final Map<VisualKey, Integer> sharedVisuals = new HashMap<>();
-+            final CustomBlockTextures textures = new CustomBlockTextures(resourcePackStorage);
-+            final List<BedrockBlockState> orderedCustomStates = customBlockStates.stream()
-+                    .sorted(Comparator.comparing(BlockState::toBlockStateString)).toList();
-+            int exhaustedStates = 0;
-+            for (BedrockBlockState customState : orderedCustomStates) {
-+                try {
-+                    final CompoundTag components = this.customBlockComponents.get(customState);
-+                    if (components == null) {
-+                        continue;
-                     }
--                    return combination;
--                }).collect(Collectors.toList());
--            if (combinations.isEmpty()) {
--                combinations.add(new CompoundTag());
-+                    // Continue checking shared visuals after capacity is reached.
-+                    final int carrier = carriers.get(Math.min(visuals.size(), carriers.size() - 1));
-+                    final CustomBlockVisual visual = CustomBlockModel.compile(resourcePackStorage, textures, customState.toBlockStateString(), carrier, components);
-+                    if (visual != null) {
-+                        final VisualKey key = new VisualKey(visual.textures(),
-+                                visual.modelJson().replace("viabedrock:block/custom/slot_" + carrier, "viabedrock:block/custom/slot"),
-+                                visual.renderMethod(), visual.collisionBoxes(), visual.selectionBoxes(), visual.occluding(), visual.lightEmission(), visual.lightDampening(), visual.randomOffset());
-+                        final Integer sharedCarrier = sharedVisuals.get(key);
-+                        if (sharedCarrier != null) {
-+                            customJavaStates.put(customState, sharedCarrier);
-+                        } else if (visuals.size() < carriers.size()) {
-+                            visuals.put(carrier, visual);
-+                            sharedVisuals.put(key, carrier);
-+                            customJavaStates.put(customState, carrier);
-+                        } else {
-+                            exhaustedStates++;
-+                        }
 +                    }
 +                } catch (final Exception e) {
-+                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to resolve custom block " + customState.toBlockStateString(), e);
++                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to resolve custom block " + state.toBlockStateString(), e);
++                }
++            }
++        }
++        if (resourcePackStorage.isLoadedOnJavaClient()) {
++            final CustomBlockVisualCache.Snapshot compiled = CustomBlockVisualCache.load(resourcePackStorage, blockProperties,
++                    () -> this.compileCustomBlockVisuals(resourcePackStorage, customBlockStates));
++            resourcePackStorage.setCustomBlockVisuals(compiled.visuals());
++            resourcePackStorage.setCustomBlockStateMappings(compiled.mappings());
++            for (final BedrockBlockState state : customBlockStates) {
++                final Integer carrier = compiled.mappings().get(state.toBlockStateString());
++                if (carrier != null) {
++                    customJavaStates.put(state, carrier);
 +                }
              }
--
--            for (CompoundTag combination : combinations) {
--                final CompoundTag blockStateTag = new CompoundTag();
--                blockStateTag.putString("name", blockProperty.getKey());
--                blockStateTag.put("states", combination);
--                blockStateTag.putInt("network_id", BlockStateHasher.hash(blockStateTag));
--
--                customBlockStates.add(BedrockBlockState.fromNbt(blockStateTag));
-+            if (exhaustedStates != 0) {
-+                ViaBedrock.getPlatform().getLogger().warning("Custom block carrier capacity exhausted: " + exhaustedStates
-+                        + " states could not be assigned after filling " + carriers.size() + " carriers");
-             }
-+            resourcePackStorage.setCustomBlockVisuals(visuals);
-+            final Map<String, Integer> stateMappings = new LinkedHashMap<>();
-+            customJavaStates.forEach((state, carrier) -> stateMappings.put(state.toBlockStateString(), carrier));
-+            resourcePackStorage.setCustomBlockStateMappings(stateMappings);
-         }
--
--        bedrockBlockStates.addAll(customBlockStates);
-         bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
++        }
++        bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
  
--        for (int i = 0; i < bedrockBlockStates.size(); i++) {
--            final BedrockBlockState bedrockBlockState = bedrockBlockStates.get(i);
--            int bedrockId = hashedRuntimeBlockIds ? bedrockBlockState.blockStateTag().getIntTag("network_id").asInt() : i;
--            if (hashedRuntimeBlockIds && this.blockStateMappings.containsValue(bedrockId)) {
--                bedrockId++; // Bedrock client increments the hash in case a collision occurs
--            }
--
 -            this.blockStateMappings.put(bedrockBlockState, bedrockId);
 +        this.palette = new RuntimeBlockPalette(bedrockBlockStates, hashedRuntimeBlockIds);
 +        for (final RuntimeBlockPalette.Registration registration : this.palette.registrations()) {
@@ -3991,7 +4016,7 @@ index a4ce7054..96735ac4 100644
              this.validBlockStates.computeIfAbsent(bedrockBlockState.namespacedIdentifier(), k -> new IntLinkedOpenHashSet()).add(bedrockId);
  
              if (blockTags.containsKey(bedrockBlockState.namespacedIdentifier())) {
-@@ -172,6 +220,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -172,6 +188,8 @@ public class BlockStateRewriter implements StorableObject {
              if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(bedrockBlockState));
                  this.blockStateIdMappings.put(bedrockId, javaId);
@@ -4000,7 +4025,7 @@ index a4ce7054..96735ac4 100644
              } else {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-@@ -186,26 +236,49 @@ public class BlockStateRewriter implements StorableObject {
+@@ -186,26 +204,93 @@ public class BlockStateRewriter implements StorableObject {
                  continue; // Dirty hack Mojang did in 1.12. Can be ignored safely as those values can't be used in chunk packets.
              }
  
@@ -4019,12 +4044,54 @@ index a4ce7054..96735ac4 100644
 -        for (final BlockProperties definition : definitions) {
 -            if (definition.properties().contains("vanilla_block_data")) {
 -                registered.add(definition.name().toLowerCase(Locale.ROOT));
--            }
--        }
++    private CustomBlockVisualCache.Snapshot compileCustomBlockVisuals(final ResourcePackStorage storage, final List<BedrockBlockState> customBlockStates) {
++        final List<Integer> carriers = CustomBlockResourceRewriter.availableStates();
++        final Map<Integer, CustomBlockVisual> visuals = new LinkedHashMap<>();
++        final Map<String, Integer> stateMappings = new LinkedHashMap<>();
++        final Map<VisualKey, Integer> sharedVisuals = new HashMap<>();
++        final CustomBlockTextures textures = new CustomBlockTextures(storage);
++        final List<BedrockBlockState> orderedCustomStates = customBlockStates.stream()
++                .sorted(Comparator.comparing(BlockState::toBlockStateString)).toList();
++        int exhaustedStates = 0;
++        for (BedrockBlockState customState : orderedCustomStates) {
++            try {
++                final CompoundTag components = this.customBlockComponents.get(customState);
++                if (components == null) {
++                    continue;
++                }
++                // Continue checking shared visuals after capacity is reached.
++                final int carrier = carriers.get(Math.min(visuals.size(), carriers.size() - 1));
++                final CustomBlockVisual visual = CustomBlockModel.compile(storage, textures, customState.toBlockStateString(), carrier, components);
++                if (visual != null) {
++                    final VisualKey key = new VisualKey(visual.textures(),
++                            visual.modelJson().replace("viabedrock:block/custom/slot_" + carrier, "viabedrock:block/custom/slot"),
++                            visual.renderMethod(), visual.collisionBoxes(), visual.selectionBoxes(), visual.occluding(), visual.lightEmission(), visual.lightDampening(), visual.randomOffset());
++                    final Integer sharedCarrier = sharedVisuals.get(key);
++                    if (sharedCarrier != null) {
++                        stateMappings.put(customState.toBlockStateString(), sharedCarrier);
++                    } else if (visuals.size() < carriers.size()) {
++                        visuals.put(carrier, visual);
++                        sharedVisuals.put(key, carrier);
++                        stateMappings.put(customState.toBlockStateString(), carrier);
++                    } else {
++                        exhaustedStates++;
++                    }
++                }
++            } catch (final Exception e) {
++                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to resolve custom block " + customState.toBlockStateString(), e);
+             }
+         }
 -        final List<BedrockBlockState> states = new ArrayList<>(BedrockProtocol.MAPPINGS.getBedrockBlockStates().size());
 -        for (final BedrockBlockState state : BedrockProtocol.MAPPINGS.getBedrockBlockStates()) {
 -            if (!BedrockProtocol.MAPPINGS.getBedrockDataDrivenBlocks().contains(state.namespacedIdentifier()) || registered.contains(state.namespacedIdentifier())) {
 -                states.add(state);
++        if (exhaustedStates != 0) {
++            ViaBedrock.getPlatform().getLogger().warning("Custom block carrier capacity exhausted: " + exhaustedStates
++                    + " states could not be assigned after filling " + carriers.size() + " carriers");
++        }
++        return new CustomBlockVisualCache.Snapshot(visuals, stateMappings);
++    }
++
 +    /** Return an isolated snapshot for this registered runtime-state owner. */
 +    public CompoundTag blockComponents(final int runtimeId) {
 +        final CompoundTag components = this.customBlockComponents.get(this.blockState(runtimeId));
@@ -4063,7 +4130,7 @@ index a4ce7054..96735ac4 100644
      }
  
      public int bedrockId(final CompoundTag bedrockBlockStateTag) {
-@@ -222,11 +295,37 @@ public class BlockStateRewriter implements StorableObject {
+@@ -222,11 +307,37 @@ public class BlockStateRewriter implements StorableObject {
      }
  
      public int bedrockId(final BlockState bedrockBlockState) {
@@ -4103,7 +4170,7 @@ index a4ce7054..96735ac4 100644
      }
  
      public int bedrockId(final int legacyBlockStateId) {
-@@ -249,6 +348,15 @@ public class BlockStateRewriter implements StorableObject {
+@@ -249,6 +360,15 @@ public class BlockStateRewriter implements StorableObject {
          };
      }
  
@@ -4119,7 +4186,7 @@ index a4ce7054..96735ac4 100644
      public int waterlog(final int javaBlockStateId) {
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
-@@ -266,4 +374,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -266,4 +386,8 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateTags.get(bedrockBlockStateId);
      }
  
@@ -5471,6 +5538,273 @@ index 00000000..7492049f
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java
+new file mode 100644
+index 00000000..4790cfe2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java
+@@ -0,0 +1,261 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.Gson;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.ByteBufUtil;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++import net.raphimc.viabedrock.api.resourcepack.http.ConvertedResourcePackCache;
++import net.raphimc.viabedrock.platform.ViaBedrockConfig;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.BlockProperties;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.io.DataOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.AtomicMoveNotSupportedException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.StandardCopyOption;
++import java.nio.file.attribute.FileTime;
++import java.security.DigestOutputStream;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.Comparator;
++import java.util.HexFormat;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.function.Supplier;
++
++/** Caches immutable visual compilation, never runtime palettes, mutable NBT components or connection state. */
++public final class CustomBlockVisualCache {
++
++    // Advance when compilation, physical/material semantics or carrier assignment changes.
++    private static final int FORMAT = 1;
++    private static final int MAX_ENTRY_BYTES = 32 << 20;
++    private static final Gson GSON = new Gson();
++    private static final Store SHARED = new Store(32L << 20, 128L << 20, 8);
++
++    public static Snapshot load(final ResourcePackStorage storage, final BlockProperties[] properties, final Supplier<Snapshot> compile) {
++        final var config = ViaBedrock.getConfig();
++        if (config != null && config.getPackCacheMode() == ViaBedrockConfig.PackCacheMode.DISABLED) {
++            return compile.get();
++        }
++        final String key;
++        try {
++            key = fingerprint(storage, properties, CustomBlockResourceRewriter.availableStates());
++        } catch (final Exception unavailable) {
++            return compile.get();
++        }
++        final var platform = ViaBedrock.getPlatform();
++        final Path directory = config != null && config.getPackCacheMode() == ViaBedrockConfig.PackCacheMode.DISK
++                && platform != null && platform.getServerPacksFolder() != null
++                ? platform.getServerPacksFolder().toPath().resolve("compiled_blocks") : null;
++        return SHARED.get(key, directory, compile);
++    }
++
++    static String fingerprint(final ResourcePackStorage storage, final BlockProperties[] properties, final List<Integer> carriers) throws Exception {
++        final MessageDigest digest = digest();
++        try (var output = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
++            output.writeInt(FORMAT);
++            output.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            // The resolved stack contains only the native layers admitted for this world's version.
++            output.writeUTF(ConvertedResourcePackCache.fingerprint(storage.getPackStackBottomToTop()));
++            output.writeInt(carriers.size());
++            for (final int carrier : carriers) {
++                output.writeInt(carrier);
++            }
++            // Preserve registration order, all NBT tag types and every StartGame definition byte.
++            output.writeInt(properties.length);
++            for (final BlockProperties property : properties) {
++                final ByteBuf buffer = Unpooled.buffer();
++                try {
++                    BedrockTypes.BLOCK_PROPERTIES.write(buffer, property);
++                    output.writeInt(buffer.readableBytes());
++                    output.write(ByteBufUtil.getBytes(buffer));
++                } finally {
++                    buffer.release();
++                }
++            }
++        }
++        return HexFormat.of().formatHex(digest.digest());
++    }
++
++    private static MessageDigest digest() {
++        try {
++            return MessageDigest.getInstance("SHA-256");
++        } catch (final NoSuchAlgorithmException impossible) {
++            throw new IllegalStateException(impossible);
++        }
++    }
++
++    private CustomBlockVisualCache() {
++    }
++
++    public record Snapshot(Map<Integer, CustomBlockVisual> visuals, Map<String, Integer> mappings) {
++        public Snapshot {
++            visuals = Map.copyOf(visuals);
++            mappings = Map.copyOf(mappings);
++            for (final var entry : visuals.entrySet()) {
++                if (entry.getKey() != entry.getValue().javaState()) {
++                    throw new IllegalArgumentException("Mismatched compiled block carrier");
++                }
++            }
++            if (!visuals.keySet().containsAll(mappings.values())) {
++                throw new IllegalArgumentException("Missing compiled block carrier");
++            }
++        }
++    }
++
++    static final class Store {
++
++        private final long memoryBudget;
++        private final long diskBudget;
++        private final int maxEntries;
++        private final Map<String, Entry> memory = new LinkedHashMap<>(16, 0.75F, true);
++        private long retained;
++
++        Store(final long memoryBudget, final long diskBudget, final int maxEntries) {
++            this.memoryBudget = memoryBudget;
++            this.diskBudget = diskBudget;
++            this.maxEntries = maxEntries;
++        }
++
++        Snapshot get(final String key, final Path directory, final Supplier<Snapshot> compile) {
++            synchronized (this.memory) {
++                final Entry found = this.memory.get(key);
++                if (found != null) {
++                    return found.snapshot;
++                }
++            }
++            Entry entry = directory == null ? null : this.read(directory.resolve(key + ".bin"), key);
++            if (entry == null) {
++                final Snapshot snapshot = compile.get();
++                try {
++                    final byte[] bytes = GSON.toJson(new Envelope(FORMAT, key, snapshot)).getBytes(StandardCharsets.UTF_8);
++                    entry = new Entry(snapshot, bytes.length * 3L);
++                    if (directory != null && bytes.length + 65 <= MAX_ENTRY_BYTES && bytes.length + 65 <= this.diskBudget) {
++                        this.write(directory, key, bytes);
++                    }
++                } catch (final RuntimeException uncacheable) {
++                    return snapshot;
++                }
++            }
++            if (entry.weight <= this.memoryBudget) {
++                synchronized (this.memory) {
++                    final Entry previous = this.memory.put(key, entry);
++                    this.retained += entry.weight - (previous == null ? 0 : previous.weight);
++                    final var eldest = this.memory.values().iterator();
++                    while (this.retained > this.memoryBudget || this.memory.size() > this.maxEntries) {
++                        this.retained -= eldest.next().weight;
++                        eldest.remove();
++                    }
++                }
++            }
++            return entry.snapshot;
++        }
++
++        private Entry read(final Path path, final String key) {
++            try {
++                if (!Files.isRegularFile(path) || Files.size(path) > MAX_ENTRY_BYTES) {
++                    return null;
++                }
++                final byte[] bytes;
++                try (var input = Files.newInputStream(path)) {
++                    bytes = input.readNBytes(MAX_ENTRY_BYTES + 1);
++                }
++                if (bytes.length < 65 || bytes.length > MAX_ENTRY_BYTES || bytes[64] != '\n') {
++                    return null;
++                }
++                final MessageDigest digest = digest();
++                digest.update(bytes, 65, bytes.length - 65);
++                if (!HexFormat.of().formatHex(digest.digest()).equals(new String(bytes, 0, 64, StandardCharsets.US_ASCII))) {
++                    return null;
++                }
++                final Envelope envelope = GSON.fromJson(new String(bytes, 65, bytes.length - 65, StandardCharsets.UTF_8), Envelope.class);
++                if (envelope == null || envelope.format != FORMAT || !key.equals(envelope.key) || envelope.snapshot == null) {
++                    return null;
++                }
++                try {
++                    Files.setLastModifiedTime(path, FileTime.fromMillis(System.currentTimeMillis()));
++                } catch (final IOException readOnly) {
++                    // Read-only caches can still provide a complete snapshot.
++                }
++                return new Entry(envelope.snapshot, bytes.length * 3L);
++            } catch (final IOException | RuntimeException malformed) {
++                return null;
++            }
++        }
++
++        private synchronized void write(final Path directory, final String key, final byte[] bytes) {
++            Path temporary = null;
++            try {
++                Files.createDirectories(directory);
++                temporary = directory.resolve(key + "." + UUID.randomUUID() + ".tmp");
++                try (var output = Files.newOutputStream(temporary)) {
++                    output.write(HexFormat.of().formatHex(digest().digest(bytes)).getBytes(StandardCharsets.US_ASCII));
++                    output.write('\n');
++                    output.write(bytes);
++                }
++                final Path target = directory.resolve(key + ".bin");
++                try {
++                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
++                } catch (final AtomicMoveNotSupportedException unavailable) {
++                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
++                }
++                try (var paths = Files.list(directory)) {
++                    final var files = paths.filter(path -> path.getFileName().toString().matches("[0-9a-f]{64}\\.bin"))
++                            .map(path -> {
++                                try {
++                                    return new DiskEntry(path, Files.size(path), Files.getLastModifiedTime(path).toMillis());
++                                } catch (final IOException missing) {
++                                    return new DiskEntry(path, 0, 0);
++                                }
++                            }).sorted(Comparator.comparingLong(DiskEntry::modified)
++                                    .thenComparing(entry -> entry.path.equals(target))).toList();
++                    long bytesRetained = files.stream().mapToLong(DiskEntry::bytes).sum();
++                    int count = files.size();
++                    for (final DiskEntry entry : files) {
++                        if (bytesRetained <= this.diskBudget && count <= this.maxEntries) {
++                            break;
++                        }
++                        Files.deleteIfExists(entry.path);
++                        bytesRetained -= entry.bytes;
++                        count--;
++                    }
++                }
++            } catch (final IOException | RuntimeException unavailable) {
++                // A cache write cannot change compilation or admission.
++            } finally {
++                if (temporary != null) {
++                    try {
++                        Files.deleteIfExists(temporary);
++                    } catch (final IOException ignored) {
++                    }
++                }
++            }
++        }
++
++    }
++
++    private record Entry(Snapshot snapshot, long weight) {
++    }
++
++    private record Envelope(int format, String key, Snapshot snapshot) {
++    }
++
++    private record DiskEntry(Path path, long bytes, long modified) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockCollision.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockCollision.java
 new file mode 100644
 index 00000000..cb349154
@@ -6352,10 +6686,10 @@ index 00000000..95b4e7d8
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java b/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
-index 3f0dc0ae..c8b89e1d 100644
+index 3f0dc0ae..83d03816 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
-@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.Via;
+@@ -21,10 +21,12 @@ import com.viaversion.viaversion.api.Via;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
  import com.viaversion.viaversion.api.protocol.packet.State;
@@ -6363,7 +6697,12 @@ index 3f0dc0ae..c8b89e1d 100644
  import com.viaversion.viaversion.api.type.Types;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundConfigurationPackets26_3;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
-@@ -36,12 +37,17 @@ public class KeepAliveTask implements Runnable {
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
+ 
+ import java.util.concurrent.ThreadLocalRandom;
+ 
+@@ -36,12 +38,18 @@ public class KeepAliveTask implements Runnable {
              final State state = info.getProtocolInfo().getServerState();
              if ((state == State.PLAY || state == State.CONFIGURATION) && info.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)) {
                  info.getChannel().eventLoop().submit(() -> {
@@ -6373,7 +6712,8 @@ index 3f0dc0ae..c8b89e1d 100644
 +                            || (info.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_20_2)
 +                                && currentState != info.getProtocolInfo().getClientState())
 +                            || (currentState != State.PLAY && currentState != State.CONFIGURATION)
-+                            || !info.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)) {
++                            || !info.getProtocolInfo().getPipeline().contains(BedrockProtocol.class)
++                            || !Via.getManager().getProviders().get(NettyPipelineProvider.class).isJavaOutboundReady(info)) {
                          return;
                      }
  
@@ -13315,6 +13655,129 @@ index 00000000..c95c859d
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java
+new file mode 100644
+index 00000000..110d325c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java
+@@ -0,0 +1,117 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
++import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.model.BlockProperties;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CustomBlockVisualCacheTest {
++
++    @TempDir
++    Path directory;
++
++    @Test
++    void memoryAndReopenedDiskReuseCompleteImmutableVisuals() {
++        final var original = snapshot("probe:block");
++        final String key = "a".repeat(64);
++        final var store = new CustomBlockVisualCache.Store(1 << 20, 1 << 20, 2);
++        assertEquals(original, store.get(key, this.directory, () -> original));
++        final var memory = store.get(key, this.directory, () -> {
++            throw new AssertionError("Recompiled a memory hit");
++        });
++        assertThrows(UnsupportedOperationException.class, () -> memory.visuals().clear());
++        assertThrows(UnsupportedOperationException.class, () -> memory.mappings().put("another:block", 3));
++        assertThrows(UnsupportedOperationException.class, () -> memory.visuals().get(3).textures().clear());
++        final var reopened = new CustomBlockVisualCache.Store(1 << 20, 1 << 20, 2).get(key, this.directory, () -> {
++            throw new AssertionError("Recompiled a disk hit");
++        });
++        assertEquals(original, reopened);
++    }
++
++    @Test
++    void evictedCorruptAndUnavailableEntriesCompileFromCurrentInputs() throws Exception {
++        final String first = "a".repeat(64);
++        final String second = "b".repeat(64);
++        final var store = new CustomBlockVisualCache.Store(0, 1 << 20, 1);
++        store.get(first, this.directory, () -> snapshot("probe:first"));
++        store.get(second, this.directory, () -> snapshot("probe:second"));
++        assertFalse(Files.exists(this.directory.resolve(first + ".bin")));
++        Files.write(this.directory.resolve(second + ".bin"), new byte[]{1, 2, 3});
++        final var builds = new AtomicInteger();
++        assertEquals(snapshot("probe:current"), store.get(second, this.directory, () -> {
++            builds.incrementAndGet();
++            return snapshot("probe:current");
++        }));
++        assertEquals(1, builds.get());
++        final Path unavailable = this.directory.resolve("file");
++        Files.write(unavailable, new byte[]{1});
++        assertEquals(snapshot("probe:available"), store.get(first, unavailable, () -> snapshot("probe:available")));
++    }
++
++    @Test
++    void changedDefinitionsResourcesAndCarrierRegistrationsCannotReuseOldVisuals() throws Exception {
++        final ResourcePackStorage storage = storage(1);
++        final var properties = new CompoundTag();
++        properties.putInt("typed", 1);
++        final var changedType = new CompoundTag();
++        changedType.putByte("typed", (byte) 1);
++        final var first = new BlockProperties[]{new BlockProperties("probe:block", properties)};
++        final var second = new BlockProperties[]{new BlockProperties("probe:block", changedType)};
++        final var store = new CustomBlockVisualCache.Store(1 << 20, 0, 8);
++        final String originalKey = CustomBlockVisualCache.fingerprint(storage, first, List.of(3));
++        store.get(originalKey, null, () -> snapshot("probe:original"));
++        for (final String key : List.of(CustomBlockVisualCache.fingerprint(storage, second, List.of(3)),
++                CustomBlockVisualCache.fingerprint(storage(2), first, List.of(3)),
++                CustomBlockVisualCache.fingerprint(storage, first, List.of(4)))) {
++            assertEquals(snapshot("probe:changed"), store.get(key, null, () -> snapshot("probe:changed")));
++        }
++        assertEquals(snapshot("probe:original"), store.get(originalKey, null, () -> {
++            throw new AssertionError("Recompiled unchanged inputs");
++        }));
++    }
++
++    @Test
++    void snapshotDoesNotRetainMutableInputMaps() {
++        final var source = snapshot("probe:block");
++        final var visuals = new HashMap<>(source.visuals());
++        final var mappings = new HashMap<>(source.mappings());
++        final var retained = new CustomBlockVisualCache.Snapshot(visuals, mappings);
++        visuals.clear();
++        mappings.clear();
++        assertEquals(source, retained);
++    }
++
++    private static CustomBlockVisualCache.Snapshot snapshot(final String name) {
++        final var visual = new CustomBlockVisual(name, 3, "tile", "{\"elements\":[]}", "alpha_test",
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, .5, 1)), List.of(), false, 2, 3,
++                Map.of("all", "tile"), Map.of("all", "alpha_test"), CustomBlockOffset.NONE);
++        return new CustomBlockVisualCache.Snapshot(Map.of(3, visual), Map.of(name, 3));
++    }
++
++    private static ResourcePackStorage storage(final int pixel) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"cache\",\"uuid\":\"20bf2796-63a5-405d-9c62-ef01507c580a\",\"version\":[1,0,0]}}");
++        content.put("textures/blocks/probe.png", new byte[]{(byte) pixel});
++        return new ResourcePackStorage(List.of(new ResourcePack(content)));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 index ee51c6fe..05d6389c 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
@@ -13827,10 +14290,10 @@ index 00000000..4f41dd8a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java b/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java
 new file mode 100644
-index 00000000..bdcf4c65
+index 00000000..15eb23a4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,89 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -13840,6 +14303,7 @@ index 00000000..bdcf4c65
 +
 +import com.viaversion.viaversion.api.Via;
 +import com.viaversion.viaversion.api.ViaManager;
++import com.viaversion.viaversion.api.platform.providers.ViaProviders;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.protocol.packet.State;
@@ -13848,6 +14312,7 @@ index 00000000..bdcf4c65
 +import io.netty.channel.Channel;
 +import io.netty.channel.EventLoop;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.ArrayDeque;
@@ -13859,11 +14324,15 @@ index 00000000..bdcf4c65
 +class KeepAliveTaskTest {
 +
 +    @Test
-+    void sendsKeepAlivesOnlyAfterBothProtocolsAcknowledgeTheTransition() throws Exception {
++    void sendsKeepAlivesAfterProtocolAcknowledgmentAndNativeEncoderReadiness() throws Exception {
 +        final UserConnection user = mock(UserConnection.class, RETURNS_DEEP_STUBS);
 +        final Channel channel = mock(Channel.class);
 +        final EventLoop loop = mock(EventLoop.class);
 +        final ViaManager manager = mock(ViaManager.class, RETURNS_DEEP_STUBS);
++        final NettyPipelineProvider pipeline = mock(NettyPipelineProvider.class);
++        final ViaProviders providers = new ViaProviders();
++        providers.use(NettyPipelineProvider.class, pipeline);
++        when(manager.getProviders()).thenReturn(providers);
 +        final PacketWrapper packet = mock(PacketWrapper.class);
 +        final Queue<Runnable> pending = new ArrayDeque<>();
 +        when(user.getChannel()).thenReturn(channel);
@@ -13888,6 +14357,11 @@ index 00000000..bdcf4c65
 +            packets.verifyNoInteractions();
 +
 +            when(user.getProtocolInfo().getClientState()).thenReturn(State.CONFIGURATION);
++            task.run();
++            pending.remove().run();
++            packets.verifyNoInteractions();
++
++            when(pipeline.isJavaOutboundReady(user)).thenReturn(true);
 +            task.run();
 +            pending.remove().run();
 +            verify(packet).send(BedrockProtocol.class);

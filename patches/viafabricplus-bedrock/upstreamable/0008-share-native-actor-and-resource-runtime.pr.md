@@ -27,6 +27,8 @@ The immutable item cache retains the optional native air-use predicate. Missing 
 
 Bundled assets build their resource library once. Validation uses the same library that the loader publishes, and every version, manifest, required-resource and persona check still runs before publication. The removed second build took 348 ms in a cold Galaxite trace.
 
+The native pipeline provider reports outbound readiness only while the Java encoder is present and the temporary configuration encoder is absent. Core checks this on the event loop before sending keepalives. This requires viabedrock/0054-render-native-block-state-geometry-and-materials.patch. The core transition regression and all final live Galaxite recordings pass without the unconfigured outbound protocol error.
+
 ## Validation and remaining limits
 
 Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTest`, `BedrockActorRenderSelectionTest`, `BedrockActorScaleTest`, and `BedrockActorPickingStateTest`.

@@ -76,6 +76,14 @@ Installed direct and ViaProxy controls cover all 18 fixed profiles, representati
 These controls retain the bounds through swaps, resource reload, and dimension return. Full core, add-on, and proxy builds pass.
 Other shape providers, loaded native world publication, full camera trajectories, and mounted movement parity remain unverified.
 
-`BlockStatePreparationTest`, `WorldPacketBufferTest` and `ResourcePackStageCacheTest` cover queue rejection, stale publication, held packet order, isolated stage outputs and budget eviction. The final cold Galaxite replay moves block-state setup from the previous pushed build's 1.54 seconds on Netty to 1.19 seconds on a preparation worker. The native archive is encoded once instead of twice; supplemental rewriting plus ZIP output takes 0.69 seconds versus 1.10 seconds. A fresh JVM with a populated disk cache hits both converted packs in 99 ms and 94 ms, with no rewriting, archive encoding or converted ZIP output. The same-JVM reconnect also skips those stages and builds block states on a worker in 0.84 seconds. All final runs pass complete-payload transport checks. These build comparisons include the other performance patches and main's HUD/audio fixes; one replay per condition and captured packet pacing do not establish a statistical end-to-end speedup. Existing unresolved mappings still fail broad rendering checks.
+`BlockStatePreparationTest`, `WorldPacketBufferTest` and `ResourcePackStageCacheTest` cover queue rejection, stale publication, held packet order, isolated stage outputs and budget eviction.
+
+An immutable visual cache retains compiled models and logical carrier assignments. Runtime palettes, physics and connection mappings remain local. Keys include the protocol, accepted resources, typed block definitions and available carriers. The cache retains at most eight entries, 32 MiB in memory and 128 MiB on disk. Checksummed entries fail closed to compilation. The cache requires viabedrock/0001-cache-converted-resource-packs.patch.
+
+The keepalive task also checks native outbound codec readiness on the event loop. The add-on reports the temporary configuration encoder as unavailable. A regression covers this transition without publishing a packet through an unconfigured codec.
+
+Two fresh-process Galaxite disk-cache recordings build block states on a worker in 0.71 and 0.75 seconds. A same-JVM reconnect takes 0.44 seconds. Both conversions hit cache in these cases. A forced conversion using restored prepared data matches all 2,220 custom models and the physical and culling metadata from fresh compilation.
+
+The combined four-project build passes 3,984 tests with 336 optional skips. All final recordings pass complete-payload transport checks. Timings count overlapping processing windows once and exclude gaps, vanilla reloads and network pacing. They do not measure a native-client latency difference. The comparison includes the selector and barrier corrections from main. Existing unresolved mappings still fail broad rendering checks.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.

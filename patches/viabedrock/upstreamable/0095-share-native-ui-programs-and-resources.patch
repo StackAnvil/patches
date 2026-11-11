@@ -1,4 +1,4 @@
-From f5830af8d6c11b6aa77a8262ec676b9ed434c53c Mon Sep 17 00:00:00 2001
+From bc1dc378d761698aefb32984e7f59f71145a9f5d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -906,6 +906,41 @@ on the network event loop. Retain the existing current-storage publication
 guard and failure path for both preparations.
 
 Keep authored forms available when optional texture slicing metadata is malformed. A Venity selector texture has a valid image but an invalid JSON sidecar; propagating its syntax error rejected the complete screen and exposed raw form-routing markers in the Java fallback. Ignore only metadata parse errors, retain the selected pixels and response identities, and keep valid higher-priority metadata and semantic animation validation unchanged. The form boundary regression covers the malformed sidecar without falling back to a lower pack layer.
+
+Reuse prepared UI layers by resource paths/content and a normalization revision.
+Keep validated images and normalized declaration documents in a shared bounded
+cache: 64 MiB accounted resource memory, 512 MiB disk, and at most 128 entries in each.
+Disk entries carry the source fingerprint and a payload checksum, publish by
+atomic replacement, and fall back to ordinary preparation when unavailable or
+invalid. Disabled pack caching also disables prepared-layer reuse.
+
+Programs share private read-only image bytes and restore their own declaration
+objects. Texture exports return independent arrays, so callers cannot mutate
+images retained by the cache or another program. Preserve
+pack admission order, PNG/JPEG replacement and metadata, dynamic path coverage,
+native versus server provenance, and per-storage translation bindings. Fonts
+and scene/controller state remain with each program. The cache moves image
+validation and normalization out of repeated joins without accepting different
+pixels or sharing mutable session state.
+
+Regressions cover memory and reopened-disk reuse, mutation isolation, changed
+source bytes and per-program application order, corrupt/unavailable storage, eviction, cross-format
+overrides, and independent translations when resource preparation is reused.
+
+Retain compact canonical declaration bytes rather than parsed JSON trees.
+Restore one document at a time when building each program; a global tree cache
+adds excessive heap pressure alongside existing program graphs. Account for
+canonical JSON escaping expanding an admitted source document by up to six
+times, without relaxing the original source-file admission limit.
+
+A recorded 38-layer accepted stack exceeds a 32-entry working set and cycles
+through evictions on every join. Allow 128 entries while retaining the byte
+budgets, so the cache can reuse a complete ordinary server stack.
+
+Normalize resources independently of file iteration order. Hash sorted names
+and bytes, then apply cached declaration and image lookups in the current
+source order. This preserves layering, metadata and admission behavior while
+avoiding cache misses caused by unordered host-file sets across fresh JVMs.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   94 +
@@ -948,7 +983,7 @@ Keep authored forms available when optional texture slicing metadata is malforme
  .../api/resourcepack/ui/HudTitleUi.java       |   28 +
  .../resourcepack/ui/InventoryItemFilter.java  |   43 +
  .../resourcepack/ui/InventoryStackCount.java  |   21 +
- .../api/resourcepack/ui/JsonUiProgram.java    | 2181 +++++++++++++++++
+ .../api/resourcepack/ui/JsonUiProgram.java    | 2201 +++++++++++++++++
  .../resourcepack/ui/NativeRecipeSearch.java   |  124 +
  .../ui/NativeSearchNormalization.java         |  189 ++
  .../api/resourcepack/ui/NpcDialogueUi.java    |  316 +++
@@ -964,10 +999,11 @@ Keep authored forms available when optional texture slicing metadata is malforme
  .../resourcepack/ui/UiFactoryInstances.java   |   69 +
  .../api/resourcepack/ui/UiFontGlyphs.java     |  235 ++
  .../api/resourcepack/ui/UiFonts.java          |  395 +++
+ .../api/resourcepack/ui/UiPreparedLayer.java  |  323 +++
  .../resourcepack/ui/UiRetainedBindings.java   |   49 +
  .../api/resourcepack/ui/UiTextureAliases.java |  136 +
  .../api/resourcepack/ui/UiTextureLimits.java  |   24 +
- .../api/resourcepack/ui/UiTextures.java       |  101 +
+ .../api/resourcepack/ui/UiTextures.java       |  132 +
  .../viabedrock/api/util/NativeSort.java       |  168 ++
  .../protocol/packet/EntityPackets.java        |    9 +
  .../protocol/packet/ResourcePackPackets.java  |   36 +-
@@ -1006,7 +1042,7 @@ Keep authored forms available when optional texture slicing metadata is malforme
  .../api/resourcepack/ui/HudFactoryUiTest.java |   75 +
  .../api/resourcepack/ui/HudRootUiTest.java    |  207 ++
  .../ui/InventoryItemFilterTest.java           |   33 +
- .../resourcepack/ui/JsonUiProgramTest.java    |  901 +++++++
+ .../resourcepack/ui/JsonUiProgramTest.java    |  921 +++++++
  .../ui/NativeRecipeSearchTest.java            |  110 +
  .../ui/NativeSearchNormalizationTest.java     |   46 +
  .../resourcepack/ui/NpcDialogueUiTest.java    |  108 +
@@ -1023,11 +1059,12 @@ Keep authored forms available when optional texture slicing metadata is malforme
  .../ui/UiFactoryInstancesTest.java            |   56 +
  .../api/resourcepack/ui/UiFontGlyphsTest.java |   60 +
  .../api/resourcepack/ui/UiFontsTest.java      |  311 +++
+ .../resourcepack/ui/UiPreparedLayerTest.java  |  128 +
  .../resourcepack/ui/UiTextureAliasesTest.java |   77 +
  .../api/resourcepack/ui/UiTexturesTest.java   |  231 ++
  .../ui/native-inventory-item-filter.json      |  311 +++
  .../generator/SearchUnicodeDataGenerator.java |  126 +
- 120 files changed, 19074 insertions(+), 78 deletions(-)
+ 122 files changed, 19596 insertions(+), 78 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerItems.java
@@ -1083,6 +1120,7 @@ Keep authored forms available when optional texture slicing metadata is malforme
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFactoryInstances.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontGlyphs.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFonts.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiRetainedBindings.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliases.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureLimits.java
@@ -1137,6 +1175,7 @@ Keep authored forms available when optional texture slicing metadata is malforme
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFactoryInstancesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontGlyphsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliasesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
  create mode 100644 src/test/resources/ui/native-inventory-item-filter.json
@@ -3224,7 +3263,7 @@ index 00000000..f7b0cb2a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 38699007..c3718694 100644
+index d7786a5a..2bed270e 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -18,6 +18,7 @@
@@ -3247,7 +3286,7 @@ index 38699007..c3718694 100644
  
      private final Path directory;
      private final String conversionVersion;
-@@ -321,6 +322,7 @@ public class ConvertedResourcePackCache {
+@@ -322,6 +323,7 @@ public class ConvertedResourcePackCache {
              identity.append("\nshared-custom-block-textures:1");
          }
          identity.append("\nbase-game:").append(storage.getBaseGameVersion());
@@ -5755,10 +5794,10 @@ index 00000000..5dfbb3f8
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 00000000..444a9624
+index 00000000..c847f71f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,2181 @@
+@@ -0,0 +1,2201 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5834,8 +5873,7 @@ index 00000000..444a9624
 +        this.nativeHurtPolicy = true;
 +        this.translator = storage.getTexts()::translate;
 +        final Map<String, byte[]> builtin = Builtins.FILES;
-+        this.loadFiles(builtin, false);
-+        UiTextures.load(builtin, this.textureFiles);
++        this.loadLayer(builtin, builtin, false);
 +        this.fonts.load(builtin);
 +        for (final ResourcePack pack : storage.getPackStackBottomToTop()) {
 +            final Map<String, byte[]> files = new LinkedHashMap<>();
@@ -5845,7 +5883,6 @@ index 00000000..444a9624
 +                    files.put(path, bytes);
 +                }
 +            }
-+            this.loadFiles(files, storage.isServerPack(pack));
 +            final Map<String, byte[]> textures = new LinkedHashMap<>();
 +            for (final String path : pack.content().getFilesDeep("textures/", "")) {
 +                if (safePath(path)) {
@@ -5855,7 +5892,7 @@ index 00000000..444a9624
 +                    }
 +                }
 +            }
-+            UiTextures.load(textures, this.textureFiles);
++            this.loadLayer(files, textures, storage.isServerPack(pack));
 +            final Map<String, byte[]> fontFiles = new LinkedHashMap<>();
 +            for (final String path : pack.content().getFilesDeep("font/", "")) {
 +                final byte[] bytes = pack.content().get(path);
@@ -5908,7 +5945,9 @@ index 00000000..444a9624
 +    }
 +
 +    public Map<String, byte[]> textures() {
-+        return Collections.unmodifiableMap(this.textureFiles);
++        final Map<String, byte[]> result = new LinkedHashMap<>();
++        this.textureFiles.forEach((path, bytes) -> result.put(path, bytes.clone()));
++        return Collections.unmodifiableMap(result);
 +    }
 +
 +    public Map<String, byte[]> bitmapFontResources() {
@@ -6437,8 +6476,26 @@ index 00000000..444a9624
 +    }
 +
 +    private void loadFiles(final Map<String, byte[]> files, final boolean server) {
-+        for (final Map.Entry<String, byte[]> file : files.entrySet()) {
-+            if (!safePath(file.getKey()) || file.getValue().length > MAX_FILE_BYTES || !file.getKey().endsWith(".json")) {
++        this.loadDocuments(files, server, true);
++    }
++
++    private void loadLayer(final Map<String, byte[]> files, final Map<String, byte[]> textures, final boolean server) {
++        final UiPreparedLayer.Prepared prepared = UiPreparedLayer.load(files, textures);
++        final Map<String, byte[]> orderedDocuments = new LinkedHashMap<>();
++        for (final String path : files.keySet()) {
++            final byte[] document = prepared.documents().get(path);
++            if (document != null) {
++                orderedDocuments.put(path, document);
++            }
++        }
++        this.loadDocuments(orderedDocuments, server, false);
++        UiTextures.merge(textures, prepared.textures(), this.textureFiles);
++    }
++
++    private void loadDocuments(final Map<String, byte[]> documents, final boolean server, final boolean normalize) {
++        for (final Map.Entry<String, byte[]> file : documents.entrySet()) {
++            final int limit = normalize ? MAX_FILE_BYTES : UiPreparedLayer.MAX_NORMALIZED_DOCUMENT_BYTES;
++            if (!safePath(file.getKey()) || file.getValue().length > limit || !file.getKey().endsWith(".json")) {
 +                continue;
 +            }
 +            try {
@@ -6447,7 +6504,9 @@ index 00000000..444a9624
 +                    continue;
 +                }
 +                final JsonObject document = parsed.getAsJsonObject();
-+                withoutOmittedArrayValues(document);
++                if (normalize) {
++                    withoutOmittedArrayValues(document);
++                }
 +                if (file.getKey().equals("ui/_global_variables.json")) {
 +                    document.entrySet().forEach(entry -> this.globals.put(entry.getKey(), entry.getValue()));
 +                    this.formattingColors.clear();
@@ -6480,7 +6539,7 @@ index 00000000..444a9624
 +     * Gson's lenient reader instead inserts a null element for the omitted value, which no UI property or
 +     * control declaration can use. Removing it keeps one stray comma from rejecting every control in the file.
 +     */
-+    private static void withoutOmittedArrayValues(final JsonElement element) {
++    static void withoutOmittedArrayValues(final JsonElement element) {
 +        if (element.isJsonObject()) {
 +            element.getAsJsonObject().entrySet().forEach(entry -> withoutOmittedArrayValues(entry.getValue()));
 +        } else if (element.isJsonArray()) {
@@ -11566,6 +11625,335 @@ index 00000000..f7290d9c
 +    record Metrics(double size, double baseline, double lineHeight) { }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayer.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayer.java
+new file mode 100644
+index 00000000..f3c3125c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayer.java
+@@ -0,0 +1,323 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.platform.ViaBedrockConfig;
++
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.DataInputStream;
++import java.io.DataOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.AtomicMoveNotSupportedException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.StandardCopyOption;
++import java.nio.file.attribute.FileTime;
++import java.security.DigestOutputStream;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.Arrays;
++import java.util.Comparator;
++import java.util.Collections;
++import java.util.HexFormat;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.function.Supplier;
++
++/** Reuses resource-only preparation. Translation, provenance, layering and scene state belong to each program. */
++final class UiPreparedLayer {
++
++    // Canonical JSON may escape an admitted single-byte character as six ASCII bytes.
++    static final int MAX_NORMALIZED_DOCUMENT_BYTES = 6 << 20;
++    // Advance when declaration normalization, image validation or image format selection changes.
++    private static final int FORMAT = 2;
++    private static final int MAX_DOCUMENT_BYTES = 1 << 20;
++    private static final int MAX_ENTRY_BYTES = 128 << 20;
++    private static final Store SHARED = new Store(64L << 20, 512L << 20, 128);
++
++    static Prepared load(final Map<String, byte[]> files, final Map<String, byte[]> textures) {
++        final var config = ViaBedrock.getConfig();
++        if (config != null && config.getPackCacheMode() == ViaBedrockConfig.PackCacheMode.DISABLED) {
++            return prepare(files, textures);
++        }
++        final var platform = ViaBedrock.getPlatform();
++        final Path directory = config != null && config.getPackCacheMode() == ViaBedrockConfig.PackCacheMode.DISK
++                && platform != null && platform.getServerPacksFolder() != null
++                ? platform.getServerPacksFolder().toPath().resolve("prepared_ui") : null;
++        return SHARED.get(fingerprint(files, textures), directory, () -> prepare(files, textures));
++    }
++
++    static Map<String, byte[]> documents(final Map<String, byte[]> files) {
++        final Map<String, byte[]> documents = new LinkedHashMap<>();
++        files.forEach((path, bytes) -> {
++            if (!JsonUiProgram.safePath(path) || !path.endsWith(".json") || bytes.length > MAX_DOCUMENT_BYTES) {
++                return;
++            }
++            try {
++                final var parsed = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8));
++                if (parsed.isJsonObject()) {
++                    JsonUiProgram.withoutOmittedArrayValues(parsed);
++                    documents.put(path, parsed.toString().getBytes(StandardCharsets.UTF_8));
++                }
++            } catch (final RuntimeException malformed) {
++                // An unrelated malformed declaration does not disable other UI files.
++            }
++        });
++        return documents;
++    }
++
++    static Prepared prepare(final Map<String, byte[]> files, final Map<String, byte[]> textures) {
++        final Map<String, byte[]> normalized = new LinkedHashMap<>();
++        UiTextures.load(textures, normalized);
++        return new Prepared(documents(files), normalized);
++    }
++
++    static String fingerprint(final Map<String, byte[]> files, final Map<String, byte[]> textures) {
++        final MessageDigest digest = digest();
++        try (var output = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
++            output.writeInt(FORMAT);
++            for (final var layer : List.of(files, textures)) {
++                output.writeInt(layer.size());
++                // Preparation is per resource. Programs apply the current source order after lookup.
++                for (final var entry : layer.entrySet().stream().sorted(Map.Entry.comparingByKey()).toList()) {
++                    final byte[] path = entry.getKey().getBytes(StandardCharsets.UTF_8);
++                    output.writeInt(path.length);
++                    output.write(path);
++                    output.writeInt(entry.getValue().length);
++                    output.write(entry.getValue());
++                }
++            }
++        } catch (final IOException impossible) {
++            throw new IllegalStateException(impossible);
++        }
++        return HexFormat.of().formatHex(digest.digest());
++    }
++
++    private static MessageDigest digest() {
++        try {
++            return MessageDigest.getInstance("SHA-256");
++        } catch (final NoSuchAlgorithmException impossible) {
++            throw new IllegalStateException(impossible);
++        }
++    }
++
++    private UiPreparedLayer() {
++    }
++
++    record Prepared(Map<String, byte[]> documents, Map<String, byte[]> textures) {
++
++        Prepared {
++            documents = Collections.unmodifiableMap(new LinkedHashMap<>(documents));
++            textures = Collections.unmodifiableMap(new LinkedHashMap<>(textures));
++        }
++
++        Prepared copy() {
++            final Map<String, byte[]> documents = new LinkedHashMap<>();
++            this.documents.forEach((path, value) -> documents.put(path, value.clone()));
++            final Map<String, byte[]> textures = new LinkedHashMap<>();
++            this.textures.forEach((path, bytes) -> textures.put(path, bytes.clone()));
++            return new Prepared(documents, textures);
++        }
++
++        long weight() {
++            long result = 256;
++            for (final var entry : this.documents.entrySet()) {
++                result += 128L + 2L * entry.getKey().length() + entry.getValue().length;
++            }
++            for (final var entry : this.textures.entrySet()) {
++                result += 128L + 2L * entry.getKey().length() + entry.getValue().length;
++            }
++            return result;
++        }
++
++    }
++
++    static final class Store {
++
++        private final long memoryBudget;
++        private final long diskBudget;
++        private final int maxEntries;
++        private final Map<String, Prepared> memory = new LinkedHashMap<>(16, 0.75F, true);
++        private final Map<String, Long> weights = new LinkedHashMap<>();
++        private long retained;
++
++        Store(final long memoryBudget, final long diskBudget, final int maxEntries) {
++            this.memoryBudget = memoryBudget;
++            this.diskBudget = diskBudget;
++            this.maxEntries = maxEntries;
++        }
++
++        /** Internal snapshot arrays are read-only; copy bytes when exposing them outside a program. */
++        Prepared get(final String key, final Path directory, final Supplier<Prepared> producer) {
++            synchronized (this.memory) {
++                final Prepared found = this.memory.get(key);
++                if (found != null) {
++                    return found;
++                }
++            }
++            Prepared value = directory == null ? null : this.read(directory.resolve(key + ".bin"), key);
++            if (value == null) {
++                value = producer.get().copy();
++                if (directory != null) {
++                    this.write(directory, key, value);
++                }
++            }
++            final long weight = value.weight();
++            if (weight <= this.memoryBudget) {
++                synchronized (this.memory) {
++                    final Long previous = this.weights.put(key, weight);
++                    this.memory.put(key, value);
++                    this.retained += weight - (previous == null ? 0 : previous);
++                    final var eldest = this.memory.entrySet().iterator();
++                    while (this.retained > this.memoryBudget || this.memory.size() > this.maxEntries) {
++                        this.retained -= this.weights.remove(eldest.next().getKey());
++                        eldest.remove();
++                    }
++                }
++            }
++            return value;
++        }
++
++        private Prepared read(final Path path, final String key) {
++            try {
++                if (!Files.isRegularFile(path) || Files.size(path) > MAX_ENTRY_BYTES) {
++                    return null;
++                }
++                final byte[] bytes;
++                try (var input = Files.newInputStream(path)) {
++                    bytes = input.readNBytes(MAX_ENTRY_BYTES + 1);
++                }
++                if (bytes.length < 36 || bytes.length > MAX_ENTRY_BYTES) {
++                    return null;
++                }
++                final MessageDigest digest = digest();
++                digest.update(bytes, 0, bytes.length - 32);
++                if (!Arrays.equals(digest.digest(), Arrays.copyOfRange(bytes, bytes.length - 32, bytes.length))) {
++                    return null;
++                }
++                try (var input = new DataInputStream(new ByteArrayInputStream(bytes, 0, bytes.length - 32))) {
++                    if (input.readInt() != FORMAT || !input.readUTF().equals(key)) {
++                        return null;
++                    }
++                    final Map<String, byte[]> documents = new LinkedHashMap<>();
++                    final Map<String, byte[]> textures = new LinkedHashMap<>();
++                    for (int group = 0; group < 2; group++) {
++                        final int count = input.readInt();
++                        if (count < 0 || count > UiTextures.MAX_FILES) {
++                            return null;
++                        }
++                        for (int index = 0; index < count; index++) {
++                            final String name = input.readUTF();
++                            final int length = input.readInt();
++                            final int bound = group == 0 ? MAX_NORMALIZED_DOCUMENT_BYTES : UiTextureLimits.MAX_ENCODED_BYTES;
++                            if (!JsonUiProgram.safePath(name) || length < 0 || length > bound || length > input.available()) {
++                                return null;
++                            }
++                            final byte[] value = input.readNBytes(length);
++                            if (group == 0) {
++                                JsonParser.parseString(new String(value, StandardCharsets.UTF_8)).getAsJsonObject();
++                                documents.put(name, value);
++                            } else {
++                                textures.put(name, value);
++                            }
++                        }
++                    }
++                    if (input.available() != 0) {
++                        return null;
++                    }
++                    try {
++                        Files.setLastModifiedTime(path, FileTime.fromMillis(System.currentTimeMillis()));
++                    } catch (final IOException readOnly) {
++                        // A readable cache remains useful on read-only storage.
++                    }
++                    return new Prepared(documents, textures);
++                }
++            } catch (final IOException | RuntimeException malformed) {
++                return null;
++            }
++        }
++
++        private synchronized void write(final Path directory, final String key, final Prepared value) {
++            Path temporary = null;
++            try {
++                if (value.weight() > MAX_ENTRY_BYTES || this.diskBudget <= 0) {
++                    return;
++                }
++                final var bytes = new ByteArrayOutputStream();
++                try (var output = new DataOutputStream(bytes)) {
++                    output.writeInt(FORMAT);
++                    output.writeUTF(key);
++                    for (final var group : List.of(value.documents, value.textures)) {
++                        output.writeInt(group.size());
++                        for (final var entry : group.entrySet()) {
++                            output.writeUTF(entry.getKey());
++                            output.writeInt(entry.getValue().length);
++                            output.write(entry.getValue());
++                        }
++                    }
++                }
++                final byte[] body = bytes.toByteArray();
++                if (body.length + 32 > MAX_ENTRY_BYTES || body.length + 32 > this.diskBudget) {
++                    return;
++                }
++                Files.createDirectories(directory);
++                temporary = directory.resolve(key + "." + UUID.randomUUID() + ".tmp");
++                try (var output = Files.newOutputStream(temporary)) {
++                    output.write(body);
++                    output.write(digest().digest(body));
++                }
++                final Path target = directory.resolve(key + ".bin");
++                try {
++                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
++                } catch (final AtomicMoveNotSupportedException unavailable) {
++                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
++                }
++                try (var paths = Files.list(directory)) {
++                    final var files = paths.filter(path -> path.getFileName().toString().matches("[0-9a-f]{64}\\.bin"))
++                            .map(path -> {
++                                try {
++                                    return new DiskEntry(path, Files.size(path), Files.getLastModifiedTime(path).toMillis());
++                                } catch (final IOException missing) {
++                                    return new DiskEntry(path, 0, 0);
++                                }
++                            }).sorted(Comparator.comparingLong(DiskEntry::modified)
++                                    .thenComparing(entry -> entry.path.equals(target))).toList();
++                    long retained = files.stream().mapToLong(DiskEntry::bytes).sum();
++                    int count = files.size();
++                    for (final DiskEntry entry : files) {
++                        if (retained <= this.diskBudget && count <= this.maxEntries) {
++                            break;
++                        }
++                        Files.deleteIfExists(entry.path);
++                        retained -= entry.bytes;
++                        count--;
++                    }
++                }
++            } catch (final IOException | RuntimeException unavailable) {
++                // Cache failures must not change which source resources are accepted.
++            } finally {
++                if (temporary != null) {
++                    try {
++                        Files.deleteIfExists(temporary);
++                    } catch (final IOException ignored) {
++                    }
++                }
++            }
++        }
++
++    }
++
++    private record DiskEntry(Path path, long bytes, long modified) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiRetainedBindings.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiRetainedBindings.java
 new file mode 100644
 index 00000000..a8d43d9e
@@ -11795,10 +12183,10 @@ index 00000000..cc526d4c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
 new file mode 100644
-index 00000000..b30b3a2f
+index 00000000..ff2c71b2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,132 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -11821,6 +12209,37 @@ index 00000000..b30b3a2f
 +    static final int MAX_FILES = 16384;
 +
 +    private UiTextures() {
++    }
++
++    /** Applies a normalized layer with the same shared admission limit and cross-format replacement as a source layer. */
++    static void merge(final Map<String, byte[]> source, final Map<String, byte[]> prepared, final Map<String, byte[]> result) {
++        final Set<String> images = new LinkedHashSet<>();
++        for (final var entry : source.entrySet()) {
++            final String path = entry.getKey();
++            if (!path.startsWith("textures/") || !JsonUiProgram.safePath(path) || entry.getValue().length > UiTextureLimits.MAX_ENCODED_BYTES) {
++                continue;
++            }
++            if (path.endsWith(".json")) {
++                final byte[] metadata = prepared.get(path);
++                if (metadata != null && (result.size() < MAX_FILES || result.containsKey(path))) {
++                    result.put(path, metadata);
++                }
++            } else if (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")) {
++                images.add(path.substring(0, path.length() - 4));
++            }
++        }
++        for (final String basename : images) {
++            if (result.size() >= MAX_FILES && !result.containsKey(basename + ".png") && !result.containsKey(basename + ".jpg")) {
++                continue;
++            }
++            final String path = prepared.containsKey(basename + ".jpg") ? basename + ".jpg" : basename + ".png";
++            final byte[] image = prepared.get(path);
++            if (image != null) {
++                result.remove(basename + ".png");
++                result.remove(basename + ".jpg");
++                result.put(path, image);
++            }
++        }
 +    }
 +
 +    static void load(final Map<String, byte[]> files, final Map<String, byte[]> result) {
@@ -17221,10 +17640,10 @@ index 00000000..bc575caa
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
 new file mode 100644
-index 00000000..486587d8
+index 00000000..2a8e9856
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
-@@ -0,0 +1,901 @@
+@@ -0,0 +1,921 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -17242,6 +17661,7 @@ index 00000000..486587d8
 +import net.raphimc.viabedrock.api.util.TextUtil;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import java.util.HashMap;
++import java.util.Base64;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.Set;
@@ -17265,6 +17685,25 @@ index 00000000..486587d8
 +              {"binding_collection_name":"options","binding_name":"#caption","binding_name_override":"#text"},
 +              {"binding_type":"collection_details","binding_collection_name":"first","binding_name":"#total","binding_name_override":"#maximum_grid_items"}]}}
 +            """;
++
++    @Test
++    void reusedUiResourcesKeepEachAcceptedStacksTranslations() {
++        final byte[] image = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6N1sAAAAASUVORK5CYII=");
++        for (final String caption : List.of("First server", "Second server", "First server")) {
++            final var content = new InMemoryContent();
++            content.putString("manifest.json", """
++                    {"format_version":2,"header":{"uuid":"5ac628cf-8151-4269-9f14-048830a02d8a","version":[1,0,0],"name":"cache"}}
++                    """);
++            content.putString("ui/_ui_defs.json", "{\"ui_defs\":[\"ui/cache.json\"]}");
++            content.putString("ui/cache.json", "{\"namespace\":\"cache\",\"root\":{\"type\":\"label\",\"text\":\"cache.caption\"}}");
++            content.putString("texts/en_US.lang", "cache.caption=" + caption + "\n");
++            content.put("textures/ui/cache_icon.png", image);
++            final var program = new ResourcePackStorage(List.of(new ResourcePack(content))).getJsonUiProgram();
++            assertEquals(caption, program.resolve("cache.root", new Bindings()).root().get("text").getAsString());
++            program.textures().get("textures/ui/cache_icon.png")[0] = 0;
++            assertArrayEquals(image, program.textures().get("textures/ui/cache_icon.png"));
++        }
++    }
 +
 +    private static JsonUiProgram program(final String definition) {
 +        return new JsonUiProgram(List.of(Map.of("ui/example.json", definition.getBytes(StandardCharsets.UTF_8))));
@@ -21136,6 +21575,140 @@ index 00000000..e94582bb
 +        bytes.putShort(68, (short) ascent);
 +        bytes.putShort(70, (short) descent);
 +        return bytes.array();
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayerTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayerTest.java
+new file mode 100644
+index 00000000..d70ad415
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayerTest.java
+@@ -0,0 +1,128 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class UiPreparedLayerTest {
++
++    @TempDir
++    Path directory;
++
++    @Test
++    void restoredLayersKeepDefinitionAndImageBytesIndependentOfEachJoin() {
++        final var store = new UiPreparedLayer.Store(4096, 16384, 4);
++        final String key = key("first");
++        final var initial = store.get(key, this.directory, () -> layer(7)).copy();
++        initial.documents().get("ui/example.json")[0] = 0;
++        initial.textures().get("textures/ui/example.png")[0] = 99;
++
++        final var cached = store.get(key, this.directory, () -> {
++            throw new AssertionError("Reprepared a memory hit");
++        });
++        assertArrayEquals(layer(7).documents().get("ui/example.json"), cached.documents().get("ui/example.json"));
++        assertArrayEquals(new byte[]{7}, cached.textures().get("textures/ui/example.png"));
++
++        final var reopened = new UiPreparedLayer.Store(4096, 16384, 4)
++                .get(key, this.directory, () -> {
++                    throw new AssertionError("Reprepared a disk hit");
++                });
++        assertArrayEquals(cached.documents().get("ui/example.json"), reopened.documents().get("ui/example.json"));
++        assertArrayEquals(new byte[]{7}, reopened.textures().get("textures/ui/example.png"));
++    }
++
++    @Test
++    void corruptOrUnavailableDiskCacheFallsBackToSourcePreparation() throws Exception {
++        final String key = key("corrupt");
++        new UiPreparedLayer.Store(4096, 16384, 4).get(key, this.directory, () -> layer(1));
++        Files.write(this.directory.resolve(key + ".bin"), new byte[]{1, 2, 3});
++        final var recovered = new UiPreparedLayer.Store(4096, 16384, 4).get(key, this.directory, () -> layer(2));
++        assertArrayEquals(new byte[]{2}, recovered.textures().get("textures/ui/example.png"));
++        final Path file = this.directory.resolve("not-a-directory");
++        Files.write(file, new byte[]{1});
++        final var unavailable = new UiPreparedLayer.Store(4096, 16384, 4).get(key, file, () -> layer(3));
++        assertArrayEquals(new byte[]{3}, unavailable.textures().get("textures/ui/example.png"));
++    }
++
++    @Test
++    void budgetsEvictPreparedResourcesAndEvictedEntriesCanBePreparedAgain() throws Exception {
++        final long budget = layer(1).weight() + 1;
++        final var store = new UiPreparedLayer.Store(budget, 16384, 1);
++        final String first = key("first");
++        final String second = key("second");
++        store.get(first, this.directory, () -> layer(1));
++        store.get(second, this.directory, () -> layer(2));
++        assertFalse(Files.exists(this.directory.resolve(first + ".bin")));
++        final var builds = new AtomicInteger();
++        final var result = store.get(first, this.directory, () -> {
++            builds.incrementAndGet();
++            return layer(4);
++        });
++        assertEquals(1, builds.get());
++        assertArrayEquals(new byte[]{4}, result.textures().get("textures/ui/example.png"));
++    }
++
++    @Test
++    void reorderedFilesReusePreparationButChangedBytesCannotRestoreOldResources() {
++        final var store = new UiPreparedLayer.Store(16384, 0, 8);
++        final var original = new LinkedHashMap<String, byte[]>();
++        original.put("ui/first.json", new byte[]{1});
++        original.put("ui/second.json", new byte[]{2});
++        final var reversed = new LinkedHashMap<String, byte[]>();
++        reversed.put("ui/second.json", new byte[]{2});
++        reversed.put("ui/first.json", new byte[]{1});
++        final var changed = new LinkedHashMap<>(original);
++        changed.put("ui/first.json", new byte[]{3});
++        store.get(UiPreparedLayer.fingerprint(original, Map.of()), null, () -> layer(1));
++        final var reordered = store.get(UiPreparedLayer.fingerprint(reversed, Map.of()), null, () -> layer(2));
++        final var updated = store.get(UiPreparedLayer.fingerprint(changed, Map.of()), null, () -> layer(3));
++        assertArrayEquals(new byte[]{1}, reordered.textures().get("textures/ui/example.png"));
++        assertArrayEquals(new byte[]{3}, updated.textures().get("textures/ui/example.png"));
++    }
++
++    @Test
++    void normalizedLayerPreservesOverridesAcrossImageFormatsAndMetadata() {
++        final var lower = new LinkedHashMap<String, byte[]>();
++        lower.put("textures/ui/photo.jpg", new byte[]{1});
++        lower.put("textures/ui/photo.json", new byte[]{2});
++        UiTextures.merge(Map.of("textures/ui/photo.png", new byte[]{3}), Map.of("textures/ui/photo.png", new byte[]{3}), lower);
++        assertFalse(lower.containsKey("textures/ui/photo.jpg"));
++        assertArrayEquals(new byte[]{3}, lower.get("textures/ui/photo.png"));
++        assertArrayEquals(new byte[]{2}, lower.get("textures/ui/photo.json"));
++
++        final var source = new LinkedHashMap<String, byte[]>();
++        source.put("textures/ui/b.png", new byte[]{4});
++        source.put("textures/ui/a.png", new byte[]{5});
++        final var prepared = new LinkedHashMap<String, byte[]>();
++        prepared.put("textures/ui/a.png", new byte[]{5});
++        prepared.put("textures/ui/b.png", new byte[]{4});
++        final var ordered = new LinkedHashMap<String, byte[]>();
++        UiTextures.merge(source, prepared, ordered);
++        assertEquals(List.of("textures/ui/b.png", "textures/ui/a.png"), List.copyOf(ordered.keySet()));
++    }
++
++    private static UiPreparedLayer.Prepared layer(final int marker) {
++        return new UiPreparedLayer.Prepared(Map.of("ui/example.json",
++                "{\"namespace\":\"example\",\"root\":{\"type\":\"label\",\"text\":\"Caption\"}}".getBytes(StandardCharsets.UTF_8)),
++                Map.of("textures/ui/example.png", new byte[]{(byte) marker}));
++    }
++
++    private static String key(final String value) {
++        return UiPreparedLayer.fingerprint(Map.of("ui/example.json", value.getBytes(StandardCharsets.UTF_8)), Map.of());
 +    }
 +
 +}

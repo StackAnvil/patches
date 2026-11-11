@@ -1,4 +1,4 @@
-From 7782f1e6771e2aeebd904f4dfab70e8d500d2cf3 Mon Sep 17 00:00:00 2001
+From fd1cf5fddd863f436dc7eb81d71a151974ab8832 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(resources): select native libraries by world version
@@ -53,40 +53,70 @@ newer/older/newer texture, sound and graph selection, retained server
 priority, immutable earlier views, eviction/reselection, missing context,
 and resource-manager reuse across world-version changes. Native graphical
 and audible world-transition comparisons remain pending.
+
+Start one bounded bundled-library preparation during protocol initialization.
+Joining awaits the same future, while client startup continues. Publish only
+a fully validated library, preserve the original preparation failure across
+joins, and stop the worker with the client. This shifts process initialization
+out of the first join when startup has enough time; it does not remove its CPU
+cost or bypass manifest, resource, version or persona validation.
+
+Regressions cover a join waiting for in-flight startup preparation, repeated
+requests reusing one load, and startup failures reaching joining without retry.
+
+Reuse decoded accepted native archives across resource-manager generations by
+SHA-256 of the selected archive bytes, including their protocol and world
+version header. Keep current-generation success and error ownership unchanged.
+Retain at most 128 MiB of decoded resource data and four content identities;
+never retain resource managers, packs or open streams. Cache copies own their
+arrays, and each resource generation receives independent bytes.
+
+The 96 MiB encoded cache limit does not change archive admission. For larger
+inputs, prepend the already-read bytes to the remaining stream and let the
+existing bounded codec validate the complete archive without caching it.
+Failed decodes remain retryable after the resource generation changes.
+
+Regressions cover decode reuse, independent arrays across generations, changed
+content, entry/byte eviction, uncacheable large streams and failed decoding.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |   3 +
+ .../bedrock/ViaFabricPlusBedrock.java         |   7 +
  .../appearance/BedrockActorAnimation.java     |   4 +-
- .../appearance/BedrockActorDependencies.java  |  63 ++++++++
- .../appearance/BedrockEntityResources.java    |  31 ++--
- .../appearance/BedrockResourceLibrary.java    | 143 +++++++++++++++++-
+ .../appearance/BedrockActorDependencies.java  |  63 ++++++
+ .../appearance/BedrockEntityResources.java    |  31 +--
+ .../appearance/BedrockResourceLibrary.java    | 143 +++++++++++++-
  .../appearance/BedrockServerResources.java    |  15 +-
- ...FabricPlusBuiltinResourcePackProvider.java |  37 +++++
- .../render/BedrockAcceptedResources.java      |  17 ++-
+ ...FabricPlusBuiltinResourcePackProvider.java |  76 ++++++++
+ .../render/BedrockAcceptedArchiveCache.java   |  94 +++++++++
+ .../render/BedrockAcceptedResources.java      |  21 +-
  .../bedrock/render/BedrockActorResources.java |   4 +-
- .../BedrockActorDependenciesTest.java         | 109 +++++++++++++
+ .../BedrockActorDependenciesTest.java         | 109 +++++++++++
  .../BedrockResourceLibraryTest.java           |  24 ++-
  .../BedrockServerActorResourcesTest.java      |   3 +-
  .../BedrockServerEntityAnimationTest.java     |  14 +-
- .../BedrockServerResourcesTest.java           |  42 ++++-
- .../BedrockWorldResourceVersionsTest.java     |  85 +++++++++++
- ...icPlusBuiltinResourcePackProviderTest.java | 127 ++++++++++++++++
+ .../BedrockServerResourcesTest.java           |  42 +++-
+ .../BedrockWorldResourceVersionsTest.java     |  85 ++++++++
+ ...icPlusBuiltinResourcePackProviderTest.java | 184 ++++++++++++++++++
+ .../BedrockAcceptedArchiveCacheTest.java      |  81 ++++++++
  .../render/BedrockAcceptedResourcesTest.java  |   3 +-
- 17 files changed, 680 insertions(+), 44 deletions(-)
+ 19 files changed, 958 insertions(+), 45 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependenciesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldResourceVersionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCacheTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index b0be31d..e84e7d8 100644
+index b0be31d..669474a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -60,9 +60,11 @@ import com.viaversion.viafabricplus.bedrock.protocoltranslator.impl.provider.via
+@@ -60,9 +60,12 @@ import com.viaversion.viafabricplus.bedrock.protocoltranslator.impl.provider.via
  import com.viaversion.viafabricplus.bedrock.protocoltranslator.impl.provider.viabedrock.ViaFabricPlusSkinProvider;
  import com.viaversion.viafabricplus.bedrock.settings.impl.BedrockSettings;
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
 +import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusBuiltinResourcePackProvider;
++import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
  import com.viaversion.viaversion.api.Via;
  import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
  import net.raphimc.viabedrock.protocol.provider.SkinProvider;
@@ -94,11 +124,14 @@ index b0be31d..e84e7d8 100644
  import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusEmoteProvider;
  import org.apache.logging.log4j.LogManager;
-@@ -157,6 +159,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -157,6 +160,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          new ViaFabricPlusViaBedrockPlatform();
          Via.getManager().getProviders().use(NettyPipelineProvider.class, new ViaFabricPlusNettyPipelineProvider());
          Via.getManager().getProviders().use(SkinProvider.class, new ViaFabricPlusSkinProvider());
-+        Via.getManager().getProviders().use(BuiltinResourcePackProvider.class, new ViaFabricPlusBuiltinResourcePackProvider());
++        final var builtinResources = new ViaFabricPlusBuiltinResourcePackProvider();
++        Via.getManager().getProviders().use(BuiltinResourcePackProvider.class, builtinResources);
++        builtinResources.prepare();
++        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> builtinResources.close());
          Via.getManager().getProviders().use(EmoteProvider.class, new ViaFabricPlusEmoteProvider());
      }
  
@@ -523,10 +556,10 @@ index e274777..d1dcc23 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
 new file mode 100644
-index 0000000..eed87fa
+index 0000000..bebcc3f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,76 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -537,14 +570,20 @@ index 0000000..eed87fa
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
 +import net.raphimc.viabedrock.protocol.provider.BuiltinResourcePackProvider;
 +
 +import java.io.IOException;
 +import java.util.List;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionException;
++import java.util.concurrent.ExecutionException;
 +
 +/** Supplies bundled native visual and actor resources on ViaBedrock's resource-pack worker. */
-+public final class ViaFabricPlusBuiltinResourcePackProvider extends BuiltinResourcePackProvider {
++public final class ViaFabricPlusBuiltinResourcePackProvider extends BuiltinResourcePackProvider implements AutoCloseable {
 +    private final LibraryLoader library;
++    private final ResourcePackExecutor preparation = new ResourcePackExecutor(1, 1, "Bedrock Builtin Asset Preparation");
++    private CompletableFuture<BedrockResourceLibrary> prepared;
 +
 +    public ViaFabricPlusBuiltinResourcePackProvider() {
 +        this(() -> BedrockBuiltinAssets.load().library());
@@ -554,9 +593,42 @@ index 0000000..eed87fa
 +        this.library = library;
 +    }
 +
++    /** Starts the same validated load that joining awaits, without blocking client startup. */
++    public void prepare() {
++        this.preparedLibrary();
++    }
++
++    private synchronized CompletableFuture<BedrockResourceLibrary> preparedLibrary() {
++        if (this.prepared == null) {
++            this.prepared = this.preparation.submit(() -> {
++                try {
++                    return this.library.load();
++                } catch (final IOException error) {
++                    throw new CompletionException(error);
++                }
++            });
++        }
++        return this.prepared;
++    }
++
 +    @Override
 +    public List<ResourcePack> load(final UserConnection user, final BaseGameVersion version) throws IOException {
-+        return this.library.load().forVersion(version).resourcePacks();
++        try {
++            return this.preparedLibrary().get().forVersion(version).resourcePacks();
++        } catch (final InterruptedException interrupted) {
++            Thread.currentThread().interrupt();
++            throw new IOException("Interrupted while preparing bundled Bedrock assets", interrupted);
++        } catch (final ExecutionException failed) {
++            Throwable cause = failed.getCause();
++            while (cause instanceof CompletionException && cause.getCause() != null) cause = cause.getCause();
++            if (cause instanceof IOException error) throw error;
++            throw new IOException("Failed to prepare bundled Bedrock assets", cause);
++        }
++    }
++
++    @Override
++    public void close() {
++        this.preparation.stop();
 +    }
 +
 +    @FunctionalInterface
@@ -564,11 +636,111 @@ index 0000000..eed87fa
 +        BedrockResourceLibrary load() throws IOException;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java
+new file mode 100644
+index 0000000..2081a3a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java
+@@ -0,0 +1,94 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.SequenceInputStream;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.ArrayList;
++import java.util.HexFormat;
++import java.util.LinkedHashMap;
++import java.util.Map;
++
++/** Reuses decoded bytes across resource generations without retaining their managers, packs or streams. */
++final class BedrockAcceptedArchiveCache {
++    private final Decoder decoder;
++    private final long budget;
++    private final int maxEntries;
++    private final int maxEncodedBytes;
++    private final Map<String, Entry> entries = new LinkedHashMap<>(4, .75F, true);
++    private long retained;
++
++    BedrockAcceptedArchiveCache(final Decoder decoder, final long budget, final int maxEntries, final int maxEncodedBytes) {
++        this.decoder = decoder;
++        this.budget = budget;
++        this.maxEntries = maxEntries;
++        this.maxEncodedBytes = maxEncodedBytes;
++    }
++
++    synchronized NativeActorLibrary.Archive decode(final InputStream source) throws IOException {
++        final byte[] bytes = source.readNBytes(this.maxEncodedBytes + 1);
++        if (bytes.length > this.maxEncodedBytes) {
++            // This is a cache limit, not an archive admission limit. The codec still sees the complete stream.
++            return this.decoder.decode(new SequenceInputStream(new ByteArrayInputStream(bytes), source));
++        }
++        final String key;
++        try {
++            key = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
++        } catch (final NoSuchAlgorithmException impossible) {
++            throw new IllegalStateException(impossible);
++        }
++        final Entry cached = this.entries.get(key);
++        if (cached != null) {
++            return copy(cached.archive);
++        }
++        final NativeActorLibrary.Archive archive = this.decoder.decode(new ByteArrayInputStream(bytes));
++        final long weight = weight(archive);
++        if (weight <= this.budget) {
++            this.entries.put(key, new Entry(copy(archive), weight));
++            this.retained += weight;
++            final var eldest = this.entries.values().iterator();
++            while (this.retained > this.budget || this.entries.size() > this.maxEntries) {
++                this.retained -= eldest.next().weight;
++                eldest.remove();
++            }
++        }
++        return archive;
++    }
++
++    private static NativeActorLibrary.Archive copy(final NativeActorLibrary.Archive archive) {
++        final var layers = new ArrayList<NativeActorLibrary.Layer>(archive.layers().size());
++        for (final var layer : archive.layers()) {
++            final Map<String, byte[]> files = new LinkedHashMap<>();
++            layer.resources().forEach((path, bytes) -> files.put(path, bytes.clone()));
++            layers.add(new NativeActorLibrary.Layer(layer.server(), files));
++        }
++        return new NativeActorLibrary.Archive(archive.version(), layers);
++    }
++
++    private static long weight(final NativeActorLibrary.Archive archive) {
++        long weight = 256;
++        for (final var layer : archive.layers()) {
++            weight += 128;
++            for (final var entry : layer.resources().entrySet()) {
++                weight += 128L + entry.getKey().length() * 2L + entry.getValue().length;
++            }
++        }
++        return weight;
++    }
++
++    @FunctionalInterface
++    interface Decoder {
++        NativeActorLibrary.Archive decode(InputStream input) throws IOException;
++    }
++
++    private record Entry(NativeActorLibrary.Archive archive, long weight) { }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
-index 76f93d2..ffc8d7d 100644
+index 76f93d2..5ce6caf 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
-@@ -12,6 +12,7 @@ import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
+@@ -12,42 +12,49 @@ import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
  
  import java.io.IOException;
  import java.util.List;
@@ -576,7 +748,11 @@ index 76f93d2..ffc8d7d 100644
  
  /** Actor and effect loaders share one decoded accepted archive during each resource generation. */
  public final class BedrockAcceptedResources {
-@@ -21,19 +22,23 @@ public final class BedrockAcceptedResources {
+ 
++    private static final BedrockAcceptedArchiveCache ARCHIVES = new BedrockAcceptedArchiveCache(
++            NativeActorLibrary::decode, 128L << 20, 4, 96 << 20);
+     private static Snapshot snapshot;
+ 
      private BedrockAcceptedResources() {}
  
      /** Decoding accepted assets never requests authentication or a direct Bedrock connection. */
@@ -604,8 +780,10 @@ index 76f93d2..ffc8d7d 100644
          final var stack = resources.getResourceStack(Identifier.fromNamespaceAndPath("viabedrock", "actor_library.bin"));
          for (int index = stack.size() - 1; index >= 0; index--) {
              final var resource = stack.get(index);
-@@ -42,12 +47,12 @@ public final class BedrockAcceptedResources {
-                 return NativeActorLibrary.decode(input);
+             if (resource.source().location().source() != PackSource.SERVER) continue;
+             try (var input = resource.open()) {
+-                return NativeActorLibrary.decode(input);
++                return ARCHIVES.decode(input);
              }
          }
 -        return List.of();
@@ -1019,10 +1197,10 @@ index 0000000..a589612
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
 new file mode 100644
-index 0000000..85d180b
+index 0000000..e30f094
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,184 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
@@ -1035,10 +1213,67 @@ index 0000000..85d180b
 +import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionException;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class ViaFabricPlusBuiltinResourcePackProviderTest {
++    @Test
++    void joiningAwaitsTheStartupLoadAndLaterJoinsReuseIt() throws Exception {
++        final var started = new CountDownLatch(1);
++        final var finish = new CountDownLatch(1);
++        final var reads = new AtomicInteger();
++        final var library = BedrockResourceLibrary.read(Map.of("library/vanilla/textures/items/shared.png", new byte[] {1}));
++        try (final var provider = new ViaFabricPlusBuiltinResourcePackProvider(() -> {
++            reads.incrementAndGet();
++            started.countDown();
++            try {
++                if (!finish.await(5, TimeUnit.SECONDS)) throw new IOException("Timed out waiting for startup load");
++            } catch (InterruptedException error) {
++                Thread.currentThread().interrupt();
++                throw new IOException(error);
++            }
++            return library;
++        })) {
++            provider.prepare();
++            assertTrue(started.await(5, TimeUnit.SECONDS));
++            provider.prepare();
++            final var join = CompletableFuture.supplyAsync(() -> {
++                try {
++                    return provider.load(null, BaseGameVersion.CURRENT);
++                } catch (IOException error) {
++                    throw new CompletionException(error);
++                }
++            });
++            assertFalse(join.isDone());
++            finish.countDown();
++            assertArrayEquals(new byte[] {1}, join.get(5, TimeUnit.SECONDS).getFirst().content().get("textures/items/shared.png"));
++            provider.load(null, BaseGameVersion.CURRENT);
++            assertEquals(1, reads.get());
++        } finally {
++            finish.countDown();
++        }
++    }
++
++    @Test
++    void startupFailureRemainsTheJoinFailureWithoutRetrying() {
++        final var failure = new IOException("Bundled manifest mismatch");
++        final var reads = new AtomicInteger();
++        try (final var provider = new ViaFabricPlusBuiltinResourcePackProvider(() -> {
++            reads.incrementAndGet();
++            throw failure;
++        })) {
++            provider.prepare();
++            assertSame(failure, assertThrows(IOException.class, () -> provider.load(null, BaseGameVersion.CURRENT)));
++            assertSame(failure, assertThrows(IOException.class, () -> provider.load(null, BaseGameVersion.CURRENT)));
++            assertEquals(1, reads.get());
++        }
++    }
++
 +    @Test
 +    void loadsBundledImagesWithoutAnAccount() throws Exception {
 +        final var packs = new ViaFabricPlusBuiltinResourcePackProvider().load(null, BaseGameVersion.CURRENT);
@@ -1148,6 +1383,93 @@ index 0000000..85d180b
 +            if (fullPath != null) return pack.content().get(fullPath);
 +        }
 +        return null;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCacheTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCacheTest.java
+new file mode 100644
+index 0000000..b07bf62
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCacheTest.java
+@@ -0,0 +1,81 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockAcceptedArchiveCacheTest {
++    @Test
++    void reloadsReuseDecodedContentWithoutSharingMutableBytesBetweenGenerations() throws Exception {
++        final var decodes = new AtomicInteger();
++        final var cache = new BedrockAcceptedArchiveCache(input -> {
++            decodes.incrementAndGet();
++            return archive(input.readAllBytes());
++        }, 4096, 2, 64);
++        final byte[] encoded = {1, 2, 3};
++        final var first = cache.decode(new ByteArrayInputStream(encoded));
++        first.layers().getFirst().resources().get("textures/probe.png")[0] = 99;
++        final var second = cache.decode(new ByteArrayInputStream(encoded));
++        assertEquals(1, decodes.get());
++        assertNotSame(first, second);
++        assertEquals(first.version(), second.version());
++        assertArrayEquals(encoded, second.layers().getFirst().resources().get("textures/probe.png"));
++        second.layers().getFirst().resources().get("textures/probe.png")[1] = 99;
++        assertArrayEquals(encoded, cache.decode(new ByteArrayInputStream(encoded)).layers().getFirst().resources().get("textures/probe.png"));
++        assertEquals(1, decodes.get());
++        assertArrayEquals(new byte[]{4}, cache.decode(new ByteArrayInputStream(new byte[]{4})).layers().getFirst().resources().get("textures/probe.png"));
++        assertEquals(2, decodes.get());
++    }
++
++    @Test
++    void entryAndByteBudgetsDoNotRetainUnboundedArchives() throws Exception {
++        final var decodes = new AtomicInteger();
++        final BedrockAcceptedArchiveCache.Decoder decoder = input -> {
++            decodes.incrementAndGet();
++            return archive(input.readAllBytes());
++        };
++        final var oneEntry = new BedrockAcceptedArchiveCache(decoder, 4096, 1, 64);
++        for (final int marker : List.of(1, 2, 1)) oneEntry.decode(new ByteArrayInputStream(new byte[]{(byte) marker}));
++        assertEquals(3, decodes.get());
++        final var noSpace = new BedrockAcceptedArchiveCache(decoder, 1, 2, 64);
++        noSpace.decode(new ByteArrayInputStream(new byte[]{3}));
++        noSpace.decode(new ByteArrayInputStream(new byte[]{3}));
++        assertEquals(5, decodes.get());
++    }
++
++    @Test
++    void uncacheableLargeInputsReachTheCodecWithoutTruncationAndFailuresCanRetry() throws Exception {
++        final var decodes = new AtomicInteger();
++        final var cache = new BedrockAcceptedArchiveCache(input -> {
++            decodes.incrementAndGet();
++            final byte[] bytes = input.readAllBytes();
++            if (bytes[0] == 0) throw new IOException("Invalid archive");
++            return archive(bytes);
++        }, 4096, 2, 2);
++        final byte[] large = {1, 2, 3, 4, 5};
++        assertArrayEquals(large, cache.decode(new ByteArrayInputStream(large)).layers().getFirst().resources().get("textures/probe.png"));
++        cache.decode(new ByteArrayInputStream(large));
++        assertEquals(2, decodes.get());
++        assertThrows(IOException.class, () -> cache.decode(new ByteArrayInputStream(new byte[]{0})));
++        assertThrows(IOException.class, () -> cache.decode(new ByteArrayInputStream(new byte[]{0})));
++        assertEquals(4, decodes.get());
++    }
++
++    private static NativeActorLibrary.Archive archive(final byte[] bytes) {
++        return new NativeActorLibrary.Archive(BaseGameVersion.CURRENT,
++                List.of(new NativeActorLibrary.Layer(true, Map.of("textures/probe.png", bytes))));
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java

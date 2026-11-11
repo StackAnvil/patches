@@ -26,6 +26,14 @@ The new bundled path uses the matching installed package bytes.
 The four provider tests pass with the actual bundle.
 The complete add-on build and test suite also pass; optional private-fixture tests remain skipped.
 
+## Prepare and reuse accepted resources
+
+Client startup begins bundle validation on one bounded worker. Joining awaits the same future, including its failure. Client shutdown closes the worker. This moves about 1.5 seconds of first-use work before joining in the recorded runs. It does not remove that CPU work. The provider requires the bounded executor from viabedrock/0001-cache-converted-resource-packs.patch.
+
+A content-based cache reuses decoded accepted archives within the process. It retains at most four entries and 128 MiB of decoded resources. Inputs above the cache eligibility limit still decode normally. Each generation receives independent arrays and containers. Decode failures are not cached. Regressions cover startup reuse and failure, mutation isolation, content changes, budgets and oversized streams.
+
+Final Galaxite recordings spend 0.37 to 0.42 seconds reading accepted resources in fresh processes and 0.066 seconds on reconnect. The reconnect decodes the native archive only once across both joins. The full four-project build passes 3,984 tests with 336 optional skips. Transport and live resource probes pass. Broad rendering still fails on existing unresolved mappings.
+
 ## Include native actor dependencies
 
 The provider now supplies equipment definitions, geometry, animations, controllers and materials beside native images.
