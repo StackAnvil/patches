@@ -33,3 +33,9 @@ Private screenshots and traffic evidence remain outside Git.
 
 These selected controls do not establish complete form, NPC, font, or rendering parity.
 The original reported untranslated dialog remains unmatched.
+
+Action-form search fields are editable. The authored placeholder becomes the edit box hint, typing does not refresh or filter the scene, and the submit control sends the typed values in the core's `text_values` payload. Ordinary buttons still send their original ordinal. `BedrockActionFormTextTest` covers typing, submission, ordinals and the length limit.
+
+Unset text: official 1.26.60.5 sends `[null]` for a Wardrobe search that never gained focus and `[""]` after focus alone or a cleared field. The form keeps a field unset until it gains focus or text and sends a `text_set` flag per value. `BedrockActionFormTextTest` covers the untouched and focus-only submissions and, with nested CubeCraft-style controls, checks that the editor draws above the edit box background at the text control's inset.
+
+The rebuilt client passes a live CubeCraft Wardrobe check: typed `red` is visible, its placeholder hides, and submission sends `["red"]`. Untouched, focused-empty and typed-then-cleared fields send the same responses as the native controls. Featured Loot navigation still sends numeric response `0` and restores the tiles. No purchase or multiple-field form was tested.

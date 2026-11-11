@@ -1,4 +1,4 @@
-From 6a619c3e72fab4b78e0bc36062a7a4c19633ff89 Mon Sep 17 00:00:00 2001
+From 9ed95587aef962a8d7d27128e47f284aba734454 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): render authored Bedrock forms and NPC dialogs
@@ -167,13 +167,26 @@ typed protocol fallback instead of adopting an action-form projection.
 Regressions cover rejected renderers, sparse response indices, malformed
 projection data, custom-form titles, and actual fallback widget clicks.
 Filtering rows must never renumber a response or send a second reply.
+
+Edit action-form text values that the core scene declares. The authored
+placeholder label becomes the edit box hint. Typing keeps the value in
+the widget state without rebuilding or filtering the scene, because the
+native Wardrobe search only answers after submission. The submit command
+sends the values as the core's text_values payload; buttons keep their
+original response ordinal.
+
+Submit an untouched action-form text field as unset. Official 1.26.60.5
+sends [null] for a Wardrobe search that never gained focus and [""] after
+focus alone or a cleared field. The form keeps a field unset until it gains
+focus or text and sends a text_set flag per value with the strings.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   4 +
+ .../screen/form/BedrockActionFormText.java    | 101 ++++++
  .../screen/form/BedrockCustomFormState.java   | 159 +++++++++
  .../form/BedrockFallbackFormScreen.java       | 119 +++++++
- .../screen/form/BedrockFormController.java    | 107 ++++++
+ .../screen/form/BedrockFormController.java    | 122 +++++++
  .../bedrock/screen/form/BedrockFormScene.java |  84 +++++
- .../screen/form/BedrockNativeForms.java       |  89 +++++
+ .../screen/form/BedrockNativeForms.java       |  90 +++++
  .../screen/form/NativeCustomFormPayload.java  |  25 ++
  .../screen/form/NativeFormPayload.java        |  24 ++
  .../bedrock/screen/npc/BedrockNativeNpcs.java |  89 +++++
@@ -182,6 +195,7 @@ Filtering rows must never renumber a response or send a second reply.
  .../bedrock/screen/npc/BedrockNpcScene.java   |  47 +++
  .../screen/npc/NativeNpcDialoguePayload.java  |  22 ++
  .../screen/npc/NativeNpcEditorPayload.java    |  22 ++
+ .../form/BedrockActionFormTextTest.java       | 244 ++++++++++++++
  .../form/BedrockCustomFormEditingTest.java    | 110 ++++++
  .../BedrockCustomFormInteractionTest.java     | 219 ++++++++++++
  .../screen/form/BedrockFormSceneTest.java     | 124 +++++++
@@ -189,7 +203,8 @@ Filtering rows must never renumber a response or send a second reply.
  .../screen/form/BedrockNativeFormsTest.java   |  69 ++++
  .../screen/npc/BedrockNativeNpcsTest.java     | 313 ++++++++++++++++++
  .../npc/BedrockNpcConversationTest.java       | 106 ++++++
- 21 files changed, 2090 insertions(+)
+ 23 files changed, 2451 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormText.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFallbackFormScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormController.java
@@ -203,6 +218,7 @@ Filtering rows must never renumber a response or send a second reply.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNpcScene.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/NativeNpcDialoguePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/NativeNpcEditorPayload.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormTextTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormEditingTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormInteractionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormSceneTest.java
@@ -235,6 +251,113 @@ index c5a1e30..f3732c4 100644
          PayloadTypeRegistry.clientboundPlay().register(NativeSkinPayload.TYPE, NativeSkinPayload.CODEC);
          // Capture the listener identity at INIT. Fabric Context.player() returns the current client player.
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormText.java
+new file mode 100644
+index 0000000..65cfbfd
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormText.java
+@@ -0,0 +1,101 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiController;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.minecraft.nbt.ByteArrayTag;
++import net.minecraft.nbt.CompoundTag;
++import net.minecraft.nbt.ListTag;
++import net.minecraft.nbt.StringTag;
++
++/**
++ * Text values that an authored action form submits as a string array instead of a button ordinal. A native field is
++ * unset until it gains focus or text: submitting an untouched field sends {@code [null]}, while a focused or cleared
++ * field sends {@code [""]}.
++ */
++final class BedrockActionFormText implements NativeUiController.Inputs {
++    /** Null marks a field that has neither gained focus nor received text. */
++    private final String[] values;
++    private final String[] placeholders;
++    private final int[] limits;
++
++    private BedrockActionFormText(final String[] placeholders, final int[] limits) {
++        this.values = new String[limits.length];
++        this.placeholders = placeholders;
++        this.limits = limits;
++    }
++
++    /** Returns null when the scene has no submitted text values. */
++    static BedrockActionFormText parse(final String source) {
++        final var scene = JsonParser.parseString(source).getAsJsonObject();
++        if (!scene.has("text_inputs")) return null;
++        final var inputs = scene.getAsJsonArray("text_inputs");
++        if (inputs.isEmpty() || inputs.size() > 16) throw new IllegalArgumentException("Invalid action form text inputs");
++        final String[] placeholders = new String[inputs.size()];
++        final int[] limits = new int[inputs.size()];
++        for (int index = 0; index < inputs.size(); index++) {
++            final var input = inputs.get(index).getAsJsonObject();
++            final int limit = input.get("max_length").getAsBigDecimal().intValueExact();
++            if (input.get("index").getAsBigDecimal().intValueExact() != index || limit < 0 || limit > 100)
++                throw new IllegalArgumentException("Invalid action form text input");
++            limits[index] = limit;
++            placeholders[index] = input.has("placeholder") ? input.get("placeholder").getAsString() : "";
++        }
++        return new BedrockActionFormText(placeholders, limits);
++    }
++
++    @Override
++    public int maxLength(final int index) { return this.limits[this.index(index)]; }
++
++    @Override
++    public String text(final int index) {
++        final String value = this.values[this.index(index)];
++        return value == null ? "" : value;
++    }
++
++    @Override
++    public String placeholder(final int index) { return this.placeholders[this.index(index)]; }
++
++    @Override
++    public boolean setText(final int index, final String value) {
++        if (value.length() > this.maxLength(index)) throw new IllegalArgumentException("Action form text exceeds its limit");
++        // Editors call this when they gain focus, which initializes an unset field to its current text.
++        this.values[index] = value;
++        // Native search fields do not filter locally; the server answers the submitted text.
++        return false;
++    }
++
++    @Override
++    public boolean isSlider(final int index) {
++        this.index(index);
++        return false;
++    }
++
++    @Override
++    public void slide(final int index, final double fraction) { throw new IllegalArgumentException("Not a slider input"); }
++
++    @Override
++    public void adjust(final int index, final int direction) { this.index(index); }
++
++    CompoundTag response() {
++        final ListTag values = new ListTag();
++        final byte[] set = new byte[this.values.length];
++        for (int index = 0; index < this.values.length; index++) {
++            values.add(StringTag.valueOf(this.text(index)));
++            set[index] = (byte) (this.values[index] == null ? 0 : 1);
++        }
++        final CompoundTag payload = new CompoundTag();
++        payload.put("text_values", values);
++        payload.put("text_set", new ByteArrayTag(set));
++        return payload;
++    }
++
++    private int index(final int index) {
++        if (index < 0 || index >= this.values.length) throw new IllegalArgumentException("Invalid action form text input");
++        return index;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormState.java
 new file mode 100644
 index 0000000..f9c78f5
@@ -527,10 +650,10 @@ index 0000000..2085b60
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormController.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormController.java
 new file mode 100644
-index 0000000..39e82e7
+index 0000000..db51c5e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormController.java
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,122 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -550,15 +673,23 @@ index 0000000..39e82e7
 +    private final ClientPacketListener owner;
 +    private final int formId;
 +    private final BedrockCustomFormState custom;
++    private final BedrockActionFormText text;
 +    private BedrockFormScene scene;
 +    private boolean responded;
 +
 +    BedrockFormController(final ClientPacketListener owner, final int formId, final BedrockFormScene scene,
 +                          final BedrockCustomFormState custom) {
++        this(owner, formId, scene, custom, null);
++    }
++
++    BedrockFormController(final ClientPacketListener owner, final int formId, final BedrockFormScene scene,
++                          final BedrockCustomFormState custom, final BedrockActionFormText text) {
++        if (custom != null && text != null) throw new IllegalArgumentException("Custom forms carry their own inputs");
 +        this.owner = owner;
 +        this.formId = formId;
 +        this.scene = scene;
 +        this.custom = custom;
++        this.text = text;
 +    }
 +
 +    @Override
@@ -580,7 +711,7 @@ index 0000000..39e82e7
 +    public boolean current() { return BedrockNativeForms.current(this.owner); }
 +
 +    @Override
-+    public Inputs inputs() { return this.custom; }
++    public Inputs inputs() { return this.custom != null ? this.custom : this.text; }
 +
 +    @Override
 +    public void refresh() {
@@ -591,6 +722,13 @@ index 0000000..39e82e7
 +    public Activation activate(final NativeUiScene.Node node) {
 +        if (this.responded) return Activation.STAY;
 +        if (this.custom == null) {
++            if (node.string("command", "").equals("submit")) {
++                if (this.text == null) return Activation.STAY;
++                this.responded = true;
++                BedrockNativeForms.respond(this.owner, this.formId, this.text.response());
++                return Activation.CLOSE;
++            }
++            if (node.properties().has("input")) return Activation.STAY;
 +            this.respond(node.action());
 +            return Activation.CLOSE;
 +        }
@@ -730,10 +868,10 @@ index 0000000..26dd934
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
 new file mode 100644
-index 0000000..0375a1a
+index 0000000..a0baf43
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,90 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -793,7 +931,8 @@ index 0000000..0375a1a
 +        client.execute(() -> {
 +            if (!current(owner)) return;
 +            try {
-+                client.setScreenAndShow(new NativeUiSceneScreen(new BedrockFormController(owner, message.formId(), BedrockFormScene.parse(message.scene()), null)));
++                client.setScreenAndShow(new NativeUiSceneScreen(new BedrockFormController(owner, message.formId(), BedrockFormScene.parse(message.scene()),
++                    null, BedrockActionFormText.parse(message.scene()))));
 +            } catch (final RuntimeException error) {
 +                ViaFabricPlusBedrock.impl().logger().warn("Could not render native form; opening its ordinary controls", error);
 +                try {
@@ -1319,6 +1458,256 @@ index 0000000..01a70cc
 +
 +    @Override
 +    public Type<NativeNpcEditorPayload> type() { return TYPE; }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormTextTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormTextTest.java
+new file mode 100644
+index 0000000..3ea0f48
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormTextTest.java
+@@ -0,0 +1,244 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.mojang.blaze3d.platform.InputConstants;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiLayout;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiScene;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen;
++import java.util.List;
++import java.util.function.Predicate;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.StringSplitter;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.components.EditBox;
++import net.minecraft.client.input.MouseButtonEvent;
++import net.minecraft.client.input.MouseButtonInfo;
++import net.minecraft.client.sounds.SoundManager;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiPresentation;
++import net.minecraft.nbt.ByteArrayTag;
++import net.minecraft.nbt.CompoundTag;
++import net.minecraft.nbt.ListTag;
++import net.minecraft.nbt.StringTag;
++import net.minecraft.server.Bootstrap;
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
++import org.junit.jupiter.api.Test;
++import org.mockito.MockedStatic;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.anyBoolean;
++import static org.mockito.ArgumentMatchers.anyInt;
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.Mockito.*;
++
++final class BedrockActionFormTextTest {
++    @Test
++    void searchTextIsSubmittedAsTheNativeStringArrayWithoutLocalFiltering() throws Exception {
++        withScreen((screen, forms) -> {
++            final EditBox search = screen.children().stream().filter(EditBox.class::isInstance).map(EditBox.class::cast)
++                .findFirst().orElseThrow();
++            assertEquals("", search.getValue());
++            search.setValue("red");
++            final var rows = find(root(screen), node -> node.name().equals("row"));
++            assertTrue(rows.bounds().width() > 0);
++            assertEquals("red", search.getValue());
++            click(screen, find(root(screen), node -> node.string("command", "").equals("submit")));
++            final ListTag expected = new ListTag();
++            expected.add(StringTag.valueOf("red"));
++            forms.verify(() -> BedrockNativeForms.respond(null, 7, response(expected, 1)));
++            forms.verify(() -> BedrockNativeForms.respond(any(), anyInt(), anyInt()), never());
++        });
++    }
++
++    /** Native 1.26.60 control: an untouched field submits [null]; focus alone initializes it to "". */
++    @Test
++    void untouchedSearchStaysUnsetUntilItGainsFocus() throws Exception {
++        final ListTag empty = new ListTag();
++        empty.add(StringTag.valueOf(""));
++        withScreen((screen, forms) -> {
++            click(screen, find(root(screen), node -> node.string("command", "").equals("submit")));
++            forms.verify(() -> BedrockNativeForms.respond(null, 7, response(empty, 0)));
++        });
++        withScreen((screen, forms) -> {
++            screen.setFocused(search(screen));
++            click(screen, find(root(screen), node -> node.string("command", "").equals("submit")));
++            forms.verify(() -> BedrockNativeForms.respond(null, 7, response(empty, 1)));
++        });
++    }
++
++    /**
++     * Real CubeCraft search fields nest their text and placeholder labels inside centering and clipping panels, and
++     * draw state images at the edit box's own layer. The editor must draw above those images, at its text control,
++     * and replace only the labels that belong to this edit box.
++     */
++    @Test
++    void editorDrawsAboveItsBackgroundAtTheNestedTextControl() throws Exception {
++        withScreen(NESTED_SEARCH, (screen, forms) -> {
++            final var root = root(screen);
++            final var draws = NativeUiPresentation.draws(root, box -> false);
++            final var editBox = find(root, node -> node.type().equals("edit_box"));
++            final var text = find(editBox, node -> node.name().equals("display_text"));
++            assertTrue(draws.stream().noneMatch(draw -> draw.box() == text));
++            assertTrue(draws.stream().noneMatch(draw -> draw.box() == find(editBox, node -> node.name().equals("place_holder_control"))));
++            assertTrue(draws.stream().anyMatch(draw -> draw.box().node().name().equals("place_holder_control")),
++                "a same-named control outside the edit box stays visible");
++            final var background = draws.stream().filter(draw -> draw.box().node().name().equals("default")).findFirst().orElseThrow();
++            assertTrue(draws.stream().noneMatch(draw -> draw.box().node().name().equals("hover")));
++
++            final var inputDraws = NativeUiSceneScreen.class.getDeclaredMethod("inputDraws", List.class);
++            inputDraws.setAccessible(true);
++            final List<?> inputs = (List<?>) inputDraws.invoke(screen, draws);
++            assertEquals(1, inputs.size());
++            final var layer = inputs.getFirst().getClass().getDeclaredMethod("layer");
++            layer.setAccessible(true);
++            assertTrue((float) layer.invoke(inputs.getFirst()) > background.box().layer());
++
++            final EditBox search = search(screen);
++            assertEquals(Math.round(text.bounds().x()), search.getX());
++            assertEquals(Math.round(editBox.bounds().x()) + 3, search.getX());
++            assertEquals(Math.round(text.bounds().y()), search.getY());
++            search.setValue("red");
++            assertEquals("red", search.getValue());
++        });
++    }
++
++    private static CompoundTag response(final ListTag values, final int set) {
++        final CompoundTag payload = new CompoundTag();
++        payload.put("text_values", values);
++        payload.put("text_set", new ByteArrayTag(new byte[] {(byte) set}));
++        return payload;
++    }
++
++    private static EditBox search(final NativeUiSceneScreen screen) {
++        return screen.children().stream().filter(EditBox.class::isInstance).map(EditBox.class::cast).findFirst().orElseThrow();
++    }
++
++    private static final String SEARCH = """
++        {"search":{"type":"edit_box","size":[100,20],"offset":[0,0],"anchor_from":"top_left","anchor_to":"top_left","max_length":20,
++          "text_edit_box_grid_collection_name":"custom_form","place_holder_control":"hint",
++          "controls":[{"hint":{"type":"label","text":"search...","size":[100,20]}}]}}""";
++
++    private static final String NESTED_SEARCH = """
++        {"search":{"type":"edit_box","size":[100,18],"offset":[0,0],"anchor_from":"top_left","anchor_to":"top_left","max_length":20,
++          "layer":1,"text_edit_box_grid_collection_name":"custom_form","text_control":"display_text",
++          "place_holder_control":"place_holder_control","default_control":"default","hover_control":"hover",
++          "pressed_control":"pressed","locked_control":"locked",
++          "controls":[
++            {"centering_panel":{"type":"panel","size":["100% - 6px","100% - 4px"],"controls":[
++              {"clipper_panel":{"type":"panel","size":["100%","100%"],"clips_children":true,
++                "anchor_from":"left_middle","anchor_to":"left_middle","controls":[
++                {"display_text":{"type":"label","text":"","layer":1,"anchor_from":"left_middle","anchor_to":"left_middle"}},
++                {"visibility_panel":{"type":"panel","controls":[
++                  {"place_holder_control":{"type":"label","text":"search...","layer":1,
++                    "anchor_from":"right_middle","anchor_to":"right_middle"}}]}}]}}]}},
++            {"locked":{"type":"panel"}},
++            {"default":{"type":"image"}},
++            {"hover":{"type":"image"}},
++            {"pressed":{"type":"image"}}]}},
++        {"caption":{"type":"panel","offset":[0,60],"anchor_from":"top_left","anchor_to":"top_left","size":[100,20],"controls":[
++          {"place_holder_control":{"type":"label","text":"unrelated"}}]}}""";
++
++    @Test
++    void ordinaryButtonsKeepTheirResponseOrdinal() throws Exception {
++        withScreen((screen, forms) -> {
++            click(screen, find(root(screen), node -> node.name().equals("row")));
++            forms.verify(() -> BedrockNativeForms.respond(null, 7, 0));
++            forms.verify(() -> BedrockNativeForms.respond(any(), anyInt(), any(CompoundTag.class)), never());
++        });
++    }
++
++    @Test
++    void rejectsTextBeyondThePresentedLimit() {
++        final var text = BedrockActionFormText.parse("""
++            {"text_inputs":[{"index":0,"max_length":3,"placeholder":"search..."}]}
++            """);
++        assertEquals("search...", text.placeholder(0));
++        assertThrows(IllegalArgumentException.class, () -> text.setText(0, "redd"));
++        assertThrows(IllegalArgumentException.class, () -> text.text(1));
++        assertNull(BedrockActionFormText.parse("{\"format\":1}"));
++    }
++
++    private static void withScreen(final Interaction interaction) throws Exception {
++        withScreen(SEARCH, interaction);
++    }
++
++    private static void withScreen(final String search, final Interaction interaction) throws Exception {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        final var program = com.viaversion.viaversion.libs.gson.JsonParser.parseString("""
++            {"definitions":{
++              "server_form.main_screen_content":{"parent":"","value":{"type":"panel","size":[240,120],"anchor_from":"top_left","anchor_to":"top_left","controls":[
++                %s,
++                {"submit":{"type":"button","size":[20,20],"offset":[110,0],"anchor_from":"top_left","anchor_to":"top_left",
++                  "$pressed_button_name":"button.submit_custom_form"}},
++                {"row":{"type":"button","size":[100,20],"offset":[0,40],"anchor_from":"top_left","anchor_to":"top_left",
++                  "collection_index":0,"$pressed_button_name":"button.form_button_click"}}]}}}}
++            """.formatted(search)).getAsJsonObject();
++        final var form = com.viaversion.viaversion.libs.gson.JsonParser.parseString("""
++            {"type":"form","title":"Wardrobe","content":"","elements":[{"type":"button","text":"Hat"}]}
++            """).getAsJsonObject();
++        final var scene = ServerFormUi.fromProgram(program).resolve(form);
++        assertNotNull(scene);
++        assertEquals(List.of(20), ServerFormUi.actionTextLimits(scene));
++        final Font font = mock(Font.class);
++        when(font.getSplitter()).thenReturn(new StringSplitter((c, style) -> 6));
++        when(font.plainSubstrByWidth(anyString(), anyInt())).thenAnswer(call -> fit(call.getArgument(0), call.getArgument(1), false));
++        when(font.plainSubstrByWidth(anyString(), anyInt(), anyBoolean())).thenAnswer(call -> fit(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
++        when(font.width(anyString())).thenAnswer(call -> ((String) call.getArgument(0)).length() * 6);
++        final Minecraft game = mock(Minecraft.class);
++        when(game.getSoundManager()).thenReturn(mock(SoundManager.class));
++        final var field = Minecraft.class.getField("font");
++        field.setAccessible(true);
++        field.set(game, font);
++        try (final var singleton = mockStatic(Minecraft.class);
++             final var forms = mockStatic(BedrockNativeForms.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            final String source = ServerFormUi.transport(scene);
++            final var screen = new NativeUiSceneScreen(new BedrockFormController(null, 7, BedrockFormScene.parse(source), null,
++                BedrockActionFormText.parse(source)));
++            screen.width = 240;
++            screen.height = 120;
++            final var init = NativeUiSceneScreen.class.getDeclaredMethod("init");
++            init.setAccessible(true);
++            init.invoke(screen);
++            interaction.run(screen, forms);
++        }
++    }
++
++    private static String fit(final String text, final int width, final boolean reverse) {
++        final int count = Math.min(text.length(), Math.max(0, width / 6));
++        return reverse ? text.substring(text.length() - count) : text.substring(0, count);
++    }
++
++    private static NativeUiLayout.Box root(final NativeUiSceneScreen screen) throws Exception {
++        final var field = NativeUiSceneScreen.class.getDeclaredField("root");
++        field.setAccessible(true);
++        return (NativeUiLayout.Box) field.get(screen);
++    }
++
++    private static NativeUiLayout.Box find(final NativeUiLayout.Box box, final Predicate<NativeUiScene.Node> predicate) {
++        if (predicate.test(box.node())) return box;
++        for (final var child : box.children()) {
++            final var found = find(child, predicate);
++            if (found != null) return found;
++        }
++        return null;
++    }
++
++    private static void click(final NativeUiSceneScreen screen, final NativeUiLayout.Box box) {
++        assertNotNull(box);
++        final var event = new MouseButtonEvent(box.bounds().x() + 5, box.bounds().y() + 5,
++            new MouseButtonInfo(InputConstants.MOUSE_BUTTON_LEFT, 0));
++        assertTrue(screen.mouseClicked(event, false));
++        screen.mouseReleased(event);
++    }
++
++    private interface Interaction {
++        void run(NativeUiSceneScreen screen, MockedStatic<BedrockNativeForms> forms) throws Exception;
++    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormEditingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormEditingTest.java
 new file mode 100644
