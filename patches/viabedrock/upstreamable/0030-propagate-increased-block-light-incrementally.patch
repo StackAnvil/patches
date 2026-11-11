@@ -1,4 +1,4 @@
-From c3bf2aba05584dc7b65b9bcd00392bb5dc338c12 Mon Sep 17 00:00:00 2001
+From 195e07e8df0d38d26738f50780400aec97d4536a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] perf(lighting): propagate increased block light incrementally
@@ -61,15 +61,19 @@ Map Java states and secondary water flags once per palette entry. Reuse indexed 
 Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.github.com>
 
 Preserve native barrier and invisible-bedrock light transmission independently of their opaque Java carrier. Official BDS 1.26.60.6 (build 52886190) sealed shafts transmit skylight 15 through both blocks, including two barrier layers, and sealed glowstone tunnels transmit block light 14 then 13. The client request placeholder maps to the same Java barrier but blocks both light types. Use light-only states in snapshots and incremental change detection so carrier rendering, collision, redstone behavior and custom blocks remain unchanged. Native secondary water still supplies its own filter.
+
+Keep measured native light separate from Java carrier data. Official BDS 1.26.60.6 (build 52886190) sealed shafts and glowstone tunnels at clear noon read 11 in the first air cell after ice, frosted ice (ages 0 and 3) and an empty brewing stand, consistent with filter 3 where the Java data uses 1 or 0. Honey blocks, slime, mob spawners, all 17 shulker boxes, amethyst clusters and ice crystals pass skylight 15, where the Java data filters 1 or treats amethyst clusters as opaque. Each corrected filter belongs to a Java carrier that represents the measured native block, so it is a carrier rule. The Script API reset brewing stand bottle bits, so filled stands use the empty measurement.
+
+Glowing obsidian shares the crying obsidian carrier, and ice crystals share the amethyst cluster carrier. Isolated sources read 12, 11 and 10 in the air above glowing obsidian but 9 above crying obsidian. Ice crystals on all six faces read 4 at the source and 3 in the first air cell, where amethyst clusters read 5 and 4. Emissions 13 and 4 are derived from these sequences, not decompiled declarations. A native light table now holds these entries with barrier and invisible bedrock, and appends light-only states after the Java states. Snapshots and block updates resolve them from the native block, so a change between two blocks that share a carrier relights although the Java block update is a no-op. Light-only states skip Java waterlogging; secondary-water snapshots still filter them. Carrier render and collision states stay unchanged. Redstone conductor checks read the carrier filter, so non-solid amethyst clusters no longer count as conductors. Supported snow layers 1, 4, 7 and 8 already pass skylight 15 and keep that rule. Other shapes, End and Nether light, and client rendering parity were not measured.
 ---
  .../api/chunk/light/LightEngine.java          | 228 +++++++++--
- .../protocol/data/BedrockMappingData.java     |  32 +-
- .../protocol/storage/ChunkTracker.java        | 354 +++++++++++++++---
- .../api/chunk/light/LightEngineTest.java      | 211 +++++++++++
+ .../protocol/data/BedrockMappingData.java     | 104 ++++-
+ .../protocol/storage/ChunkTracker.java        | 361 ++++++++++++++---
+ .../api/chunk/light/LightEngineTest.java      | 211 ++++++++++
  .../protocol/data/BlockLightEmissionTest.java |  91 +++++
- .../data/BlockLightFilteringTest.java         |  97 +++++
- .../protocol/storage/ChunkTrackerTest.java    | 234 ++++++++++++
- 7 files changed, 1156 insertions(+), 91 deletions(-)
+ .../data/BlockLightFilteringTest.java         | 113 ++++++
+ .../protocol/storage/ChunkTrackerTest.java    | 373 ++++++++++++++++++
+ 7 files changed, 1384 insertions(+), 97 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightEmissionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
@@ -388,35 +392,108 @@ index 7083d930..d101d0b5 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
-index 1dc13113..a7f4d1c6 100644
+index 1dc13113..1524dc55 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
-@@ -1062,10 +1062,10 @@ public class BedrockMappingData extends MappingDataBase {
+@@ -71,12 +71,27 @@ import java.io.InputStream;
+ import java.io.InputStreamReader;
+ import java.nio.file.Path;
+ import java.util.*;
++import java.util.function.ToIntFunction;
+ import java.util.logging.Level;
+ import java.util.logging.Logger;
+ import java.util.zip.GZIPInputStream;
+ 
+ public class BedrockMappingData extends MappingDataBase {
+ 
++    /**
++     * Measured light of native blocks that differ from their Java carrier. Another native block,
++     * or the client request placeholder, shares each carrier, so the carrier's values cannot change.
++     * These entries apply only to light snapshots; rendering, collision and redstone keep the carrier.
++     */
++    public static final List<NativeLight> NATIVE_LIGHT = List.of(
++            // Barrier and invisible bedrock transmit full sky and block light, unlike the placeholder.
++            new NativeLight("minecraft:barrier", 0, 0),
++            new NativeLight("minecraft:invisible_bedrock", 0, 0),
++            // Crying obsidian carrier; first air cells read 12, 11, 10 where crying obsidian reads 9.
++            new NativeLight("minecraft:glowingobsidian", 15, 13),
++            // Amethyst cluster carrier; every face reads 4 at the source and 3 in the first air cell.
++            new NativeLight("minecraft:ice_crystal", 0, 4));
++
+     // Bedrock misc
+     private Map<ResourcePack.Key, ResourcePack> bedrockResourcePacks;
+     private Map<ResourcePack.Key, ResourcePack> bedrockSkinPacks;
+@@ -105,6 +120,7 @@ public class BedrockMappingData extends MappingDataBase {
+     private Set<String> dataDrivenBedrockBlocks;
+     private byte[] javaBlockLightEmission;
+     private byte[] javaBlockOpacity;
++    private int nativeLightStateStart;
+ 
+     // Biomes
+     private CompoundTag bedrockBiomeDefinitions;
+@@ -1053,40 +1069,70 @@ public class BedrockMappingData extends MappingDataBase {
+         }
+ 
+         final int stateCount = this.javaBlockStates.size();
+-        this.javaBlockLightEmission = new byte[stateCount];
+-        this.javaBlockOpacity = new byte[stateCount];
+-        Arrays.fill(this.javaBlockOpacity, (byte) 15); // Blocks that are not listed are treated as full opaque cubes
++        final byte[] javaEmission = new byte[stateCount];
++        final byte[] javaOpacity = new byte[stateCount];
++        Arrays.fill(javaOpacity, (byte) 15); // Blocks that are not listed are treated as full opaque cubes
+         for (Map.Entry<BlockState, Integer> entry : this.javaBlockStates.entrySet()) {
+             final BlockState blockState = entry.getKey();
+             final int stateId = entry.getValue();
              final String identifier = blockState.namespacedIdentifier();
  
              final Integer opacity = opacityByIdentifier.get(identifier);
 -            this.javaBlockOpacity[stateId] = opacity != null ? opacity.byteValue() : (byte) 15;
-+            this.javaBlockOpacity[stateId] = (byte) getStateLightOpacity(blockState, opacity != null ? opacity : 15);
++            javaOpacity[stateId] = (byte) getStateLightOpacity(blockState, opacity != null ? opacity : 15);
  
              // State dependent emission rules take precedence over the static values from the data asset
 -            final int stateEmission = this.getStateLightEmission(blockState);
 +            final int stateEmission = getStateLightEmission(blockState);
              if (stateEmission != -1) {
-                 this.javaBlockLightEmission[stateId] = (byte) stateEmission;
+-                this.javaBlockLightEmission[stateId] = (byte) stateEmission;
++                javaEmission[stateId] = (byte) stateEmission;
              } else {
-@@ -1075,18 +1075,27 @@ public class BedrockMappingData extends MappingDataBase {
+                 final Integer emission = emissionByIdentifier.get(identifier);
+-                this.javaBlockLightEmission[stateId] = emission != null ? emission.byteValue() : 0;
++                javaEmission[stateId] = emission != null ? emission.byteValue() : 0;
+             }
          }
-     }
- 
-+    static int getStateLightOpacity(final BlockState blockState, final int defaultOpacity) {
-+        // Bedrock single slabs diffuse skylight; doubles are opaque. Java uses the same block
-+        // identifier for both, so identifier-only opacity cannot represent their filtering.
-+        if (blockState.identifier().endsWith("_slab")) {
-+            return blockState.hasProperty("type", "double") ? 15 : 1;
-+        }
-+        return blockState.hasProperty("waterlogged", "true") ? Math.max(defaultOpacity, 1) : defaultOpacity;
++        this.javaBlockLightEmission = withNativeLightStates(javaEmission, NativeLight::emission);
++        this.javaBlockOpacity = withNativeLightStates(javaOpacity, NativeLight::opacity);
++        this.nativeLightStateStart = stateCount;
 +    }
 +
++    /** Appends one light-only state per {@link #NATIVE_LIGHT} entry after the Java states. */
++    public static byte[] withNativeLightStates(final byte[] javaValues, final ToIntFunction<NativeLight> value) {
++        final byte[] values = Arrays.copyOf(javaValues, javaValues.length + NATIVE_LIGHT.size());
++        for (int i = 0; i < NATIVE_LIGHT.size(); i++) {
++            values[javaValues.length + i] = (byte) value.applyAsInt(NATIVE_LIGHT.get(i));
++        }
++        return values;
++    }
++
++    static int getStateLightOpacity(final BlockState blockState, final int defaultOpacity) {
++        final String identifier = blockState.identifier();
++        // Bedrock single slabs diffuse skylight; doubles are opaque. Java uses the same block
++        // identifier for both, so identifier-only opacity cannot represent their filtering.
++        if (identifier.endsWith("_slab")) {
++            return blockState.hasProperty("type", "double") ? 15 : 1;
++        }
++        final int opacity = switch (identifier) {
++            // Native ice, frosted ice and brewing stands filter three levels. Native bottle
++            // states could not be held for measurement, so filled stands use the empty value.
++            case "ice", "frosted_ice", "brewing_stand" -> 3;
++            // These native blocks pass full skylight where the Java data filters or blocks it.
++            case "honey_block", "slime_block", "spawner", "amethyst_cluster" -> 0;
++            default -> identifier.endsWith("shulker_box") ? 0 : defaultOpacity;
++        };
++        return blockState.hasProperty("waterlogged", "true") ? Math.max(opacity, 1) : opacity;
+     }
+ 
      /**
       * Light emission of a java block state that depends on its block state properties.
       * Returns -1 if the block has no state dependent emission rule.
@@ -434,7 +511,7 @@ index 1dc13113..a7f4d1c6 100644
              }
              case "furnace", "blast_furnace", "smoker" -> {
                  return blockState.hasProperty("lit", "true") ? 13 : 0;
-@@ -1098,19 +1107,22 @@ public class BedrockMappingData extends MappingDataBase {
+@@ -1098,19 +1144,22 @@ public class BedrockMappingData extends MappingDataBase {
                  return blockState.hasProperty("lit", "true") ? 7 : 0;
              }
              case "redstone_wire" -> {
@@ -461,7 +538,7 @@ index 1dc13113..a7f4d1c6 100644
              }
              case "vault" -> {
                  return blockState.hasProperty("vault_state", "inactive") ? 6 : 12;
-@@ -1129,7 +1141,7 @@ public class BedrockMappingData extends MappingDataBase {
+@@ -1129,7 +1178,7 @@ public class BedrockMappingData extends MappingDataBase {
              }
              default -> {
                  if (identifier.equals("candle") || identifier.endsWith("_candle")) {
@@ -470,7 +547,7 @@ index 1dc13113..a7f4d1c6 100644
                  }
                  if (identifier.equals("candle_cake") || identifier.endsWith("_candle_cake")) {
                      return blockState.hasProperty("lit", "true") ? 3 : 0;
-@@ -1154,7 +1166,7 @@ public class BedrockMappingData extends MappingDataBase {
+@@ -1154,7 +1203,7 @@ public class BedrockMappingData extends MappingDataBase {
          }
      }
  
@@ -479,8 +556,54 @@ index 1dc13113..a7f4d1c6 100644
          try {
              return Integer.parseInt(blockState.properties().getOrDefault(property, String.valueOf(fallback)));
          } catch (final NumberFormatException e) {
+@@ -1246,8 +1295,27 @@ public class BedrockMappingData extends MappingDataBase {
+         return this.dataDrivenBedrockBlocks;
+     }
+ 
++    /**
++     * Returns the light-only state for a native block whose light differs from its Java carrier,
++     * or -1. Index the light tables with it, never Java block state lookups.
++     */
++    public int getNativeLightState(final String bedrockIdentifier) {
++        for (int i = 0; i < NATIVE_LIGHT.size(); i++) {
++            if (NATIVE_LIGHT.get(i).identifier().equals(bedrockIdentifier)) {
++                return this.nativeLightStateStart + i;
++            }
++        }
++        return -1;
++    }
++
++    /** Returns whether a light table index is a light-only state without a Java block state. */
++    public boolean isNativeLightState(final int lightState) {
++        return lightState >= this.nativeLightStateStart;
++    }
++
+     /**
+      * Light emission (0-15) of every java block state, indexed by java block state id.
++     * Native light-only states follow the Java states.
+      */
+     public byte[] getJavaBlockLightEmission() {
+         return this.javaBlockLightEmission;
+@@ -1255,7 +1323,8 @@ public class BedrockMappingData extends MappingDataBase {
+ 
+     /**
+      * Light opacity (0-15) of every java block state, indexed by java block state id.
+-     * Values of 15 or above fully block light propagation.
++     * Values of 15 or above fully block light propagation. Native light-only states follow the
++     * Java states.
+      */
+     public byte[] getJavaBlockOpacity() {
+         return this.javaBlockOpacity;
+@@ -1571,4 +1640,7 @@ public class BedrockMappingData extends MappingDataBase {
+     public record JavaItemMapping(int id, String identifier, String name, CompoundTag overrideTag) {
+     }
+ 
++    public record NativeLight(String identifier, int opacity, int emission) {
++    }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index 5c7f11dc..a925de85 100644
+index 5c7f11dc..16fd5f52 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -67,12 +67,17 @@ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
@@ -530,7 +653,7 @@ index 5c7f11dc..a925de85 100644
          this.chunkLight.remove(chunkKey);
          this.lightDirtyChunks.remove(chunkKey);
          this.lightVersions.remove(chunkKey);
-@@ -315,6 +325,22 @@ public class ChunkTracker extends StoredObject {
+@@ -315,6 +325,24 @@ public class ChunkTracker extends StoredObject {
          return remappedBlockState;
      }
  
@@ -541,11 +664,13 @@ index 5c7f11dc..a925de85 100644
 +
 +    private int lightBlockState(final int nativeState, final int javaState) {
 +        final BlockState state = this.user().get(BlockStateRewriter.class).blockState(nativeState);
-+        // These native blocks transmit light, but share an opaque Java carrier with the
-+        // client request placeholder. Substitute only in light snapshots, never render states.
-+        if (state != null && (state.namespacedIdentifier().equals("minecraft:barrier")
-+                || state.namespacedIdentifier().equals("minecraft:invisible_bedrock"))) {
-+            return ProtocolConstants.JAVA_AIR_ID;
++        // Some native blocks light differently from the Java carrier they share with another
++        // native block. Substitute only in light snapshots, never render or collision states.
++        if (state != null) {
++            final int lightState = BedrockProtocol.MAPPINGS.getNativeLightState(state.namespacedIdentifier());
++            if (lightState != -1) {
++                return lightState;
++            }
 +        }
 +        return javaState;
 +    }
@@ -553,7 +678,7 @@ index 5c7f11dc..a925de85 100644
      public BedrockBlockEntity getBlockEntity(final BlockPosition blockPosition) {
          final BedrockChunk chunk = this.getChunk(blockPosition.x() >> 4, blockPosition.z() >> 4);
          if (chunk == null) {
-@@ -488,8 +514,10 @@ public class ChunkTracker extends StoredObject {
+@@ -488,8 +516,10 @@ public class ChunkTracker extends StoredObject {
          }
          final DataPalette palette = section.palettes(PaletteType.BLOCKS).get(layer);
          final int prevBlockState = palette.idAt(sectionX, sectionY, sectionZ);
@@ -564,7 +689,7 @@ index 5c7f11dc..a925de85 100644
          final String tag = blockStateRewriter.tag(blockState);
  
          int remappedBlockState = this.getJavaBlockState(blockPosition);
-@@ -503,14 +531,14 @@ public class ChunkTracker extends StoredObject {
+@@ -503,14 +533,14 @@ public class ChunkTracker extends StoredObject {
                  this.sendNativeBlocks(new NativeBlockIdentifiers.Update(this.dimension.ordinal(), blockPosition, layer, blockState));
              }
              this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
@@ -586,7 +711,7 @@ index 5c7f11dc..a925de85 100644
  
              if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
                  entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
-@@ -536,6 +564,87 @@ public class ChunkTracker extends StoredObject {
+@@ -536,6 +566,87 @@ public class ChunkTracker extends StoredObject {
          return new IntObjectImmutablePair<>(remappedBlockState, null);
      }
  
@@ -674,7 +799,7 @@ index 5c7f11dc..a925de85 100644
      public BedrockChunkSection handleBlockPalette(final BedrockChunkSection section) {
          this.replaceLegacyBlocks(section);
          this.resolvePersistentIds(section);
-@@ -817,17 +926,21 @@ public class ChunkTracker extends StoredObject {
+@@ -817,17 +928,21 @@ public class ChunkTracker extends StoredObject {
  
      private ChunkLight computeChunkLight(final int chunkX, final int chunkZ) {
          final int[][][] regionStates = new int[9][][];
@@ -700,7 +825,7 @@ index 5c7f11dc..a925de85 100644
          for (int dz = -1; dz <= 1; dz++) {
              for (int dx = -1; dx <= 1; dx++) {
                  final BedrockChunk neighbor = this.chunks.get(ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz));
-@@ -837,9 +950,10 @@ public class ChunkTracker extends StoredObject {
+@@ -837,9 +952,10 @@ public class ChunkTracker extends StoredObject {
  
                  final int chunkIndex = (dz + 1) * 3 + (dx + 1);
                  regionStates[chunkIndex] = this.snapshotChunkStates(neighbor);
@@ -712,7 +837,7 @@ index 5c7f11dc..a925de85 100644
      }
  
      private int[][] snapshotChunkStates(final BedrockChunk chunk) {
-@@ -850,27 +964,53 @@ public class ChunkTracker extends StoredObject {
+@@ -850,27 +966,53 @@ public class ChunkTracker extends StoredObject {
          return states.clone();
      }
  
@@ -783,7 +908,7 @@ index 5c7f11dc..a925de85 100644
                  this.pendingLightComputations.remove(chunkKey);
                  if (!this.user().getChannel().isActive()) {
                      return;
-@@ -900,7 +1040,6 @@ public class ChunkTracker extends StoredObject {
+@@ -900,7 +1042,6 @@ public class ChunkTracker extends StoredObject {
                  this.writeLightData(lightUpdate, lightData);
                  lightUpdate.send(BedrockProtocol.class);
              });
@@ -791,7 +916,7 @@ index 5c7f11dc..a925de85 100644
      }
  
      private int[][] getJavaBlockStates(final BedrockChunk chunk) {
-@@ -917,14 +1056,13 @@ public class ChunkTracker extends StoredObject {
+@@ -917,14 +1058,13 @@ public class ChunkTracker extends StoredObject {
      }
  
      /**
@@ -810,21 +935,21 @@ index 5c7f11dc..a925de85 100644
          }
  
          final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
-@@ -932,8 +1070,12 @@ public class ChunkTracker extends StoredObject {
+@@ -932,8 +1072,12 @@ public class ChunkTracker extends StoredObject {
          final int[] entryJavaIds = new int[layer0.size()];
          for (int i = 0; i < entryJavaIds.length; i++) {
              final int javaId = blockStateRewriter.javaId(layer0.idByIndex(i));
 -            entryJavaIds[i] = javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID;
 +            entryJavaIds[i] = this.lightBlockState(layer0.idByIndex(i), javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID);
-+        }
+         }
 +        if (layer0.size() == 1 && blockPalettes.size() == 1) {
 +            return entryJavaIds;
-         }
++        }
 +        final int[] states = new int[ChunkSection.SIZE];
          if (layer0.size() == 1) {
              if (entryJavaIds[0] != ProtocolConstants.JAVA_AIR_ID) {
                  Arrays.fill(states, entryJavaIds[0]);
-@@ -947,7 +1089,37 @@ public class ChunkTracker extends StoredObject {
+@@ -947,7 +1091,42 @@ public class ChunkTracker extends StoredObject {
                  }
              }
          }
@@ -841,6 +966,11 @@ index 5c7f11dc..a925de85 100644
 +                                continue;
 +                            }
 +                            final int index = (y << 8) | (z << 4) | x;
++                            // Light-only states have no Java waterlogged variant. The secondary
++                            // water snapshot still applies native water filtering to them.
++                            if (BedrockProtocol.MAPPINGS.isNativeLightState(states[index])) {
++                                continue;
++                            }
 +                            final int waterlogged = blockStateRewriter.waterlog(states[index]);
 +                            if (waterlogged != -1) {
 +                                states[index] = waterlogged;
@@ -863,7 +993,7 @@ index 5c7f11dc..a925de85 100644
      }
  
      private void invalidateJavaBlockStates(final int chunkX, final int subChunkY, final int chunkZ) {
-@@ -959,6 +1131,10 @@ public class ChunkTracker extends StoredObject {
+@@ -959,6 +1138,10 @@ public class ChunkTracker extends StoredObject {
          final int sectionIndex = subChunkY + Math.abs(this.minY >> 4);
          if (sectionIndex >= 0 && sectionIndex < chunkStates.length) {
              chunkStates[sectionIndex] = null;
@@ -874,7 +1004,7 @@ index 5c7f11dc..a925de85 100644
          }
      }
  
-@@ -1043,21 +1219,48 @@ public class ChunkTracker extends StoredObject {
+@@ -1043,21 +1226,48 @@ public class ChunkTracker extends StoredObject {
              this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
          }
  
@@ -931,7 +1061,7 @@ index 5c7f11dc..a925de85 100644
      }
  
      private long distanceToCenterSquared(final int chunkX, final int chunkZ) {
-@@ -1361,6 +1564,63 @@ public class ChunkTracker extends StoredObject {
+@@ -1361,6 +1571,63 @@ public class ChunkTracker extends StoredObject {
          }
      }
  
@@ -1311,10 +1441,10 @@ index 00000000..b7f9d085
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java b/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
 new file mode 100644
-index 00000000..147e776c
+index 00000000..aefa7eef
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,113 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1361,7 +1491,23 @@ index 00000000..147e776c
 +                new Measurement("minecraft:oak_leaves", 14, 14),
 +                new Measurement("minecraft:water", 14, 14),
 +                new Measurement("minecraft:glass", 15, 14),
-+                new Measurement("minecraft:stone", 0, 0));
++                new Measurement("minecraft:stone", 0, 0),
++                // BDS 1.26.60.6 build 52886190: native IDs ice, frosted_ice ages 0/3 and the
++                // empty brewing_stand read 12 at the roof and tunnel block, then 11.
++                new Measurement("minecraft:ice", 12, 12),
++                new Measurement("minecraft:frosted_ice[age=0]", 12, 12),
++                new Measurement("minecraft:frosted_ice[age=3]", 12, 12),
++                new Measurement("minecraft:brewing_stand[has_bottle_0=false,has_bottle_1=false,has_bottle_2=false]", 12, 12),
++                // Native honey_block, slime, mob_spawner, all 17 shulker boxes and amethyst_cluster
++                // pass full skylight and lose only the normal block-light step.
++                new Measurement("minecraft:honey_block", 15, 14),
++                new Measurement("minecraft:slime_block", 15, 14),
++                new Measurement("minecraft:spawner", 15, 14),
++                new Measurement("minecraft:shulker_box[facing=up]", 15, 14),
++                new Measurement("minecraft:white_shulker_box[facing=up]", 15, 14),
++                new Measurement("minecraft:light_gray_shulker_box[facing=down]", 15, 14),
++                new Measurement("minecraft:black_shulker_box[facing=north]", 15, 14),
++                new Measurement("minecraft:amethyst_cluster[facing=up,waterlogged=false]", 15, 14));
 +        for (final Measurement measurement : measurements) {
 +            final BlockState state = BlockState.fromString(measurement.state());
 +            final var configured = opacityData.get(state.namespacedIdentifier());
@@ -1413,10 +1559,10 @@ index 00000000..147e776c
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-index 130e48f5..97b135b1 100644
+index 130e48f5..b486ade7 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-@@ -9,17 +9,205 @@
+@@ -9,17 +9,344 @@
   */
  package net.raphimc.viabedrock.protocol.storage;
  
@@ -1429,10 +1575,15 @@ index 130e48f5..97b135b1 100644
 +import com.viaversion.viaversion.libs.fastutil.longs.LongLinkedOpenHashSet;
  import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
  import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
++import net.raphimc.viabedrock.api.model.BedrockBlockState;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
++import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
  import org.junit.jupiter.api.Test;
  
 +import java.util.ArrayDeque;
 +import java.util.Arrays;
++import java.util.BitSet;
 +import java.util.Queue;
 +import java.util.concurrent.Executor;
 +import java.util.concurrent.RejectedExecutionException;
@@ -1454,57 +1605,191 @@ index 130e48f5..97b135b1 100644
  
  class ChunkTrackerTest {
  
-+    @Test
-+    void nativeBarrierRoofsTransmitLightWithoutChangingTheirSharedOpaqueCarrier() {
++    // Java carrier IDs: air, opaque cube, glowstone, crying obsidian and amethyst cluster.
++    private static final byte[] JAVA_EMISSION = {0, 0, 15, 10, 5};
++    private static final byte[] JAVA_OPACITY = {0, 15, 0, 15, 0};
++    private static final byte[] LIGHT_EMISSION = BedrockMappingData.withNativeLightStates(JAVA_EMISSION, BedrockMappingData.NativeLight::emission);
++    private static final byte[] LIGHT_OPACITY = BedrockMappingData.withNativeLightStates(JAVA_OPACITY, BedrockMappingData.NativeLight::opacity);
++    // Native runtime IDs used by the light identity tests.
++    private static final int AIR = 0;
++    private static final int BARRIER = 1;
++    private static final int INVISIBLE_BEDROCK = 2;
++    private static final int PLACEHOLDER = 3;
++    private static final int CRYING_OBSIDIAN = 4;
++    private static final int GLOWING_OBSIDIAN = 5;
++    private static final int AMETHYST_CLUSTER = 6;
++    private static final int ICE_CRYSTAL = 7;
++    private static final int WATER = 8;
++    private static final int STONE = 9;
++    private static final int GLOWSTONE = 10;
++
++    private static ChunkTracker nativeLightTracker() {
 +        final var user = mock(UserConnection.class);
 +        final var rewriter = mock(BlockStateRewriter.class);
 +        final var tracker = mock(ChunkTracker.class, CALLS_REAL_METHODS);
 +        when(tracker.user()).thenReturn(user);
 +        when(user.get(BlockStateRewriter.class)).thenReturn(rewriter);
-+        when(rewriter.javaId(0)).thenReturn(0);
-+        when(rewriter.javaId(1)).thenReturn(1);
-+        when(rewriter.javaId(2)).thenReturn(1);
-+        when(rewriter.javaId(3)).thenReturn(1);
-+        when(rewriter.blockState(0)).thenReturn(BlockState.fromString("minecraft:air"));
-+        when(rewriter.blockState(1)).thenReturn(BlockState.fromString("minecraft:barrier"));
-+        when(rewriter.blockState(2)).thenReturn(BlockState.fromString("minecraft:invisible_bedrock"));
-+        when(rewriter.blockState(3)).thenReturn(BlockState.fromString("minecraft:client_request_placeholder_block"));
-+        final byte[] opacity = {0, 15, 0};
-+        final byte[] emission = {0, 0, 15};
-+        for (int nativeId = 1; nativeId <= 3; nativeId++) {
-+            final var section = new BedrockChunkSectionImpl();
-+            final var palette = new BedrockDataPalette();
-+            palette.addId(0);
-+            section.addPalette(PaletteType.BLOCKS, palette);
-+            // A sealed shaft and tunnel exclude sideways light around the sampled roof.
-+            for (int index = 0; index < 4096; index++) {
-+                palette.setIdAt(index, 3);
-+            }
-+            for (int y = 1; y < 16; y++) {
-+                palette.setIdAt(8, y, 8, 0);
-+            }
-+            palette.setIdAt(8, 12, 8, nativeId);
-+            palette.setIdAt(7, 8, 4, nativeId);
-+            palette.setIdAt(8, 8, 4, 0);
-+            final int[] snapshot = tracker.buildJavaBlockStates(section);
-+            final int[][][] region = new int[9][1][4096];
-+            for (final int[][] chunk : region) {
-+                Arrays.fill(chunk[0], 1);
-+            }
-+            region[4][0] = snapshot;
-+            final var sky = LightEngine.computeCenterLight(region, 1, true, emission, opacity);
-+            assertEquals(nativeId == 3 ? 0 : 15, lightAt(sky.skyLight(1), 8, 5, 8));
-+            snapshot[(8 << 8) | (4 << 4) | 6] = 2;
-+            final var block = LightEngine.computeCenterLight(region, 1, false, emission, opacity);
-+            assertEquals(nativeId == 3 ? 0 : 14, lightAt(block.blockLight(1), 7, 8, 4));
-+            assertEquals(nativeId == 3 ? 0 : 13, lightAt(block.blockLight(1), 8, 8, 4));
-+            assertEquals(nativeId, palette.idAt(8, 12, 8));
-+            assertEquals(1, tracker.getJavaBlockState(section, 8, 12, 8));
-+            final int previous = tracker.getLightBlockState(section, 8, 12, 8);
-+            palette.setIdAt(8, 12, 8, nativeId == 3 ? 1 : 3);
-+            final int current = tracker.getLightBlockState(section, 8, 12, 8);
-+            assertTrue(ChunkTracker.changesLight(previous, current, emission, opacity));
++        final String[] nativeIds = {"air", "barrier", "invisible_bedrock", "client_request_placeholder_block",
++            "crying_obsidian", "glowingobsidian", "amethyst_cluster", "ice_crystal", "water", "stone", "glowstone"};
++        final int[] carriers = {0, 1, 1, 1, 3, 3, 4, 4, 0, 1, 2};
++        for (int id = 0; id < nativeIds.length; id++) {
++            when(rewriter.javaId(id)).thenReturn(carriers[id]);
++            when(rewriter.blockState(id)).thenReturn(BlockState.fromString("minecraft:" + nativeIds[id]));
 +        }
++        when(rewriter.bedrockId(BedrockBlockState.AIR)).thenReturn(AIR);
++        when(rewriter.tag(WATER)).thenReturn(CustomBlockTags.WATER);
++        return tracker;
++    }
++
++    private static void withNativeLightStates(final Runnable test) {
++        try {
++            final var start = BedrockMappingData.class.getDeclaredField("nativeLightStateStart");
++            start.setAccessible(true);
++            final Object previous = start.get(BedrockProtocol.MAPPINGS);
++            start.set(BedrockProtocol.MAPPINGS, JAVA_EMISSION.length);
++            try {
++                test.run();
++            } finally {
++                start.set(BedrockProtocol.MAPPINGS, previous);
++            }
++        } catch (final ReflectiveOperationException e) {
++            throw new AssertionError(e);
++        }
++    }
++
++    /** A sealed stone section with an open vertical shaft at x=8, z=8 from y=1 upward. */
++    private static BedrockDataPalette sealedSection(final BedrockChunkSectionImpl section) {
++        final var palette = new BedrockDataPalette();
++        palette.addId(AIR);
++        section.addPalette(PaletteType.BLOCKS, palette);
++        for (int index = 0; index < 4096; index++) {
++            palette.setIdAt(index, STONE);
++        }
++        for (int y = 1; y < 16; y++) {
++            palette.setIdAt(8, y, 8, AIR);
++        }
++        return palette;
++    }
++
++    private static int[][][] centeredRegion(final int[] center) {
++        final int[][][] region = new int[9][1][4096];
++        for (final int[][] chunk : region) {
++            Arrays.fill(chunk[0], 1);
++        }
++        region[4][0] = center;
++        return region;
++    }
++
++    @Test
++    void nativeBarrierRoofsTransmitLightWithoutChangingTheirSharedOpaqueCarrier() {
++        final ChunkTracker tracker = nativeLightTracker();
++        withNativeLightStates(() -> {
++            for (final int nativeId : new int[]{BARRIER, INVISIBLE_BEDROCK, PLACEHOLDER}) {
++                final var section = new BedrockChunkSectionImpl();
++                final var palette = sealedSection(section);
++                // A sealed shaft and tunnel exclude sideways light around the sampled roof.
++                palette.setIdAt(8, 12, 8, nativeId);
++                palette.setIdAt(6, 8, 4, GLOWSTONE);
++                palette.setIdAt(7, 8, 4, nativeId);
++                palette.setIdAt(8, 8, 4, AIR);
++                final int[][][] region = centeredRegion(tracker.buildJavaBlockStates(section));
++                final var sky = LightEngine.computeCenterLight(region, 1, true, LIGHT_EMISSION, LIGHT_OPACITY);
++                assertEquals(nativeId == PLACEHOLDER ? 0 : 15, lightAt(sky.skyLight(1), 8, 5, 8));
++                final var block = LightEngine.computeCenterLight(region, 1, false, LIGHT_EMISSION, LIGHT_OPACITY);
++                assertEquals(nativeId == PLACEHOLDER ? 0 : 14, lightAt(block.blockLight(1), 7, 8, 4));
++                assertEquals(nativeId == PLACEHOLDER ? 0 : 13, lightAt(block.blockLight(1), 8, 8, 4));
++                assertEquals(1, tracker.getJavaBlockState(section, 8, 12, 8));
++                final int previous = tracker.getLightBlockState(section, 8, 12, 8);
++                palette.setIdAt(8, 12, 8, nativeId == PLACEHOLDER ? BARRIER : PLACEHOLDER);
++                final int current = tracker.getLightBlockState(section, 8, 12, 8);
++                assertEquals(1, tracker.getJavaBlockState(section, 8, 12, 8));
++                assertTrue(ChunkTracker.changesLight(previous, current, LIGHT_EMISSION, LIGHT_OPACITY));
++            }
++        });
++    }
++
++    @Test
++    void nativeSourcesSharingOneCarrierKeepTheirMeasuredFirstAirLight() {
++        final ChunkTracker tracker = nativeLightTracker();
++        // BDS 1.26.60.6 isolated sources: first three air cells above each source.
++        final int[][] measured = {
++            {CRYING_OBSIDIAN, 9, 8, 7},
++            {GLOWING_OBSIDIAN, 12, 11, 10},
++            {AMETHYST_CLUSTER, 4, 3, 2},
++            {ICE_CRYSTAL, 3, 2, 1}
++        };
++        withNativeLightStates(() -> {
++            for (final int[] source : measured) {
++                final var section = new BedrockChunkSectionImpl();
++                sealedSection(section).setIdAt(8, 1, 8, source[0]);
++                final var block = LightEngine.computeCenterLight(centeredRegion(tracker.buildJavaBlockStates(section)),
++                        1, false, LIGHT_EMISSION, LIGHT_OPACITY);
++                for (int distance = 1; distance <= 3; distance++) {
++                    assertEquals(source[distance], lightAt(block.blockLight(1), 8, 1 + distance, 8), "native " + source[0]);
++                }
++                assertEquals(source[0] <= GLOWING_OBSIDIAN ? 3 : 4, tracker.getJavaBlockState(section, 8, 1, 8));
++            }
++        });
++    }
++
++    @Test
++    void sharedCarrierTransitionsRelightIncrementallyLikeFreshSnapshots() {
++        final ChunkTracker tracker = nativeLightTracker();
++        withNativeLightStates(() -> {
++            final var section = new BedrockChunkSectionImpl();
++            final var palette = sealedSection(section);
++            palette.setIdAt(8, 1, 8, CRYING_OBSIDIAN);
++            final int[][][] before = centeredRegion(tracker.buildJavaBlockStates(section));
++            final ChunkLight[] cached = LightEngine.computeRegionLight(before, 1, false, LIGHT_EMISSION, LIGHT_OPACITY);
++            final int previous = tracker.getLightBlockState(section, 8, 1, 8);
++            palette.setIdAt(8, 1, 8, GLOWING_OBSIDIAN);
++            final int current = tracker.getLightBlockState(section, 8, 1, 8);
++            // The Java block update is a no-op, but the light state still changes.
++            assertEquals(3, tracker.getJavaBlockState(section, 8, 1, 8));
++            assertTrue(ChunkTracker.changesLight(previous, current, LIGHT_EMISSION, LIGHT_OPACITY));
++            assertEquals(LIGHT_OPACITY[previous], LIGHT_OPACITY[current]);
++            final int[][][] after = centeredRegion(tracker.buildJavaBlockStates(section));
++            final ChunkLight[] incremental = LightEngine.brightenBlockLight(after, 1, 8, 1, 8,
++                    LIGHT_EMISSION[current], LIGHT_OPACITY, cached);
++            final ChunkLight[] full = LightEngine.computeRegionLight(after, 1, false, LIGHT_EMISSION, LIGHT_OPACITY);
++            for (int y = 2; y <= 4; y++) {
++                assertEquals(14 - y, lightAt(full[4].blockLight(1), 8, y, 8));
++                assertEquals(14 - y, lightAt(incremental[4].blockLight(1), 8, y, 8));
++            }
++
++            palette.setIdAt(8, 1, 8, AMETHYST_CLUSTER);
++            final int amethyst = tracker.getLightBlockState(section, 8, 1, 8);
++            palette.setIdAt(8, 1, 8, ICE_CRYSTAL);
++            assertTrue(ChunkTracker.changesLight(amethyst, tracker.getLightBlockState(section, 8, 1, 8), LIGHT_EMISSION, LIGHT_OPACITY));
++            assertEquals(4, tracker.getJavaBlockState(section, 8, 1, 8));
++        });
++    }
++
++    @Test
++    void wetLightOnlyStatesKeepTheirEmissionAndNativeWaterFilter() {
++        final ChunkTracker tracker = nativeLightTracker();
++        withNativeLightStates(() -> {
++            final var section = new BedrockChunkSectionImpl();
++            final var palette = sealedSection(section);
++            palette.setIdAt(8, 12, 8, ICE_CRYSTAL);
++            final var water = new BedrockDataPalette();
++            water.addId(AIR);
++            section.addPalette(PaletteType.BLOCKS, water);
++            water.setIdAt(8, 12, 8, WATER);
++            final int[] states = tracker.buildJavaBlockStates(section);
++            assertEquals(tracker.getLightBlockState(section, 8, 12, 8), states[(12 << 8) | (8 << 4) | 8]);
++            final int[][][] region = centeredRegion(states);
++            final BitSet[][] secondaryWater = new BitSet[9][];
++            secondaryWater[4] = new BitSet[]{ChunkTracker.secondaryWater(water, id -> id == WATER)};
++            final var sky = LightEngine.computeCenterLight(region, secondaryWater, 1, true, LIGHT_EMISSION, LIGHT_OPACITY);
++            final var dry = LightEngine.computeCenterLight(region, 1, true, LIGHT_EMISSION, LIGHT_OPACITY);
++            // Native water filters one level at the block, like the measured water roof.
++            assertEquals(14, lightAt(sky.skyLight(1), 8, 12, 8));
++            assertEquals(13, lightAt(sky.skyLight(1), 8, 11, 8));
++            assertEquals(15, lightAt(dry.skyLight(1), 8, 11, 8));
++            final var block = LightEngine.computeCenterLight(region, secondaryWater, 1, false, LIGHT_EMISSION, LIGHT_OPACITY);
++            assertEquals(3, lightAt(block.blockLight(1), 8, 11, 8));
++        });
 +    }
 +
 +    private static int lightAt(final byte[] data, final int x, final int y, final int z) {
@@ -1622,7 +1907,7 @@ index 130e48f5..97b135b1 100644
      @Test
      void ignoresRepeatedSubChunkAfterApplyingPendingUpdates() {
          final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
-@@ -32,6 +220,35 @@ class ChunkTrackerTest {
+@@ -32,6 +359,35 @@ class ChunkTrackerTest {
          assertEquals(3, section.palette(PaletteType.BLOCKS).idAt(0));
      }
  
@@ -1658,7 +1943,7 @@ index 130e48f5..97b135b1 100644
      private static BedrockChunkSectionImpl sectionWithBlock(final int blockId) {
          final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
          final BedrockDataPalette palette = new BedrockDataPalette();
-@@ -40,4 +257,21 @@ class ChunkTrackerTest {
+@@ -40,4 +396,21 @@ class ChunkTrackerTest {
          return section;
      }
  
