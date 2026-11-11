@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { journalMagic, summarizeJournal } from "../src/replay/journal.ts";
+
+const execute = promisify(execFile);
 
 function journal(entries: { direction: number; nanos: bigint; payload: number[] }[]): Buffer {
   const header = Buffer.alloc(8);
@@ -25,6 +32,33 @@ function packetHeader(id: number, subclients: number): number[] {
 }
 
 describe("private Bedrock packet journals", () => {
+  test("both readers retain the final gameplay packet after a busy fifteen-minute recording", async () => {
+    const latency = journal([{ direction: 1, nanos: 0n, payload: [115] }]).subarray(8);
+    const bytes = Buffer.concat([
+      journal([{ direction: 0, nanos: 0n, payload: [113] }]),
+      Buffer.alloc(latency.length * 250_000).fill(latency),
+      journal([{ direction: 0, nanos: 900_000_000_000n, payload: [144, 1, 99] }]).subarray(8),
+    ]);
+    expect(summarizeJournal(bytes)).toMatchObject({
+      clientbound: 250_000,
+      serverbound: 2,
+      elapsedSeconds: 900,
+      reachedGameplay: true,
+      serverboundIds: { 113: 1, 144: 1 },
+    });
+    const directory = await mkdtemp(join(tmpdir(), "stackanvil-long-journal-"));
+    try {
+      const file = join(directory, "scene.sbr");
+      await writeFile(file, bytes);
+      await execute("javac", ["-d", directory,
+        join(import.meta.dir, "../src/replay/java/net/pistonmaster/stackanvil/replay/PrivateFiles.java"),
+        join(import.meta.dir, "../src/replay/java/net/pistonmaster/stackanvil/replay/PacketJournal.java"),
+        join(import.meta.dir, "fixtures/LongJournalSelfTest.java")]);
+      await execute("java", ["-cp", directory, "net.pistonmaster.stackanvil.replay.LongJournalSelfTest", file]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 15_000);
   test("decodes every subclient pair without allowing authentication packets or reserved bits", () => {
     for (let subclients = 0; subclients < 16; subclients++) {
       const summary = summarizeJournal(journal([

@@ -746,8 +746,9 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   if (client !== "native") javaCleanup = new OwnedProcesses();
   const nativeOffline =
     mode === "replay" && client === "native" ? await requireNativeOfflineReplay() : undefined;
-  if (!Number.isInteger(seconds) || seconds < 20 || seconds > 300)
-    throw new Error("--seconds must be between 20 and 300.");
+  const maxSeconds = mode === "record" ? 3600 : 300;
+  if (!Number.isInteger(seconds) || seconds < 20 || seconds > maxSeconds)
+    throw new Error(`--seconds must be between 20 and ${maxSeconds}.`);
   let target = servers[input as keyof typeof servers];
   if (mode === "record" && input !== "local" && input !== "public" && option("--target"))
     throw new Error(

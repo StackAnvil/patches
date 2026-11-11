@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 export const journalMagic = 0x53425231;
 export const maxJournalBytes = 512 * 1024 * 1024;
+const maxJournalEntries = 3_000_000;
 export interface PacketSummary {
   protocol: number;
   clientbound: number;
@@ -49,7 +50,7 @@ export function summarizeJournal(bytes: Buffer): PacketSummary {
       length < 1 ||
       length > 32 * 1024 * 1024 ||
       offset + length > bytes.length ||
-      ++count > 250_000
+      ++count > maxJournalEntries
     )
       throw new Error("Invalid packet journal entry.");
     let header = 0;

@@ -9,6 +9,7 @@ public final class PacketJournal implements AutoCloseable {
     public static final int MAGIC = 0x53425231;
     public static final int MAX_PACKET_BYTES = 32 * 1024 * 1024;
     public static final long MAX_JOURNAL_BYTES = 512L * 1024 * 1024;
+    private static final int MAX_JOURNAL_ENTRIES = 3_000_000;
     private final DataOutputStream output;
     private final long start = System.nanoTime();
     private long written = 8;
@@ -52,7 +53,7 @@ public final class PacketJournal implements AutoCloseable {
                 if (direction == -1) return entries;
                 long nanos = input.readLong();
                 int length = input.readInt();
-                if (direction > 1 || nanos < previous || length < 1 || length > MAX_PACKET_BYTES || entries.size() >= 250_000) {
+                if (direction > 1 || nanos < previous || length < 1 || length > MAX_PACKET_BYTES || entries.size() >= MAX_JOURNAL_ENTRIES) {
                     throw new IOException("Invalid packet journal entry");
                 }
                 byte[] payload = input.readNBytes(length);
