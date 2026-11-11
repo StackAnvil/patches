@@ -186,7 +186,9 @@ export const sync = Effect.fn("sync")(function* (
   }
   const projected =
     mode === "pr"
-      ? yield* Effect.tryPromise(() => readFile(patches[0]!, "utf8").then(projectPrPatch))
+      ? yield* Effect.tryPromise(() =>
+          readFile(patches[0]!, "utf8").then((patch) => projectPrPatch(patch, id)),
+        )
       : undefined;
   const dir = yield* cloneIfMissing(id, target, modeKey);
   yield* resetToBase(dir, target, modeKey);
@@ -244,7 +246,7 @@ export const continueApply = Effect.fn("continueApply")(function* (
       ),
     );
   }
-  if (mode === "pr") yield* assertPrProductionChanges(dir, target.baseSha, true);
+  if (mode === "pr") yield* assertPrProductionChanges(dir, target.baseSha, true, id);
   yield* applyPatch(
     ["am", "--continue"],
     dir,
@@ -259,13 +261,14 @@ export const assertPrProductionChanges = Effect.fn("assertPrProductionChanges")(
   dir: string,
   baseSha: string,
   staged = false,
+  project?: string,
 ) {
   const diff = yield* git(
     ["diff", "--binary", ...(staged ? ["--cached", baseSha] : [baseSha, "HEAD"])],
     dir,
   );
   const projected = yield* Effect.try({
-    try: () => projectPrPatch(diff),
+    try: () => projectPrPatch(diff, project),
     catch: (cause) => cause as Error,
   });
   if (projected.omittedTests)

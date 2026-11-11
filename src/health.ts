@@ -99,9 +99,14 @@ async function applies(directory: string, patch: string, reverse = false): Promi
   }
 }
 
-async function standaloneApply(directory: string, patch: string, base: string): Promise<Check> {
+async function standaloneApply(
+  directory: string,
+  patch: string,
+  base: string,
+  project: string,
+): Promise<Check> {
   try {
-    const projected = projectPrPatch(await readFile(patch, "utf8"));
+    const projected = projectPrPatch(await readFile(patch, "utf8"), project);
     const prPatch = join(directory, ".git", "stackanvil-pr.patch");
     await writeFile(prPatch, projected.patch);
     // Match pr check's three-way application, with no setup or preceding patch in the source tree.
@@ -147,7 +152,12 @@ export async function inspectUpstream(
     await runGit(["checkout", "--detach", target.baseSha], directory);
     for (const patch of report.patches) {
       if (patch.group === "upstreamable" && !patch.prerequisites.length)
-        patch.standalone = await standaloneApply(directory, patchPath(patch), target.baseSha);
+        patch.standalone = await standaloneApply(
+          directory,
+          patchPath(patch),
+          target.baseSha,
+          report.project,
+        );
     }
     const commits: string[] = [];
     for (const patch of report.patches) {
@@ -191,6 +201,7 @@ export async function inspectUpstream(
           directory,
           patchPath(patch),
           report.upstreamSha,
+          report.project,
         );
     }
     for (const patch of report.patches) {

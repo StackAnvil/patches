@@ -24,10 +24,11 @@ The [PaperSpigot 1.8.8 apply script](https://github.com/PaperMC/Paper-archive/bl
 | Patch notes in commit messages | Put the purpose and maintenance details in the commit body. They remain in the exported patch and become the PR change summary. `stack add` requires a body, and `stack rebuild` keeps the series title aligned with the commit subject. |
 | Independently test an upstreamable patch | `bun run pr check <project>` applies the first patch to clean upstream. Add `--patch <file>` to check another patch. |
 
-StackAnvil keeps `setup`, `upstreamable`, and `deferred` separate in `series.json`. Full builds apply them in that order. Setup prepares StackAnvil builds. Upstreamable patches can become focused PRs. Deferred patches track work that another contributor already owns upstream, with a reason and PR link for each entry. The PR checkout applies only the production changes from the first upstreamable patch to the pinned upstream base.
-PR preparation excludes test sources, fixtures, test dependencies, and test-only Gradle configuration.
+StackAnvil keeps `setup`, `upstreamable`, and `deferred` separate in `series.json`. Full builds apply them in that order. Setup prepares StackAnvil builds. Upstreamable patches can become focused PRs. Deferred patches track work that another contributor already owns upstream, with a reason and PR link for each entry. The PR checkout applies the first upstreamable patch to the pinned upstream base.
+CubeConverter PRs include the complete feature, its regression tests, and required API migrations.
+For other projects, PR preparation excludes test sources, fixtures, test dependencies, and test-only Gradle configuration.
 The saved patches and full-stack checkouts retain these local tests.
-After upstream merges the feature, remove its local tests when retiring the owning patch.
+After upstream merges a feature, remove its local tests when retiring the owning patch.
 Do not submit those tests as a separate upstream PR.
 The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
 
@@ -54,14 +55,15 @@ bun run pr body viabedrock --patch 0085-resolve-server-effects-relative-to-their
 bun run pr sync viabedrock --patch 0085-resolve-server-effects-relative-to-their-actor.patch
 ```
 
-A successful `pr check` proves that the filtered production patch applies.
-Use `pr build` to compile that patch with the upstream build configuration.
-It does not run the local regression tests excluded from the PR.
-Run those tests through the full stack separately, and identify that scope in the PR validation notes.
+A successful `pr check` proves that the selected PR patch applies without setup.
+Use `pr build` to build that patch with the upstream build configuration.
+For CubeConverter, this also runs the included regression tests.
+For other projects, run the excluded regression tests through the full stack separately.
+Identify the validation scope in the PR notes.
 PR builds select the target JDK from `targets.json`, just like full builds.
 Set `STACKANVIL_JAVA_<version>` to select an installed JDK explicitly.
 Preparation stops if filtering leaves no production changes.
-Conflict recovery and publication reject tests reintroduced into the PR checkout.
+For projects that keep tests local, conflict recovery and publication reject tests reintroduced into the PR checkout.
 If test exclusion removes all context from a production Gradle change, expand the patch context before PR preparation.
 
 If a patch requires an API from another unmerged patch, record that dependency in its `upstreamable` entry:

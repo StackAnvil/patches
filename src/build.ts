@@ -5,7 +5,7 @@ import { constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { Effect } from "effect";
 import { buildOrder } from "./dependencies.ts";
-import { getTarget, getTargets, listArtifacts, root } from "./model.ts";
+import { getTarget, getTargets, listArtifacts, root, type Target } from "./model.ts";
 import { command } from "./process.ts";
 import { sync } from "./stack.ts";
 import { prepareViaFabricPlus } from "./viafabricplus.ts";
@@ -102,6 +102,31 @@ function coordinates(pom: string): Coordinates {
   };
 }
 
+export function artifactProjectDirectory(dir: string, project?: string): string {
+  if (!project) return dir;
+  if (!/^:[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)*$/.test(project)) {
+    throw new Error(`Invalid Gradle artifact project: ${project}`);
+  }
+  return join(dir, ...project.slice(1).split(":"));
+}
+
+export async function readBuildArtifact(
+  dir: string,
+  target: Pick<Target, "publication" | "artifactProject">,
+) {
+  const directory = artifactProjectDirectory(dir, target.artifactProject);
+  const artifacts = await listArtifacts(directory);
+  if (artifacts.length !== 1) {
+    throw new Error(`Expected one distributable JAR in ${directory}, found ${artifacts.length}`);
+  }
+  const publication = target.publication[0]!.toLowerCase() + target.publication.slice(1);
+  const pom = await readFile(
+    join(directory, "build", "publications", publication, "pom-default.xml"),
+    "utf8",
+  );
+  return { artifact: artifacts[0]!, pom, coordinate: coordinates(pom) };
+}
+
 async function publishLocal(artifact: string, pom: string, coordinate: Coordinates): Promise<void> {
   const directory = join(
     localRepo,
@@ -118,6 +143,7 @@ async function publishLocal(artifact: string, pom: string, coordinate: Coordinat
 const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string, Coordinates>) {
   const target = yield* Effect.promise(() => getTarget(id));
   const dir = yield* sync(id);
+  artifactProjectDirectory(dir, target.artifactProject);
   const environment = yield* Effect.promise(() => buildEnvironment(target.java));
   const builtinAssets = yield* Effect.promise(() => builtinAssetArguments(id));
   const viaFabricPlusVersion =
@@ -138,17 +164,12 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
       ...builtinAssets,
       "clean",
       target.buildTask,
-      `generatePomFileFor${target.publication}Publication`,
+      `${target.artifactProject ?? ""}:generatePomFileFor${target.publication}Publication`,
     ],
     dir,
     environment,
   );
-  const artifacts = yield* Effect.promise(() => listArtifacts(dir));
-  if (artifacts.length !== 1)
-    return yield* Effect.fail(
-      new Error(`Expected one distributable JAR for ${id}, found ${artifacts.length}`),
-    );
-  const artifact = artifacts[0]!;
+  const { artifact, pom, coordinate } = yield* Effect.promise(() => readBuildArtifact(dir, target));
   if (["viabedrock", "viafabricplus-bedrock", "viaproxy"].includes(id)) {
     const { version } = JSON.parse(
       yield* Effect.promise(() => readFile(join(root, "bedrock-assets.json"), "utf8")),
@@ -192,20 +213,6 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
       new Error(`Branding patch did not suffix ${name} with -StackAnvil.jar`),
     );
   }
-  const publications = yield* Effect.promise(() =>
-    readdir(join(dir, "build", "publications"), { withFileTypes: true }),
-  );
-  const pomCandidates = publications
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(dir, "build", "publications", entry.name, "pom-default.xml"));
-  const pom = yield* Effect.promise(async () => {
-    for (const path of pomCandidates) {
-      const text = await Bun.file(path).text();
-      if (text) return text;
-    }
-    throw new Error(`No generated Maven POM found for ${id}`);
-  });
-  const coordinate = coordinates(pom);
   const output = join(root, "dist", id);
   yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
   yield* Effect.promise(() => mkdir(output, { recursive: true }));
@@ -269,7 +276,9 @@ export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: s
     dir,
     environment,
   );
-  const artifacts = yield* Effect.promise(() => listArtifacts(dir));
+  const artifacts = yield* Effect.promise(() =>
+    listArtifacts(artifactProjectDirectory(dir, target.artifactProject)),
+  );
   if (!artifacts.length)
     return yield* Effect.fail(new Error(`No PR JAR artifacts found for ${id}`));
   const output = patchFile

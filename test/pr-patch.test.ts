@@ -70,6 +70,25 @@ class MockitoAgentArgumentProvider implements org.gradle.process.CommandLineArgu
     await git(["commit", "-m", "fix: repair runtime", "-m", "Keep the regression local."]);
     const saved = await git(["format-patch", "--binary", "--stdout", "-1"]);
     await write(".git/saved.patch", saved);
+    const complete = projectPrPatch(saved, "cubeconverter");
+    expect(complete.omittedTests).toBe(false);
+    await write(".git/cubeconverter.patch", complete.patch);
+    await git(["reset", "--hard", base]);
+    await git(["am", "--3way", join(directory, ".git/cubeconverter.patch")]);
+    expect(await readFile(join(directory, "src/test/java/RegressionTest.java"), "utf8")).toBe(
+      "local regression\n",
+    );
+    expect(await readFile(join(directory, "src/test/resources/reference.bin"))).toEqual(
+      Buffer.from([0, 1, 255, 0]),
+    );
+    expect(await readFile(join(directory, "build.gradle"), "utf8")).toContain(
+      "junit-jupiter:6.1.3",
+    );
+    await Effect.runPromise(assertPrProductionChanges(directory, base, false, "cubeconverter"));
+    await expect(Effect.runPromise(assertPrProductionChanges(directory, base))).rejects.toThrow(
+      /include local tests/,
+    );
+    await git(["reset", "--hard", base]);
     const projected = projectPrPatch(saved);
     expect(projected.omittedTests).toBe(true);
     await write(".git/pr.patch", projected.patch);

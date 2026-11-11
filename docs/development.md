@@ -18,7 +18,7 @@ bun run build all
 bun run bundle
 ```
 
-`targets.json` records the build order. ViaBedrock uses the `vv-json` branch of `oryxel1/CubeConverter`, as its upstream build does. ViaProxy embeds the ViaBedrock build from this stack. The build tool publishes each JAR and POM to `.stackanvil/maven/` and passes that path to Gradle. The setup patches use the local artifacts when the path is present. Direct Gradle builds use the upstream dependencies. Artifacts and manifests go to `dist/`.
+`targets.json` records the build order. CubeConverter tracks `master` and builds both Gson variants from shared sources. The build tool selects its `:vv-json` module for ViaBedrock. The `artifactProject` field selects that module's JAR and matching POM. ViaProxy embeds the ViaBedrock build from this stack. The build tool publishes each JAR and POM to `.stackanvil/maven/` and passes that path to Gradle. The setup patches use the local artifacts when the path is present. Direct Gradle builds use the upstream dependencies. Artifacts and manifests go to `dist/`.
 
 The add-on setup includes one compatibility patch for the current ViaBedrock API. The upstream PR branch does not include setup patches.
 

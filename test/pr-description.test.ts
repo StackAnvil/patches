@@ -32,6 +32,13 @@ test("a PR needs both the patch description and extra body", () => {
   expect(body).toContain("Extra review context");
 });
 
+test("CubeConverter PR descriptions identify included regressions and excluded setup", () => {
+  const body = renderPrBody("cubeconverter", "Publish both Gson backends", "Both suites pass");
+  expect(body).toContain("includes the complete CubeConverter feature and its regression tests");
+  expect(body).toContain("StackAnvil setup remains excluded");
+  expect(body).not.toContain("excluded from this PR");
+});
+
 test("standalone PRs use a patch-specific branch and body", () => {
   const file = "0006-encode-26-3-game-modes-correctly.patch";
   expect(prHead(file)).toBe("stackanvil/0006-encode-26-3-game-modes-correctly");

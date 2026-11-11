@@ -14,6 +14,7 @@ export interface Target {
   java: string;
   publication: string;
   buildTask: string;
+  artifactProject?: string;
 }
 
 export interface UpstreamablePatch {

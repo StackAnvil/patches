@@ -167,7 +167,9 @@ export function renderPrBody(
     "",
     provenance,
     "",
-    "Test sources, fixtures, and test-only build configuration stay in StackAnvil's local stack and are excluded from this PR.",
+    id === "cubeconverter"
+      ? "This PR includes the complete CubeConverter feature and its regression tests. StackAnvil setup remains excluded."
+      : "Test sources, fixtures, and test-only build configuration stay in StackAnvil's local stack and are excluded from this PR.",
     "",
     extraBody.trim(),
   ];
@@ -226,7 +228,7 @@ export const syncPr = Effect.fn("syncPr")(function* (
   const count = yield* git(["rev-list", "--count", `${target.baseSha}..HEAD`], dir);
   if (count !== "1")
     return yield* Effect.fail(new Error(`Expected exactly one PR commit, found ${count}`));
-  yield* assertPrProductionChanges(dir, target.baseSha);
+  yield* assertPrProductionChanges(dir, target.baseSha, false, id);
   const remote = `https://github.com/${target.fork}.git`;
   const head = prHead(patchFile);
   const remoteHead = yield* git(["ls-remote", remote, `refs/heads/${head}`], dir);

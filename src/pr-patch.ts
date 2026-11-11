@@ -161,11 +161,12 @@ function filterGradleDiff(section: string): { diff: string; omittedTests: boolea
   };
 }
 
-/** Keep the saved full-stack patch intact and prepare only its production changes. */
-export function projectPrPatch(patch: string): PrPatch {
+/** CubeConverter publishes its complete feature; other projects retain tests locally. */
+export function projectPrPatch(patch: string, project?: string): PrPatch {
   const normalized = patch.replaceAll("\r\n", "\n");
   const start = normalized.search(/^diff --git /m);
   if (start < 0) throw new Error("Patch has no file changes");
+  if (project === "cubeconverter") return { patch: normalized, omittedTests: false };
   const separator = normalized.lastIndexOf("\n---\n", start);
   const prefix = separator < 0 ? "" : normalized.slice(0, separator + "\n---\n".length) + "\n";
   const sections = normalized
