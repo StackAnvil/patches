@@ -10,7 +10,15 @@ Resolve ordered permutations and preserve original native block identities. Assi
 
 Resolve physical collision separately from visual compilation and Java pack acceptance. Native base-factory registrations retain collision planes, transforms, random offsets, and default friction. Known native classes keep their own providers. Missing physical data remains distinct from an empty shape.
 
+Reuse decoded terrain images and alpha summaries within each compilation or conversion pass. Release these caches after the pass. Shared PNG resources use content hashes, while models retain their material flags and particle references. Bulk raster rows preserve the existing alpha thresholds. The custom-visual cache identity excludes older packs that contain a separate texture copy for each carrier.
+
 ## Validation and remaining limits
+
+The four-project build passes 3,943 tests with 336 optional skips and no failures. Four new regressions cover image reuse, pack precedence, material pixels and shared sprite references.
+
+A paired cold Galaxite replay reduces block-state setup from 4.44 seconds to 1.04 seconds. The following conversion, including ZIP output, falls from 5.07 seconds to 1.11 seconds. Its texture worker falls from 4.49 seconds to 0.49 seconds. These are measured StackAnvil stages, not a predicted live join duration. The replay preserves recorded packet timing and chunk reply gates.
+
+The final pack retains all 2,220 carrier models with the same geometry, material flags, particle pixels and physical metadata. The comparison resolves sprite references to PNG byte hashes and treats culling direction sets as unordered. Shared texture output uses 173 PNGs instead of 2,220 copies. Both replays pass complete-payload transport checks. Existing unresolved mappings still fail rendering verification, so this comparison does not establish complete native appearance.
 
 Regression coverage includes `BlockItemDescriptorsTest`, `BlockItemStatesTest`, `BlockRegistryNamesTest`, `RuntimeBlockPaletteTest`, and `VanillaBlockStatesTest`.
 

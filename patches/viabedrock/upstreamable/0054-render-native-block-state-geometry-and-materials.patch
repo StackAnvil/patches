@@ -1,4 +1,4 @@
-From 040af3ce08b9a42cc8cd80c123cd972c04490415 Mon Sep 17 00:00:00 2001
+From ef37fe4410703b605f1e82741bbe7e83d6f3e04f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -484,6 +484,10 @@ queries, including negative coordinates and world-float collapse. Carry
 this geometry through the existing registered-state dictionary instead
 of borrowing Java shapes. Unsupported provider classes retain their
 existing fallback, and custom namespaces do not inherit vanilla bounds.
+
+Reuse terrain image decodes and alpha summaries within each custom-block compilation or conversion pass. Release those caches with the pass instead of retaining decoded images for the connection. Bulk raster rows preserve material alpha thresholds without allocating temporary pixel arrays for every getRGB/setRGB call.
+
+Export each effective texture/material combination once, share byte-identical PNGs through content-derived sprite identifiers, and rewrite model and particle references while preserving translucent material objects. Advance only the custom-visual conversion identity so persisted packs cannot retain per-carrier texture copies. Regression coverage checks repeated-state image reuse, pack precedence, raster pixels, alpha thresholds, shared sprite references and translucent flags.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -506,7 +510,7 @@ existing fallback, and custom namespaces do not inherit vanilla bounds.
  .../definition/CustomBlockDefinition.java     |   73 ++
  .../definition/ModelDefinitions.java          |    7 +
  .../definition/TextureDefinitions.java        |   85 +-
- .../http/ConvertedResourcePackCache.java      |   12 +-
+ .../http/ConvertedResourcePackCache.java      |   15 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   26 +-
  .../protocol/model/BlockProperties.java       |   10 +
  .../protocol/model/BlockTraitStates.java      |  195 +++
@@ -514,12 +518,13 @@ existing fallback, and custom namespaces do not inherit vanilla bounds.
  .../protocol/packet/JoinPackets.java          |   31 +-
  .../protocol/packet/ResourcePackPackets.java  |   45 +
  .../protocol/packet/VoxelShapePackets.java    |   35 +
- .../protocol/rewriter/BlockStateRewriter.java |  308 +++--
+ .../protocol/rewriter/BlockStateRewriter.java |  310 +++--
  .../rewriter/ResourcePackRewriter.java        |    2 +
  .../CustomBlockCullingCompiler.java           |  162 +++
- .../resourcepack/CustomBlockModel.java        |  556 ++++++++
- .../CustomBlockResourceRewriter.java          |  237 ++++
+ .../resourcepack/CustomBlockModel.java        |  561 +++++++++
+ .../CustomBlockResourceRewriter.java          |  250 ++++
  .../CustomBlockStateDefinitions.java          |  225 ++++
+ .../resourcepack/CustomBlockTextures.java     |   95 ++
  .../resourcepack/NativeBlockCollision.java    |   82 ++
  .../resourcepack/NativeBlockSelection.java    |   54 +
  .../resourcepack/NativeBlockTransform.java    |  189 +++
@@ -558,12 +563,13 @@ existing fallback, and custom namespaces do not inherit vanilla bounds.
  .../CustomBlockCullingCompilerTest.java       |  140 ++
  .../CustomBlockMaterialVisibilityTest.java    |  106 ++
  .../CustomBlockStateDefinitionsTest.java      |  286 +++++
+ .../CustomBlockTextureReuseTest.java          |  175 +++
  .../protocol/storage/ChunkTrackerTest.java    |   22 +
  .../storage/CustomBlockPackStorageTest.java   |   31 +
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  230 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   78 ++
- 78 files changed, 11243 insertions(+), 126 deletions(-)
+ 80 files changed, 11536 insertions(+), 126 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -588,6 +594,7 @@ existing fallback, and custom namespaces do not inherit vanilla bounds.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextures.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockCollision.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
@@ -622,6 +629,7 @@ existing fallback, and custom namespaces do not inherit vanilla bounds.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompilerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java
@@ -2804,7 +2812,7 @@ index ba8c2db5..5c6717be 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index db5e690b..d9ce5c69 100644
+index db5e690b..f259c45f 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -101,7 +101,7 @@ public class ConvertedResourcePackCache {
@@ -2816,12 +2824,15 @@ index db5e690b..d9ce5c69 100644
                  this.prepare(key, storage).thenApply(pack -> {
                      storage.getConverterData().putAll(pack.converterData());
                      return pack;
-@@ -292,6 +292,16 @@ public class ConvertedResourcePackCache {
+@@ -292,6 +292,19 @@ public class ConvertedResourcePackCache {
          return HexFormat.of().formatHex(digest.digest());
      }
  
 +    static String fingerprint(final ResourcePackStorage storage) {
 +        final StringBuilder identity = new StringBuilder(fingerprint(storage.getPackStackTopToBottom()));
++        if (!storage.getCustomBlockVisuals().isEmpty()) {
++            identity.append("\nshared-custom-block-textures:1");
++        }
 +        storage.getCustomBlockVisuals().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(entry -> {
 +            final var visual = entry.getValue();
 +            identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson())
@@ -3400,10 +3411,10 @@ index 00000000..9c9d6637
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index a4ce7054..d596e6ff 100644
+index a4ce7054..96735ac4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-@@ -17,23 +17,35 @@
+@@ -17,23 +17,36 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter;
  
@@ -3438,12 +3449,13 @@ index a4ce7054..d596e6ff 100644
 +import net.raphimc.viabedrock.protocol.model.CustomBlockStates;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResourceRewriter;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockTextures;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.NativeBlockCollision;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  
  import java.util.*;
  import java.util.logging.Level;
-@@ -43,23 +55,45 @@ public class BlockStateRewriter implements StorableObject {
+@@ -43,23 +56,45 @@ public class BlockStateRewriter implements StorableObject {
  
      private final Int2IntMap blockStateIdMappings = new Int2IntOpenHashMap(); // Bedrock -> Java
      private final Int2IntMap legacyBlockStateIdMappings = new Int2IntOpenHashMap(); // Bedrock -> Bedrock
@@ -3493,7 +3505,7 @@ index a4ce7054..d596e6ff 100644
          for (BlockProperties blockProperty : blockProperties) {
              final String identifier = blockProperty.name().toLowerCase(Locale.ROOT);
              if (bedrockBlockIdentifiers.contains(identifier)) {
-@@ -67,102 +101,114 @@ public class BlockStateRewriter implements StorableObject {
+@@ -67,102 +102,115 @@ public class BlockStateRewriter implements StorableObject {
              }
  
              if (!effectiveBlockProperties.containsKey(identifier)) {
@@ -3613,6 +3625,7 @@ index a4ce7054..d596e6ff 100644
 +            final List<Integer> carriers = CustomBlockResourceRewriter.availableStates();
 +            final Map<Integer, CustomBlockVisual> visuals = new LinkedHashMap<>();
 +            final Map<VisualKey, Integer> sharedVisuals = new HashMap<>();
++            final CustomBlockTextures textures = new CustomBlockTextures(resourcePackStorage);
 +            final List<BedrockBlockState> orderedCustomStates = customBlockStates.stream()
 +                    .sorted(Comparator.comparing(BlockState::toBlockStateString)).toList();
 +            int exhaustedStates = 0;
@@ -3628,7 +3641,7 @@ index a4ce7054..d596e6ff 100644
 -                combinations.add(new CompoundTag());
 +                    // Continue checking shared visuals after capacity is reached.
 +                    final int carrier = carriers.get(Math.min(visuals.size(), carriers.size() - 1));
-+                    final CustomBlockVisual visual = CustomBlockModel.compile(resourcePackStorage, customState.toBlockStateString(), carrier, components);
++                    final CustomBlockVisual visual = CustomBlockModel.compile(resourcePackStorage, textures, customState.toBlockStateString(), carrier, components);
 +                    if (visual != null) {
 +                        final VisualKey key = new VisualKey(visual.textures(),
 +                                visual.modelJson().replace("viabedrock:block/custom/slot_" + carrier, "viabedrock:block/custom/slot"),
@@ -3684,7 +3697,7 @@ index a4ce7054..d596e6ff 100644
              this.validBlockStates.computeIfAbsent(bedrockBlockState.namespacedIdentifier(), k -> new IntLinkedOpenHashSet()).add(bedrockId);
  
              if (blockTags.containsKey(bedrockBlockState.namespacedIdentifier())) {
-@@ -172,6 +218,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -172,6 +220,8 @@ public class BlockStateRewriter implements StorableObject {
              if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(bedrockBlockState));
                  this.blockStateIdMappings.put(bedrockId, javaId);
@@ -3693,7 +3706,7 @@ index a4ce7054..d596e6ff 100644
              } else {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-@@ -186,26 +234,49 @@ public class BlockStateRewriter implements StorableObject {
+@@ -186,26 +236,49 @@ public class BlockStateRewriter implements StorableObject {
                  continue; // Dirty hack Mojang did in 1.12. Can be ignored safely as those values can't be used in chunk packets.
              }
  
@@ -3756,7 +3769,7 @@ index a4ce7054..d596e6ff 100644
      }
  
      public int bedrockId(final CompoundTag bedrockBlockStateTag) {
-@@ -222,11 +293,37 @@ public class BlockStateRewriter implements StorableObject {
+@@ -222,11 +295,37 @@ public class BlockStateRewriter implements StorableObject {
      }
  
      public int bedrockId(final BlockState bedrockBlockState) {
@@ -3796,7 +3809,7 @@ index a4ce7054..d596e6ff 100644
      }
  
      public int bedrockId(final int legacyBlockStateId) {
-@@ -249,6 +346,15 @@ public class BlockStateRewriter implements StorableObject {
+@@ -249,6 +348,15 @@ public class BlockStateRewriter implements StorableObject {
          };
      }
  
@@ -3812,7 +3825,7 @@ index a4ce7054..d596e6ff 100644
      public int waterlog(final int javaBlockStateId) {
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
-@@ -266,4 +372,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -266,4 +374,8 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateTags.get(bedrockBlockStateId);
      }
  
@@ -4011,10 +4024,10 @@ index 00000000..5a7981fc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..8ad84b0a
+index 00000000..0cf7ebcd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,561 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4053,6 +4066,11 @@ index 00000000..8ad84b0a
 +    }
 +
 +    public static CustomBlockVisual compile(final ResourcePackStorage storage, final String state, final int javaState, final CompoundTag components) {
++        return compile(storage, new CustomBlockTextures(storage), state, javaState, components);
++    }
++
++    public static CustomBlockVisual compile(final ResourcePackStorage storage, final CustomBlockTextures textures, final String state,
++                                            final int javaState, final CompoundTag components) {
 +        final Tag geometryTag = components.get("minecraft:geometry");
 +        String geometry = geometryTag instanceof StringTag name ? name.getValue()
 +                : geometryTag instanceof CompoundTag details && details.get("identifier") instanceof StringTag name ? name.getValue() : "";
@@ -4104,7 +4122,7 @@ index 00000000..8ad84b0a
 +            if (!List.of("opaque", "alpha_test", "alpha_test_single_sided", "blend").contains(method)) {
 +                return null;
 +            }
-+            final var image = CustomBlockResourceRewriter.terrainTexture(storage, texture.getValue());
++            final var image = textures.get(texture.getValue());
 +            final String vanillaTexture = image == null ? CustomBlockResourceRewriter.vanillaTexture(texture.getValue()) : null;
 +            if (image == null && vanillaTexture == null) {
 +                return null;
@@ -4113,14 +4131,14 @@ index 00000000..8ad84b0a
 +            textureBindings.put(binding, texture.getValue());
 +            textureMethods.put(binding, method);
 +            textureIds.put(direction, image == null ? vanillaTexture : "viabedrock:block/custom/slot_" + javaState + '/' + binding);
-+            visibleSprites.put(textureIds.get(direction), CustomBlockResourceRewriter.hasVisiblePixels(image, method));
++            visibleSprites.put(textureIds.get(direction), textures.hasVisiblePixels(image, method));
 +            directionMethods.put(direction, method);
 +            final float exponent = material.get("ambient_occlusion") instanceof NumberTag value ? value.asFloat() : 1F;
 +            if (!Float.isFinite(exponent) || exponent < 0F || exponent > 10F) {
 +                return null;
 +            }
 +            faceLighting.put(face, new CustomBlockLighting(exponent, !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0));
-+            opaque &= method.equals("opaque") || !method.equals("blend") && CustomBlockResourceRewriter.hasOpaquePixels(image);
++            opaque &= method.equals("opaque") || !method.equals("blend") && textures.hasOpaquePixels(image);
 +            ao |= exponent != 0F;
 +            if (method.equals("blend") || renderMethod.equals("opaque")) {
 +                renderMethod = method;
@@ -4573,10 +4591,10 @@ index 00000000..8ad84b0a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
 new file mode 100644
-index 00000000..085f9fef
+index 00000000..dd4e34da
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,250 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -4597,6 +4615,9 @@ index 00000000..085f9fef
 +package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 +
 +import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
 +import net.raphimc.viabedrock.api.model.BlockState;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
 +import net.raphimc.viabedrock.api.model.CustomBlockProperties;
@@ -4611,6 +4632,9 @@ index 00000000..085f9fef
 +import java.util.ArrayList;
 +import java.util.Comparator;
 +import java.util.HashSet;
++import java.util.HashMap;
++import java.util.HexFormat;
++import java.util.IdentityHashMap;
 +import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
@@ -4618,6 +4642,13 @@ index 00000000..085f9fef
 +import java.util.function.Consumer;
 +import java.util.function.Supplier;
 +import java.awt.image.BufferedImage;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.io.UncheckedIOException;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import javax.imageio.ImageIO;
++import javax.imageio.stream.MemoryCacheImageOutputStream;
 +
 +/** Exports resolved Bedrock block visuals on unused Java carrier states. */
 +public class CustomBlockResourceRewriter implements ResourcePackRewriter.Rewriter {
@@ -4659,29 +4690,7 @@ index 00000000..085f9fef
 +    }
 +
 +    public static boolean hasOpaquePixels(final Content.LazyImage texture) {
-+        if (texture == null) {
-+            return false;
-+        }
-+        final BufferedImage image;
-+        try {
-+            image = texture.getImage();
-+        } catch (final RuntimeException e) {
-+            return false;
-+        }
-+        if (image == null) {
-+            return false;
-+        }
-+        if (!image.getColorModel().hasAlpha()) {
-+            return true;
-+        }
-+        for (int y = 0; y < image.getHeight(); y++) {
-+            for (int x = 0; x < image.getWidth(); x++) {
-+                if (image.getRGB(x, y) >>> 24 != 255) {
-+                    return false;
-+                }
-+            }
-+        }
-+        return true;
++        return texture != null && CustomBlockTextures.analyze(texture).opaque();
 +    }
 +
 +    public static Content.LazyImage terrainTexture(final ResourcePackStorage storage, final String texture) {
@@ -4690,26 +4699,7 @@ index 00000000..085f9fef
 +    }
 +
 +    public static boolean hasVisiblePixels(final Content.LazyImage texture, final String method) {
-+        if (texture == null || method.equals("opaque")) {
-+            return true;
-+        }
-+        final BufferedImage image;
-+        try {
-+            image = texture.getImage();
-+        } catch (final RuntimeException e) {
-+            return true;
-+        }
-+        if (image == null) {
-+            return true;
-+        }
-+        for (int y = 0; y < image.getHeight(); y++) {
-+            for (int x = 0; x < image.getWidth(); x++) {
-+                if (materialAlpha(image.getRGB(x, y), method) != 0) {
-+                    return true;
-+                }
-+            }
-+        }
-+        return false;
++        return texture == null || method.equals("opaque") || CustomBlockTextures.analyze(texture).visible(method);
 +    }
 +
 +    /** Vanilla terrain assets are available in the Java client even when omitted from the server pack. */
@@ -4739,18 +4729,39 @@ index 00000000..085f9fef
 +
 +    private static Content convertVisuals(final ResourcePackStorage storage) {
 +        final Content result = new InMemoryContent();
++        final CustomBlockTextures textures = new CustomBlockTextures(storage);
++        final Map<Content.LazyImage, Map<String, String>> exported = new IdentityHashMap<>();
 +        result.putJson(CustomBlockProperties.RESOURCE_PATH, CustomBlockProperties.encode(storage.getCustomBlockVisuals().values()));
 +        result.putJson(CustomBlockCulling.RESOURCE_PATH, CustomBlockCulling.encode(storage.getCustomBlockVisuals()));
 +        for (CustomBlockVisual visual : storage.getCustomBlockVisuals().values()) {
-+            result.putString("assets/viabedrock/models/block/custom/slot_" + visual.javaState() + ".json", visual.modelJson());
++            final Map<String, String> replacements = new HashMap<>();
 +            for (Map.Entry<String, String> texture : visual.textures().entrySet()) {
-+                final Content.LazyImage image = terrainTexture(storage, texture.getValue());
++                final Content.LazyImage image = textures.get(texture.getValue());
 +                if (image == null) {
 +                    continue; // This model references a vanilla Java sprite.
 +                }
-+                result.putPngImage("assets/viabedrock/textures/block/custom/slot_" + visual.javaState() + '/' + texture.getKey() + ".png",
-+                        materialTexture(image, visual.textureRenderMethods().get(texture.getKey())));
++                final String method = visual.textureRenderMethods().get(texture.getKey());
++                final String pixels = method.startsWith("alpha_test") ? "alpha_test" : method;
++                final String sprite = exported.computeIfAbsent(image, ignored -> new HashMap<>())
++                        .computeIfAbsent(pixels, ignored -> exportTexture(result, image, method));
++                replacements.put("viabedrock:block/custom/slot_" + visual.javaState() + '/' + texture.getKey(), sprite);
 +            }
++            final JsonObject model = JsonParser.parseString(visual.modelJson()).getAsJsonObject();
++            for (Map.Entry<String, JsonElement> entry : model.getAsJsonObject("textures").entrySet()) {
++                if (entry.getValue().isJsonObject()) {
++                    final JsonObject reference = entry.getValue().getAsJsonObject();
++                    final String replacement = replacements.get(reference.get("sprite").getAsString());
++                    if (replacement != null) {
++                        reference.addProperty("sprite", replacement);
++                    }
++                } else {
++                    final String replacement = replacements.get(entry.getValue().getAsString());
++                    if (replacement != null) {
++                        entry.setValue(new JsonPrimitive(replacement));
++                    }
++                }
++            }
++            result.putJson("assets/viabedrock/models/block/custom/slot_" + visual.javaState() + ".json", model);
 +        }
 +        final Map<Integer, String> models = new LinkedHashMap<>();
 +        storage.getCustomBlockVisuals().keySet().forEach(state -> models.put(state, "viabedrock:block/custom/slot_" + state));
@@ -4761,18 +4772,38 @@ index 00000000..085f9fef
 +    public static BufferedImage materialTexture(final Content.LazyImage texture, final String method) {
 +        final BufferedImage source = texture.getImage();
 +        final BufferedImage result = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
++        final int[] row = new int[source.getWidth()];
 +        for (int y = 0; y < source.getHeight(); y++) {
-+            for (int x = 0; x < source.getWidth(); x++) {
-+                final int pixel = source.getRGB(x, y);
-+                final int alpha = materialAlpha(pixel, method);
-+                result.setRGB(x, y, (pixel & 0xFFFFFF) | alpha << 24);
++            source.getRGB(0, y, row.length, 1, row, 0, row.length);
++            for (int x = 0; x < row.length; x++) {
++                row[x] = (row[x] & 0xFFFFFF) | materialAlpha(row[x], method) << 24;
 +            }
++            result.setRGB(0, y, row.length, 1, row, 0, row.length);
 +        }
 +        return result;
 +    }
 +
 +    private static int materialAlpha(final int pixel, final String method) {
 +        return method.equals("opaque") ? 255 : method.startsWith("alpha_test") ? (pixel >>> 24 >= 128 ? 255 : 0) : pixel >>> 24;
++    }
++
++    private static String exportTexture(final Content result, final Content.LazyImage texture, final String method) {
++        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        try (var output = new MemoryCacheImageOutputStream(bytes)) {
++            ImageIO.write(materialTexture(texture, method), "png", output);
++        } catch (final IOException e) {
++            throw new UncheckedIOException(e);
++        }
++        final byte[] png = bytes.toByteArray();
++        final String hash;
++        try {
++            hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png));
++        } catch (final NoSuchAlgorithmException e) {
++            throw new IllegalStateException("SHA-256 is not available", e);
++        }
++        final String path = "block/custom/shared/" + hash;
++        result.put("assets/viabedrock/textures/" + path + ".png", png);
++        return "viabedrock:" + path;
 +    }
 +
 +    private static Content convert(final ResourcePackStorage storage, final Map<String, Integer> assignments) {
@@ -5042,6 +5073,107 @@ index 00000000..a063da13
 +            model.addProperty("y", rotation);
 +        }
 +        return model;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextures.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextures.java
+new file mode 100644
+index 00000000..7492049f
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextures.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.awt.image.BufferedImage;
++import java.util.HashMap;
++import java.util.IdentityHashMap;
++import java.util.Map;
++
++/** Reuses decoded images and alpha summaries for one block compilation or conversion pass. */
++public final class CustomBlockTextures {
++
++    private final ResourcePackStorage storage;
++    private final Map<String, Content.LazyImage> images = new HashMap<>();
++    private final Map<Content.LazyImage, Transparency> transparency = new IdentityHashMap<>();
++
++    public CustomBlockTextures(final ResourcePackStorage storage) {
++        this.storage = storage;
++    }
++
++    public Content.LazyImage get(final String texture) {
++        final String path = this.storage.getTextures().terrainTextures().get(texture);
++        if (path == null) {
++            return null;
++        }
++        if (!this.images.containsKey(path)) {
++            this.images.put(path, this.find(path));
++        }
++        return this.images.get(path);
++    }
++
++    public boolean hasOpaquePixels(final Content.LazyImage texture) {
++        return texture != null && this.transparency.computeIfAbsent(texture, CustomBlockTextures::analyze).opaque();
++    }
++
++    public boolean hasVisiblePixels(final Content.LazyImage texture, final String method) {
++        return texture == null || method.equals("opaque")
++                || this.transparency.computeIfAbsent(texture, CustomBlockTextures::analyze).visible(method);
++    }
++
++    private Content.LazyImage find(final String path) {
++        for (ResourcePack pack : this.storage.getPackStackTopToBottom()) {
++            final Content.LazyImage image = pack.content().getShortnameImage(path);
++            if (image != null) {
++                return image;
++            }
++        }
++        return null;
++    }
++
++    static Transparency analyze(final Content.LazyImage texture) {
++        final BufferedImage image;
++        try {
++            image = texture.getImage();
++        } catch (final RuntimeException e) {
++            return new Transparency(false, -1);
++        }
++        if (image == null) {
++            return new Transparency(false, -1);
++        }
++        if (!image.getColorModel().hasAlpha()) {
++            return new Transparency(true, 255);
++        }
++        boolean opaque = true;
++        int maximumAlpha = 0;
++        final int[] row = new int[image.getWidth()];
++        for (int y = 0; y < image.getHeight(); y++) {
++            image.getRGB(0, y, row.length, 1, row, 0, row.length);
++            for (int pixel : row) {
++                final int alpha = pixel >>> 24;
++                opaque &= alpha == 255;
++                maximumAlpha = Math.max(maximumAlpha, alpha);
++            }
++            if (!opaque && maximumAlpha == 255) {
++                break;
++            }
++        }
++        return new Transparency(opaque, maximumAlpha);
++    }
++
++    record Transparency(boolean opaque, int maximumAlpha) {
++
++        boolean visible(final String method) {
++            return this.maximumAlpha == -1 || this.maximumAlpha >= (method.startsWith("alpha_test") ? 128 : 1);
++        }
 +    }
 +
 +}
@@ -12398,6 +12530,187 @@ index 00000000..7fe228fa
 +    }
 +
 +    private record AppliedModel(String name, int rotation) {
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java
+new file mode 100644
+index 00000000..c95c859d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java
+@@ -0,0 +1,175 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.google.common.collect.HashBiMap;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.lang.reflect.Field;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.function.Supplier;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CustomBlockTextureReuseTest {
++
++    private static final int[] PIXELS = {0x00123456, 0x7F224466, 0x804080C0, 0xFFABCDEF};
++
++    @Test
++    void compilesRepeatedStatesAndAliasesFromOneImageLookupPerPass() {
++        final CountingContent content = content(PIXELS);
++        final ResourcePackStorage storage = storage(content);
++        final CustomBlockTextures textures = new CustomBlockTextures(storage);
++        for (int state = 0; state < 12; state++) {
++            final var visual = CustomBlockModel.compile(storage, textures, "test:block[variant=" + state + "]", state,
++                    components(state % 2 == 0 ? "skin" : "alias", "alpha_test"));
++            assertNotNull(visual);
++            assertFalse(visual.occluding());
++        }
++        assertEquals(1, content.lookups);
++        assertTrue(textures.hasVisiblePixels(textures.get("skin"), "blend"));
++        assertFalse(textures.hasOpaquePixels(textures.get("alias")));
++        assertEquals(1, content.lookups);
++    }
++
++    @Test
++    void resolvesTheTopPackAndDoesNotReuseImagesAcrossDifferentStacks() {
++        final CountingContent lower = content(new int[]{0xFF112233});
++        final CountingContent upper = content(new int[]{0xFFABCDEF});
++        final var overlaid = new CustomBlockTextures(new ResourcePackStorage(List.of(new ResourcePack(upper), new ResourcePack(lower))));
++        assertEquals(0xFFABCDEF, overlaid.get("skin").getImage().getRGB(0, 0));
++        final var replaced = new CustomBlockTextures(storage(lower));
++        assertEquals(0xFF112233, replaced.get("skin").getImage().getRGB(0, 0));
++    }
++
++    @Test
++    void preservesPixelsAndMaterialThresholdsAcrossRasterLayouts() {
++        for (int type : new int[]{BufferedImage.TYPE_INT_ARGB, BufferedImage.TYPE_4BYTE_ABGR}) {
++            final BufferedImage source = new BufferedImage(2, 2, type);
++            source.setRGB(0, 0, 2, 2, PIXELS, 0, 2);
++            final Content.LazyImage texture = new Content.LazyImage(new byte[0], "png") {
++                @Override
++                public BufferedImage getImage() {
++                    return source;
++                }
++            };
++            assertPixels(new int[]{0xFF123456, 0xFF224466, 0xFF4080C0, 0xFFABCDEF}, CustomBlockResourceRewriter.materialTexture(texture, "opaque"));
++            for (String method : List.of("alpha_test", "alpha_test_single_sided")) {
++                assertPixels(new int[]{0x00123456, 0x00224466, 0xFF4080C0, 0xFFABCDEF}, CustomBlockResourceRewriter.materialTexture(texture, method));
++            }
++            assertPixels(PIXELS, CustomBlockResourceRewriter.materialTexture(texture, "blend"));
++            assertPixels(PIXELS, source);
++        }
++    }
++
++    @Test
++    void sharesExportedSpritesAcrossCarriersAndRetainsEachMaterialAndParticleReference() throws Exception {
++        final CountingContent content = content(PIXELS);
++        content.put("textures/blocks/copy.png", content.get("textures/blocks/skin.png"));
++        final ResourcePackStorage storage = storage(content);
++        final Map<Integer, CustomBlockVisual> visuals = new LinkedHashMap<>();
++        final String[] methods = {"opaque", "opaque", "alpha_test", "alpha_test_single_sided", "blend", "opaque"};
++        for (int i = 0; i < methods.length; i++) {
++            visuals.put(42 + i, CustomBlockModel.compile(storage, "test:block", 42 + i, components(i == 5 ? "copy" : "skin", methods[i])));
++        }
++        storage.setCustomBlockVisuals(visuals);
++        final Field states = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaBlockStates");
++        states.setAccessible(true);
++        final Object previous = states.get(BedrockProtocol.MAPPINGS);
++        final Content converted;
++        try {
++            states.set(BedrockProtocol.MAPPINGS, HashBiMap.create());
++            final List<Supplier<Content>> tasks = new ArrayList<>();
++            new CustomBlockResourceRewriter().submitTasks(storage, tasks::add);
++            assertEquals(1, tasks.size());
++            converted = tasks.getFirst().get();
++        } finally {
++            states.set(BedrockProtocol.MAPPINGS, previous);
++        }
++        assertEquals(3, converted.getFilesDeep("assets/viabedrock/textures/block/custom/", ".png").size());
++        final List<String> sprites = new ArrayList<>();
++        for (int i = 0; i < methods.length; i++) {
++            final JsonObject model = converted.getJson("assets/viabedrock/models/block/custom/slot_" + (42 + i) + ".json");
++            final JsonObject textures = model.getAsJsonObject("textures");
++            final String sprite;
++            if (methods[i].equals("blend")) {
++                final JsonObject reference = textures.getAsJsonObject("north");
++                assertTrue(reference.get("force_translucent").getAsBoolean());
++                sprite = reference.get("sprite").getAsString();
++            } else {
++                sprite = textures.get("north").getAsString();
++            }
++            assertEquals(sprite, textures.get("particle").getAsString());
++            final String path = "assets/viabedrock/textures/" + sprite.substring("viabedrock:".length()) + ".png";
++            final BufferedImage image = converted.getImage(path).getImage();
++            assertPixels(i == 2 || i == 3 ? new int[]{0x00123456, 0x00224466, 0xFF4080C0, 0xFFABCDEF}
++                    : i == 4 ? PIXELS : new int[]{0xFF123456, 0xFF224466, 0xFF4080C0, 0xFFABCDEF}, image);
++            sprites.add(sprite);
++        }
++        assertEquals(sprites.get(0), sprites.get(1));
++        assertEquals(sprites.get(0), sprites.get(5));
++        assertEquals(sprites.get(2), sprites.get(3));
++        assertNotEquals(sprites.get(0), sprites.get(2));
++        assertNotEquals(sprites.get(2), sprites.get(4));
++    }
++
++    private static void assertPixels(final int[] expected, final BufferedImage image) {
++        assertArrayEquals(expected, image.getRGB(0, 0, image.getWidth(), image.getHeight(), null, 0, image.getWidth()));
++    }
++
++    private static ResourcePackStorage storage(final CountingContent content) {
++        return new ResourcePackStorage(List.of(new ResourcePack(content)));
++    }
++
++    private static CountingContent content(final int[] pixels) {
++        final CountingContent content = new CountingContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        content.putString("textures/terrain_texture.json", """
++                {"texture_data":{"skin":{"textures":"textures/blocks/skin"},"alias":{"textures":"textures/blocks/skin"},"copy":{"textures":"textures/blocks/copy"}}}
++                """);
++        final BufferedImage image = new BufferedImage(pixels.length == 1 ? 1 : 2, pixels.length == 1 ? 1 : 2, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, image.getWidth(), image.getHeight(), pixels, 0, image.getWidth());
++        content.putPngImage("textures/blocks/skin.png", image);
++        return content;
++    }
++
++    private static CompoundTag components(final String texture, final String method) {
++        final CompoundTag result = new CompoundTag();
++        result.putString("minecraft:geometry", "minecraft:geometry.full_block");
++        final CompoundTag material = new CompoundTag();
++        material.putString("texture", texture);
++        material.putString("render_method", method);
++        final CompoundTag materials = new CompoundTag();
++        materials.put("*", material);
++        result.put("minecraft:material_instances", materials);
++        return result;
++    }
++
++    private static final class CountingContent extends InMemoryContent {
++
++        private int lookups;
++
++        @Override
++        public LazyImage getShortnameImage(final String path) {
++            this.lookups++;
++            return super.getShortnameImage(path);
++        }
 +    }
 +
 +}
