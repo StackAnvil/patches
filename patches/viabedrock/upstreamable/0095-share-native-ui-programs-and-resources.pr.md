@@ -203,3 +203,12 @@ Program transport retains the texture metadata the UI resolver consumes: nine-sl
 The final installed Mineville check opens Settings through the authored PvP Pit menu. It shows the clean SETTINGS heading, toggles and sliders; the former generic routing-title fallback no longer appears. The captured form also round-trips through the codec in 880,464 bytes and rebuilds all twelve inputs. Full native appearance remains unverified.
 
 Ordinary chat with pack row filters: with the exact installed builtin UI and all nine accepted MegaSMP packs, a server permission denial now stays Java-visible, while a `%toast%` message stays hidden there and still produces its authored notification. A synthetic regression covers the same row shape. Native rendering of MegaSMP's chat panel is not compared.
+
+The form controller creates its form control in every factory named `server_form_factory`, including a factory hosted by a panel.
+The built-in 1.26.60.5 `server_form.json` declares that factory on a `factory` control with `long_form` and `custom_form` IDs. Dimension Clash adds a panel with the same factory name that maps only `long_form`.
+Before this change, only factory-typed hosts selected the form key, so the panel stayed empty and the splash and tutorial forms fell back to Java dialogs with encoded `dc_menus` titles and 453 generic buttons.
+`FormBindings` now supplies one factory creation for the current form type. Other factory names keep their declarative expansion.
+`ServerFormUiTest` covers a panel-hosted long form with a header row and original response indices, an unrelated empty panel factory, and a custom form whose panel maps only `long_form`. The custom form still resolves through the built-in factory and rebuilds from its exported program.
+With the bundled native UI and the single accepted Dimension Clash pack, evaluated privately, the captured splash resolves 583 nodes and 12 response actions in 232,774 transport bytes. The tutorial resolves 151 nodes and its Start control at original index 94. No templates are missing, and the add-on scene parser admits both scenes.
+
+The rebuilt add-on renders the splash, menu drawer and tutorial prompt through the authored scene. Selecting Replay Tutorial and Start sends original response 94 and starts the arena flyover. The tutorial then returns to first-person control. No full tutorial or match was completed. The direct Join Game path and official-client visual parity remain unverified.

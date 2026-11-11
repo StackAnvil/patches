@@ -1,7 +1,21 @@
-From 3f71cf8804cb991803fc311e8214eef72876313d Mon Sep 17 00:00:00 2001
+From 3f9a5693814032d847a32c322c949ff11462d4f4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 21 Oct 2026 12:25:34 +0200
-Subject: [PATCH] test(chunks): cover full-height biome palette decoding
+Subject: [PATCH] fix(chunks): read counted border blocks before block entities
+
+The LevelChunk tail after the biome palettes starts with an unsigned
+border-block column count, followed by one packed X/Z byte per column,
+then block entity NBT. The reader skipped only the count byte and parsed
+the column bytes as NBT. Captured protocol-2225 Lifeboat Skyblock chunks
+carry counts of 1 and 16; the old reader logged 16 "Error reading chunk
+data" warnings per island load and silently stopped on 19 more columns.
+Skip the counted bytes. A short list still ends the column through the
+existing out-of-bounds path.
+
+PowerNukkitX writes the same framing, capping the count at 255:
+https://github.com/PowerNukkitX/PowerNukkitX/blob/93b06b1d7e3df0ea639f2164ec16205668d8faf8/src/main/java/org/powernukkitx/level/format/leveldb/LevelDBProvider.java
+This change only consumes the border columns. It does not implement
+border block behavior.
 
 Upstream #466 now reads modern biome palettes across the full dimension
 height. Keep packet regressions for zero, one and nine block sections,
@@ -9,20 +23,20 @@ both cache paths, repeated palettes and the trailing chest block entity.
 Reading only the block section count shifts biome bytes into block entity
 NBT and corrupts the resulting state.
 
-The fixture reproduces errors from BDS 1.26.51.1 (protocol 2193). The
-Dragonfly v0.11.5 network decoder also reads the full dimension range:
+The biome fixture reproduces errors from BDS 1.26.51.1 (protocol 2193).
+The Dragonfly v0.11.5 network decoder also reads the full dimension range:
 https://github.com/df-mc/dragonfly/blob/v0.11.5/server/world/chunk/decode.go
 
-These tests retain the boundary coverage after the upstream fix. Native
-inventory navigation remains a separate validation requirement.
+Border cases cover counts 1, 16 and 200 before a valid block entity, a
+coordinate byte equal to the compound tag ID, and a truncated list.
 ---
- .../protocol/packet/WorldPackets.java         |   1 +
- .../packet/LevelChunkBiomePacketTest.java     | 147 ++++++++++++++++++
- 2 files changed, 148 insertions(+)
+ .../protocol/packet/WorldPackets.java         |   4 +-
+ .../packet/LevelChunkBiomePacketTest.java     | 171 ++++++++++++++++++
+ 2 files changed, 174 insertions(+), 1 deletion(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/LevelChunkBiomePacketTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index afcc1205..f737c0b2 100644
+index afcc1205..949e0818 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 @@ -279,6 +279,7 @@ public final class WorldPackets {
@@ -33,12 +47,22 @@ index afcc1205..f737c0b2 100644
                              for (int i = 0; i < sections.length; i++) {
                                  BedrockDataPalette biomePalette = BedrockTypes.RUNTIME_DATA_PALETTE.read(dataBuf); // biome palette
                                  if (biomePalette == null) {
+@@ -291,7 +292,8 @@ public final class WorldPackets {
+                             }
+                         }
+ 
+-                        dataBuf.skipBytes(1); // border blocks
++                        // Border blocks: an unsigned column count, then one packed X/Z byte per column.
++                        dataBuf.skipBytes(dataBuf.readUnsignedByte()); // border block columns
+                         while (dataBuf.isReadable()) {
+                             final Tag tag = BedrockTypes.NETWORK_TAG.read(dataBuf); // block entity tag
+                             if (tag instanceof CompoundTag) { // Ignore non-compound tags
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/LevelChunkBiomePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/LevelChunkBiomePacketTest.java
 new file mode 100644
-index 00000000..c4f127a9
+index 00000000..9f4044de
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/LevelChunkBiomePacketTest.java
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,171 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -84,6 +108,21 @@ index 00000000..c4f127a9
 +    @ParameterizedTest
 +    @CsvSource({"0, false", "0, true", "1, false", "1, true", "9, false", "9, true"})
 +    void readsDimensionBiomesBeforeBlockEntities(final int sectionCount, final boolean cached) throws Exception {
++        decodesBlockEntityAfterTail(sectionCount, cached, 0, 0);
++    }
++
++    // Protocol 2225 servers send counts of 1 and 16; 200 covers the unsigned byte range.
++    @ParameterizedTest
++    @CsvSource({"1, false, 1, 1", "9, true, 16, 16", "1, false, 200, 200", "0, true, 16, 3"})
++    void skipsCountedBorderColumnsBeforeBlockEntities(final int sectionCount, final boolean cached, final int borderCount,
++                                                      final int coordinateBytes) throws Exception {
++        decodesBlockEntityAfterTail(sectionCount, cached, borderCount, coordinateBytes);
++    }
++
++    /** A truncated border list ends the column like other short payloads, without a block entity or warning. */
++    private static void decodesBlockEntityAfterTail(final int sectionCount, final boolean cached, final int borderCount,
++                                                    final int coordinateBytes) throws Exception {
++        final boolean truncated = coordinateBytes < borderCount;
 +        final var protocol = mock(BedrockProtocol.class);
 +        WorldPackets.register(protocol);
 +        final var handler = ArgumentCaptor.forClass(PacketHandler.class);
@@ -125,13 +164,18 @@ index 00000000..c4f127a9
 +                    BedrockTypes.VAR_INT.writePrimitive(blob, 40 + i);
 +                }
 +            }
-+            tail.writeByte(0); // border blocks
++            tail.writeByte(borderCount); // border block columns
++            for (int i = 0; i < coordinateBytes; i++) {
++                tail.writeByte(i == 0 ? 10 : i * 17); // packed Z/X; 10 is also the compound tag ID
++            }
 +            final var tag = new CompoundTag();
 +            tag.putString("id", "Chest");
 +            tag.putInt("x", 3);
 +            tag.putInt("y", 70);
 +            tag.putInt("z", 5);
-+            BedrockTypes.NETWORK_TAG.write(tail, tag);
++            if (!truncated) {
++                BedrockTypes.NETWORK_TAG.write(tail, tag);
++            }
 +            BedrockTypes.VAR_INT.writePrimitive(packet, 0);
 +            BedrockTypes.VAR_INT.writePrimitive(packet, 0);
 +            BedrockTypes.VAR_INT.writePrimitive(packet, Dimension.OVERWORLD.ordinal());
@@ -174,8 +218,12 @@ index 00000000..c4f127a9
 +                    assertEquals(40 + i - 1, sections[i - 1].palette(PaletteType.BIOMES).idAt(0));
 +                }
 +            }
-+            assertEquals(1, chunk.blockEntities().size());
-+            assertEquals(tag, chunk.getBlockEntityAt(new BlockPosition(3, 70, 5)).tag());
++            if (truncated) {
++                assertTrue(chunk.blockEntities().isEmpty());
++            } else {
++                assertEquals(1, chunk.blockEntities().size());
++                assertEquals(tag, chunk.getBlockEntityAt(new BlockPosition(3, 70, 5)).tag());
++            }
 +            verify(tracker).sendChunkInNextTick(0, 0);
 +            verifyNoInteractions(logger);
 +        } finally {
