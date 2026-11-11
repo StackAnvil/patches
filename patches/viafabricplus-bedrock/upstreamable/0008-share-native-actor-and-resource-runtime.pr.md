@@ -21,7 +21,7 @@ Prerequisites:
 
 - viabedrock/0085-resolve-server-effects-relative-to-their-actor.patch: Publish native animation-controller command snapshots consumed by the shared graph runtime.
 
-- viabedrock/0078-preserve-native-identifiers-in-java-item-data.patch: Provide the optional native air-continuation item field consumed by the shared metadata cache.
+- viabedrock/0078-preserve-native-identifiers-in-java-item-data.patch: Provide the optional native air-continuation and shooter-release item fields consumed by the shared metadata cache.
 
 The immutable item cache retains the optional native air-use predicate. Missing metadata selects the older-core fallback; explicit false selects the current native policy. Replacing custom data changes the predicate without mutating cached snapshots. `BedrockItemMetadataTest` covers this boundary.
 

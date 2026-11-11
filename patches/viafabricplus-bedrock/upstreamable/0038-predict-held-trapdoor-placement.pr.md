@@ -133,3 +133,7 @@ Short native input spans still miss some physical edges and do not establish ful
 Dynamic capability changes and legacy fallback need broader installed controls.
 The native 80 ms control has no start/stop callback, so matching endpoints do not establish its initial admission. Exact edge timing and other active-use families still need comparisons.
 The original intermittent animation-without-feeding report remains open.
+
+Native shooter release survives Java carriers with no active use cycle. A target 1.26.60.5/protocol 2225 paired visual control shows one round consumed natively versus a drained magazine after translated mouse-up. Explicit shooter metadata owns one main-hand release, scoped to slot and native definition. Regression coverage exercises mouse-up with an inactive Java carrier, duplicate release, replacement ownership and session reset.
+
+The installed fixed build emits exactly one ItemRelease transaction per mouse-up in a public BlasterWars match. Holds of 80, 160 and 600 ms consume one, two and four rounds respectively and stop; ammo remains unchanged on reselect 18 seconds after the final release. The baseline drains all 20 rounds after a 160 ms press with no release. This verifies release lifetime, not native shot cadence or complete input scheduling. Core and add-on suites pass with the release regressions.

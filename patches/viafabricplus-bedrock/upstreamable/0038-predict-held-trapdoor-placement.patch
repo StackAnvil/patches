@@ -1,4 +1,4 @@
-From d8dc2d89e25dab222d27052f522c223fc5e4b965 Mon Sep 17 00:00:00 2001
+From 42ed65e68f5946baef9803a7830d97a138ea84c4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 28 Oct 2026 03:36:18 +0100
 Subject: [PATCH] feat(interaction): preserve native held item use
@@ -216,6 +216,18 @@ the existing held-session and strict air-deadline owners, ordinary Java
 connections, and inventory authority. No second timer, delayed release
 latch, forced food callback or quantity prediction is needed. The
 original intermittent animation-without-feeding report remains open.
+
+Retain an admitted native shooter use until physical release independently
+of Java active use. The official 1.26.60.5/protocol 2225 Repeater control
+consumes one round on a 160 ms press; the translated carrier drains its
+magazine after mouse-up and sends no ItemRelease transaction. Its Java
+carrier never enters an active use cycle.
+
+Arm release only from explicit native shooter metadata after main-hand
+use. Consume it once on release, checking the selected slot and native
+definition so it cannot release a replacement item. Keep the existing
+Java active-use release path and clear ownership on connection reset.
+Ordinary carriers, retained-air repeats and block timing are unchanged.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../features/block/MixinTrapDoorBlock.java    |  18 +-
@@ -223,18 +235,19 @@ original intermittent animation-without-feeding report remains open.
  .../features/input/MixinUseKeyMapping.java    |  25 ++
  .../inventory/MixinHeldBlockPlacement.java    |  32 ++
  .../features/inventory/MixinHeldBlockUse.java |  65 ++++
- .../bedrock/input/BedrockItemUse.java         | 285 +++++++++++++++++
+ .../bedrock/input/BedrockItemUse.java         | 298 +++++++++++++++++
  .../bedrock/input/BlockPlacementPath.java     |  83 +++++
  .../bedrock/input/BlockUsePayload.java        |  24 ++
  .../input/BlockUsePredictionPayload.java      |  33 ++
  .../input/ItemUsePredictionPayload.java       |  24 ++
- .../bedrock/input/ItemUseState.java           | 139 +++++++++
+ .../bedrock/input/ItemUseState.java           | 157 +++++++++
  .../bedrock/inventory/TrapdoorPlacement.java  |  55 ++++
  .../viafabricplus-bedrock.mixins.json         |   4 +
+ .../input/BedrockItemUseReleaseTest.java      |  75 +++++
  .../bedrock/input/BlockPlacementPathTest.java | 128 ++++++++
- .../bedrock/input/ItemUseStateTest.java       | 286 ++++++++++++++++++
+ .../bedrock/input/ItemUseStateTest.java       | 308 ++++++++++++++++++
  .../inventory/TrapdoorPlacementTest.java      | 100 ++++++
- 17 files changed, 1411 insertions(+), 4 deletions(-)
+ 18 files changed, 1539 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinUseKeyMapping.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
@@ -246,6 +259,7 @@ original intermittent animation-without-feeding report remains open.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUsePredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUseReleaseTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java
@@ -580,10 +594,10 @@ index 0000000..82b3509
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
 new file mode 100644
-index 0000000..6fb7aa2
+index 0000000..54aeca3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,298 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -624,6 +638,7 @@ index 0000000..6fb7aa2
 +    private static Boolean pendingAirPredicate;
 +    private static boolean pendingAirItem;
 +    private static boolean pendingFoodUse;
++    private static String pendingReleaseDefinition;
 +    private static ItemStack predictedItem = ItemStack.EMPTY;
 +    private static final ItemUseState INPUT = new ItemUseState();
 +    private static Position3f cursor;
@@ -671,6 +686,9 @@ index 0000000..6fb7aa2
 +    }
 +
 +    public static void beginItemPrediction(final InteractionHand hand, final ItemStack item) {
++        final var metadata = BedrockItemMetadata.get(item.get(DataComponents.CUSTOM_DATA));
++        pendingReleaseDefinition = hand == InteractionHand.MAIN_HAND && bedrockConnection() && metadata.releaseOnStop()
++            ? metadata.identifier() : null;
 +        predictedItem = hand == InteractionHand.MAIN_HAND && bedrockConnection()
 +            && ClientPlayNetworking.canSend(ItemUsePredictionPayload.TYPE) ? item.copy() : ItemStack.EMPTY;
 +    }
@@ -688,6 +706,11 @@ index 0000000..6fb7aa2
 +    }
 +
 +    public static void airResult(final InteractionHand hand) {
++        final var player = Minecraft.getInstance().player;
++        if (hand == InteractionHand.MAIN_HAND && pendingReleaseDefinition != null && player != null && bedrockConnection()) {
++            INPUT.armRelease(player.getInventory().getSelectedSlot(), pendingReleaseDefinition);
++        }
++        pendingReleaseDefinition = null;
 +        if (hand == InteractionHand.MAIN_HAND && pendingAirPredicate != null && bedrockConnection()) {
 +            INPUT.airResult(Minecraft.getInstance().player.isUsingItem() || pendingFoodUse, pendingAirItem, pendingAirPredicate);
 +        }
@@ -713,9 +736,12 @@ index 0000000..6fb7aa2
 +    }
 +
 +    private static void stopItemUse(final Minecraft client) {
-+        if (bedrockConnection() && client.player != null && client.gameMode != null
-+                && client.player.isUsingItem()) {
-+            client.gameMode.releaseUsingItem(client.player);
++        if (bedrockConnection() && client.player != null && client.gameMode != null) {
++            final String definition = BedrockItemMetadata.get(client.player.getMainHandItem().get(DataComponents.CUSTOM_DATA)).identifier();
++            final boolean nativeRelease = INPUT.takeRelease(client.player.getInventory().getSelectedSlot(), definition);
++            if (client.player.isUsingItem() || nativeRelease) {
++                client.gameMode.releaseUsingItem(client.player);
++            }
 +        }
 +    }
 +
@@ -866,6 +892,7 @@ index 0000000..6fb7aa2
 +        pendingAirPredicate = null;
 +        pendingAirItem = false;
 +        pendingFoodUse = false;
++        pendingReleaseDefinition = null;
 +        predictedItem = ItemStack.EMPTY;
 +    }
 +}
@@ -1059,10 +1086,10 @@ index 0000000..4b4e787
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
 new file mode 100644
-index 0000000..3b10db1
+index 0000000..feb17aa
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,157 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1078,6 +1105,8 @@ index 0000000..3b10db1
 +    private static final long AIR_DELAY_NANOS = 200_000_000L;
 +    private static final long BLOCK_DELAY_NANOS = 300_000_000L;
 +    private static final long LINE_DELAY_NANOS = 200_000_000L;
++    private int releaseSlot = -1;
++    private String releaseDefinition;
 +    private boolean airActive;
 +    private boolean airAttempted;
 +    private long airStartedAt;
@@ -1192,6 +1221,20 @@ index 0000000..3b10db1
 +        this.blockDelayed = false;
 +    }
 +
++    /** A native shooter can remain active even when its Java carrier has no use cycle. */
++    public void armRelease(final int slot, final String definition) {
++        this.releaseSlot = slot;
++        this.releaseDefinition = definition;
++    }
++
++    public boolean takeRelease(final int slot, final String definition) {
++        final boolean matches = this.releaseDefinition != null && this.releaseSlot == slot
++            && this.releaseDefinition.equals(definition);
++        this.releaseSlot = -1;
++        this.releaseDefinition = null;
++        return matches;
++    }
++
 +    public void release() {
 +        this.airActive = false;
 +        this.cancelPlacement();
@@ -1200,6 +1243,8 @@ index 0000000..3b10db1
 +    public void clear() {
 +        this.release();
 +        this.airAttempted = false;
++        this.releaseSlot = -1;
++        this.releaseDefinition = null;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacement.java
@@ -1278,6 +1323,87 @@ index e48c788..938fa4a 100644
      "features.creative.MixinCreativeModeInventoryScreen",
      "features.creative.MixinCreativeModeTab_ItemDisplayBuilder",
      "features.creative.MixinCreativeModeTabs",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUseReleaseTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUseReleaseTest.java
+new file mode 100644
+index 0000000..cd2e709
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUseReleaseTest.java
+@@ -0,0 +1,75 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.client.multiplayer.MultiPlayerGameMode;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.core.component.DataComponents;
++import net.minecraft.nbt.CompoundTag;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.InteractionHand;
++import net.minecraft.world.entity.player.Inventory;
++import net.minecraft.world.item.ItemStack;
++import net.minecraft.world.item.Items;
++import net.minecraft.world.item.component.CustomData;
++import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.mockito.Mockito.*;
++
++final class BedrockItemUseReleaseTest {
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void mouseUpReleasesNativeShooterOnceWithoutAJavaUseCycle() throws Exception {
++        final var game = mock(Minecraft.class);
++        final var player = mock(LocalPlayer.class);
++        final var mode = mock(MultiPlayerGameMode.class);
++        final var inventory = mock(Inventory.class);
++        Minecraft.class.getField("player").set(game, player);
++        Minecraft.class.getField("gameMode").set(game, mode);
++        when(game.getConnection()).thenReturn(mock(ClientPacketListener.class));
++        when(player.getInventory()).thenReturn(inventory);
++        when(inventory.getSelectedSlot()).thenReturn(0);
++        final var tag = new CompoundTag();
++        tag.putString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG, "fixture:shooter");
++        tag.putBoolean(ItemDataRewriter.BEDROCK_USE_RELEASE_TAG, true);
++        final var item = new ItemStack(Items.PAPER);
++        item.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
++        when(player.getMainHandItem()).thenReturn(item);
++        when(player.isUsingItem()).thenReturn(false);
++        try (final var singleton = mockStatic(Minecraft.class);
++             final var permissions = mockStatic(BedrockInputPermissions.class);
++             final var network = mockStatic(ClientPlayNetworking.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            permissions.when(BedrockInputPermissions::isBedrockConnection).thenReturn(true);
++            BedrockItemUse.beginItemPrediction(InteractionHand.MAIN_HAND, item);
++            BedrockItemUse.airResult(InteractionHand.MAIN_HAND);
++            BedrockItemUse.releaseKey();
++            BedrockItemUse.releaseKey();
++            verify(mode, times(1)).releaseUsingItem(player);
++
++            // Sharing the Java carrier does not give an ordinary native item a release lifetime.
++            clearInvocations(mode);
++            tag.putString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG, "fixture:ordinary");
++            tag.putBoolean(ItemDataRewriter.BEDROCK_USE_RELEASE_TAG, false);
++            item.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
++            BedrockItemUse.beginItemPrediction(InteractionHand.MAIN_HAND, item);
++            BedrockItemUse.airResult(InteractionHand.MAIN_HAND);
++            BedrockItemUse.releaseKey();
++            verifyNoInteractions(mode);
++        }
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java
 new file mode 100644
 index 0000000..e4fe3f2
@@ -1414,10 +1540,10 @@ index 0000000..e4fe3f2
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
 new file mode 100644
-index 0000000..00f79ed
+index 0000000..199b5df
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,308 @@
 +package com.viaversion.viafabricplus.bedrock.input;
 +
 +import org.junit.jupiter.api.Test;
@@ -1430,6 +1556,28 @@ index 0000000..00f79ed
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class ItemUseStateTest {
++    @Test
++    void nativeReleaseSurvivesRouteRetirementAndIsConsumedOnce() {
++        final var input = new ItemUseState();
++        input.armRelease(0, "fixture:shooter");
++        input.release();
++        assertTrue(input.takeRelease(0, "fixture:shooter"));
++        assertFalse(input.takeRelease(0, "fixture:shooter"));
++    }
++
++    @Test
++    void nativeReleaseCannotTargetAReplacedSlotDefinitionOrSession() {
++        final var input = new ItemUseState();
++        input.armRelease(0, "fixture:shooter");
++        assertFalse(input.takeRelease(1, "fixture:shooter"));
++        assertFalse(input.takeRelease(0, "fixture:shooter"));
++        input.armRelease(0, "fixture:shooter");
++        assertFalse(input.takeRelease(0, "fixture:other"));
++        input.armRelease(0, "fixture:shooter");
++        input.clear();
++        assertFalse(input.takeRelease(0, "fixture:shooter"));
++    }
++
 +    @Test
 +    void admittedProjectileOwnsTheDeadlineAndAirRouteEvenWithoutAnActiveUseCycle() {
 +        final var input = new ItemUseState();

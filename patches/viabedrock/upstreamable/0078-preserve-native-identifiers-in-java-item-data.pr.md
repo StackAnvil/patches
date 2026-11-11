@@ -10,6 +10,8 @@ Keep original native identifiers, descriptors, and component ownership alongside
 
 Carry explicit native air-continuation metadata alongside the item identity. Component presence and built-in subclass defaults differ from Java carrier types. Preserve an explicit false value when replacing an earlier stack's context.
 
+Carry a separate release-on-stop flag for installed `minecraft:shooter` components. A Java carrier can send native use without entering Java active use. The flag lets an integration retain physical release ownership without enabling repeated air use for unrelated items.
+
 ## Validation and remaining limits
 
 Regression coverage includes `NativeItemStackDataTest`, `ItemAnimationDataTest`, `ItemUseDurationTest`, `ItemIdentityTest`, and `ItemAirUsePropertiesTest`.

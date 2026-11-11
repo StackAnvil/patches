@@ -1,4 +1,4 @@
-From 9ed95587aef962a8d7d27128e47f284aba734454 Mon Sep 17 00:00:00 2001
+From f7af4a013b0d8c3a2c15e0fc348197a41d3bb5c5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(ui): render authored Bedrock forms and NPC dialogs
@@ -179,6 +179,12 @@ Submit an untouched action-form text field as unset. Official 1.26.60.5
 sends [null] for a Wardrobe search that never gained focus and [""] after
 focus alone or a cleared field. The form keeps a field unset until it gains
 focus or text and sends a text_set flag per value with the strings.
+
+Rebuild separately negotiated action-form programs on the owning client thread.
+Retain original response ordinals and text inputs without putting the expanded
+scene through another 1 MiB envelope. Reject non-action programs and request
+ordinary current-form controls if local resolution fails. Stale listener work
+remains inert across reconfiguration.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   4 +
  .../screen/form/BedrockActionFormText.java    | 101 ++++++
@@ -186,9 +192,10 @@ focus or text and sends a text_set flag per value with the strings.
  .../form/BedrockFallbackFormScreen.java       | 119 +++++++
  .../screen/form/BedrockFormController.java    | 122 +++++++
  .../bedrock/screen/form/BedrockFormScene.java |  84 +++++
- .../screen/form/BedrockNativeForms.java       |  90 +++++
+ .../screen/form/BedrockNativeForms.java       | 124 +++++++
  .../screen/form/NativeCustomFormPayload.java  |  25 ++
  .../screen/form/NativeFormPayload.java        |  24 ++
+ .../screen/form/NativeProgramFormPayload.java |  25 ++
  .../bedrock/screen/npc/BedrockNativeNpcs.java |  89 +++++
  .../screen/npc/BedrockNpcController.java      | 167 ++++++++++
  .../screen/npc/BedrockNpcConversation.java    |  53 +++
@@ -200,10 +207,10 @@ focus or text and sends a text_set flag per value with the strings.
  .../BedrockCustomFormInteractionTest.java     | 219 ++++++++++++
  .../screen/form/BedrockFormSceneTest.java     | 124 +++++++
  .../BedrockNativeFormWidgetIdentityTest.java  | 138 ++++++++
- .../screen/form/BedrockNativeFormsTest.java   |  69 ++++
+ .../screen/form/BedrockNativeFormsTest.java   | 109 ++++++
  .../screen/npc/BedrockNativeNpcsTest.java     | 313 ++++++++++++++++++
  .../npc/BedrockNpcConversationTest.java       | 106 ++++++
- 23 files changed, 2451 insertions(+)
+ 24 files changed, 2550 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormText.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockCustomFormState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFallbackFormScreen.java
@@ -212,6 +219,7 @@ focus or text and sends a text_set flag per value with the strings.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeCustomFormPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeFormPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeProgramFormPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNativeNpcs.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNpcController.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/npc/BedrockNpcConversation.java
@@ -868,10 +876,10 @@ index 0000000..26dd934
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
 new file mode 100644
-index 0000000..a0baf43
+index 0000000..0b2cad8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,124 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -891,6 +899,8 @@ index 0000000..a0baf43
 +import net.minecraft.network.protocol.common.ServerboundCustomClickActionPacket;
 +import net.minecraft.resources.Identifier;
 +import net.raphimc.viabedrock.api.model.NativeFormMessage;
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
++import com.viaversion.viaversion.libs.gson.JsonParser;
 +
 +public final class BedrockNativeForms {
 +    private BedrockNativeForms() {}
@@ -898,11 +908,43 @@ index 0000000..a0baf43
 +    public static void register() {
 +        PayloadTypeRegistry.clientboundPlay().register(NativeFormPayload.TYPE, NativeFormPayload.CODEC);
 +        PayloadTypeRegistry.clientboundPlay().register(NativeCustomFormPayload.TYPE, NativeCustomFormPayload.CODEC);
++        PayloadTypeRegistry.clientboundPlay().register(NativeProgramFormPayload.TYPE, NativeProgramFormPayload.CODEC);
 +        ClientPlayConnectionEvents.INIT.register((listener, client) -> {
 +            ClientPlayNetworking.registerReceiver(NativeFormPayload.TYPE,
 +                (payload, context) -> accept(listener, payload.message()));
++            ClientPlayNetworking.registerReceiver(NativeProgramFormPayload.TYPE,
++                (payload, context) -> acceptProgram(listener, payload.message()));
 +            ClientPlayNetworking.registerReceiver(NativeCustomFormPayload.TYPE,
 +                (payload, context) -> acceptCustom(listener, payload.message()));
++        });
++    }
++
++    static String expandProgram(final String source) {
++        final var message = JsonParser.parseString(source).getAsJsonObject();
++        if (message.get("format").getAsBigDecimal().intValueExact() != 3)
++            throw new IllegalArgumentException("Unsupported action form program");
++        final var program = message.getAsJsonObject("program");
++        final var form = program.getAsJsonObject("form");
++        if (!"form".equals(form.get("type").getAsString()))
++            throw new IllegalArgumentException("Not an action form program");
++        final var scene = ServerFormUi.fromProgram(program).resolve(form);
++        if (scene == null) throw new IllegalArgumentException("Unsupported action form program");
++        return scene.toString();
++    }
++
++    static void acceptProgram(final ClientPacketListener owner, final NativeFormMessage message) {
++        final Minecraft client = Minecraft.getInstance();
++        client.execute(() -> {
++            if (!current(owner)) return;
++            try {
++                // Expanded scenes are local data, not another network message with the 1 MiB wire bound.
++                final String scene = expandProgram(message.scene());
++                client.setScreenAndShow(new NativeUiSceneScreen(new BedrockFormController(owner, message.formId(),
++                    BedrockFormScene.parse(scene), null, BedrockActionFormText.parse(scene))));
++            } catch (final RuntimeException error) {
++                ViaFabricPlusBedrock.impl().logger().warn("Could not render native action form program; requesting its ordinary controls", error);
++                fallback(owner, message.formId());
++            }
 +        });
 +    }
 +
@@ -1020,6 +1062,37 @@ index 0000000..c59ab7c
 +
 +    @Override
 +    public Type<NativeFormPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeProgramFormPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeProgramFormPayload.java
+new file mode 100644
+index 0000000..90f30c7
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeProgramFormPayload.java
+@@ -0,0 +1,25 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeFormMessage;
++
++/** Separately negotiated action forms rebuilt from a bounded UI program. */
++public record NativeProgramFormPayload(NativeFormMessage message) implements CustomPacketPayload {
++    public static final Type<NativeProgramFormPayload> TYPE = new Type<>(Identifier.parse(NativeFormMessage.PROGRAM_CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeProgramFormPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> NativeFormMessage.TYPE.write(buffer, payload.message),
++        buffer -> new NativeProgramFormPayload(NativeFormMessage.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeProgramFormPayload> type() {
 +        return TYPE;
 +    }
 +}
@@ -2326,10 +2399,10 @@ index 0000000..35b530a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormsTest.java
 new file mode 100644
-index 0000000..12c6673
+index 0000000..d65d03d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormsTest.java
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,109 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2343,6 +2416,12 @@ index 0000000..12c6673
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen;
 +
 +import java.util.ArrayDeque;
++import java.util.List;
++import java.util.Map;
++import java.nio.charset.StandardCharsets;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
 +
 +import net.minecraft.SharedConstants;
 +import net.minecraft.client.Minecraft;
@@ -2356,6 +2435,39 @@ index 0000000..12c6673
 +import org.mockito.ArgumentCaptor;
 +
 +final class BedrockNativeFormsTest {
++    @Test
++    void retainedActionProgramsRebuildTheSameButtonAndRejectNonActionForms() {
++        final String ui = """
++                {"namespace":"server_form","third_party_server_screen":{"$screen_content":"server_form.main_screen_content"},
++                 "main_screen_content":{"type":"grid","collection_name":"form_buttons","grid_item_template":"server_form.row"},
++                 "row":{"type":"button","size":[100,20],"$pressed_button_name":"button.form_button_click","controls":[
++                   {"caption":{"type":"label","text":"#form_button_text"}},
++                   {"decoration":{"type":"label","visible":false,"text":"DECORATION"}}]}}
++                """.replace("DECORATION", "x".repeat(8192));
++        final var form = JsonParser.parseString("""
++                {"type":"form","title":"Results","content":"","elements":[]}
++                """).getAsJsonObject();
++        for (int index = 0; index < 160; index++) {
++            final var button = new JsonObject();
++            button.addProperty("type", "button");
++            button.addProperty("text", "Choice " + index);
++            form.getAsJsonArray("elements").add(button);
++        }
++        final var resolver = new ServerFormUi(List.of(Map.of(
++            "ui/server_form.json", ui.getBytes(StandardCharsets.UTF_8))));
++        final var scene = resolver.resolve(form);
++        assertNotNull(scene);
++        final var message = new NativeFormMessage(7, ServerFormUi.transport(scene));
++        final String expanded = BedrockNativeForms.expandProgram(message.scene());
++        final var rebuilt = BedrockFormScene.parse(expanded);
++        assertEquals(159, rebuilt.root().children().get(159).action());
++        assertEquals("Choice 159", rebuilt.fallback().buttons().getLast().caption());
++        assertThrows(IllegalArgumentException.class, () -> new NativeFormMessage(7, expanded));
++        final var invalid = JsonParser.parseString(message.scene()).getAsJsonObject();
++        invalid.getAsJsonObject("program").getAsJsonObject("form").addProperty("type", "custom_form");
++        assertThrows(IllegalArgumentException.class, () -> BedrockNativeForms.expandProgram(invalid.toString()));
++    }
++
 +    @Test
 +    void reconfigurationDropsQueuedFormsAndResponsesOnTheSameConnectedTransport() {
 +        SharedConstants.tryDetectVersion();
@@ -2382,6 +2494,7 @@ index 0000000..12c6673
 +            clearInvocations(game);
 +            BedrockNativeForms.accept(oldSession, message);
 +            BedrockNativeForms.acceptCustom(oldSession, new NativeFormMessage(7, "{}"));
++            BedrockNativeForms.acceptProgram(oldSession, new NativeFormMessage(7, "{}"));
 +            when(game.getConnection()).thenReturn(newSession);
 +            while (!queue.isEmpty()) queue.removeFirst().run();
 +            verify(game, never()).setScreenAndShow(any());

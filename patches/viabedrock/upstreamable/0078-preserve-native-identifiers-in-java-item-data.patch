@@ -1,4 +1,4 @@
-From 402d9b83e604184cd66670a78e0c739ef3afcd25 Mon Sep 17 00:00:00 2001
+From 1852cfe3439167a7af1ba3efb8800101296e44cc Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(items): preserve native item context in Java data
@@ -92,23 +92,32 @@ name at14474b0d6 and invokes that constructor at14474b0f1. A captured
 protocol2225 registry supplies version None and no throwable component for
 Snowball, unlike Wind Charge. Keep this built-in default separate from
 generic data-driven replacement of the same name.
+
+Carry an independent release-on-stop flag for installed minecraft:shooter
+components. In a 1.26.60.5/protocol 2225 live control, a 160 ms Repeater
+press consumes one round natively but drains the translated magazine
+after mouse-up without an ItemRelease transaction. The Java carrier does
+not enter active use. Preserve shooter ownership across omitted component
+updates, independently of retained-air predicates and Java item classes.
+Replace stale flags when mapping another stack; absent metadata leaves
+older clients unchanged.
 ---
  .../api/model/NativeItemListTypes.java        | 131 ++++++++++++
  .../api/model/NativeItemStackData.java        | 110 ++++++++++
  .../protocol/model/BedrockItem.java           |  19 +-
- .../protocol/model/ItemAirUseProperties.java  |  52 +++++
+ .../protocol/model/ItemAirUseProperties.java  |  57 +++++
  .../protocol/model/ItemAnimationData.java     |  88 ++++++++
  .../protocol/model/ItemUseDuration.java       |  25 +++
- .../protocol/rewriter/ItemDataRewriter.java   |  33 +++
- .../protocol/rewriter/ItemRewriter.java       |  23 +-
+ .../protocol/rewriter/ItemDataRewriter.java   |  40 ++++
+ .../protocol/rewriter/ItemRewriter.java       |  24 ++-
  .../protocol/types/item/BedrockItemType.java  |   2 +-
  .../item/NetworkItemStackDescriptorType.java  |   2 +-
  .../api/model/NativeItemStackDataTest.java    | 197 ++++++++++++++++++
- .../model/ItemAirUsePropertiesTest.java       |  34 +++
+ .../model/ItemAirUsePropertiesTest.java       |  49 +++++
  .../protocol/model/ItemAnimationDataTest.java |  90 ++++++++
  .../protocol/model/ItemUseDurationTest.java   |  82 ++++++++
- .../protocol/rewriter/ItemIdentityTest.java   |  69 ++++++
- 15 files changed, 945 insertions(+), 12 deletions(-)
+ .../protocol/rewriter/ItemIdentityTest.java   |  71 +++++++
+ 15 files changed, 975 insertions(+), 12 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemListTypes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemAirUseProperties.java
@@ -438,10 +447,10 @@ index 77d33f59..64ceb8da 100644
      @Override
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAirUseProperties.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAirUseProperties.java
 new file mode 100644
-index 00000000..45d70afc
+index 00000000..0720f7ef
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAirUseProperties.java
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,57 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -455,12 +464,16 @@ index 00000000..45d70afc
 +import java.util.Set;
 +
 +/** Native item predicates that retain air-only input after an admitted use. */
-+public record ItemAirUseProperties(boolean throwableItem, boolean useableItem) {
++public record ItemAirUseProperties(boolean throwableItem, boolean useableItem, boolean releaseOnStop) {
 +
 +    public static final ItemAirUseProperties NONE = new ItemAirUseProperties(false, false);
 +    private static final Set<String> LEGACY_THROWABLES = Set.of(
 +            "minecraft:egg", "minecraft:ender_pearl", "minecraft:ender_eye", "minecraft:experience_bottle",
 +            "minecraft:trident", "minecraft:splash_potion", "minecraft:lingering_potion");
++
++    public ItemAirUseProperties(final boolean throwableItem, final boolean useableItem) {
++        this(throwableItem, useableItem, false);
++    }
 +
 +    public static ItemAirUseProperties legacyConstructor(final String identifier) {
 +        return LEGACY_THROWABLES.contains(identifier) ? new ItemAirUseProperties(true, false) : NONE;
@@ -486,7 +499,8 @@ index 00000000..45d70afc
 +            return this;
 +        }
 +        return new ItemAirUseProperties(this.throwableItem || components.get("minecraft:throwable") instanceof CompoundTag,
-+                this.useableItem || components.get("minecraft:legacy_trigger_on_use") instanceof CompoundTag);
++                this.useableItem || components.get("minecraft:legacy_trigger_on_use") instanceof CompoundTag,
++                this.releaseOnStop || components.get("minecraft:shooter") instanceof CompoundTag);
 +    }
 +
 +    public boolean retainsAirUse() {
@@ -620,7 +634,7 @@ index 00000000..060368e6
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-index 4fbf0a35..c9c0893c 100644
+index 4fbf0a35..ec00b107 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 @@ -47,6 +47,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type
@@ -632,7 +646,7 @@ index 4fbf0a35..c9c0893c 100644
  
  import java.util.ArrayList;
  import java.util.HashMap;
-@@ -58,6 +60,12 @@ import java.util.logging.Level;
+@@ -58,6 +60,13 @@ import java.util.logging.Level;
  
  public final class ItemDataRewriter {
  
@@ -641,11 +655,12 @@ index 4fbf0a35..c9c0893c 100644
 +    public static final String BEDROCK_ANIMATION_TAG = "viabedrock:item_animation";
 +    public static final String BEDROCK_USE_DURATION_TAG = "viabedrock:item_use_duration";
 +    public static final String BEDROCK_AIR_USE_TAG = "viabedrock:item_air_use";
++    public static final String BEDROCK_USE_RELEASE_TAG = "viabedrock:item_use_release";
 +
      private static final Set<String> DYED_LEATHER_ARMOR_ITEMS = Set.of(
              "minecraft:leather_helmet", "minecraft:leather_chestplate",
              "minecraft:leather_leggings", "minecraft:leather_boots");
-@@ -332,6 +340,31 @@ public final class ItemDataRewriter {
+@@ -332,6 +341,37 @@ public final class ItemDataRewriter {
          }
      }
  
@@ -656,9 +671,15 @@ index 4fbf0a35..c9c0893c 100644
 +
 +    static CompoundTag withBedrockItemData(final CompoundTag javaData, final String identifier, final ItemAnimationData animation,
 +                                         final NativeItemStackData nativeStack, final boolean retainsAirUse) {
++        return withBedrockItemData(javaData, identifier, animation, nativeStack, retainsAirUse, false);
++    }
++
++    static CompoundTag withBedrockItemData(final CompoundTag javaData, final String identifier, final ItemAnimationData animation,
++                                         final NativeItemStackData nativeStack, final boolean retainsAirUse, final boolean releaseOnStop) {
 +        final CompoundTag data = javaData == null ? new CompoundTag() : javaData.copy();
 +        data.putString(BEDROCK_IDENTIFIER_TAG, identifier);
 +        data.putBoolean(BEDROCK_AIR_USE_TAG, retainsAirUse);
++        data.putBoolean(BEDROCK_USE_RELEASE_TAG, releaseOnStop);
 +        data.put(BEDROCK_STACK_TAG, nativeStack.toTag());
 +        if (animation.useDurationTicks() != null) {
 +            data.putInt(BEDROCK_USE_DURATION_TAG, animation.useDurationTicks());
@@ -678,7 +699,7 @@ index 4fbf0a35..c9c0893c 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 9010fec4..2e530ec9 100644
+index 9010fec4..cd50e973 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -39,6 +39,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSet;
@@ -744,14 +765,15 @@ index 9010fec4..2e530ec9 100644
          } else {
              final int meta = bedrockItem.data() & 0xFFFF;
              final String newIdentifier = BedrockProtocol.MAPPINGS.getBedrockItemUpgrader().upgradeMetaItem(identifier, meta);
-@@ -254,6 +267,10 @@ public class ItemRewriter extends StoredObject {
+@@ -254,6 +267,11 @@ public class ItemRewriter extends StoredObject {
          }
  
          CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
 +        javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA,
 +                ItemDataRewriter.withBedrockItemData(javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA),
 +                        identifier, this.animationData.getOrDefault(identifier, ItemAnimationData.EMPTY), nativeStack,
-+                        this.airUseProperties.getOrDefault(identifier, ItemAirUseProperties.NONE).retainsAirUse()));
++                        this.airUseProperties.getOrDefault(identifier, ItemAirUseProperties.NONE).retainsAirUse(),
++                        this.airUseProperties.getOrDefault(identifier, ItemAirUseProperties.NONE).releaseOnStop()));
          return javaItem;
      }
  
@@ -986,10 +1008,10 @@ index 00000000..48d0e424
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemAirUsePropertiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemAirUsePropertiesTest.java
 new file mode 100644
-index 00000000..fccf55b2
+index 00000000..404a0db7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemAirUsePropertiesTest.java
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,49 @@
 +package net.raphimc.viabedrock.protocol.model;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
@@ -1021,6 +1043,21 @@ index 00000000..fccf55b2
 +        final CompoundTag trigger = new CompoundTag();
 +        trigger.put("minecraft:legacy_trigger_on_use", new CompoundTag());
 +        assertTrue(ItemAirUseProperties.NONE.withComponentData(trigger, true).retainsAirUse());
++    }
++
++    @Test
++    void shooterReleaseSurvivesOmittedUpdatesWithoutRetainingAirRepeats() {
++        final CompoundTag shooter = new CompoundTag();
++        shooter.put("minecraft:shooter", new CompoundTag());
++        final var properties = ItemAirUseProperties.NONE.withComponentData(shooter, true);
++        assertTrue(properties.releaseOnStop());
++        assertTrue(properties.withComponentData(new CompoundTag(), true).releaseOnStop());
++        assertFalse(properties.retainsAirUse());
++        assertFalse(ItemAirUseProperties.NONE.withComponentData(shooter, false).releaseOnStop());
++        final CompoundTag projectile = new CompoundTag();
++        projectile.put("minecraft:projectile", new CompoundTag());
++        assertFalse(ItemAirUseProperties.NONE.withComponentData(projectile, true).releaseOnStop());
++        assertFalse(ItemAirUseProperties.legacyConstructor("minecraft:ender_pearl").releaseOnStop());
 +    }
 +
 +}
@@ -1210,10 +1247,10 @@ index 00000000..8390e3fe
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
 new file mode 100644
-index 00000000..adbffe8e
+index 00000000..aa3bcdd1
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,71 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1263,10 +1300,12 @@ index 00000000..adbffe8e
 +    @Test
 +    void replacesAirContinuationMetadataWithoutMutatingThePreviousStack() {
 +        final CompoundTag projectile = ItemDataRewriter.withBedrockItemData(null, "probe:shared_carrier",
-+                ItemAnimationData.EMPTY, STACK, true);
++                ItemAnimationData.EMPTY, STACK, true, true);
 +        final CompoundTag ordinary = ItemDataRewriter.withBedrockItemData(projectile, "probe:shared_carrier",
 +                ItemAnimationData.EMPTY, STACK, false);
 +        assertTrue(projectile.getBoolean(ItemDataRewriter.BEDROCK_AIR_USE_TAG));
++        assertTrue(projectile.getBoolean(ItemDataRewriter.BEDROCK_USE_RELEASE_TAG));
++        assertFalse(ordinary.getBoolean(ItemDataRewriter.BEDROCK_USE_RELEASE_TAG));
 +        assertFalse(ordinary.getBoolean(ItemDataRewriter.BEDROCK_AIR_USE_TAG));
 +        assertTrue(ordinary.contains(ItemDataRewriter.BEDROCK_AIR_USE_TAG));
 +    }
