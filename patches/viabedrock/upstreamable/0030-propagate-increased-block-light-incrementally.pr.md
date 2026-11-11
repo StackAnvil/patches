@@ -83,3 +83,9 @@ CubeConverter passes 18 tests and ViaProxy passes four tests.
 The standalone cache patch passes 45 tests and both Checkstyle tasks.
 TypeScript checking and patch whitespace checks also pass.
 These results establish stack replay and test behavior. Live server frame-time profiling remains separate.
+
+Native barrier and invisible-bedrock states now transmit light independently of their opaque Java carrier. The client-request placeholder shares that carrier but remains opaque. Light snapshots and incremental change detection retain the distinction without changing rendering, collision, custom block carriers or redstone conductivity. Secondary water retains its own filtering.
+
+An isolated official BDS 1.26.60.6 control (build 52886190) measured sealed shafts and glowstone tunnels at clear noon. Barriers, two barrier layers and invisible bedrock passed skylight 15; the placeholder and stone blocked it. Barrier and invisible-bedrock tunnel cells read block light 14 then 13. The regression exercises native palettes through the production snapshot and propagation paths, preserves the render carrier and detects barrier/placeholder transitions. These numerical server measurements do not establish official-client visual parity.
+
+Validation: the full dependency build passes with 2,519 core tests and 1,720 add-on tests, no failures, plus Checkstyle. The 111-patch stack replays to the tested source tree. The selector is verified live with original response indices; the recorded Fate/Mace arena now has a lit floor and skylight 15 below its double barrier roof. A fresh live arena match and official-client visual parity were not established.

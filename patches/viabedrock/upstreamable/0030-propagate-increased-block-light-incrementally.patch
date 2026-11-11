@@ -1,4 +1,4 @@
-From 7f2fd1be585c56cea33d1fa7bdfc36c1af41752a Mon Sep 17 00:00:00 2001
+From c3bf2aba05584dc7b65b9bcd00392bb5dc338c12 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] perf(lighting): propagate increased block light incrementally
@@ -59,15 +59,17 @@ Keep uniform lighting snapshots as one state instead of 4,096 integers. Reuse th
 Map Java states and secondary water flags once per palette entry. Reuse indexed values while building section snapshots and resolving block entity tags. Preserve palette coordinate order and uniform-section compaction. Tests cover secondary water positions and palette-sized classification work.
 
 Co-authored-by: Miles Tech Studios <291174896+milesalexg-tech@users.noreply.github.com>
+
+Preserve native barrier and invisible-bedrock light transmission independently of their opaque Java carrier. Official BDS 1.26.60.6 (build 52886190) sealed shafts transmit skylight 15 through both blocks, including two barrier layers, and sealed glowstone tunnels transmit block light 14 then 13. The client request placeholder maps to the same Java barrier but blocks both light types. Use light-only states in snapshots and incremental change detection so carrier rendering, collision, redstone behavior and custom blocks remain unchanged. Native secondary water still supplies its own filter.
 ---
- .../api/chunk/light/LightEngine.java          | 228 ++++++++++--
+ .../api/chunk/light/LightEngine.java          | 228 +++++++++--
  .../protocol/data/BedrockMappingData.java     |  32 +-
- .../protocol/storage/ChunkTracker.java        | 332 +++++++++++++++---
+ .../protocol/storage/ChunkTracker.java        | 354 +++++++++++++++---
  .../api/chunk/light/LightEngineTest.java      | 211 +++++++++++
  .../protocol/data/BlockLightEmissionTest.java |  91 +++++
  .../data/BlockLightFilteringTest.java         |  97 +++++
- .../protocol/storage/ChunkTrackerTest.java    | 168 +++++++++
- 7 files changed, 1071 insertions(+), 88 deletions(-)
+ .../protocol/storage/ChunkTrackerTest.java    | 234 ++++++++++++
+ 7 files changed, 1156 insertions(+), 91 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightEmissionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
@@ -478,7 +480,7 @@ index 1dc13113..a7f4d1c6 100644
              return Integer.parseInt(blockState.properties().getOrDefault(property, String.valueOf(fallback)));
          } catch (final NumberFormatException e) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index 5c7f11dc..a59c1b55 100644
+index 5c7f11dc..a925de85 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -67,12 +67,17 @@ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
@@ -528,18 +530,41 @@ index 5c7f11dc..a59c1b55 100644
          this.chunkLight.remove(chunkKey);
          this.lightDirtyChunks.remove(chunkKey);
          this.lightVersions.remove(chunkKey);
-@@ -488,8 +498,10 @@ public class ChunkTracker extends StoredObject {
+@@ -315,6 +325,22 @@ public class ChunkTracker extends StoredObject {
+         return remappedBlockState;
+     }
+ 
++    int getLightBlockState(final BedrockChunkSection section, final int x, final int y, final int z) {
++        final int nativeState = section.palettes(PaletteType.BLOCKS).get(0).idAt(x, y, z);
++        return this.lightBlockState(nativeState, this.getJavaBlockState(section, x, y, z));
++    }
++
++    private int lightBlockState(final int nativeState, final int javaState) {
++        final BlockState state = this.user().get(BlockStateRewriter.class).blockState(nativeState);
++        // These native blocks transmit light, but share an opaque Java carrier with the
++        // client request placeholder. Substitute only in light snapshots, never render states.
++        if (state != null && (state.namespacedIdentifier().equals("minecraft:barrier")
++                || state.namespacedIdentifier().equals("minecraft:invisible_bedrock"))) {
++            return ProtocolConstants.JAVA_AIR_ID;
++        }
++        return javaState;
++    }
++
+     public BedrockBlockEntity getBlockEntity(final BlockPosition blockPosition) {
+         final BedrockChunk chunk = this.getChunk(blockPosition.x() >> 4, blockPosition.z() >> 4);
+         if (chunk == null) {
+@@ -488,8 +514,10 @@ public class ChunkTracker extends StoredObject {
          }
          final DataPalette palette = section.palettes(PaletteType.BLOCKS).get(layer);
          final int prevBlockState = palette.idAt(sectionX, sectionY, sectionZ);
-+        final int previousJavaState = this.getJavaBlockState(section, sectionX, sectionY, sectionZ);
++        final int previousJavaState = this.getLightBlockState(section, sectionX, sectionY, sectionZ);
          final String prevTag = blockStateRewriter.tag(prevBlockState);
          palette.setIdAt(sectionX, sectionY, sectionZ, blockState);
-+        final int currentJavaState = this.getJavaBlockState(section, sectionX, sectionY, sectionZ);
++        final int currentJavaState = this.getLightBlockState(section, sectionX, sectionY, sectionZ);
          final String tag = blockStateRewriter.tag(blockState);
  
          int remappedBlockState = this.getJavaBlockState(blockPosition);
-@@ -503,14 +515,14 @@ public class ChunkTracker extends StoredObject {
+@@ -503,14 +531,14 @@ public class ChunkTracker extends StoredObject {
                  this.sendNativeBlocks(new NativeBlockIdentifiers.Update(this.dimension.ordinal(), blockPosition, layer, blockState));
              }
              this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
@@ -561,7 +586,7 @@ index 5c7f11dc..a59c1b55 100644
  
              if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
                  entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
-@@ -536,6 +548,87 @@ public class ChunkTracker extends StoredObject {
+@@ -536,6 +564,87 @@ public class ChunkTracker extends StoredObject {
          return new IntObjectImmutablePair<>(remappedBlockState, null);
      }
  
@@ -649,7 +674,7 @@ index 5c7f11dc..a59c1b55 100644
      public BedrockChunkSection handleBlockPalette(final BedrockChunkSection section) {
          this.replaceLegacyBlocks(section);
          this.resolvePersistentIds(section);
-@@ -817,17 +910,21 @@ public class ChunkTracker extends StoredObject {
+@@ -817,17 +926,21 @@ public class ChunkTracker extends StoredObject {
  
      private ChunkLight computeChunkLight(final int chunkX, final int chunkZ) {
          final int[][][] regionStates = new int[9][][];
@@ -675,7 +700,7 @@ index 5c7f11dc..a59c1b55 100644
          for (int dz = -1; dz <= 1; dz++) {
              for (int dx = -1; dx <= 1; dx++) {
                  final BedrockChunk neighbor = this.chunks.get(ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz));
-@@ -837,9 +934,10 @@ public class ChunkTracker extends StoredObject {
+@@ -837,9 +950,10 @@ public class ChunkTracker extends StoredObject {
  
                  final int chunkIndex = (dz + 1) * 3 + (dx + 1);
                  regionStates[chunkIndex] = this.snapshotChunkStates(neighbor);
@@ -687,7 +712,7 @@ index 5c7f11dc..a59c1b55 100644
      }
  
      private int[][] snapshotChunkStates(final BedrockChunk chunk) {
-@@ -850,27 +948,53 @@ public class ChunkTracker extends StoredObject {
+@@ -850,27 +964,53 @@ public class ChunkTracker extends StoredObject {
          return states.clone();
      }
  
@@ -758,7 +783,7 @@ index 5c7f11dc..a59c1b55 100644
                  this.pendingLightComputations.remove(chunkKey);
                  if (!this.user().getChannel().isActive()) {
                      return;
-@@ -900,7 +1024,6 @@ public class ChunkTracker extends StoredObject {
+@@ -900,7 +1040,6 @@ public class ChunkTracker extends StoredObject {
                  this.writeLightData(lightUpdate, lightData);
                  lightUpdate.send(BedrockProtocol.class);
              });
@@ -766,15 +791,18 @@ index 5c7f11dc..a59c1b55 100644
      }
  
      private int[][] getJavaBlockStates(final BedrockChunk chunk) {
-@@ -918,13 +1041,12 @@ public class ChunkTracker extends StoredObject {
+@@ -917,14 +1056,13 @@ public class ChunkTracker extends StoredObject {
+     }
  
      /**
-      * Converts the bedrock block states of a chunk section into java block states, indexed with
+-     * Converts the bedrock block states of a chunk section into java block states, indexed with
 -     * {@code y * 256 | z * 16 | x}.
++     * Converts a section into light-only Java states, preserving native filtering, indexed with
 +     * {@code y * 256 | z * 16 | x}. Uniform sections retain only their one state.
       */
-     private int[] buildJavaBlockStates(final BedrockChunkSection section) {
+-    private int[] buildJavaBlockStates(final BedrockChunkSection section) {
 -        final int[] states = new int[ChunkSection.SIZE];
++    int[] buildJavaBlockStates(final BedrockChunkSection section) {
          final List<DataPalette> blockPalettes = section.palettes(PaletteType.BLOCKS);
          if (blockPalettes.isEmpty()) {
 -            return states; // All air
@@ -782,18 +810,21 @@ index 5c7f11dc..a59c1b55 100644
          }
  
          final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
-@@ -934,6 +1056,10 @@ public class ChunkTracker extends StoredObject {
+@@ -932,8 +1070,12 @@ public class ChunkTracker extends StoredObject {
+         final int[] entryJavaIds = new int[layer0.size()];
+         for (int i = 0; i < entryJavaIds.length; i++) {
              final int javaId = blockStateRewriter.javaId(layer0.idByIndex(i));
-             entryJavaIds[i] = javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID;
-         }
+-            entryJavaIds[i] = javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID;
++            entryJavaIds[i] = this.lightBlockState(layer0.idByIndex(i), javaId != -1 ? javaId : ProtocolConstants.JAVA_AIR_ID);
++        }
 +        if (layer0.size() == 1 && blockPalettes.size() == 1) {
 +            return entryJavaIds;
-+        }
+         }
 +        final int[] states = new int[ChunkSection.SIZE];
          if (layer0.size() == 1) {
              if (entryJavaIds[0] != ProtocolConstants.JAVA_AIR_ID) {
                  Arrays.fill(states, entryJavaIds[0]);
-@@ -947,7 +1073,37 @@ public class ChunkTracker extends StoredObject {
+@@ -947,7 +1089,37 @@ public class ChunkTracker extends StoredObject {
                  }
              }
          }
@@ -832,7 +863,7 @@ index 5c7f11dc..a59c1b55 100644
      }
  
      private void invalidateJavaBlockStates(final int chunkX, final int subChunkY, final int chunkZ) {
-@@ -959,6 +1115,10 @@ public class ChunkTracker extends StoredObject {
+@@ -959,6 +1131,10 @@ public class ChunkTracker extends StoredObject {
          final int sectionIndex = subChunkY + Math.abs(this.minY >> 4);
          if (sectionIndex >= 0 && sectionIndex < chunkStates.length) {
              chunkStates[sectionIndex] = null;
@@ -843,7 +874,7 @@ index 5c7f11dc..a59c1b55 100644
          }
      }
  
-@@ -1043,23 +1203,50 @@ public class ChunkTracker extends StoredObject {
+@@ -1043,21 +1219,48 @@ public class ChunkTracker extends StoredObject {
              this.sendChunk(chunkPos.chunkX(), chunkPos.chunkZ());
          }
  
@@ -876,10 +907,10 @@ index 5c7f11dc..a59c1b55 100644
 +                this.pendingLightComputations.remove(chunkKey);
 +                task.close();
 +                throw failure;
-             }
-         }
-     }
- 
++            }
++        }
++    }
++
 +    static OptionalLong takeLightUpdate(final LongSet dirty, final LongSet pending, final LongPredicate loaded) {
 +        final var iterator = dirty.iterator();
 +        while (iterator.hasNext()) {
@@ -887,7 +918,7 @@ index 5c7f11dc..a59c1b55 100644
 +            if (!loaded.test(key)) {
 +                iterator.remove();
 +                continue;
-+            }
+             }
 +            // An older job can finish after column replacement and discard its snapshot.
 +            // Keep the newer column's refresh queued until that worker releases this key.
 +            if (pending.contains(key)) {
@@ -895,14 +926,12 @@ index 5c7f11dc..a59c1b55 100644
 +            }
 +            iterator.remove();
 +            return OptionalLong.of(key);
-+        }
+         }
 +        return OptionalLong.empty();
-+    }
-+
+     }
+ 
      private long distanceToCenterSquared(final int chunkX, final int chunkZ) {
-         final long dx = (long) chunkX - this.centerX;
-         final long dz = (long) chunkZ - this.centerZ;
-@@ -1361,6 +1548,63 @@ public class ChunkTracker extends StoredObject {
+@@ -1361,6 +1564,63 @@ public class ChunkTracker extends StoredObject {
          }
      }
  
@@ -1384,14 +1413,18 @@ index 00000000..147e776c
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-index 130e48f5..17bc55d4 100644
+index 130e48f5..97b135b1 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-@@ -9,17 +9,139 @@
+@@ -9,17 +9,205 @@
   */
  package net.raphimc.viabedrock.protocol.storage;
  
++import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.api.chunk.light.ChunkLight;
++import net.raphimc.viabedrock.api.chunk.light.LightEngine;
++import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
  import com.viaversion.viaversion.api.minecraft.chunks.PaletteType;
 +import com.viaversion.viaversion.libs.fastutil.longs.LongLinkedOpenHashSet;
  import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
@@ -1399,6 +1432,7 @@ index 130e48f5..17bc55d4 100644
  import org.junit.jupiter.api.Test;
  
 +import java.util.ArrayDeque;
++import java.util.Arrays;
 +import java.util.Queue;
 +import java.util.concurrent.Executor;
 +import java.util.concurrent.RejectedExecutionException;
@@ -1413,9 +1447,70 @@ index 130e48f5..17bc55d4 100644
 +import static org.junit.jupiter.api.Assertions.assertNull;
 +import static org.junit.jupiter.api.Assertions.assertSame;
 +import static org.junit.jupiter.api.Assertions.assertThrows;
++
++import static org.mockito.Mockito.CALLS_REAL_METHODS;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
  
  class ChunkTrackerTest {
  
++    @Test
++    void nativeBarrierRoofsTransmitLightWithoutChangingTheirSharedOpaqueCarrier() {
++        final var user = mock(UserConnection.class);
++        final var rewriter = mock(BlockStateRewriter.class);
++        final var tracker = mock(ChunkTracker.class, CALLS_REAL_METHODS);
++        when(tracker.user()).thenReturn(user);
++        when(user.get(BlockStateRewriter.class)).thenReturn(rewriter);
++        when(rewriter.javaId(0)).thenReturn(0);
++        when(rewriter.javaId(1)).thenReturn(1);
++        when(rewriter.javaId(2)).thenReturn(1);
++        when(rewriter.javaId(3)).thenReturn(1);
++        when(rewriter.blockState(0)).thenReturn(BlockState.fromString("minecraft:air"));
++        when(rewriter.blockState(1)).thenReturn(BlockState.fromString("minecraft:barrier"));
++        when(rewriter.blockState(2)).thenReturn(BlockState.fromString("minecraft:invisible_bedrock"));
++        when(rewriter.blockState(3)).thenReturn(BlockState.fromString("minecraft:client_request_placeholder_block"));
++        final byte[] opacity = {0, 15, 0};
++        final byte[] emission = {0, 0, 15};
++        for (int nativeId = 1; nativeId <= 3; nativeId++) {
++            final var section = new BedrockChunkSectionImpl();
++            final var palette = new BedrockDataPalette();
++            palette.addId(0);
++            section.addPalette(PaletteType.BLOCKS, palette);
++            // A sealed shaft and tunnel exclude sideways light around the sampled roof.
++            for (int index = 0; index < 4096; index++) {
++                palette.setIdAt(index, 3);
++            }
++            for (int y = 1; y < 16; y++) {
++                palette.setIdAt(8, y, 8, 0);
++            }
++            palette.setIdAt(8, 12, 8, nativeId);
++            palette.setIdAt(7, 8, 4, nativeId);
++            palette.setIdAt(8, 8, 4, 0);
++            final int[] snapshot = tracker.buildJavaBlockStates(section);
++            final int[][][] region = new int[9][1][4096];
++            for (final int[][] chunk : region) {
++                Arrays.fill(chunk[0], 1);
++            }
++            region[4][0] = snapshot;
++            final var sky = LightEngine.computeCenterLight(region, 1, true, emission, opacity);
++            assertEquals(nativeId == 3 ? 0 : 15, lightAt(sky.skyLight(1), 8, 5, 8));
++            snapshot[(8 << 8) | (4 << 4) | 6] = 2;
++            final var block = LightEngine.computeCenterLight(region, 1, false, emission, opacity);
++            assertEquals(nativeId == 3 ? 0 : 14, lightAt(block.blockLight(1), 7, 8, 4));
++            assertEquals(nativeId == 3 ? 0 : 13, lightAt(block.blockLight(1), 8, 8, 4));
++            assertEquals(nativeId, palette.idAt(8, 12, 8));
++            assertEquals(1, tracker.getJavaBlockState(section, 8, 12, 8));
++            final int previous = tracker.getLightBlockState(section, 8, 12, 8);
++            palette.setIdAt(8, 12, 8, nativeId == 3 ? 1 : 3);
++            final int current = tracker.getLightBlockState(section, 8, 12, 8);
++            assertTrue(ChunkTracker.changesLight(previous, current, emission, opacity));
++        }
++    }
++
++    private static int lightAt(final byte[] data, final int x, final int y, final int z) {
++        return data == null ? 0 : (data[(y << 7) | (z << 3) | (x >> 1)] >>> ((x & 1) << 2)) & 15;
++    }
++
 +    @Test
 +    void slowResultDeliveryBoundsRetainedLightJobsAcrossRepeatedSubmissionBursts() {
 +        final Semaphore slots = new Semaphore(2);
@@ -1527,7 +1622,7 @@ index 130e48f5..17bc55d4 100644
      @Test
      void ignoresRepeatedSubChunkAfterApplyingPendingUpdates() {
          final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
-@@ -32,6 +154,35 @@ class ChunkTrackerTest {
+@@ -32,6 +220,35 @@ class ChunkTrackerTest {
          assertEquals(3, section.palette(PaletteType.BLOCKS).idAt(0));
      }
  
@@ -1563,7 +1658,7 @@ index 130e48f5..17bc55d4 100644
      private static BedrockChunkSectionImpl sectionWithBlock(final int blockId) {
          final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
          final BedrockDataPalette palette = new BedrockDataPalette();
-@@ -40,4 +191,21 @@ class ChunkTrackerTest {
+@@ -40,4 +257,21 @@ class ChunkTrackerTest {
          return section;
      }
  
