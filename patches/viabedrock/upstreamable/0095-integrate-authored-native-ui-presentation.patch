@@ -1,4 +1,4 @@
-From 16928c2bcffc696ba9c32592354d888328b72ba5 Mon Sep 17 00:00:00 2001
+From 44a80c9e39d6e353e7938aa1853e34f1b246cd86 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -911,6 +911,15 @@ HUD; timing and complete cross-pack appearance are not established.
 Retain current boss progress in authored HUD root snapshots and refresh the
 root on percent updates. Ordinary bars remain available where the accepted
 root does not render a replacement.
+
+The native HUD controller also publishes the current title strings to
+persistent HUD controls, not only to title factories. MegaSMP repeats a
+"%obj%Tutorial" title every second; its pack hides that text from
+hud_title_text and shows it in a small top objective panel. Supply the
+title and subtitle to the root HUD resolution and refresh the root after
+each title update. Repeated titles that leave the root scene unchanged send
+nothing. Keep the root's visibility_changed binding values in the title
+state, so the panel keeps its objective while unrelated titles arrive.
 ---
  Data Asset Sources.md                         |    33 +
  build.gradle                                  |     1 +
@@ -964,7 +973,7 @@ root does not render a replacement.
  .../protocol/model/NativeItemDefinitions.java |   309 +
  .../protocol/model/NativeItemName.java        |    78 +
  .../protocol/packet/ChatPackets.java          |    33 +-
- .../protocol/packet/HudPackets.java           |   228 +-
+ .../protocol/packet/HudPackets.java           |   235 +-
  .../protocol/packet/InteractionPackets.java   |     2 +-
  .../protocol/packet/InventoryPackets.java     |   720 +-
  .../protocol/packet/JoinPackets.java          |    14 +-
@@ -980,7 +989,7 @@ root does not render a replacement.
  .../storage/NativeHudActionbarState.java      |    37 +
  .../protocol/storage/NativeHudBossBars.java   |   139 +
  .../protocol/storage/NativeHudChatState.java  |    51 +
- .../protocol/storage/NativeHudTitleState.java |    81 +
+ .../protocol/storage/NativeHudTitleState.java |    97 +
  .../protocol/storage/ScoreboardTracker.java   |    16 +
  .../data/bedrock/block_name_keys.json         |  1386 ++
  .../viabedrock/data/bedrock/item_aliases.json |  1471 ++
@@ -1015,7 +1024,7 @@ root does not render a replacement.
  .../packet/ActionFormTextResponseTest.java    |    74 +
  .../packet/ModalFormTransitionTest.java       |   253 +
  .../NativeContainerOpeningPacketTest.java     |   486 +
- .../protocol/packet/NativeHudPacketTest.java  |   189 +
+ .../protocol/packet/NativeHudPacketTest.java  |   277 +
  .../packet/NpcDialoguePacketTest.java         |   301 +-
  .../packet/WrittenBookUsePacketTest.java      |     1 +
  .../storage/NativeContainerUiStateTest.java   |   139 +
@@ -1026,7 +1035,7 @@ root does not render a replacement.
  .../native-bundle-tooltip-layout.json         |   266 +
  .../inventory/native-bundle-transfers.json    |  1622 ++
  .../inventory/native-item-storage.json        |   568 +
- 114 files changed, 41864 insertions(+), 414 deletions(-)
+ 114 files changed, 41975 insertions(+), 414 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BuiltinBlockNames.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleTooltipData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleTooltipItems.java
@@ -5761,7 +5770,7 @@ index 76d32f5c..a3fb494d 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
-index 35ab3921..8173332b 100644
+index 35ab3921..ae1d6a43 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 @@ -22,18 +22,30 @@ import com.viaversion.viaversion.api.Via;
@@ -5809,7 +5818,7 @@ index 35ab3921..8173332b 100644
  public final class HudPackets {
  
      static void writeObjectivePresentation(final PacketWrapper wrapper, final String objectiveName,
-@@ -70,6 +75,114 @@ public final class HudPackets {
+@@ -70,6 +75,117 @@ public final class HudPackets {
          }
      }
  
@@ -5843,8 +5852,11 @@ index 35ab3921..8173332b 100644
 +        }
 +        final NativeHudBossBars bossBars = user.get(NativeHudBossBars.class);
 +        final var bars = bossBars == null ? List.<NativeHudBossBars.Bar>of() : bossBars.bars();
++        final NativeHudTitleState titles = user.get(NativeHudTitleState.class);
 +        final var root = new HudRootUi(bars.stream().map(NativeHudBossBars.Bar::name).toList(),
-+                bars.stream().map(NativeHudBossBars.Bar::progress).toList())
++                bars.stream().map(NativeHudBossBars.Bar::progress).toList(),
++                titles == null ? "" : titles.title(), titles == null ? "" : titles.subtitle(),
++                titles == null ? null : titles.rootBindings())
 +                .resolve(user.get(ResourcePackStorage.class).getJsonUiProgram());
 +        final String scene = root == null ? "" : root.toString();
 +        if (bossBars != null && !bossBars.retainRoot(scene) && onlyChanged) {
@@ -5924,7 +5936,7 @@ index 35ab3921..8173332b 100644
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_LIST, null, wrapper -> {
              final PlayerListStorage playerListStorage = wrapper.user().get(PlayerListStorage.class);
-@@ -209,6 +322,28 @@ public final class HudPackets {
+@@ -209,6 +325,32 @@ public final class HudPackets {
                      text = rootComponent.asString();
                  }
  
@@ -5938,6 +5950,10 @@ index 35ab3921..8173332b 100644
 +                    }
 +                    final var hud = actionbar ? wrapper.user().get(NativeHudActionbarState.class).update(type, text, resources)
 +                            : wrapper.user().get(NativeHudTitleState.class).update(type, text, fadeInTicks, stayTicks, fadeOutTicks, resources);
++                    if (!actionbar) {
++                        // Accepted packs can present prefixed titles in persistent root controls instead of the title factory.
++                        sendNativeRoot(wrapper.user(), true);
++                    }
 +                    if (hud != null) {
 +                        final PacketWrapper payload = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, wrapper.user());
 +                        payload.write(Types.STRING, nativeChannel);
@@ -5953,7 +5969,7 @@ index 35ab3921..8173332b 100644
                  switch (type) {
                      case Clear, Reset -> {
                          wrapper.setPacketType(ClientboundPackets26_3.CLEAR_TITLES);
-@@ -260,7 +395,11 @@ public final class HudPackets {
+@@ -260,7 +402,11 @@ public final class HudPackets {
              }
              wrapper.write(Types.STRING, objectiveName); // objective name
  
@@ -5965,7 +5981,7 @@ index 35ab3921..8173332b 100644
                  return;
              }
  
-@@ -281,6 +420,7 @@ public final class HudPackets {
+@@ -281,6 +427,7 @@ public final class HudPackets {
                      newObjective ? ObjectiveAction.ADD : ObjectiveAction.CHANGE,
                      title, displaySlot.equals("sidebar"));
              scoreboardObjective.send(BedrockProtocol.class);
@@ -5973,7 +5989,7 @@ index 35ab3921..8173332b 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_SCORE, null, wrapper -> {
              wrapper.cancel();
-@@ -343,6 +483,7 @@ public final class HudPackets {
+@@ -343,6 +490,7 @@ public final class HudPackets {
                      }
                  }
              }
@@ -5981,7 +5997,7 @@ index 35ab3921..8173332b 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_SCOREBOARD_IDENTITY, null, wrapper -> {
              wrapper.cancel();
-@@ -390,72 +531,89 @@ public final class HudPackets {
+@@ -390,72 +538,89 @@ public final class HudPackets {
                      default -> throw new IllegalStateException("Unhandled ScoreboardIdentityPacketType: " + action);
                  }
              }
@@ -8632,10 +8648,10 @@ index 00000000..0b73fbed
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java
 new file mode 100644
-index 00000000..04444773
+index 00000000..c5b9e883
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,97 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8646,6 +8662,7 @@ index 00000000..04444773
 +import com.viaversion.viaversion.api.connection.StorableObject;
 +import net.raphimc.viabedrock.api.model.NativeHudMessage;
 +import net.raphimc.viabedrock.api.resourcepack.ui.HudTitleUi;
++import net.raphimc.viabedrock.api.resourcepack.ui.UiRetainedBindings;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SetTitlePacket_TitleType;
 +
 +/** Retains subtitle-before-title ordering without restarting a live title for subtitle updates. */
@@ -8656,6 +8673,21 @@ index 00000000..04444773
 +    private Timing configuredTiming = Timing.DEFAULT;
 +    private Timing activeTiming = Timing.DEFAULT;
 +    private boolean nativeTitle;
++    private final UiRetainedBindings rootBindings = new UiRetainedBindings();
++
++    /** The native HUD controller publishes the current title text to persistent controls as well as title factories. */
++    public String title() {
++        return this.title;
++    }
++
++    public String subtitle() {
++        return this.subtitle;
++    }
++
++    /** Persistent HUD controls keep visibility_changed binding values across the connection's title updates. */
++    public UiRetainedBindings rootBindings() {
++        return this.rootBindings;
++    }
 +
 +    public NativeHudMessage update(final SetTitlePacket_TitleType type, final String text,
 +                                   final int in, final int hold, final int out, final ResourcePackStorage resources) {
@@ -41425,10 +41457,10 @@ index 00000000..36598bdc
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeHudPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeHudPacketTest.java
 new file mode 100644
-index 00000000..3b975b94
+index 00000000..4f425289
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeHudPacketTest.java
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,277 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -41447,6 +41479,7 @@ index 00000000..3b975b94
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import io.netty.buffer.Unpooled;
++import java.nio.charset.StandardCharsets;
 +import java.util.ArrayList;
 +import java.util.Collections;
 +import java.util.HashMap;
@@ -41457,6 +41490,7 @@ index 00000000..3b975b94
 +import net.raphimc.viabedrock.ViaBedrock;
 +import net.raphimc.viabedrock.api.model.NativeHudMessage;
 +import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardObjective;
++import net.raphimc.viabedrock.api.resourcepack.ui.JsonUiProgram;
 +import net.raphimc.viabedrock.api.resourcepack.ui.ScoreboardUi;
 +import net.raphimc.viabedrock.protocol.storage.ScoreboardTracker;
 +import net.raphimc.viabedrock.platform.ViaBedrockPlatform;
@@ -41465,6 +41499,7 @@ index 00000000..3b975b94
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SetTitlePacket_TitleType;
 +import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 +import net.raphimc.viabedrock.protocol.storage.NativeHudActionbarState;
++import net.raphimc.viabedrock.protocol.storage.NativeHudBossBars;
 +import net.raphimc.viabedrock.protocol.storage.NativeHudTitleState;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
@@ -41573,6 +41608,91 @@ index 00000000..3b975b94
 +            assertTrue(translate(protocol, user, SetTitlePacket_TitleType.Actionbar, "").isCancelled());
 +            assertEquals(1, sent.size());
 +        }
++    }
++
++    @Test
++    void prefixedTitlesReachAnAuthoredRootPanelInsteadOfTheJavaTitle() throws Exception {
++        final var program = new JsonUiProgram(Map.of("ui/hud_screen.json", """
++                {"namespace":"hud","hud_screen":{"type":"screen","$screen_content":"hud.root_panel"},
++                 "root_panel":{"type":"panel","controls":[
++                   {"titles":{"type":"panel","factory":{"name":"hud_title_text_factory","control_ids":{"hud_title_text":"hud.title"}}}}]},
++                 "title":{"type":"label","text":"#text","bindings":[{"binding_name":"#hud_title_text_string","binding_name_override":"#text"}]}}
++                """.getBytes(StandardCharsets.UTF_8)), List.of(Map.of("ui/hud_screen.json", """
++                {"namespace":"hud","hud_screen":{"$screen_bg_content":"objective.root"},
++                 "title":{"bindings":[{"binding_name":"#hud_title_text_string","binding_name_override":"#text"},
++                   {"binding_type":"view","target_property_name":"#visible",
++                   "source_property_name":"(not (#text = '') and ((#text < '%') or (#text > '&')))"}]}}
++                """.getBytes(StandardCharsets.UTF_8), "ui/objective.json", """
++                {"namespace":"objective","root":{"type":"panel","controls":[
++                  {"data":{"type":"panel","bindings":[
++                    {"binding_name":"#hud_title_text_string"},
++                    {"binding_name":"#hud_title_text_string","binding_name_override":"#kept","binding_condition":"visibility_changed"},
++                    {"binding_type":"view","target_property_name":"#visible","source_property_name":
++                      "(not (#hud_title_text_string = #kept) and not ((#hud_title_text_string - '%obj%') = #hud_title_text_string))"}]}},
++                  {"text":{"type":"label","font_scale_factor":0.5,"text":"#shown","bindings":[
++                    {"binding_type":"view","source_control_name":"data","resolve_sibling_scope":true,
++                      "source_property_name":"#kept","target_property_name":"#kept"},
++                    {"binding_type":"view","source_property_name":"(#kept - '%obj%')","target_property_name":"#shown"},
++                    {"binding_type":"view","source_property_name":"(not (#kept = ''))","target_property_name":"#visible"}]}}]}}
++                """.getBytes(StandardCharsets.UTF_8))));
++        final var resources = mock(ResourcePackStorage.class, RETURNS_DEEP_STUBS);
++        when(resources.isLoadedOnJavaClient()).thenReturn(true);
++        when(resources.getJsonUiProgram()).thenReturn(program);
++        final var channels = new ChannelStorage();
++        channels.addChannels(List.of(NativeHudMessage.CHANNEL, NativeHudMessage.ROOT_CHANNEL));
++        final Map<Class<?>, Object> storage = new HashMap<>();
++        storage.put(ResourcePackStorage.class, resources);
++        storage.put(ChannelStorage.class, channels);
++        storage.put(NativeHudTitleState.class, new NativeHudTitleState());
++        storage.put(NativeHudBossBars.class, new NativeHudBossBars());
++        final var user = mock(UserConnection.class, RETURNS_DEEP_STUBS);
++        when(user.getProtocolInfo().getClientState()).thenReturn(State.PLAY);
++        when(user.get(any())).thenAnswer(call -> storage.get(call.getArgument(0)));
++        final var sent = new ArrayList<Map.Entry<String, NativeHudMessage>>();
++        final var protocol = new TestProtocol();
++        try (var wrappers = mockStatic(PacketWrapper.class)) {
++            wrappers.when(() -> PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user)).thenAnswer(call -> {
++                final var payload = spy(new PacketWrapperImpl(ClientboundPackets26_3.CUSTOM_PAYLOAD, null, user));
++                doAnswer(send -> {
++                    final var buffer = Unpooled.buffer();
++                    try {
++                        payload.writeToBuffer(buffer);
++                        Types.VAR_INT.readPrimitive(buffer);
++                        sent.add(Map.entry(Types.STRING.read(buffer), NativeHudMessage.TYPE.read(buffer)));
++                    } finally {
++                        buffer.release();
++                    }
++                    return null;
++                }).when(payload).send(BedrockProtocol.class);
++                return payload;
++            });
++            assertTrue(translate(protocol, user, SetTitlePacket_TitleType.Title, "%obj%Chop 5 logs").isCancelled(),
++                    "The routed title must not reach the Java title renderer");
++            assertEquals(List.of("Chop 5 logs"), rootText(sent));
++            assertEquals(List.of(), titleText(sent));
++            final int delivered = sent.size();
++            translate(protocol, user, SetTitlePacket_TitleType.Title, "%obj%Chop 5 logs");
++            assertEquals(1, sent.subList(delivered, sent.size()).size(), "A repeated title resends only the title scene");
++            translate(protocol, user, SetTitlePacket_TitleType.Title, "Arena opens");
++            assertEquals(List.of("Chop 5 logs"), rootText(sent));
++            assertEquals(List.of("Arena opens"), titleText(sent));
++        }
++    }
++
++    private static List<String> rootText(final List<Map.Entry<String, NativeHudMessage>> sent) {
++        return latestText(sent, NativeHudMessage.ROOT_CHANNEL);
++    }
++
++    private static List<String> titleText(final List<Map.Entry<String, NativeHudMessage>> sent) {
++        return latestText(sent, NativeHudMessage.CHANNEL);
++    }
++
++    private static List<String> latestText(final List<Map.Entry<String, NativeHudMessage>> sent, final String channel) {
++        final var latest = sent.reversed().stream().filter(entry -> entry.getKey().equals(channel)).findFirst().orElseThrow();
++        final var nodes = new ArrayList<JsonObject>();
++        collect(JsonParser.parseString(latest.getValue().scene()).getAsJsonObject().getAsJsonObject("root"), nodes);
++        return nodes.stream().filter(node -> node.get("type").getAsString().equals("label")
++                && node.get("visible").getAsBoolean()).map(node -> node.get("text").getAsString()).toList();
 +    }
 +
 +    private static PacketWrapper translate(final TestProtocol protocol, final UserConnection user,

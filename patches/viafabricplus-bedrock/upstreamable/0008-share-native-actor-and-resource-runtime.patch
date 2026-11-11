@@ -1,4 +1,4 @@
-From 50747c1037bc29250f844c022f35fe57d5f87b20 Mon Sep 17 00:00:00 2001
+From 61322e5cdecc9441672c595a3a3043134e6b4fd1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -519,6 +519,17 @@ length FFmpeg produces. Native audible parity remains unmeasured.
 Decode the optional native shooter release flag alongside retained-air
 metadata. Missing flags remain false for older cores; immutable identity
 caching keeps the release trait independent of Java carrier classes.
+
+Delete a stopped voice's static buffer only after its OpenAL source is
+gone. Vanilla ChannelHandle.release() sets the stopped flag before
+Library.releaseChannel() destroys the source on the sound executor, so
+the render-thread tick could call SoundBuffer.discardAlBuffer() while the
+source still held the buffer. OpenAL rejects that with
+AL_INVALID_OPERATION (logged as "Deleting stream buffers") and keeps the
+buffer, which leaks. Queue the deletion through the existing release hook
+on the same single-threaded executor, as the failed-start path already
+does. A Galaxite recording logged this five times, each a few seconds
+after server StopSound-all pairs.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
@@ -583,7 +594,7 @@ caching keeps the release trait independent of Java carrier classes.
  .../appearance/BedrockSoundEnvelope.java      |   40 +
  .../bedrock/appearance/BedrockSoundEvent.java |  190 +++
  .../bedrock/appearance/BedrockSoundFile.java  |  104 ++
- .../appearance/BedrockSoundPlayback.java      |  421 +++++++
+ .../appearance/BedrockSoundPlayback.java      |  431 +++++++
  .../NativeBlockIdentifiersPayload.java        |   22 +
  .../NativeParticlePlaybackPayload.java        |   22 +
  .../appearance/SoundPlaybackPayload.java      |   22 +
@@ -712,6 +723,7 @@ caching keeps the release trait independent of Java carrier classes.
  .../appearance/BedrockSoundEnvelopeTest.java  |   30 +
  .../appearance/BedrockSoundEventTest.java     |  300 +++++
  .../appearance/BedrockSoundFileTest.java      |  173 +++
+ .../appearance/BedrockSoundPlaybackTest.java  |   31 +
  .../appearance/BedrockTintMaskTest.java       |   61 +
  .../appearance/NativeAssetFixture.java        |   86 ++
  .../render/BedrockActorAttackTest.java        |   75 ++
@@ -737,7 +749,7 @@ caching keeps the release trait independent of Java carrier classes.
  .../render/BedrockWalkingAnimationTest.java   |   65 +
  .../render/NativeActorColorPayloadTest.java   |   50 +
  src/test/resources/vorbis/sine-8k-mono.ogg    |  Bin 0 -> 2810 bytes
- 217 files changed, 25518 insertions(+), 16 deletions(-)
+ 218 files changed, 25559 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -919,6 +931,7 @@ caching keeps the release trait independent of Java carrier classes.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelopeTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEventTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlaybackTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTintMaskTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeAssetFixture.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorAttackTest.java
@@ -11192,10 +11205,10 @@ index 0000000..f4330a7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
 new file mode 100644
-index 0000000..e185baf
+index 0000000..5ed3a86
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,431 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11530,12 +11543,22 @@ index 0000000..e185baf
 +        state.voices.forEach((handle, voice) -> {
 +            if (handle.isStopped()) {
 +                if (state.voices.remove(handle, voice)) {
-+                    if (voice.buffer != null) voice.buffer.discardAlBuffer();
++                    discardAfterRelease(access.viaFabricPlusBedrock$channels(), handle, voice.buffer);
 +                    state.bytes.addAndGet(-voice.bytes);
 +                    cancel(state, voice.request);
 +                }
 +            } else handle.execute(channel -> volume(channel, voice, access));
 +        });
++    }
++
++    /**
++     * Vanilla marks a handle stopped before its sound thread deletes the OpenAL source. Deleting a
++     * static buffer that a source still holds fails with AL_INVALID_OPERATION and leaks the buffer, so
++     * queue the deletion behind that release on the same single-threaded sound executor.
++     */
++    static void discardAfterRelease(final ChannelAccess channels, final ChannelAccess.ChannelHandle handle,
++                                    final SoundBuffer buffer) {
++        if (buffer != null) ((IBedrockChannelAccess) channels).viaFabricPlusBedrock$release(handle, buffer::discardAlBuffer);
 +    }
 +
 +    /** Called after vanilla releases every channel, while its OpenAL context still exists. */
@@ -25539,6 +25562,43 @@ index 0000000..29132b6
 +        }
 +        assertTrue(resolved >= 3);
 +    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlaybackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlaybackTest.java
+new file mode 100644
+index 0000000..50c39fb
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlaybackTest.java
+@@ -0,0 +1,31 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.mojang.blaze3d.audio.SoundBuffer;
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockChannelAccess;
++import net.minecraft.client.sounds.ChannelAccess;
++import org.junit.jupiter.api.Test;
++import org.mockito.ArgumentCaptor;
++
++import static org.mockito.Mockito.*;
++
++final class BedrockSoundPlaybackTest {
++
++    @Test
++    void stoppedStaticVoicesDeleteTheirBufferOnlyAfterTheSoundThreadReleasesTheSource() {
++        final var channels = mock(ChannelAccess.class, withSettings().extraInterfaces(IBedrockChannelAccess.class));
++        final var handle = mock(ChannelAccess.ChannelHandle.class);
++        final var buffer = mock(SoundBuffer.class);
++        BedrockSoundPlayback.discardAfterRelease(channels, handle, buffer);
++        verify(buffer, never()).discardAlBuffer();
++        final var cleanup = ArgumentCaptor.forClass(Runnable.class);
++        verify((IBedrockChannelAccess) channels).viaFabricPlusBedrock$release(eq(handle), cleanup.capture());
++        cleanup.getValue().run();
++        verify(buffer).discardAlBuffer();
++    }
++
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTintMaskTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTintMaskTest.java
 new file mode 100644
