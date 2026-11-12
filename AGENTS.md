@@ -55,6 +55,14 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 - Do not commit `.worktrees/`, `.stackanvil/`, `dist/`, downloaded servers, credentials, or traffic captures.
 - Treat the patches repository as GPL-3.0-or-later tooling. Keep upstream projects' license and copyright notices in generated source and builds.
 
+## Reverse engineering
+
+- Use REA for binary inspection, decompilation, and runtime evidence. Ghidra or other analysis providers must run through REA.
+- Use `bun run rea` and the shared helpers in `native/rea-controls/` for repository-owned artifact verification and comparison controls. Follow the [REA workflow](docs/bedrock-development-sources.md#analyze-a-native-artifact-with-rea).
+- Do not read, execute, import, or depend on PistonDecompiler files. This includes its scripts, modules, Python environments, caches, and generated analysis. Do not use it as a fallback.
+- Use original versioned game artifacts and preserve complete REA Evidence with artifact hashes. Re-establish older PistonDecompiler findings with REA before using them to justify a change.
+- Keep comparison harnesses and their dependencies independent of PistonDecompiler. Use these controls to supplement REA evidence, and state their supplied inputs and execution limits.
+
 ## Documentation
 
 - Write for a reader's current task: installation, development, patch maintenance, testing, or troubleshooting.
