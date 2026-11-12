@@ -1,4 +1,4 @@
-From b53fbef8424d5a50e7945d39ab577e27e1913e3a Mon Sep 17 00:00:00 2001
+From f0109700eadba10f9eaf921726d1297f2bbf186d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -502,12 +502,22 @@ After publication, pre-play packets resume in their original order and
 world packets stay held until Java acknowledges the supplemental pack.
 Conversion failures now kick only the join that is still current.
 
-Reuse the native resource archive in the supplemental conversion. It
-depends only on the accepted stack, and both conversions produced the
-same 65 MB archive. A per-storage stage cache returns independent copies,
-counts retained bytes against one process-wide 128 MiB budget and evicts
-the least recently used output. The storage releases its outputs after the
-supplemental conversion, when no supplement is needed, or on removal.
+Keep the accepted base pack loaded and append only StartGame-dependent
+block resources. The base conversion omits speculative terrain carrier
+exports: gameplay maps custom states only after their resolved visual
+snapshot exists. The supplement contains models, textures, block-state
+selectors, physical/culling metadata and the Java pack manifest. It does
+not replace accepted UI aliases, native archives or appearance provenance.
+A destination base still removes every earlier server pack, including its
+supplement. Requests and held packets retain their existing UUID and
+connection guards; a declined supplement retains the base and disables
+custom carrier mappings.
+
+Version both base and supplement conversion identities so old complete
+packs cannot be appended as supplements. Preserve converter metadata from
+the accepted base when preparing or restoring a cached supplement. The
+native archive is encoded only for the base, removing the per-storage
+stage cache, its shared retention budget and redundant archive copies.
 
 Snapshot culling directions in enum order. Set.copyOf randomizes its
 iteration between JVMs, which changes model JSON and the custom-block
@@ -553,7 +563,6 @@ avoids repeated CubeConverter work even when all persistent caches are
 disabled. A regression alternates carriers, materials and transforms on
 one geometry and verifies independent output and unchanged earlier states.
 
-
 Include the session voxel-shape registry in compiled visual cache identity.
 Culling metadata embeds grid slices, so equal packs and StartGame properties
 can still compile differently when the server changes grid cells, coordinates
@@ -561,6 +570,13 @@ or name handles. Hash every typed grid field and sorted name mapping, and
 advance the cache format to discard older incomplete keys. A reopened-disk
 regression checks actual model slices for all three changes and reuses an
 identical registry rebuilt from a different name insertion order.
+
+Bind supplement publication to both the current pack gate and the captured
+accepted storage. Replacing only the storage must make an old success or
+failure inert before it can register HTTP access, advertise above a new
+base or kick its join. Regressions cover both completions. Remove the
+retired terrain-exporter texture wrappers and exercise the shared pass
+texture API directly in the existing pixel and precedence regressions.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -578,36 +594,36 @@ identical registry rebuilt from a different name insertion order.
  .../api/model/NativeBlockGeometry.java        |   79 ++
  .../api/model/NativeBlockPrimaryGeometry.java |  297 +++++
  .../api/model/NativeSlabGeometry.java         |   82 ++
- .../resourcepack/ResourcePackStageCache.java  |  128 ++
  .../definition/BlockCullingDefinitions.java   |   86 ++
  .../definition/BlockDefinitions.java          |   17 +-
  .../definition/CustomBlockDefinition.java     |   73 ++
  .../definition/ModelDefinitions.java          |    7 +
  .../definition/TextureDefinitions.java        |   85 +-
- .../http/ConvertedResourcePackCache.java      |   29 +-
+ .../http/ConvertedResourcePackCache.java      |   33 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   26 +-
  .../protocol/model/BlockProperties.java       |   10 +
  .../protocol/model/BlockTraitStates.java      |  195 +++
  .../protocol/model/CustomBlockStates.java     |   88 ++
- .../protocol/packet/JoinPackets.java          |  116 +-
- .../protocol/packet/ResourcePackPackets.java  |   55 +
+ .../protocol/packet/JoinPackets.java          |  115 +-
+ .../protocol/packet/ResourcePackPackets.java  |   71 +-
  .../protocol/packet/VoxelShapePackets.java    |   35 +
  .../provider/NettyPipelineProvider.java       |    5 +
  .../protocol/rewriter/BlockStateRewriter.java |  322 +++--
- .../rewriter/ResourcePackRewriter.java        |    2 +
+ .../rewriter/ResourcePackRewriter.java        |   12 +
  .../CustomBlockCullingCompiler.java           |  162 +++
  .../resourcepack/CustomBlockModel.java        |  588 +++++++++
- .../CustomBlockResourceRewriter.java          |  250 ++++
+ .../CustomBlockResourceRewriter.java          |  175 +++
  .../CustomBlockStateDefinitions.java          |  225 ++++
  .../resourcepack/CustomBlockTextures.java     |   95 ++
  .../resourcepack/CustomBlockVisualCache.java  |  287 +++++
  .../resourcepack/NativeBlockCollision.java    |   82 ++
  .../resourcepack/NativeBlockSelection.java    |   54 +
  .../resourcepack/NativeBlockTransform.java    |  189 +++
- .../NativeEffectsResourceRewriter.java        |    4 +-
+ .../NativeEffectsResourceRewriter.java        |    3 +-
  .../protocol/storage/ChunkTracker.java        |   40 +-
  .../storage/CustomBlockPackStorage.java       |   37 +
- .../protocol/storage/ResourcePackStorage.java |   56 +-
+ .../storage/JavaResourcePackRequest.java      |    2 +-
+ .../protocol/storage/ResourcePackStorage.java |   44 +-
  .../protocol/storage/VoxelShapeRegistry.java  |  125 ++
  .../protocol/storage/WorldPacketBuffer.java   |  105 ++
  .../protocol/task/KeepAliveTask.java          |   12 +-
@@ -628,28 +644,29 @@ identical registry rebuilt from a different name insertion order.
  .../api/model/NativeBlockGeometryTest.java    |   31 +
  .../model/NativeBlockPrimaryGeometryTest.java |   46 +
  .../api/model/NativeSlabGeometryTest.java     |   48 +
- .../ResourcePackStageCacheTest.java           |   87 ++
  .../definition/TextureDefinitionsTest.java    |   42 +
  .../http/ConvertedResourcePackCacheTest.java  |   66 +
  .../protocol/model/BlockPropertiesTest.java   |   85 ++
  .../protocol/model/BlockTraitStatesTest.java  |  291 +++++
  .../protocol/model/CustomBlockStatesTest.java |  139 ++
  .../packet/BlockStatePreparationTest.java     |   91 ++
+ .../CustomBlockPackPublicationTest.java       |   91 ++
+ .../packet/JavaResourcePackLifecycleTest.java |   29 +-
  .../rewriter/CustomBlockBoneGeometryTest.java |  213 ++++
- .../CustomBlockModelSelectionTest.java        |  743 +++++++++++
+ .../CustomBlockModelSelectionTest.java        |  746 +++++++++++
  .../CustomBlockPlaneGeometryTest.java         |  170 +++
  .../NativeBlockGeometryRegistrationTest.java  |  145 +++
  .../CustomBlockCullingCompilerTest.java       |  140 ++
- .../CustomBlockMaterialVisibilityTest.java    |  106 ++
+ .../CustomBlockMaterialVisibilityTest.java    |  108 ++
  .../CustomBlockStateDefinitionsTest.java      |  286 +++++
- .../CustomBlockTextureReuseTest.java          |  175 +++
+ .../CustomBlockTextureReuseTest.java          |  179 +++
  .../CustomBlockVisualCacheTest.java           |  184 +++
  .../protocol/storage/ChunkTrackerTest.java    |   49 +-
  .../storage/CustomBlockPackStorageTest.java   |   31 +
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  255 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   89 ++
- 87 files changed, 12614 insertions(+), 160 deletions(-)
+ 88 files changed, 12454 insertions(+), 177 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -665,7 +682,6 @@ identical registry rebuilt from a different name insertion order.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockGeometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockPrimaryGeometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeSlabGeometry.java
- create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStageCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/BlockTraitStates.java
@@ -700,12 +716,12 @@ identical registry rebuilt from a different name insertion order.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeBlockGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeBlockPrimaryGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeSlabGeometryTest.java
- create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStageCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/BlockPropertiesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/BlockTraitStatesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CustomBlockStatesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/BlockStatePreparationTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CustomBlockPackPublicationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
@@ -2538,140 +2554,6 @@ index 00000000..07c85994
 +    }
 +
 +}
-diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStageCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStageCache.java
-new file mode 100644
-index 00000000..702ff409
---- /dev/null
-+++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStageCache.java
-@@ -0,0 +1,128 @@
-+/*
-+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
-+ * Copyright (C) 2026 RK_01/RaphiMC and contributors
-+ * SPDX-License-Identifier: GPL-3.0-or-later
-+ */
-+package net.raphimc.viabedrock.api.resourcepack;
-+
-+import net.raphimc.viabedrock.api.resourcepack.content.Content;
-+import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
-+
-+import java.util.LinkedHashMap;
-+import java.util.Map;
-+import java.util.function.Supplier;
-+
-+/**
-+ * Reuses pure conversion output between conversions of one accepted resource stack.
-+ * Each owner sees only its own outputs. All owners share one byte budget, so idle joins cannot accumulate archives.
-+ */
-+public final class ResourcePackStageCache implements AutoCloseable {
-+
-+    private static final Store SHARED = new Store(128L * 1024 * 1024, 64);
-+    private final Store store;
-+    private boolean closed;
-+
-+    public ResourcePackStageCache() {
-+        this(SHARED);
-+    }
-+
-+    ResourcePackStageCache(final Store store) {
-+        this.store = store;
-+    }
-+
-+    /**
-+     * Returns an independent copy of the stage output. The producer must depend only on the owner's accepted resources
-+     * and must not change converter metadata, because a cache hit skips it.
-+     */
-+    public Content get(final String stage, final Supplier<Content> producer) {
-+        final Key key = new Key(this, stage);
-+        final Snapshot cached;
-+        synchronized (this.store) {
-+            cached = this.closed ? null : this.store.outputs.get(key);
-+        }
-+        if (cached != null) {
-+            return copy(cached.content());
-+        }
-+        final Content result = producer.get();
-+        final long bytes = retainedBytes(result);
-+        if (bytes > this.store.maxBytes) {
-+            return result;
-+        }
-+        final Snapshot snapshot = new Snapshot(copy(result), bytes);
-+        synchronized (this.store) {
-+            if (this.closed) {
-+                return result;
-+            }
-+            final Snapshot previous = this.store.outputs.put(key, snapshot);
-+            this.store.bytes += bytes - (previous == null ? 0 : previous.bytes());
-+            final var eldest = this.store.outputs.values().iterator();
-+            while (this.store.bytes > this.store.maxBytes || this.store.outputs.size() > this.store.maxOutputs) {
-+                this.store.bytes -= eldest.next().bytes();
-+                eldest.remove();
-+            }
-+        }
-+        return result;
-+    }
-+
-+    /** Releases this owner's outputs. Later results are returned but not retained. */
-+    @Override
-+    public void close() {
-+        synchronized (this.store) {
-+            this.closed = true;
-+            final var entries = this.store.outputs.entrySet().iterator();
-+            while (entries.hasNext()) {
-+                final var entry = entries.next();
-+                if (entry.getKey().owner() == this) {
-+                    this.store.bytes -= entry.getValue().bytes();
-+                    entries.remove();
-+                }
-+            }
-+        }
-+    }
-+
-+    private static long retainedBytes(final Content content) {
-+        long bytes = 256;
-+        for (final String path : content.getFilesDeep("", "")) {
-+            bytes += 128L + 2L * path.length() + content.get(path).length;
-+        }
-+        return bytes;
-+    }
-+
-+    private static Content copy(final Content content) {
-+        final Content copy = new InMemoryContent();
-+        for (final String path : content.getFilesDeep("", "")) {
-+            final byte[] bytes = content.get(path).clone();
-+            if (content.isStored(path)) {
-+                copy.putStored(path, bytes);
-+            } else {
-+                copy.put(path, bytes);
-+            }
-+        }
-+        return copy;
-+    }
-+
-+    static final class Store {
-+
-+        private final long maxBytes;
-+        private final int maxOutputs;
-+        private final Map<Key, Snapshot> outputs = new LinkedHashMap<>(16, 0.75F, true);
-+        private long bytes;
-+
-+        Store(final long maxBytes, final int maxOutputs) {
-+            this.maxBytes = maxBytes;
-+            this.maxOutputs = maxOutputs;
-+        }
-+
-+        synchronized long retainedBytes() {
-+            return this.bytes;
-+        }
-+
-+    }
-+
-+    private record Key(ResourcePackStageCache owner, String stage) {
-+    }
-+
-+    private record Snapshot(Content content, long bytes) {
-+    }
-+
-+}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java
 new file mode 100644
 index 00000000..039f1d46
@@ -3036,7 +2918,7 @@ index ba8c2db5..5c6717be 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 0cb7b1cc..e8c4ab8f 100644
+index 0cb7b1cc..c0e6e6c6 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -17,7 +17,9 @@
@@ -3049,7 +2931,17 @@ index 0cb7b1cc..e8c4ab8f 100644
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
-@@ -102,7 +104,7 @@ public class ConvertedResourcePackCache {
+@@ -76,7 +78,8 @@ public class ConvertedResourcePackCache {
+         this(directory, mode, storage -> {
+             try {
+                 final long start = System.nanoTime();
+-                final Content content = ResourcePackRewriter.bedrockToJava(storage);
++                final Content content = storage.getCustomBlockVisuals().isEmpty()
++                        ? ResourcePackRewriter.bedrockToJava(storage) : ResourcePackRewriter.customBlocksToJava(storage);
+                 ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted resource packs in " + ((System.nanoTime() - start) / 1_000_000L) + "ms");
+                 return content;
+             } catch (final Exception e) {
+@@ -102,7 +105,7 @@ public class ConvertedResourcePackCache {
          if (this.mode == ViaBedrockConfig.PackCacheMode.DISABLED) {
              return this.executor.submit(() -> this.convert(storage));
          }
@@ -3058,7 +2950,7 @@ index 0cb7b1cc..e8c4ab8f 100644
                  this.prepare(key, storage).thenApply(pack -> {
                      storage.getConverterData().putAll(pack.converterData());
                      return pack;
-@@ -269,7 +271,8 @@ public class ConvertedResourcePackCache {
+@@ -269,7 +272,8 @@ public class ConvertedResourcePackCache {
          }
      }
  
@@ -3068,12 +2960,13 @@ index 0cb7b1cc..e8c4ab8f 100644
          final MessageDigest digest = digest("SHA-256");
          try (var output = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
              writeString(output, ViaBedrock.IMPL_VERSION);
-@@ -294,6 +297,28 @@ public class ConvertedResourcePackCache {
+@@ -294,6 +298,29 @@ public class ConvertedResourcePackCache {
          return HexFormat.of().formatHex(digest.digest());
      }
  
 +    static String fingerprint(final ResourcePackStorage storage) {
-+        final StringBuilder identity = new StringBuilder(fingerprint(storage.getPackStackTopToBottom()));
++        final StringBuilder identity = new StringBuilder(fingerprint(storage.getPackStackTopToBottom()))
++                .append("\nbase-with-block-supplements:1");
 +        if (!storage.getCustomBlockVisuals().isEmpty()) {
 +            identity.append("\nshared-custom-block-textures:1");
 +        }
@@ -3483,7 +3376,7 @@ index 00000000..ee311d9b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 6b6a97d8..40138052 100644
+index 6b6a97d8..bffaab89 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -62,6 +62,12 @@ import net.raphimc.viabedrock.protocol.storage.*;
@@ -3548,7 +3441,7 @@ index 6b6a97d8..40138052 100644
              }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores multiple start game packets
          );
          protocol.registerClientboundTransition(ClientboundBedrockPackets.BIOME_DEFINITION_LIST,
-@@ -473,6 +470,74 @@ public final class JoinPackets {
+@@ -473,6 +470,73 @@ public final class JoinPackets {
          }
      }
  
@@ -3600,7 +3493,6 @@ index 6b6a97d8..40138052 100644
 +                finishJoin(user);
 +            });
 +        } else {
-+            resourcePackStorage.getConversionStages().close();
 +            if (held != null) {
 +                user.remove(WorldPacketBuffer.class);
 +            }
@@ -3623,7 +3515,7 @@ index 6b6a97d8..40138052 100644
      private static void handleJavaClientGameJoin(final UserConnection user) {
          final JoinGameStorage joinGameStorage = user.get(JoinGameStorage.class);
          final GameSessionStorage gameSession = user.get(GameSessionStorage.class);
-@@ -608,6 +673,7 @@ public final class JoinPackets {
+@@ -608,6 +672,7 @@ public final class JoinPackets {
              initialDayTime(joinGameStorage.dayCycleStopTime(), gameSession.getLevelTime()),
              user.get(GameRulesStorage.class).getGameRule("doDayLightCycle"));
          setTime.send(BedrockProtocol.class);
@@ -3632,7 +3524,7 @@ index 6b6a97d8..40138052 100644
  
      static long initialDayTime(final int dayCycleStopTime, final long levelTime) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 4e938607..13486de9 100644
+index 4e938607..ef873bc2 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -40,6 +40,8 @@ import net.raphimc.viabedrock.protocol.storage.JavaResourcePackRequest;
@@ -3675,7 +3567,16 @@ index 4e938607..13486de9 100644
              switch (action) {
                  case SUCCESSFULLY_LOADED -> {
                      final ResourcePackStorage resourcePackStorage = wrapper.user().get(ResourcePackStorage.class);
-@@ -335,6 +354,42 @@ public final class ResourcePackPackets {
+@@ -292,7 +311,7 @@ public final class ResourcePackPackets {
+                             try {
+                                 final UUID httpToken = UUID.randomUUID();
+                                 ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
+-                                sendJavaResourcePack(user, pack, httpToken);
++                                sendJavaResourcePack(user, pack, httpToken, true);
+                             } catch (final Throwable publicationError) {
+                                 BedrockProtocol.kickForIllegalState(user, "Failed to advertise the server resource packs.", publicationError);
+                             }
+@@ -335,17 +354,55 @@ public final class ResourcePackPackets {
          response.scheduleSendToServer(BedrockProtocol.class);
      }
  
@@ -3692,10 +3593,10 @@ index 4e938607..13486de9 100644
 +        user.put(buffered);
 +        final ResourcePackStorage storage = user.get(ResourcePackStorage.class);
 +        ViaBedrock.getResourcePackServer().prepare(storage).whenComplete((pack, error) -> {
-+            storage.getConversionStages().close();
 +            user.getChannel().eventLoop().execute(() -> {
-+                // Failures of a replaced or closed join must not kick its successor.
-+                if (!user.getChannel().isActive() || user.get(CustomBlockPackStorage.class) != gate) {
++                // A supplement or failure must belong to the base stack that is still accepted.
++                if (!user.getChannel().isActive() || user.get(CustomBlockPackStorage.class) != gate
++                        || user.get(ResourcePackStorage.class) != storage) {
 +                    return;
 +                }
 +                if (error != null) {
@@ -3706,7 +3607,7 @@ index 4e938607..13486de9 100644
 +                storage.setCustomBlockPackId(pack.id());
 +                final UUID token = UUID.randomUUID();
 +                ViaBedrock.getResourcePackServer().addConnection(token, user, pack);
-+                sendJavaResourcePack(user, pack, token);
++                sendJavaResourcePack(user, pack, token, false);
 +            });
 +        });
 +        if (held != null) {
@@ -3718,6 +3619,25 @@ index 4e938607..13486de9 100644
      private static boolean shouldTranslate(final UserConnection user) {
          return ViaBedrock.getConfig().shouldTranslateResourcePacks() && user.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION);
      }
+ 
+-    private static void sendJavaResourcePack(final UserConnection user, final ConvertedResourcePackCache.Pack pack, final UUID httpToken) {
++    private static void sendJavaResourcePack(final UserConnection user, final ConvertedResourcePackCache.Pack pack, final UUID httpToken,
++                                            final boolean replaceStack) {
+         user.put(new JavaResourcePackRequest(pack.id()));
+-        // Each conversion contains the whole accepted stack, including custom-block supplements.
+-        // Keeping previous server packs consumes atlas space and can shadow the destination's assets.
+-        final PacketWrapper remove = PacketWrapper.create(ClientboundConfigurationPackets26_3.RESOURCE_PACK_POP, user);
+-        remove.write(Types.OPTIONAL_UUID, null);
+-        remove.scheduleSend(BedrockProtocol.class);
++        if (replaceStack) {
++            // A destination base replaces every pack from the previous server, including its block supplement.
++            final PacketWrapper remove = PacketWrapper.create(ClientboundConfigurationPackets26_3.RESOURCE_PACK_POP, user);
++            remove.write(Types.OPTIONAL_UUID, null);
++            remove.scheduleSend(BedrockProtocol.class);
++        }
+         final PacketWrapper resourcePack = PacketWrapper.create(ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH, user);
+         resourcePack.write(Types.UUID, pack.id()); // id
+         resourcePack.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java
 new file mode 100644
 index 00000000..9c9d6637
@@ -4212,7 +4132,7 @@ index a4ce7054..a7a50158 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-index 21454ca3..aa15ee75 100644
+index 21454ca3..1cd9c568 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 @@ -22,6 +22,7 @@ import net.raphimc.viabedrock.api.resourcepack.content.Content;
@@ -4223,14 +4143,24 @@ index 21454ca3..aa15ee75 100644
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
-@@ -41,6 +42,7 @@ public final class ResourcePackRewriter {
-     static {
-         REWRITERS.add(new GlyphSheetResourceRewriter());
-         REWRITERS.add(new CustomItemTextureResourceRewriter());
-+        REWRITERS.add(new CustomBlockResourceRewriter());
-         REWRITERS.add(new CustomAttachableResourceRewriter());
-         REWRITERS.add(new CustomEntityResourceRewriter());
-         REWRITERS.add(new NativeEffectsResourceRewriter());
+@@ -76,6 +77,17 @@ public final class ResourcePackRewriter {
+         return javaContent;
+     }
+ 
++    /** Only StartGame-dependent block resources; the accepted base pack must remain below this supplement. */
++    public static Content customBlocksToJava(final ResourcePackStorage resourcePackStorage) {
++        if (resourcePackStorage.getCustomBlockVisuals().isEmpty()) {
++            throw new IllegalArgumentException("Missing custom block visuals");
++        }
++        final Content content = new InMemoryContent();
++        new CustomBlockResourceRewriter().submitTasks(resourcePackStorage, task -> content.putAll(task.get()));
++        content.putJson("pack.mcmeta", createPackManifest());
++        return content;
++    }
++
+     private static JsonObject createPackManifest() {
+         final JsonObject pack = new JsonObject();
+         pack.addProperty("description", "ViaBedrock Resource Pack");
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompiler.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompiler.java
 new file mode 100644
 index 00000000..5a7981fc
@@ -4995,10 +4925,10 @@ index 00000000..41f6a22a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
 new file mode 100644
-index 00000000..dd4e34da
+index 00000000..92aa986c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,175 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -5026,14 +4956,12 @@ index 00000000..dd4e34da
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
 +import net.raphimc.viabedrock.api.model.CustomBlockProperties;
 +import net.raphimc.viabedrock.api.model.CustomBlockCulling;
-+import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +
-+import java.util.ArrayList;
 +import java.util.Comparator;
 +import java.util.HashSet;
 +import java.util.HashMap;
@@ -5057,28 +4985,6 @@ index 00000000..dd4e34da
 +/** Exports resolved Bedrock block visuals on unused Java carrier states. */
 +public class CustomBlockResourceRewriter implements ResourcePackRewriter.Rewriter {
 +
-+    public static Map<String, Integer> assignedStates(final ResourcePackStorage storage) {
-+        if (storage.getTextures().serverTerrainTextures().isEmpty()) {
-+            return Map.of();
-+        }
-+
-+        final List<Integer> available = availableStates();
-+
-+        final List<String> textures = new ArrayList<>(storage.getTextures().serverTerrainTextures());
-+        textures.sort(Comparator.naturalOrder());
-+        final Map<String, Integer> result = new LinkedHashMap<>();
-+        int next = 0;
-+        for (String texture : textures) {
-+            if (next == available.size()) {
-+                break;
-+            }
-+            if (terrainTexture(storage, texture) != null) {
-+                result.put(texture, available.get(next++));
-+            }
-+        }
-+        return result;
-+    }
-+
 +    public static List<Integer> availableStates() {
 +        final Set<BlockState> occupied = new HashSet<>(BedrockProtocol.MAPPINGS.getBedrockToJavaBlockStates().values());
 +        return BedrockProtocol.MAPPINGS.getJavaBlockStates().entrySet().stream()
@@ -5091,19 +4997,6 @@ index 00000000..dd4e34da
 +                })
 +                        .thenComparingInt(Map.Entry::getValue))
 +                .map(Map.Entry::getValue).toList();
-+    }
-+
-+    public static boolean hasOpaquePixels(final Content.LazyImage texture) {
-+        return texture != null && CustomBlockTextures.analyze(texture).opaque();
-+    }
-+
-+    public static Content.LazyImage terrainTexture(final ResourcePackStorage storage, final String texture) {
-+        final String path = storage.getTextures().terrainTextures().get(texture);
-+        return path == null ? null : findImage(storage, path);
-+    }
-+
-+    public static boolean hasVisiblePixels(final Content.LazyImage texture, final String method) {
-+        return texture == null || method.equals("opaque") || CustomBlockTextures.analyze(texture).visible(method);
 +    }
 +
 +    /** Vanilla terrain assets are available in the Java client even when omitted from the server pack. */
@@ -5123,11 +5016,6 @@ index 00000000..dd4e34da
 +    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
 +        if (!storage.getCustomBlockVisuals().isEmpty()) {
 +            submitter.accept(() -> convertVisuals(storage));
-+            return;
-+        }
-+        final Map<String, Integer> assignments = assignedStates(storage);
-+        if (!assignments.isEmpty()) {
-+            submitter.accept(() -> convert(storage, assignments));
 +        }
 +    }
 +
@@ -5210,42 +5098,9 @@ index 00000000..dd4e34da
 +        return "viabedrock:" + path;
 +    }
 +
-+    private static Content convert(final ResourcePackStorage storage, final Map<String, Integer> assignments) {
-+        final Content result = new InMemoryContent();
-+        for (Map.Entry<String, Integer> assignment : assignments.entrySet()) {
-+            final int state = assignment.getValue();
-+            final Content.LazyImage image = terrainTexture(storage, assignment.getKey());
-+            if (image == null) {
-+                continue;
-+            }
-+            result.putPngImage("assets/viabedrock/textures/block/custom/slot_" + state + ".png", image);
-+            final JsonObject textures = new JsonObject();
-+            textures.addProperty("all", "viabedrock:block/custom/slot_" + state);
-+            final JsonObject model = new JsonObject();
-+            model.addProperty("parent", "minecraft:block/cube_all");
-+            model.add("textures", textures);
-+            result.putJson("assets/viabedrock/models/block/custom/slot_" + state + ".json", model);
-+        }
-+
-+        final Map<Integer, String> models = new LinkedHashMap<>();
-+        assignments.values().forEach(state -> models.put(state, "viabedrock:block/custom/slot_" + state));
-+        writeStateDefinitions(result, models);
-+        return result;
-+    }
-+
 +    private static void writeStateDefinitions(final Content result, final Map<Integer, String> models) {
 +        CustomBlockStateDefinitions.create(BedrockProtocol.MAPPINGS.getJavaBlockStates(), models).forEach((block, definition) ->
 +                result.putJson("assets/minecraft/blockstates/" + block + ".json", definition));
-+    }
-+
-+    private static Content.LazyImage findImage(final ResourcePackStorage storage, final String path) {
-+        for (ResourcePack pack : storage.getPackStackTopToBottom()) {
-+            final Content.LazyImage image = pack.content().getShortnameImage(path);
-+            if (image != null) {
-+                return image;
-+            }
-+        }
-+        return null;
 +    }
 +
 +}
@@ -6218,17 +6073,16 @@ index 00000000..09e03da3
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
-index d045933a..866baa86 100644
+index d045933a..ee78127b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
-@@ -20,7 +20,9 @@ public final class NativeEffectsResourceRewriter implements ResourcePackRewriter
+@@ -20,7 +20,8 @@ public final class NativeEffectsResourceRewriter implements ResourcePackRewriter
  
      @Override
      public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
 -        submitter.accept(() -> archive(NativeActorLibrary.PATH, () -> NativeActorLibrary.encode(storage.getPackStackBottomToTop(), storage::isServerPack)));
-+        // The archive depends only on the accepted stack, so the custom-block conversion reuses the first result.
-+        submitter.accept(() -> storage.getConversionStages().get(NativeActorLibrary.PATH,
-+                () -> archive(NativeActorLibrary.PATH, () -> NativeActorLibrary.encode(storage.getPackStackBottomToTop(), storage::isServerPack))));
++        submitter.accept(() -> archive(NativeActorLibrary.PATH,
++                () -> NativeActorLibrary.encode(storage.getPackStackBottomToTop(), storage::isServerPack)));
      }
  
      private static Content archive(final String path, final Encoder encoder) {
@@ -6403,25 +6257,31 @@ index 00000000..0fef4f5c
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/JavaResourcePackRequest.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/JavaResourcePackRequest.java
+index d680e930..223f515a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/JavaResourcePackRequest.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/JavaResourcePackRequest.java
+@@ -8,5 +8,5 @@ package net.raphimc.viabedrock.protocol.storage;
+ import com.viaversion.viaversion.api.connection.StorableObject;
+ import java.util.UUID;
+ 
+-/** Correlates Java acknowledgements with the complete converted stack currently advertised. */
++/** Correlates Java acknowledgements with the base or block supplement currently advertised. */
+ public record JavaResourcePackRequest(UUID id) implements StorableObject { }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-index ea436f25..aacf4d2d 100644
+index ea436f25..8082865c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-@@ -18,7 +18,9 @@
+@@ -18,6 +18,7 @@
  package net.raphimc.viabedrock.protocol.storage;
  
  import com.viaversion.viaversion.api.connection.StorableObject;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
-+import net.raphimc.viabedrock.api.resourcepack.ResourcePackStageCache;
  import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
  import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
- import java.io.IOException;
-@@ -31,16 +33,21 @@ import java.util.concurrent.ConcurrentHashMap;
+@@ -33,14 +34,18 @@ public class ResourcePackStorage implements StorableObject {
  
- public class ResourcePackStorage implements StorableObject {
- 
-+    private final ResourcePackStageCache conversionStages = new ResourcePackStageCache();
      private final Set<ResourcePack> packStackBottomToTop = Collections.newSetFromMap(new LinkedHashMap<>(128, 0.75F, true));
      private final Set<ResourcePack> packStackTopToBottom = Collections.newSetFromMap(new LinkedHashMap<>(128, 0.75F, false));
 -
@@ -6440,7 +6300,7 @@ index ea436f25..aacf4d2d 100644
      private final ItemDefinitions items;
      private final AttachableDefinitions attachables;
      private final TextureDefinitions textures;
-@@ -74,6 +81,7 @@ public class ResourcePackStorage implements StorableObject {
+@@ -74,6 +79,7 @@ public class ResourcePackStorage implements StorableObject {
  
          this.texts = new TextDefinitions(this);
          this.blocks = new BlockDefinitions(this);
@@ -6448,7 +6308,7 @@ index ea436f25..aacf4d2d 100644
          this.items = new ItemDefinitions(this);
          this.attachables = new AttachableDefinitions(this);
          this.textures = new TextureDefinitions(this);
-@@ -125,10 +133,44 @@ public class ResourcePackStorage implements StorableObject {
+@@ -125,6 +131,30 @@ public class ResourcePackStorage implements StorableObject {
          return this.loadedOnJavaClient;
      }
  
@@ -6479,21 +6339,7 @@ index ea436f25..aacf4d2d 100644
      public void setLoadedOnJavaClient() {
          this.loadedOnJavaClient = true;
      }
- 
-+    /** Stable outputs shared by the initial and custom-block conversions of this accepted stack. */
-+    public ResourcePackStageCache getConversionStages() {
-+        return this.conversionStages;
-+    }
-+
-+    @Override
-+    public void onRemove() {
-+        this.conversionStages.close();
-+    }
-+
-     public Map<String, Object> getConverterData() {
-         return this.converterData;
-     }
-@@ -137,6 +179,18 @@ public class ResourcePackStorage implements StorableObject {
+@@ -137,6 +167,18 @@ public class ResourcePackStorage implements StorableObject {
          return this.texts;
      }
  
@@ -10855,99 +10701,6 @@ index 00000000..6ea74aac
 +    }
 +
 +}
-diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStageCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStageCacheTest.java
-new file mode 100644
-index 00000000..732978c8
---- /dev/null
-+++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStageCacheTest.java
-@@ -0,0 +1,87 @@
-+/*
-+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
-+ * Copyright (C) 2026 RK_01/RaphiMC and contributors
-+ * SPDX-License-Identifier: GPL-3.0-or-later
-+ */
-+package net.raphimc.viabedrock.api.resourcepack;
-+
-+import net.raphimc.viabedrock.api.resourcepack.content.Content;
-+import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
-+import org.junit.jupiter.api.Test;
-+
-+import java.util.concurrent.atomic.AtomicInteger;
-+
-+import static org.junit.jupiter.api.Assertions.*;
-+
-+class ResourcePackStageCacheTest {
-+
-+    @Test
-+    void secondConversionReusesStoredArchiveWithoutSharingMutableBytes() {
-+        final ResourcePackStageCache cache = new ResourcePackStageCache(new ResourcePackStageCache.Store(1024 * 1024, 8));
-+        final AtomicInteger encoded = new AtomicInteger();
-+
-+        final Content first = cache.get("native", () -> archive(encoded, 1));
-+        first.get("archive.bin")[0] = 9;
-+        final Content second = cache.get("native", () -> archive(encoded, 2));
-+
-+        assertEquals(1, encoded.get());
-+        assertArrayEquals(new byte[]{1, 2, 3}, second.get("archive.bin"));
-+        assertTrue(second.isStored("archive.bin"));
-+        assertFalse(second.isStored("plain.json"));
-+        second.get("archive.bin")[0] = 8;
-+        assertArrayEquals(new byte[]{1, 2, 3}, cache.get("native", () -> archive(encoded, 3)).get("archive.bin"));
-+    }
-+
-+    @Test
-+    void separateResourceStacksNeverShareOutputsAndClosedStacksRetainNothing() {
-+        final ResourcePackStageCache.Store store = new ResourcePackStageCache.Store(1024 * 1024, 8);
-+        final ResourcePackStageCache initial = new ResourcePackStageCache(store);
-+        final ResourcePackStageCache transferred = new ResourcePackStageCache(store);
-+        final AtomicInteger encoded = new AtomicInteger();
-+
-+        initial.get("native", () -> archive(encoded, 1));
-+        assertArrayEquals(new byte[]{2, 2, 3}, transferred.get("native", () -> archive(encoded, 2)).get("archive.bin"));
-+        initial.close();
-+        initial.get("native", () -> archive(encoded, 3));
-+        transferred.close();
-+
-+        assertEquals(3, encoded.get());
-+        assertEquals(0, store.retainedBytes());
-+    }
-+
-+    @Test
-+    void sharedBudgetEvictsTheLeastRecentlyUsedOutputAndSkipsOversizedOutputs() {
-+        final ResourcePackStageCache.Store store = new ResourcePackStageCache.Store(1500, 8);
-+        final ResourcePackStageCache first = new ResourcePackStageCache(store);
-+        final ResourcePackStageCache second = new ResourcePackStageCache(store);
-+        final AtomicInteger encoded = new AtomicInteger();
-+
-+        first.get("native", () -> sized(encoded, 300));
-+        second.get("native", () -> sized(encoded, 300));
-+        first.get("native", () -> sized(encoded, 300));
-+        first.get("ui", () -> sized(encoded, 300));
-+        first.get("native", () -> sized(encoded, 300));
-+        second.get("native", () -> sized(encoded, 300));
-+        first.get("large", () -> sized(encoded, 2000));
-+        first.get("large", () -> sized(encoded, 2000));
-+
-+        assertEquals(6, encoded.get());
-+        assertTrue(store.retainedBytes() <= 1500);
-+    }
-+
-+    private static Content archive(final AtomicInteger encoded, final int first) {
-+        encoded.incrementAndGet();
-+        final Content content = new InMemoryContent();
-+        content.putStored("archive.bin", new byte[]{(byte) first, 2, 3});
-+        content.put("plain.json", new byte[]{'{', '}'});
-+        return content;
-+    }
-+
-+    private static Content sized(final AtomicInteger encoded, final int size) {
-+        encoded.incrementAndGet();
-+        final Content content = new InMemoryContent();
-+        content.putStored("a", new byte[size]);
-+        return content;
-+    }
-+
-+}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java
 new file mode 100644
 index 00000000..9b0790e1
@@ -11718,6 +11471,152 @@ index 00000000..47e9f319
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CustomBlockPackPublicationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CustomBlockPackPublicationTest.java
+new file mode 100644
+index 00000000..a3a5732f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CustomBlockPackPublicationTest.java
+@@ -0,0 +1,91 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import io.netty.channel.Channel;
++import io.netty.channel.EventLoop;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.resourcepack.http.ConvertedResourcePackCache;
++import net.raphimc.viabedrock.api.resourcepack.http.ResourcePackHttpServer;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.storage.CustomBlockPackStorage;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.atomic.AtomicReference;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class CustomBlockPackPublicationTest {
++
++    @Test
++    void staleSupplementCannotBePublishedAboveTheReplacementBase() {
++        assertIgnoredCompletion(false);
++    }
++
++    @Test
++    void staleSupplementFailureCannotKickTheReplacementJoin() {
++        assertIgnoredCompletion(true);
++    }
++
++    private static void assertIgnoredCompletion(final boolean failed) {
++        final UserConnection user = mock(UserConnection.class);
++        final Channel channel = mock(Channel.class);
++        final EventLoop eventLoop = mock(EventLoop.class);
++        when(user.getChannel()).thenReturn(channel);
++        when(channel.eventLoop()).thenReturn(eventLoop);
++        when(channel.isActive()).thenReturn(true);
++        doAnswer(call -> {
++            call.<Runnable>getArgument(0).run();
++            return null;
++        }).when(eventLoop).execute(any(Runnable.class));
++        final ResourcePackStorage original = mock(ResourcePackStorage.class);
++        final ResourcePackStorage replacement = mock(ResourcePackStorage.class);
++        final var current = new AtomicReference<>(original);
++        final var gate = new AtomicReference<CustomBlockPackStorage>();
++        when(user.get(ResourcePackStorage.class)).thenAnswer(ignored -> current.get());
++        when(user.get(CustomBlockPackStorage.class)).thenAnswer(ignored -> gate.get());
++        doAnswer(call -> {
++            if (call.getArgument(0) instanceof CustomBlockPackStorage blocks) {
++                gate.set(blocks);
++            }
++            return null;
++        }).when(user).put(any());
++        final ResourcePackHttpServer server = mock(ResourcePackHttpServer.class);
++        final var future = new CompletableFuture<ConvertedResourcePackCache.Pack>();
++        when(server.prepare(original)).thenReturn(future);
++        final List<Boolean> joined = new ArrayList<>();
++        try (var via = mockStatic(ViaBedrock.class);
++             var protocol = mockStatic(BedrockProtocol.class);
++             var packets = mockStatic(PacketWrapper.class)) {
++            via.when(ViaBedrock::getResourcePackServer).thenReturn(server);
++            ResourcePackPackets.loadCustomBlocks(user, null, joined::add);
++            assertNotNull(gate.get());
++            // Keep the old gate installed to prove accepted-storage ownership is checked independently.
++            current.set(replacement);
++            if (failed) {
++                future.completeExceptionally(new IllegalStateException("Old conversion failed"));
++            } else {
++                future.complete(new ConvertedResourcePackCache.Pack(null, new byte[0], 0, "old-zip", UUID.randomUUID(), Map.of()));
++            }
++            verify(server, never()).addConnection(any(), any(), any());
++            verify(original, never()).setCustomBlockPackId(any());
++            protocol.verifyNoInteractions();
++            packets.verifyNoInteractions();
++            assertTrue(joined.isEmpty());
++            assertSame(replacement, current.get());
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java
+index 4469ae24..c59e4419 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java
+@@ -36,7 +36,16 @@ import static org.mockito.Mockito.*;
+ class JavaResourcePackLifecycleTest {
+ 
+     @Test
+-    void replacesThePreviousServerStackBeforeAdvertisingTheCompleteConversion() throws Exception {
++    void replacesBothPacksFromThePreviousServerBeforeAdvertisingTheDestinationBase() throws Exception {
++        assertPackRequest(true);
++    }
++
++    @Test
++    void keepsTheAcceptedBaseLoadedWhenAdvertisingItsBlockSupplement() throws Exception {
++        assertPackRequest(false);
++    }
++
++    private static void assertPackRequest(final boolean replaceStack) throws Exception {
+         final UserConnection user = mock(UserConnection.class);
+         final UUID id = UUID.randomUUID();
+         final UUID token = UUID.randomUUID();
+@@ -59,15 +68,19 @@ class JavaResourcePackLifecycleTest {
+                 return wrapper;
+             });
+             final var send = ResourcePackPackets.class.getDeclaredMethod("sendJavaResourcePack", UserConnection.class,
+-                    ConvertedResourcePackCache.Pack.class, UUID.class);
++                    ConvertedResourcePackCache.Pack.class, UUID.class, boolean.class);
+             send.setAccessible(true);
+-            send.invoke(null, user, pack, token);
++            send.invoke(null, user, pack, token, replaceStack);
++        }
++        assertEquals(replaceStack ? List.of(ClientboundConfigurationPackets26_3.RESOURCE_PACK_POP,
++                ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH) : List.of(ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH), sent);
++        if (replaceStack) {
++            assertNull(wrappers.get(ClientboundConfigurationPackets26_3.RESOURCE_PACK_POP).get(Types.OPTIONAL_UUID, 0));
+         }
+-        assertEquals(List.of(ClientboundConfigurationPackets26_3.RESOURCE_PACK_POP,
+-                ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH), sent);
+-        assertNull(wrappers.get(sent.get(0)).get(Types.OPTIONAL_UUID, 0));
+-        assertEquals(id, wrappers.get(sent.get(1)).get(Types.UUID, 0));
+-        assertEquals("http://localhost/packs?token=" + token, wrappers.get(sent.get(1)).get(Types.STRING, 0));
++        final PacketWrapper request = wrappers.get(ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH);
++        assertEquals(id, request.get(Types.UUID, 0));
++        assertEquals("http://localhost/packs?token=" + token, request.get(Types.STRING, 0));
++        assertEquals("exact-zip-hash", request.get(Types.STRING, 1));
+         verify(user).put(new JavaResourcePackRequest(id));
+     }
+ 
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
 new file mode 100644
 index 00000000..61c3a60c
@@ -11939,10 +11838,10 @@ index 00000000..61c3a60c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..aa931b04
+index 00000000..74dd2f6e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,743 @@
+@@ -0,0 +1,746 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -11956,6 +11855,7 @@ index 00000000..aa931b04
 +import net.raphimc.viabedrock.api.model.CustomBlockProperties;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +import net.raphimc.viabedrock.api.resourcepack.definition.CustomBlockDefinition;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockTextures;
@@ -12400,11 +12300,13 @@ index 00000000..aa931b04
 +        pixels.setRGB(1, 1, 0xFE123456);
 +        final ResourcePack partial = pack(pixels);
 +        final ResourcePackStorage overridden = new ResourcePackStorage(List.of(partial, opaque));
-+        assertFalse(CustomBlockResourceRewriter.hasOpaquePixels(CustomBlockResourceRewriter.terrainTexture(overridden, "ruby")));
++        final var textures = new CustomBlockTextures(overridden);
++        assertFalse(textures.hasOpaquePixels(textures.get("ruby")));
 +        final ResourcePackStorage reverse = new ResourcePackStorage(List.of(opaque, partial));
-+        assertTrue(CustomBlockResourceRewriter.hasOpaquePixels(CustomBlockResourceRewriter.terrainTexture(reverse, "ruby")));
-+        assertFalse(CustomBlockResourceRewriter.hasOpaquePixels(null));
-+        assertFalse(CustomBlockResourceRewriter.hasOpaquePixels(new net.raphimc.viabedrock.api.resourcepack.content.Content.LazyImage(new byte[]{1}, "png")));
++        final var reversedTextures = new CustomBlockTextures(reverse);
++        assertTrue(reversedTextures.hasOpaquePixels(reversedTextures.get("ruby")));
++        assertFalse(textures.hasOpaquePixels(null));
++        assertFalse(textures.hasOpaquePixels(new Content.LazyImage(new byte[]{1}, "png")));
 +    }
 +
 +    @Test
@@ -12631,7 +12533,7 @@ index 00000000..aa931b04
 +        pixels.setRGB(0, 0, 0x7F123456);
 +        pixels.setRGB(1, 0, 0x80123456);
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(pixels)));
-+        final var texture = CustomBlockResourceRewriter.terrainTexture(storage, "ruby");
++        final var texture = new CustomBlockTextures(storage).get("ruby");
 +        final var cutout = CustomBlockResourceRewriter.materialTexture(texture, "alpha_test");
 +        assertEquals(0, cutout.getRGB(0, 0) >>> 24);
 +        assertEquals(255, cutout.getRGB(1, 0) >>> 24);
@@ -13161,10 +13063,10 @@ index 00000000..0cc309b7
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
 new file mode 100644
-index 00000000..93b63501
+index 00000000..d7f6a4e4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,108 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -13203,7 +13105,7 @@ index 00000000..93b63501
 +            final var culling = CustomBlockCulling.decode(CustomBlockCulling.encode(Map.of(42, visual))).get(42);
 +            assertEquals(Set.of(CustomBlockCulling.Direction.SOUTH), culling.directions());
 +            assertEquals(List.of(new CustomBlockCulling.Rectangle(0, 0, 1, 1)), culling.slice(CustomBlockCulling.Direction.SOUTH));
-+            assertEquals(16, CustomBlockResourceRewriter.terrainTexture(storage, "skin").getImage().getWidth());
++            assertEquals(16, new CustomBlockTextures(storage).get("skin").getImage().getWidth());
 +        }
 +    }
 +
@@ -13223,16 +13125,18 @@ index 00000000..93b63501
 +        final BufferedImage pixels = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
 +        pixels.setRGB(4, 4, 0x7F123456);
 +        final ResourcePackStorage faint = storage(pixels);
-+        final var texture = CustomBlockResourceRewriter.terrainTexture(faint, "skin");
-+        assertFalse(CustomBlockResourceRewriter.hasVisiblePixels(texture, "alpha_test"));
-+        assertTrue(CustomBlockResourceRewriter.hasVisiblePixels(texture, "blend"));
++        final var textures = new CustomBlockTextures(faint);
++        final var texture = textures.get("skin");
++        assertFalse(textures.hasVisiblePixels(texture, "alpha_test"));
++        assertTrue(textures.hasVisiblePixels(texture, "blend"));
 +        final var blended = CustomBlockModel.compile(faint, "test:block", 42, components("blend"));
 +        assertNotNull(blended);
 +        assertEquals(6, JsonParser.parseString(blended.modelJson()).getAsJsonObject().getAsJsonArray("elements")
 +                .get(0).getAsJsonObject().getAsJsonObject("faces").size());
 +        pixels.setRGB(4, 4, 0x80123456);
-+        assertTrue(CustomBlockResourceRewriter.hasVisiblePixels(CustomBlockResourceRewriter.terrainTexture(storage(pixels), "skin"), "alpha_test"));
-+        assertTrue(CustomBlockResourceRewriter.hasVisiblePixels(null, "alpha_test"));
++        final var updated = new CustomBlockTextures(storage(pixels));
++        assertTrue(updated.hasVisiblePixels(updated.get("skin"), "alpha_test"));
++        assertTrue(updated.hasVisiblePixels(null, "alpha_test"));
 +    }
 +
 +    private static CompoundTag components(final String method) {
@@ -13565,10 +13469,10 @@ index 00000000..7fe228fa
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java
 new file mode 100644
-index 00000000..c95c859d
+index 00000000..8c9a77ac
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,179 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -13584,6 +13488,7 @@ index 00000000..c95c859d
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import org.junit.jupiter.api.Test;
 +
@@ -13594,7 +13499,6 @@ index 00000000..c95c859d
 +import java.util.List;
 +import java.util.Map;
 +import java.util.UUID;
-+import java.util.function.Supplier;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -13650,7 +13554,7 @@ index 00000000..c95c859d
 +    }
 +
 +    @Test
-+    void sharesExportedSpritesAcrossCarriersAndRetainsEachMaterialAndParticleReference() throws Exception {
++    void exportsOnlySupplementalBlockResourcesWhileSharingSpritesAndRetainingMaterialAndParticleReferences() throws Exception {
 +        final CountingContent content = content(PIXELS);
 +        content.put("textures/blocks/copy.png", content.get("textures/blocks/skin.png"));
 +        final ResourcePackStorage storage = storage(content);
@@ -13666,10 +13570,14 @@ index 00000000..c95c859d
 +        final Content converted;
 +        try {
 +            states.set(BedrockProtocol.MAPPINGS, HashBiMap.create());
-+            final List<Supplier<Content>> tasks = new ArrayList<>();
-+            new CustomBlockResourceRewriter().submitTasks(storage, tasks::add);
-+            assertEquals(1, tasks.size());
-+            converted = tasks.getFirst().get();
++            storage.getConverterData().put("ce_base_scale", 2.5F);
++            converted = ResourcePackRewriter.customBlocksToJava(storage);
++            assertEquals(Map.of("ce_base_scale", 2.5F), storage.getConverterData());
++            assertTrue(converted.contains("pack.mcmeta"));
++            assertTrue(converted.getFilesDeep("", "").stream().allMatch(path -> path.equals("pack.mcmeta")
++                    || path.equals("assets/viabedrock/custom_blocks.json") || path.equals("assets/viabedrock/block_culling.json")
++                    || path.startsWith("assets/viabedrock/models/block/custom/") || path.startsWith("assets/viabedrock/textures/block/custom/")
++                    || path.startsWith("assets/minecraft/blockstates/")));
 +        } finally {
 +            states.set(BedrockProtocol.MAPPINGS, previous);
 +        }
