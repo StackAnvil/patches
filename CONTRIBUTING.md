@@ -46,3 +46,9 @@ Run `bun run pr check <project>` before proposing the first upstreamable patch. 
 ## Report a problem
 
 Include the project, upstream base commit, patch filename, steps to reproduce, expected behavior, and observed behavior. Attach logs with account tokens and session data removed. Use [SECURITY.md](SECURITY.md) for a vulnerability.
+
+## Git hooks
+
+`bun install` installs Lefthook for this checkout and preserves the existing preparation steps.
+Run `bun run pre-commit` to run the commit checks manually.
+The hooks use the existing project tools. Before pushing, they run the relevant project checks for changed files.
