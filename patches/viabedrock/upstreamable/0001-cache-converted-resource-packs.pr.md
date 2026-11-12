@@ -18,8 +18,9 @@ Disk-cache misses stream into the temporary ZIP while calculating SHA-1.
 Memory and disabled modes retain their byte-array output.
 
 Typed converter metadata survives fresh conversions, shared hits and reopened disk caches.
+It stays on the backend: a per-key disk index names the content-addressed ZIP and holds the metadata, and the downloadable pack contains only converted resources.
 Finite model scales retain their float type.
-Malformed metadata or truncated archives trigger conversion and atomic replacement.
+Malformed indexes or truncated archives trigger conversion and atomic replacement. The ZIP is published before its index.
 The fallback renderer accepts numeric scale metadata through `Number.floatValue()`.
 
 Completed downloads verify hashes and decode ZIPs on bounded workers.
@@ -89,3 +90,5 @@ These plain software controls do not establish complete native camera, emote, sk
 Each Java conversion contains the full accepted Bedrock stack and custom-block supplements. Remove previous Java server packs before pushing its replacement. Retired UUID replies and discard acknowledgements cannot finish the destination's resource negotiation.
 
 A live Mineville-to-Zeqa transfer loads its custom items and HUD glyphs after this change. The previous route retained both server conversions, overflowed the item atlas and rolled back the reload; the destination packs match a working direct join. Packet regressions verify replacement order and reply ownership. Complete resource parity across other transfers remains unverified.
+
+Ordered archives use the same compressed-media storage policy as converted Content ZIPs. This avoids deflating PNG, JPEG and Ogg files again inside the native archive. Raw TGA and definitions still compress. The ZIP identity advances so old conversions refresh. A private 19,335-entry Galaxite archive benchmark uses two warmup and five alternating measured rounds. Median writing falls from 315 ms to 117 ms, while size rises from 65.08 MB to 66.99 MB. Every entry payload matches. The mixed-media regression covers both entry points and both writer backends. This isolated benchmark does not establish total join latency.

@@ -1,0 +1,131 @@
+From f611901667623e4d31c346810869bc5626385e01 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 00:40:19 +0100
+Subject: [PATCH] perf(blocks): distribute immutable state hashes
+
+Block palettes repeatedly look up logical states in immutable maps. The raw
+Map hash sums key/value XORs, so exchanging small property values produces
+many collisions. The pinned 23,960-state palette has only 15,338 distinct
+hashes, with up to 70 states sharing one hash. Map construction and lookup
+then spend substantial time comparing unrelated property maps.
+
+Mix each property pair before its order-independent sum and retain the hash
+on the state. Own a copy of the input properties in their iteration order,
+so caller mutation cannot invalidate a registered key or its hash. Keep
+equality independent of property order and preserve unsorted state strings.
+Network palette IDs still use the separate native NBT hasher.
+
+The regression mutates the caller's map, looks up an equal reordered state,
+and checks immutable derivation and the retained state string. This hash
+change is independently reviewable from pack conversion and custom blocks.
+---
+ .../viabedrock/api/model/BlockState.java      | 15 ++++--
+ .../viabedrock/api/model/BlockStateTest.java  | 53 +++++++++++++++++++
+ 2 files changed, 65 insertions(+), 3 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/BlockStateTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/BlockState.java b/src/main/java/net/raphimc/viabedrock/api/model/BlockState.java
+index 49e22a717..d35f53f53 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/BlockState.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/BlockState.java
+@@ -24,6 +24,7 @@ public class BlockState {
+     private final String namespace;
+     private final String identifier;
+     private final Map<String, String> properties;
++    private final int hash;
+ 
+     public BlockState(final String identifier, final Map<String, String> properties) {
+         this("minecraft", identifier, properties);
+@@ -36,7 +37,15 @@ public class BlockState {
+ 
+         this.namespace = namespace;
+         this.identifier = identifier.toLowerCase(Locale.ROOT);
+-        this.properties = Collections.unmodifiableMap(properties);
++        this.properties = Collections.unmodifiableMap(new LinkedHashMap<>(properties));
++        int propertyHash = 0;
++        for (final Map.Entry<String, String> entry : this.properties.entrySet()) {
++            // Mix each key/value pair before the order-independent sum. Raw map hashes collide
++            // heavily when several block properties exchange small numeric or boolean values.
++            final int mixed = (Objects.hashCode(entry.getKey()) ^ Integer.rotateLeft(Objects.hashCode(entry.getValue()), 16)) * 0x9E3779B9;
++            propertyHash += mixed ^ mixed >>> 16;
++        }
++        this.hash = 31 * (31 * (31 + this.namespace.hashCode()) + this.identifier.hashCode()) + propertyHash;
+     }
+ 
+     public static BlockState fromString(final String string) {
+@@ -183,12 +192,12 @@ public class BlockState {
+         if (!(o instanceof BlockState that)) {
+             return false;
+         }
+-        return Objects.equals(this.namespace, that.namespace) && Objects.equals(this.identifier, that.identifier) && Objects.equals(this.properties, that.properties);
++        return this.hash == that.hash && Objects.equals(this.namespace, that.namespace) && Objects.equals(this.identifier, that.identifier) && Objects.equals(this.properties, that.properties);
+     }
+ 
+     @Override
+     public int hashCode() {
+-        return Objects.hash(this.namespace, this.identifier, this.properties);
++        return this.hash;
+     }
+ 
+     @Override
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/BlockStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/BlockStateTest.java
+new file mode 100644
+index 000000000..696359687
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/BlockStateTest.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.model;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.LinkedHashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BlockStateTest {
++
++    @Test
++    void stateKeysOwnTheirPropertiesAndRetainOrderAfterCallerMutation() {
++        final Map<String, String> properties = new LinkedHashMap<>();
++        properties.put("facing", "north");
++        properties.put("powered", "false");
++        final var state = new BlockState("probe", "BLOCK", properties);
++        final var registered = Map.of(state, 42);
++        final int hash = state.hashCode();
++        properties.put("facing", "south");
++        properties.clear();
++        assertEquals("probe:block[facing=north,powered=false]", state.toBlockStateString());
++        assertEquals(hash, state.hashCode());
++        final Map<String, String> reordered = new LinkedHashMap<>();
++        reordered.put("powered", "false");
++        reordered.put("facing", "north");
++        final var equal = new BlockState("probe", "block", reordered);
++        assertEquals(state, equal);
++        assertEquals(hash, equal.hashCode());
++        assertEquals(42, registered.get(equal));
++        assertNotEquals(state, state.withProperty("powered", "true"));
++        assertEquals("false", state.properties().get("powered"));
++        assertThrows(UnsupportedOperationException.class, () -> state.properties().put("powered", "true"));
++    }
++
++}
+-- 
+2.56.0
