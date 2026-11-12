@@ -1,4 +1,4 @@
-From 8f208f93a48e617ebbf8610821fef99faaf8f053 Mon Sep 17 00:00:00 2001
+From b53fbef8424d5a50e7945d39ab577e27e1913e3a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -552,6 +552,15 @@ model before those edits and keep the compiler local to that pass. This
 avoids repeated CubeConverter work even when all persistent caches are
 disabled. A regression alternates carriers, materials and transforms on
 one geometry and verifies independent output and unchanged earlier states.
+
+
+Include the session voxel-shape registry in compiled visual cache identity.
+Culling metadata embeds grid slices, so equal packs and StartGame properties
+can still compile differently when the server changes grid cells, coordinates
+or name handles. Hash every typed grid field and sorted name mapping, and
+advance the cache format to discard older incomplete keys. A reopened-disk
+regression checks actual model slices for all three changes and reuses an
+identical registry rebuilt from a different name insertion order.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -591,7 +600,7 @@ one geometry and verifies independent output and unchanged earlier states.
  .../CustomBlockResourceRewriter.java          |  250 ++++
  .../CustomBlockStateDefinitions.java          |  225 ++++
  .../resourcepack/CustomBlockTextures.java     |   95 ++
- .../resourcepack/CustomBlockVisualCache.java  |  261 ++++
+ .../resourcepack/CustomBlockVisualCache.java  |  287 +++++
  .../resourcepack/NativeBlockCollision.java    |   82 ++
  .../resourcepack/NativeBlockSelection.java    |   54 +
  .../resourcepack/NativeBlockTransform.java    |  189 +++
@@ -634,13 +643,13 @@ one geometry and verifies independent output and unchanged earlier states.
  .../CustomBlockMaterialVisibilityTest.java    |  106 ++
  .../CustomBlockStateDefinitionsTest.java      |  286 +++++
  .../CustomBlockTextureReuseTest.java          |  175 +++
- .../CustomBlockVisualCacheTest.java           |  117 ++
+ .../CustomBlockVisualCacheTest.java           |  184 +++
  .../protocol/storage/ChunkTrackerTest.java    |   49 +-
  .../storage/CustomBlockPackStorageTest.java   |   31 +
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  255 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   89 ++
- 87 files changed, 12521 insertions(+), 160 deletions(-)
+ 87 files changed, 12614 insertions(+), 160 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -5574,10 +5583,10 @@ index 00000000..7492049f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java
 new file mode 100644
-index 00000000..4790cfe2
+index 00000000..faddc8bd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,287 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5596,6 +5605,7 @@ index 00000000..4790cfe2
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +import net.raphimc.viabedrock.protocol.model.BlockProperties;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.storage.VoxelShapeRegistry;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
 +import java.io.DataOutputStream;
@@ -5622,7 +5632,7 @@ index 00000000..4790cfe2
 +public final class CustomBlockVisualCache {
 +
 +    // Advance when compilation, physical/material semantics or carrier assignment changes.
-+    private static final int FORMAT = 1;
++    private static final int FORMAT = 2;
 +    private static final int MAX_ENTRY_BYTES = 32 << 20;
 +    private static final Gson GSON = new Gson();
 +    private static final Store SHARED = new Store(32L << 20, 128L << 20, 8);
@@ -5652,6 +5662,7 @@ index 00000000..4790cfe2
 +            output.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            // The resolved stack contains only the native layers admitted for this world's version.
 +            output.writeUTF(ConvertedResourcePackCache.fingerprint(storage.getPackStackBottomToTop()));
++            writeVoxelShapes(output, storage.getVoxelShapes());
 +            output.writeInt(carriers.size());
 +            for (final int carrier : carriers) {
 +                output.writeInt(carrier);
@@ -5670,6 +5681,30 @@ index 00000000..4790cfe2
 +            }
 +        }
 +        return HexFormat.of().formatHex(digest.digest());
++    }
++
++    private static void writeVoxelShapes(final DataOutputStream output, final VoxelShapeRegistry.Snapshot snapshot) throws IOException {
++        output.writeInt(snapshot.shapes().size());
++        for (final VoxelShapeRegistry.Shape shape : snapshot.shapes()) {
++            output.writeInt(shape.xSize());
++            output.writeInt(shape.ySize());
++            output.writeInt(shape.zSize());
++            final byte[] cells = shape.cells();
++            output.writeInt(cells.length);
++            output.write(cells);
++            for (final List<Float> coordinates : List.of(shape.xCoordinates(), shape.yCoordinates(), shape.zCoordinates())) {
++                output.writeInt(coordinates.size());
++                for (final float coordinate : coordinates) {
++                    output.writeFloat(coordinate);
++                }
++            }
++        }
++        output.writeInt(snapshot.names().size());
++        for (final var entry : snapshot.names().entrySet().stream().sorted(Map.Entry.comparingByKey()).toList()) {
++            output.writeUTF(entry.getKey());
++            output.writeInt(entry.getValue());
++        }
++        output.writeInt(snapshot.customShapeCount());
 +    }
 +
 +    private static MessageDigest digest() {
@@ -13711,10 +13746,10 @@ index 00000000..c95c859d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java
 new file mode 100644
-index 00000000..110d325c
+index 00000000..dad2a798
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,184 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -13724,17 +13759,21 @@ index 00000000..110d325c
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import net.raphimc.viabedrock.api.model.CustomBlockOffset;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.model.BlockProperties;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.storage.VoxelShapeRegistry;
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.io.TempDir;
 +
 +import java.nio.file.Files;
 +import java.nio.file.Path;
 +import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.awt.image.BufferedImage;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.concurrent.atomic.AtomicInteger;
@@ -13745,6 +13784,69 @@ index 00000000..110d325c
 +
 +    @TempDir
 +    Path directory;
++
++    @Test
++    void changedServerVoxelGridsRecompileCullingAfterReopeningTheCache() throws Exception {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"grid\",\"uuid\":\"20bf2796-63a5-405d-9c62-ef01507c580a\",\"version\":[1,0,0]}}");
++        content.putString("textures/terrain_texture.json", "{\"texture_data\":{\"skin\":{\"textures\":\"textures/blocks/skin\"}}}");
++        content.putPngImage("textures/blocks/skin.png", new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB));
++        content.putString("models/blocks/probe.json", """
++                {"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.probe","texture_width":16,"texture_height":16},
++                "bones":[{"name":"body","cubes":[{"origin":[-8,0,-8],"size":[16,16,16],"uv":[0,0]}]}]}]}
++                """);
++        final var storage = new ResourcePackStorage(List.of(new ResourcePack(content)));
++        final var geometry = new CompoundTag();
++        geometry.putString("identifier", "geometry.probe");
++        geometry.putString("culling_shape", "probe:shape");
++        final var material = new CompoundTag();
++        material.putString("texture", "skin");
++        final var materials = new CompoundTag();
++        materials.put("*", material);
++        final var components = new CompoundTag();
++        components.put("minecraft:geometry", geometry);
++        components.put("minecraft:material_instances", materials);
++        final var properties = new BlockProperties[]{new BlockProperties("probe:block", components)};
++        final var half = shape((byte) 1, .5F);
++        final var empty = shape((byte) 0, .5F);
++        final var original = new VoxelShapeRegistry.Snapshot(List.of(half, empty), Map.of("probe:shape", 0, "probe:alias", 1), 1);
++        storage.setVoxelShapes(original);
++        final String key = CustomBlockVisualCache.fingerprint(storage, properties, List.of(3));
++        final var first = new CustomBlockVisualCache.Store(0, 1 << 20, 8).get(key, this.directory, () -> compile(storage, components));
++        final var halfSlice = List.of(new CustomBlockCulling.Rectangle(0, 0, .5, 1));
++        assertEquals(halfSlice, culling(first).slice(CustomBlockCulling.Direction.DOWN));
++        final var reordered = new LinkedHashMap<String, Integer>();
++        reordered.put("probe:alias", 1);
++        reordered.put("probe:shape", 0);
++        storage.setVoxelShapes(new VoxelShapeRegistry.Snapshot(original.shapes(), reordered, 1));
++        final var reopened = new CustomBlockVisualCache.Store(0, 1 << 20, 8);
++        assertEquals(first, reopened.get(CustomBlockVisualCache.fingerprint(storage, properties, List.of(3)), this.directory, () -> {
++            throw new AssertionError("Recompiled an identical grid with reordered names");
++        }));
++        final var changes = List.of(
++                new VoxelShapeRegistry.Snapshot(List.of(empty, empty), original.names(), 1),
++                new VoxelShapeRegistry.Snapshot(List.of(shape((byte) 1, 1F), empty), original.names(), 1),
++                new VoxelShapeRegistry.Snapshot(original.shapes(), Map.of("probe:shape", 1, "probe:alias", 0), 1));
++        for (int index = 0; index < changes.size(); index++) {
++            storage.setVoxelShapes(changes.get(index));
++            final var current = reopened.get(CustomBlockVisualCache.fingerprint(storage, properties, List.of(3)), this.directory,
++                    () -> compile(storage, components));
++            assertEquals(index == 1 ? List.of(new CustomBlockCulling.Rectangle(0, 0, 1, 1)) : List.of(),
++                    culling(current).slice(CustomBlockCulling.Direction.DOWN));
++        }
++    }
++
++    private static VoxelShapeRegistry.Shape shape(final byte cells, final float width) {
++        return new VoxelShapeRegistry.Shape(1, 1, 1, new byte[]{cells}, List.of(0F, width), List.of(0F, 1F), List.of(0F, 1F));
++    }
++
++    private static CustomBlockVisualCache.Snapshot compile(final ResourcePackStorage storage, final CompoundTag components) {
++        return new CustomBlockVisualCache.Snapshot(Map.of(3, CustomBlockModel.compile(storage, "probe:block", 3, components)), Map.of("probe:block", 3));
++    }
++
++    private static CustomBlockCulling.Definition culling(final CustomBlockVisualCache.Snapshot snapshot) {
++        return CustomBlockCulling.decode(CustomBlockCulling.encode(snapshot.visuals())).get(3);
++    }
 +
 +    @Test
 +    void memoryAndReopenedDiskReuseCompleteImmutableVisuals() {

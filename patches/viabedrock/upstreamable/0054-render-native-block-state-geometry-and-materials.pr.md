@@ -78,7 +78,7 @@ Other shape providers, loaded native world publication, full camera trajectories
 
 `BlockStatePreparationTest`, `WorldPacketBufferTest` and `ResourcePackStageCacheTest` cover queue rejection, stale publication, held packet order, isolated stage outputs and budget eviction.
 
-An immutable visual cache retains compiled models and logical carrier assignments. Runtime palettes, physics and connection mappings remain local. Keys include the protocol, accepted resources, typed block definitions and available carriers. The cache retains at most eight entries, 32 MiB in memory and 128 MiB on disk. Checksummed entries fail closed to compilation. The cache requires viabedrock/0001-cache-converted-resource-packs.patch.
+An immutable visual cache retains compiled models and logical carrier assignments. Runtime palettes, physics and connection mappings remain local. Keys include the protocol, accepted resources, typed block definitions, available carriers and the server voxel grids. Grid identity includes dimensions, cell data, coordinate boundaries and sorted name handles. Advancing the cache format prevents reuse of older incomplete keys. A reopened-disk regression changes cells, coordinates and name handles independently and checks the resulting culling slices. It reproduces stale slices with the previous cache class and passes with the corrected identity. Live upgrade, reconnect and fresh-process cache controls pass. The cache retains at most eight entries, 32 MiB in memory and 128 MiB on disk. Checksummed entries fail closed to compilation. The cache requires viabedrock/0001-cache-converted-resource-packs.patch.
 
 The keepalive task also checks native outbound codec readiness on the event loop. The add-on reports the temporary configuration encoder as unavailable. A regression covers this transition without publishing a packet through an unconfigured codec.
 
@@ -86,6 +86,6 @@ The final cold Galaxite recordings build block states on a worker in 0.74 and 0.
 
 Cold compilation also reuses each accepted geometry within one preparation pass. Each state receives a copy before material binding, transforms and culling. The compiler belongs to that pass and retains no connection state afterward. A regression alternates carriers, materials and transforms on one geometry and checks independent output.
 
-The full four-project build passes 3,991 tests with 336 optional skips. Final transport, UI alias and outbound codec probes pass. All 2,220 custom models, physical metadata and culling metadata match the previous build. JSON object order and unordered direction sets are normalized. Existing unresolved mappings still fail broad rendering checks.
+The full four-project build passes 3,992 tests with 336 optional skips. Final transport, UI alias and outbound codec probes pass. All 2,220 custom models, physical metadata and culling metadata match the previous build. JSON object order and unordered direction sets are normalized. Existing unresolved mappings still fail broad rendering checks.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
