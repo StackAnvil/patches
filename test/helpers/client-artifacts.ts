@@ -12,7 +12,7 @@ export async function writeClientJar(directory: string, file: string, project: s
     depends: { minecraft },
     ...(project === "viafabricplus-bedrock" ? { jars: [
       { file: "META-INF/jars/ViaBedrock-1-StackAnvil.jar" },
-      { file: "META-INF/jars/cubeconverter-1-StackAnvil.jar" },
+      { file: "META-INF/jars/vv-json-1-StackAnvil.jar" },
     ] } : {}),
   }));
   await rm(join(directory, file), { force: true });
