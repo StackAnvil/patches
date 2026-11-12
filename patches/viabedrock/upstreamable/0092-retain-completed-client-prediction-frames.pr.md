@@ -46,3 +46,7 @@ Installed vanilla-coefficient checks, different-version server transfers, whole 
 Original Bedrock 1.26.60.5 Dolphin Boost kernel controls establish that the swim multiplier uses effect-marker presence, including the final zero-duration frame. The shared timeline exposes that multiplier from retained values. A regression checks actor and effect-kind isolation, the swimming gate, expiry, and restoration after clearing state. Full world scheduling at the swim-expiry boundary remains unverified.
 
 The [owning patch](0092-retain-completed-client-prediction-frames.patch) retains implementation rationale and versioned evidence.
+
+## Near teleports
+
+A mode-2 MovePlayer for the client player is queued into retained history when the replay channel is negotiated, the tick is retained, the player is not riding and the float distance is below 16. It is paired with a version-3 correction marked as a teleport: position written, motion cleared, ground left to the replayed frame. Exactly 16 or more, mode 1, missing history and riding players keep the Java teleport. `NearTeleportReplayPacketTest` covers these branches from the original receiver controls. Native actor exclusion tags, the final transfer acceptance gate and the full numerical trajectory gap remain unresolved.

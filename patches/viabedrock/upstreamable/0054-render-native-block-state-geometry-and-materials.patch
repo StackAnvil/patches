@@ -1,4 +1,4 @@
-From 851a6b6704db07bc7ee3cc03dfde949be170dc54 Mon Sep 17 00:00:00 2001
+From 1e25b8d38ccf4317e8816fe2b14ed6d6774eeee8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -189,11 +189,10 @@ solver or vanilla per-type collision provider.
 Retain the material AO exponent on each authored face in the converted
 model, including aliases and generated reverse-winding planes. One face
 with exponent zero must not disable AO on all other faces. Bedrock
-1.26.51.1 retains a float exponent and applies it to the product of
-corner ambient light and directional dimming, before tint and lightmap.
-Native instruction probes cover six faces and 2,304 corner outputs with
-unchanged light coordinates. The core carries metadata on both routes;
-faithful per-face evaluation requires client renderer integration.
+1.26.60.5 raises ambient light to the float exponent before multiplying
+by directional dimming, tint and lightmap. The core carries this metadata
+on both routes; faithful per-face evaluation requires client renderer
+integration.
 
 Native corner light takes independent maxima across block and sky
 channels, without Java's zero replacement or arithmetic average.
@@ -577,6 +576,35 @@ failure inert before it can register HTTP access, advertise above a new
 base or kick its join. Regressions cover both completions. Remove the
 retired terrain-exporter texture wrappers and exercise the shared pass
 texture API directly in the existing pixel and precedence regressions.
+
+Decode face dimming from bit 0 of packed_bools. Bedrock 1.26.60.5 with
+BDS 1.26.60.6 serializes materials with packed_bools 5 when dimming is
+enabled and 4 when disabled, without a face_dimming field. The compiler
+read only face_dimming, so every serialized material kept dimming, and
+installed-client on/off pairs rendered identically. Keep the explicit
+field for definitions that still carry it.
+
+Apply the material exponent to ambient occlusion before directional
+dimming. Native emitter 0x1468c33f3 computes
+clamp(directional * powf(AO, exponent), 0, 1); the previous
+pow(AO * directional, exponent) changed axis faces with exponent 0 or 2.
+Export the native dimming-stage rule for continuous normals: weight each
+component by the coefficient for its sign and take the vector length.
+
+Sample inset faces per actual vertex, as native callback 0x146acea60
+does when the material has an exponent and the diagonal squared is at
+most 3.515625. The cache cell is the floor of the centroid biased 0.01
+along the normal. Builder 0x146acfe0d records a 3x3x3 neighborhood with
+a no-light mask for opaque or unreachable cells and a skip mask for cells
+whose faces or edges are all blocked. Each vertex weights the center by
+1.331558 and every reachable neighbor within radius 1.5 on the normal's
+side by 1 / (distance^2 + 0.001), and keeps per-channel light maxima.
+Two live cache tuples and eight live vertices from an admitted installed
+inset face replay exactly in the original instructions. The same
+captured neighborhood gives the native AO values and block light 14 on
+all four occluded vertices here. Outer-plane faces keep the corner path:
+their full-face controls predate this capture, and no native control
+compares the per-vertex path with them.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -586,8 +614,8 @@ texture API directly in the existing pixel and precedence regressions.
  .../chunk/blockstate/RuntimeBlockPalette.java |   68 +
  .../chunk/blockstate/VanillaBlockStates.java  |   40 +
  .../api/model/CustomBlockCulling.java         |  211 ++++
- .../api/model/CustomBlockFaceLighting.java    |   98 ++
- .../api/model/CustomBlockLighting.java        |   59 +
+ .../api/model/CustomBlockFaceLighting.java    |  231 ++++
+ .../api/model/CustomBlockLighting.java        |   75 ++
  .../api/model/CustomBlockOffset.java          |   97 ++
  .../api/model/CustomBlockProperties.java      |  146 +++
  .../api/model/CustomBlockVisual.java          |   27 +
@@ -611,7 +639,7 @@ texture API directly in the existing pixel and precedence regressions.
  .../protocol/rewriter/BlockStateRewriter.java |  322 +++--
  .../rewriter/ResourcePackRewriter.java        |   12 +
  .../CustomBlockCullingCompiler.java           |  162 +++
- .../resourcepack/CustomBlockModel.java        |  588 +++++++++
+ .../resourcepack/CustomBlockModel.java        |  599 +++++++++
  .../CustomBlockResourceRewriter.java          |  175 +++
  .../CustomBlockStateDefinitions.java          |  225 ++++
  .../resourcepack/CustomBlockTextures.java     |   95 ++
@@ -637,7 +665,7 @@ texture API directly in the existing pixel and precedence regressions.
  .../blockstate/RuntimeBlockPaletteTest.java   |   61 +
  .../blockstate/VanillaBlockStatesTest.java    |   87 ++
  .../api/model/CustomBlockCullingTest.java     |   68 +
- .../api/model/CustomBlockLightingTest.java    |  171 +++
+ .../api/model/CustomBlockLightingTest.java    |  224 ++++
  .../api/model/CustomBlockOffsetTest.java      |   80 ++
  .../api/model/CustomBlockPropertiesTest.java  |   92 ++
  .../api/model/NativeBlockGeometryTest.java    |   31 +
@@ -652,7 +680,7 @@ texture API directly in the existing pixel and precedence regressions.
  .../CustomBlockPackPublicationTest.java       |   91 ++
  .../packet/JavaResourcePackLifecycleTest.java |   29 +-
  .../rewriter/CustomBlockBoneGeometryTest.java |  213 ++++
- .../CustomBlockModelSelectionTest.java        |  746 +++++++++++
+ .../CustomBlockModelSelectionTest.java        |  770 +++++++++++
  .../CustomBlockPlaneGeometryTest.java         |  170 +++
  .../NativeBlockGeometryRegistrationTest.java  |  145 +++
  .../CustomBlockCullingCompilerTest.java       |  140 ++
@@ -665,7 +693,7 @@ texture API directly in the existing pixel and precedence regressions.
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  255 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   89 ++
- 87 files changed, 12452 insertions(+), 176 deletions(-)
+ 87 files changed, 12689 insertions(+), 176 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -1622,10 +1650,10 @@ index 000000000..21c0870c6
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
 new file mode 100644
-index 000000000..ef477d59b
+index 000000000..a2e11c087
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,231 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1695,8 +1723,141 @@ index 000000000..ef477d59b
 +        return new Face(corners[0], corners[1], corners[2], corners[3]);
 +    }
 +
++    /**
++     * Native classic terrain uses the per-vertex sampler of callback 0x146acea60 when the material has an AO
++     * exponent and the first/third vertex diagonal squared is at most 3.515625. Other faces use the per-face path.
++     */
++    public static boolean perVertex(final CustomBlockLighting material, final float[][] positions) {
++        final float x = positions[0][0] - positions[2][0];
++        final float y = positions[0][1] - positions[2][1];
++        final float z = positions[0][2] - positions[2][2];
++        return material.ambientOcclusion() != 0F && x * x + y * y + z * z <= 3.515625F;
++    }
++
++    /**
++     * Sample each actual vertex like the native per-vertex callback. The cache cell is the floor of the
++     * centroid biased 0.01 along the normal. Its 3x3x3 neighborhood records AO, light and two masks: cells
++     * without light (opaque or unreachable) and cells skipped entirely. Each vertex then weights the cache
++     * center and the reachable neighbors within radius 1.5 on the normal's side of the vertex by
++     * 1 / (distance^2 + 0.001) and keeps the per-channel light maximum.
++     */
++    public static Vertex[] sampleVertices(final float[][] positions, final float[] normal, final Neighborhood neighborhood) {
++        final float bias = 0.01F;
++        final int ox = (int) Math.floor(((positions[0][0] + positions[1][0] + positions[2][0] + positions[3][0]) * 0.25F) + normal[0] * bias);
++        final int oy = (int) Math.floor(((positions[0][1] + positions[1][1] + positions[2][1] + positions[3][1]) * 0.25F) + normal[1] * bias);
++        final int oz = (int) Math.floor(((positions[0][2] + positions[1][2] + positions[2][2] + positions[3][2]) * 0.25F) + normal[2] * bias);
++        final Cache cache = Cache.build(ox, oy, oz, neighborhood);
++        final Vertex[] vertices = new Vertex[4];
++        for (int i = 0; i < 4; i++) {
++            vertices[i] = cache.vertex(ox, oy, oz, positions[i], normal);
++        }
++        return vertices;
++    }
++
 +    private static int step(final Direction direction, final int axis) {
 +        return direction.axis() == axis ? (direction.positive() ? 1 : -1) : 0;
++    }
++
++    /** One sampled vertex: Java-packed light and the AO value before the material exponent. */
++    public record Vertex(int light, float ambient) {
++    }
++
++    private record Cache(int lightMask, int skipMask, int[] lights, float[] ambient) {
++
++        // Neighbor offsets from cache origin - 1 and the faces/edges each one is reached through.
++        private static final int[][] OFFSETS = {
++            {0, 1, 1}, {1, 1, 0}, {1, 0, 1}, {1, 2, 1}, {1, 1, 2}, {2, 1, 1}, {0, 1, 0}, {0, 0, 1}, {0, 2, 1},
++            {0, 1, 2}, {1, 0, 0}, {1, 2, 0}, {1, 0, 2}, {1, 2, 2}, {2, 1, 0}, {2, 0, 1}, {2, 2, 1}, {2, 1, 2},
++            {0, 0, 0}, {0, 2, 0}, {0, 0, 2}, {0, 2, 2}, {2, 0, 0}, {2, 2, 0}, {2, 0, 2}, {2, 2, 2}
++        };
++        private static final int[] DEPENDENCIES = {
++            0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x6, 0xA, 0x12, 0x22, 0xC, 0x14, 0x28, 0x30, 0x44, 0x48, 0x50, 0x60,
++            0x980, 0x1280, 0x2500, 0x4600, 0x188, 0x290, 0x520, 0x640
++        };
++        private static final float NORMAL_BIAS = 0.45F;
++        private static final float CENTER_WEIGHT = Float.intBitsToFloat(0x3FAA707E);
++        private static final float RADIUS_SQUARED = 2.25F;
++        private static final float WEIGHT_EPSILON = 0.001F;
++
++        /** Cache builder 0x146acfe0d: neighbors behind opaque cells on every path are skipped. */
++        private static Cache build(final int ox, final int oy, final int oz, final Neighborhood neighborhood) {
++            final int[] lights = new int[27];
++            final float[] ambient = new float[27];
++            final Sample center = neighborhood.sample(ox, oy, oz);
++            ambient[0] = center.ambient();
++            if (center.opaque()) {
++                return new Cache(0xFFFFFFFF, 0xFFFFFFFE, lights, ambient);
++            }
++            lights[0] = center.light();
++            int lightMask = 0;
++            int skipMask = 0;
++            for (int i = 0; i < OFFSETS.length; i++) {
++                final int bit = 1 << (i + 1);
++                if ((DEPENDENCIES[i] & ~lightMask) == 0) {
++                    skipMask |= bit;
++                    lightMask |= bit;
++                    continue;
++                }
++                final Sample sample = neighborhood.sample(ox - 1 + OFFSETS[i][0], oy - 1 + OFFSETS[i][1], oz - 1 + OFFSETS[i][2]);
++                ambient[i + 1] = sample.ambient();
++                if (sample.opaque()) {
++                    lightMask |= bit;
++                } else {
++                    lights[i + 1] = sample.light();
++                }
++            }
++            return new Cache(lightMask, skipMask, lights, ambient);
++        }
++
++        /** Vertex loop 0x146ad01a5..0x146ad0384, with its float operation order. */
++        private Vertex vertex(final int ox, final int oy, final int oz, final float[] position, final float[] normal) {
++            final float px = position[0];
++            final float py = position[1];
++            final float pz = position[2];
++            final float nx = normal[0];
++            final float ny = normal[1];
++            final float nz = normal[2];
++            final float bx = nx * NORMAL_BIAS;
++            final float by = ny * NORMAL_BIAS;
++            final float bz = nz * NORMAL_BIAS;
++            int skip = this.skipMask;
++            int light = 0;
++            float total = 0F;
++            float weights = 0F;
++            if ((skip & 1) == 0 && 0F <= ((((oz + 0.5F) - pz) + bz) * nz + (((ox + 0.5F) - px) + bx) * nx) + (((oy + 0.5F) - py) + by) * ny) {
++                if ((this.lightMask & 1) == 0) {
++                    light = this.lights[0];
++                }
++                total = this.ambient[0] * CENTER_WEIGHT + 0F;
++                weights = CENTER_WEIGHT;
++            }
++            for (int i = 0; i < OFFSETS.length; i++) {
++                final int bit = 1 << (i + 1);
++                if ((skip & bit) != 0) {
++                    continue;
++                }
++                if ((DEPENDENCIES[i] & ~skip) != 0) {
++                    final float dy = ((float) (OFFSETS[i][1] + oy - 1) + 0.5F) - py;
++                    final float dz = ((float) (OFFSETS[i][2] + oz - 1) + 0.5F) - pz;
++                    final float dx = ((float) (OFFSETS[i][0] + ox - 1) + 0.5F) - px;
++                    final float distance = dz * dz + dx * dx + dy * dy;
++                    if (distance <= RADIUS_SQUARED) {
++                        if (0F <= ((dz + bz) * nz + (dx + bx) * nx) + (dy + by) * ny) {
++                            if ((this.lightMask & bit) == 0) {
++                                light = CustomBlockLighting.maximumLight(light, this.lights[i + 1], 0, 0);
++                            }
++                            final float weight = 1F / (distance + WEIGHT_EPSILON);
++                            weights += weight;
++                            total += weight * this.ambient[i + 1];
++                        }
++                        continue;
++                    }
++                }
++                skip |= bit;
++            }
++            final float ambient = weights != 0F ? total / weights : 0F;
++            return new Vertex(light, Math.min(Math.max(ambient, 0F), 1F));
++        }
 +    }
 +
 +    @FunctionalInterface
@@ -1726,10 +1887,10 @@ index 000000000..ef477d59b
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
 new file mode 100644
-index 000000000..17ad336e4
+index 000000000..acbc867c5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,75 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1783,9 +1944,25 @@ index 000000000..17ad336e4
 +        return lower * (1F - outer) + upper * outer;
 +    }
 +
-+    /** Native terrain applies the exponent after corner averaging and directional attenuation, before tint and world light. */
++    /**
++     * Native emitter 0x1468c33f3 multiplies the dimming factor by powf(AO, exponent) and clamps the product.
++     * Dimming stays outside the exponent; a disabled material uses factor 1.
++     */
 +    public float shade(final float ambient, final float directional) {
-+        return (float) Math.pow(ambient * (this.faceDimming ? directional : 1F), this.ambientOcclusion);
++        final float factor = (this.faceDimming ? directional : 1F) * (float) Math.pow(ambient, this.ambientOcclusion);
++        return Math.clamp(factor, 0F, 1F);
++    }
++
++    /**
++     * Native dimming stage weights each normal component by the coefficient for its sign and returns the
++     * length of the weighted vector. Axis-aligned normals give the cardinal coefficient unchanged.
++     */
++    public static float directional(final float nx, final float ny, final float nz, final float west, final float east,
++                                    final float down, final float up, final float north, final float south) {
++        final float x = nx * (nx < 0F ? west : east);
++        final float y = ny * (ny < 0F ? down : up);
++        final float z = nz * (nz < 0F ? north : south);
++        return (float) Math.sqrt(x * x + y * y + z * z);
 +    }
 +
 +}
@@ -4330,10 +4507,10 @@ index 000000000..5a7981fc9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 000000000..41f6a22ad
+index 000000000..f20927ce3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,588 @@
+@@ -0,0 +1,599 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4450,7 +4627,7 @@ index 000000000..41f6a22ad
 +            if (!Float.isFinite(exponent) || exponent < 0F || exponent > 10F) {
 +                return null;
 +            }
-+            faceLighting.put(face, new CustomBlockLighting(exponent, !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0));
++            faceLighting.put(face, new CustomBlockLighting(exponent, faceDimming(material)));
 +            opaque &= method.equals("opaque") || !method.equals("blend") && textures.hasOpaquePixels(image);
 +            ao |= exponent != 0F;
 +            if (method.equals("blend") || renderMethod.equals("opaque")) {
@@ -4581,6 +4758,17 @@ index 000000000..41f6a22ad
 +            }
 +            faces.add(opposite, back);
 +        }
++    }
++
++    /**
++     * Protocol 2225 serializes the material's face dimming in bit 0 of packed_bools, without a face_dimming field.
++     * Keep the explicit field for definitions that still carry it. Absent values default to dimming.
++     */
++    static boolean faceDimming(final CompoundTag material) {
++        if (material.get("packed_bools") instanceof NumberTag packed) {
++            return (packed.asInt() & 1) != 0;
++        }
++        return !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0;
 +    }
 +
 +    private static void applyFaceMaterials(final JsonObject model, final Map<String, CustomBlockLighting> faceLighting, final Map<Direction, String> methods) {
@@ -10184,10 +10372,10 @@ index 000000000..44c7e38bf
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
 new file mode 100644
-index 000000000..2f5290ced
+index 000000000..53c27a564
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,224 @@
 +package net.raphimc.viabedrock.api.model;
 +
 +import com.viaversion.viaversion.libs.gson.JsonParser;
@@ -10204,12 +10392,65 @@ index 000000000..2f5290ced
 +class CustomBlockLightingTest {
 +
 +    @Test
-+    void exponentIncludesDimmingAndKeepsUntintedWorldLightSeparate() {
-+        assertEquals(0.16F, new CustomBlockLighting(2F, true).shade(0.5F, 0.8F), 1E-7F);
++    void exponentAppliesToAmbientOcclusionBeforeDirectionalDimming() {
++        // Original Bedrock 1.26.60.5 emitter 0x1468c33f3 results.
++        assertEquals(0.6000000238418579F, new CustomBlockLighting(0F, true).shade(0.5F, 0.6F));
++        assertEquals(0.30000001192092896F, new CustomBlockLighting(1F, true).shade(0.5F, 0.6F));
++        assertEquals(0.15000000596046448F, new CustomBlockLighting(2F, true).shade(0.5F, 0.6F));
++        for (float exponent : new float[]{0F, 1F, 2F}) {
++            assertEquals(0.5F, new CustomBlockLighting(exponent, true).shade(1F, 0.5F));
++        }
 +        assertEquals(0.25F, new CustomBlockLighting(2F, false).shade(0.5F, 0.8F));
-+        assertEquals(1F, new CustomBlockLighting(0F, true).shade(0.2F, 0.5F));
-+        assertEquals(0.4F, new CustomBlockLighting(1F, true).shade(0.5F, 0.8F));
++        assertEquals(1F, new CustomBlockLighting(0F, false).shade(0.2F, 0.5F));
 +        assertEquals(0F, new CustomBlockLighting(10F, true).shade(0F, 0.8F));
++    }
++
++    @Test
++    void directionalDimmingUsesTheWeightedContinuousNormal() {
++        // Native dimension-0 coefficients and dimming-stage results for axis and 30-degree tilted normals.
++        final float[][] normals = {
++            {0F, -1F, 0F}, {0F, 1F, 0F}, {0F, 0F, -1F}, {-1F, 0F, 0F},
++            {0F, 0.5F, -0.8660254F}, {0.5F, 0.8660254F, 0F}, {0.5F, -0.8660254F, 0F}, {0.8660254F, 0F, 0.5F}
++        };
++        final float[] expected = {
++            0.5F, 1F, 0.800000011920929F, 0.6000000238418579F,
++            0.8544003963470459F, 0.9165151715278625F, 0.5267826914787292F, 0.6557438373565674F
++        };
++        for (int i = 0; i < normals.length; i++) {
++            assertEquals(expected[i], CustomBlockLighting.directional(normals[i][0], normals[i][1], normals[i][2],
++                    0.6F, 0.6F, 0.5F, 1F, 0.8F, 0.8F), 1E-7F);
++        }
++    }
++
++    @Test
++    void insetVerticesUseTheCapturedNativeNeighborhood() {
++        // Bedrock 1.26.60.5 live capture: north inset quad at z=0.25 with stone at -X and -Y, glowstone at +X-Y.
++        final float[][] positions = {{0.75F, 0.75F, 0.25F}, {0.75F, 0.25F, 0.25F}, {0.25F, 0.25F, 0.25F}, {0.25F, 0.75F, 0.25F}};
++        final float[] normal = {0F, 0F, -1F};
++        assertTrue(CustomBlockFaceLighting.perVertex(new CustomBlockLighting(1F, true), positions));
++        assertFalse(CustomBlockFaceLighting.perVertex(new CustomBlockLighting(0F, true), positions));
++        final var uniform = CustomBlockFaceLighting.sampleVertices(positions, normal,
++                (x, y, z) -> new CustomBlockFaceLighting.Sample(15 << 20, 1F, false));
++        for (final var vertex : uniform) {
++            assertEquals(1F, vertex.ambient());
++            assertEquals(15 << 20, vertex.light());
++        }
++        // Block light of the captured cells, indexed [x + 1][y + 1][z + 1].
++        final int[][][] block = {
++            {{12, 11, 12}, {11, 0, 11}, {10, 11, 10}},
++            {{13, 0, 13}, {12, 13, 12}, {11, 12, 11}},
++            {{14, 15, 14}, {13, 14, 13}, {12, 13, 12}}
++        };
++        final var occluded = CustomBlockFaceLighting.sampleVertices(positions, normal, (x, y, z) -> {
++            final boolean opaque = x == -1 && y == 0 && z == 0 || x == 0 && y == -1 && z == 0 || x == 1 && y == -1 && z == 0;
++            final int sky = opaque ? 0 : x == -1 && y == -1 && z == 0 ? 14 : 15;
++            return new CustomBlockFaceLighting.Sample(block[x + 1][y + 1][z + 1] << 4 | sky << 20, opaque ? 0.2F : 1F, opaque);
++        });
++        final float[] expected = {0.8888822793960571F, 0.7967658638954163F, 0.7549734115600586F, 0.8560160994529724F};
++        for (int i = 0; i < 4; i++) {
++            assertEquals(expected[i], occluded[i].ambient(), 0F);
++            assertEquals(14 << 4 | 15 << 20, occluded[i].light());
++        }
 +    }
 +
 +    @Test
@@ -11823,10 +12064,10 @@ index 000000000..61c3a60cb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 000000000..74dd2f6e4
+index 000000000..e77679a5e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,770 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -12424,6 +12665,30 @@ index 000000000..74dd2f6e4
 +        final var allElements = JsonParser.parseString(allUnshaded.modelJson()).getAsJsonObject().getAsJsonArray("elements");
 +        assertEquals(1, allElements.size());
 +        assertEquals(6, allElements.get(0).getAsJsonObject().getAsJsonObject("faces").size());
++    }
++
++    @Test
++    void decodesSerializedFaceDimmingFromPackedBoolsBitZero() {
++        // Protocol 2225 BDS definitions carry packed_bools 5 (enabled) or 4 (disabled) and no face_dimming field.
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        for (byte packed : new byte[]{4, 5}) {
++            final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
++            final CompoundTag material = components.getCompoundTag("minecraft:material_instances").getCompoundTag("*");
++            material.putFloat("ambient_occlusion", 1F);
++            material.putByte("packed_bools", packed);
++            final var visual = CustomBlockModel.compile(storage, "test:packed", 12, components);
++            final var elements = JsonParser.parseString(visual.modelJson()).getAsJsonObject().getAsJsonArray("elements");
++            assertEquals(1, elements.size());
++            final var element = elements.get(0).getAsJsonObject();
++            assertEquals(6, element.getAsJsonObject("faces").size());
++            assertEquals(packed == 4, element.has("shade_direction_override"));
++            for (var face : element.getAsJsonObject("faces").entrySet()) {
++                final var lighting = net.raphimc.viabedrock.api.model.CustomBlockLighting.fromJson(face.getValue().getAsJsonObject()
++                        .getAsJsonObject(net.raphimc.viabedrock.api.model.CustomBlockLighting.KEY));
++                assertEquals(packed == 5, lighting.faceDimming());
++                assertEquals(1F, lighting.ambientOcclusion());
++            }
++        }
 +    }
 +
 +    @Test

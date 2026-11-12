@@ -19,3 +19,9 @@ The captured definitions match the original native component controls. State swa
 Both recorders exit successfully, and the full builds and fresh replays pass. Movement collision, selection without carriers, and full camera trajectories remain open.
 
 The [owning patch](0017-apply-custom-block-shapes.patch) retains implementation rationale and versioned evidence.
+
+## Continuous normals and inset vertices
+
+The adapter derives each face's unit normal from its rendered positions, oriented to the authored direction, and passes it to the core dimming rule with the level's cardinal coefficients. Inset faces use the core per-vertex sampler; source cells retain their block-state opacity, ambient brightness and light. The captured transparent source keeps AO 1; a separate adapter regression checks an opaque source. Outer-plane faces keep the corner path.
+
+`BedrockTerrainLightingTest` drives the live-captured native neighborhood through real Java stone, glowstone and air states and reproduces the native AO and block light on all four vertices. A 30-degree tilted north face shades at 0.8544004. These are CPU checks with captured inputs; a registered installed-client comparison has not been repeated.

@@ -1,4 +1,4 @@
-From a7664eb98bbc037d096ef1acba9d6c4423c48af9 Mon Sep 17 00:00:00 2001
+From 375ff1c8d1711f0d220ffe2239621a7e021d77f6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -924,6 +924,26 @@ state, so the panel keeps its objective while unrelated titles arrive.
 Use the confirmed frontend UI context before selecting native forms, HUD, dialogue or containers. Send raw forms, HUD inputs with retained binding state, NPC/editor inputs and container identity instead of resolved scenes or exported programs. Keep backend scene evaluation for presentation selection and vanilla projection. Preserve response IDs, source indices, menu sequences, native action ownership and ordinary fallbacks when no matching frontend program is confirmed.
 
 Carry an explicit UI-context withdrawal when the frontend has no accepted program. Stop native inputs and restore ordinary boss bar presentation when a previous confirmation is withdrawn. Keep malformed input rejection and exact source/build checks.
+
+Separate published title text, the subtitle staged for the next title and
+the visible title factory. Two paired installed-client fixtures against
+Bedrock 1.26.60.5/protocol 2225 show that a title creates the factory
+from the staged subtitle and clears it, matching dispatcher 0x144b6ea70's
+cache clear on factory creation. A replacement title therefore publishes
+an empty subtitle instead of the previous one. During a title period, a
+subtitle publishes at once, also after Clear or Reset. After natural
+expiry it is only staged, so persistent root controls keep the old text
+until the next title. Clear hides the factory and keeps the published
+strings. Reset keeps the visible factory, its once state and the strings,
+and restores default timing for later titles.
+
+The paired fixtures send Times and Title together, so they do not isolate
+which packet republishes the staged subtitle. Publish it at title
+creation, the smallest rule that fits every observed stage. The title
+period uses the active timing from creation and is not shortened by
+Clear or Reset. Reset's effect on an active title's remaining time,
+subtitles before the first title, pack reload and controller reuse are
+unmeasured.
 ---
  Data Asset Sources.md                         |    33 +
  build.gradle                                  |     1 +
@@ -993,7 +1013,7 @@ Carry an explicit UI-context withdrawal when the frontend has no accepted progra
  .../storage/NativeHudActionbarState.java      |    39 +
  .../protocol/storage/NativeHudBossBars.java   |   139 +
  .../protocol/storage/NativeHudChatState.java  |    53 +
- .../protocol/storage/NativeHudTitleState.java |    99 +
+ .../protocol/storage/NativeHudTitleState.java |   150 +
  .../protocol/storage/ScoreboardTracker.java   |    16 +
  .../data/bedrock/block_name_keys.json         |  1386 ++
  .../viabedrock/data/bedrock/item_aliases.json |  1471 ++
@@ -1014,7 +1034,7 @@ Carry an explicit UI-context withdrawal when the frontend has no accepted progra
  .../resourcepack/ui/BundleTooltipUiTest.java  |   213 +
  .../api/resourcepack/ui/CookingUiTest.java    |    60 +-
  .../resourcepack/ui/HudActionbarUiTest.java   |   108 +
- .../api/resourcepack/ui/HudTitleUiTest.java   |   176 +
+ .../api/resourcepack/ui/HudTitleUiTest.java   |   177 +
  .../protocol/model/BuiltinItemNameTest.java   |   159 +
  .../model/ItemRegistryAirUseTest.java         |    44 +
  .../model/ItemRegistryAliasesTest.java        |    36 +
@@ -1034,12 +1054,13 @@ Carry an explicit UI-context withdrawal when the frontend has no accepted progra
  .../storage/NativeContainerUiStateTest.java   |   139 +
  .../storage/NativeHudBossBarsTest.java        |    71 +
  .../storage/NativeHudChatStateTest.java       |    62 +
+ .../storage/NativeHudTitleStateTest.java      |   134 +
  .../inventory/native-bundle-description.json  |    73 +
  .../native-bundle-tooltip-bindings.json       |   283 +
  .../native-bundle-tooltip-layout.json         |   266 +
  .../inventory/native-bundle-transfers.json    |  1622 ++
  .../inventory/native-item-storage.json        |   568 +
- 114 files changed, 42047 insertions(+), 431 deletions(-)
+ 115 files changed, 42233 insertions(+), 431 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BuiltinBlockNames.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleTooltipData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBundleTooltipItems.java
@@ -1117,6 +1138,7 @@ Carry an explicit UI-context withdrawal when the frontend has no accepted progra
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeContainerUiStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeHudBossBarsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeHudChatStateTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleStateTest.java
  create mode 100644 src/test/resources/inventory/native-bundle-description.json
  create mode 100644 src/test/resources/inventory/native-bundle-tooltip-bindings.json
  create mode 100644 src/test/resources/inventory/native-bundle-tooltip-layout.json
@@ -8672,10 +8694,10 @@ index 000000000..fc0ef8f73
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java
 new file mode 100644
-index 000000000..12884afcb
+index 000000000..5930b587c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleState.java
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,150 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -8689,17 +8711,42 @@ index 000000000..12884afcb
 +import net.raphimc.viabedrock.api.resourcepack.ui.UiRetainedBindings;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SetTitlePacket_TitleType;
 +
-+/** Retains subtitle-before-title ordering without restarting a live title for subtitle updates. */
++import java.util.function.LongSupplier;
++
++/**
++ * Native title data: text published to persistent HUD controls, a subtitle staged for the next title, and the
++ * visible title factory. Bedrock 1.26.60.5 installed-client fixtures distinguish these lifetimes. A title creates
++ * a factory from the staged subtitle and starts a title period. During that period a subtitle publishes at once,
++ * also after Clear or Reset. After natural expiry it is only staged for the next title. Clear hides the factory
++ * and keeps the published text. Reset keeps both and restores the default timing for later titles.
++ */
 +public final class NativeHudTitleState implements StorableObject {
 +
++    private static final long NANOS_PER_TICK = 50_000_000L;
++
++    private final LongSupplier clock;
 +    private String title = "";
 +    private String subtitle = "";
++    private String staged = "";
 +    private Timing configuredTiming = Timing.DEFAULT;
 +    private Timing activeTiming = Timing.DEFAULT;
++    private long periodEnd;
++    private boolean period;
++    private boolean factory;
 +    private boolean nativeTitle;
++    private UiRetainedBindings factoryBindings = new UiRetainedBindings();
 +    private final UiRetainedBindings rootBindings = new UiRetainedBindings();
 +
-+    /** The native HUD controller publishes the current title text to persistent controls as well as title factories. */
++    public NativeHudTitleState() {
++        this(System::nanoTime);
++    }
++
++    /** The clock supplies monotonic nanoseconds for the title period. */
++    public NativeHudTitleState(final LongSupplier clock) {
++        this.clock = clock;
++    }
++
++    /** The title text published to persistent controls. It outlives the factory on Clear, Reset and expiry. */
 +    public String title() {
 +        return this.title;
 +    }
@@ -8708,7 +8755,7 @@ index 000000000..12884afcb
 +        return this.subtitle;
 +    }
 +
-+    /** Persistent HUD controls keep visibility_changed binding values across the connection's title updates. */
++    /** Persistent HUD controls keep visibility_changed and once binding values across the connection's title updates. */
 +    public UiRetainedBindings rootBindings() {
 +        return this.rootBindings;
 +    }
@@ -8719,12 +8766,26 @@ index 000000000..12884afcb
 +        final boolean restart;
 +        switch (type) {
 +            case Title, TitleTextObject -> {
++                // Native factory creation (event 13, 0x144b6ea70) clears the staged strings it consumes.
 +                this.title = text;
++                this.subtitle = this.staged;
++                this.staged = "";
 +                this.activeTiming = this.configuredTiming;
++                this.periodEnd = this.clock.getAsLong() + this.activeTiming.ticks() * NANOS_PER_TICK;
++                this.period = true;
++                this.factory = true;
++                this.factoryBindings = new UiRetainedBindings();
 +                restart = true;
 +            }
 +            case Subtitle, SubtitleTextObject -> {
++                if (!this.inPeriod()) {
++                    this.staged = text;
++                    return null;
++                }
 +                this.subtitle = text;
++                if (!this.factory) {
++                    return null;
++                }
 +                restart = false;
 +            }
 +            case Times -> {
@@ -8732,20 +8793,24 @@ index 000000000..12884afcb
 +                this.configuredTiming = this.configuredTiming.update(in, hold, out);
 +                return null;
 +            }
-+            case Clear, Reset -> {
-+                this.title = "";
-+                this.subtitle = "";
-+                if (type == SetTitlePacket_TitleType.Reset) {
-+                    this.configuredTiming = Timing.DEFAULT;
-+                }
++            case Clear -> {
++                this.factory = false;
 +                restart = false;
++            }
++            case Reset -> {
++                // Reset leaves the visible factory and published text; it changes the timing of later titles.
++                this.configuredTiming = Timing.DEFAULT;
++                return null;
 +            }
 +            default -> {
 +                return null;
 +            }
 +        }
-+        final var scene = this.title.isEmpty() ? null
-+                : new HudTitleUi(this.title, this.subtitle, this.activeTiming.fadeIn, this.activeTiming.stay, this.activeTiming.fadeOut).resolve(resources.getJsonUiProgram());
++        final var inputs = NativeHudInputs.title(this.title, this.subtitle, this.activeTiming.fadeIn, this.activeTiming.stay,
++                this.activeTiming.fadeOut, this.factoryBindings);
++        final var scene = !this.factory || this.title.isEmpty() ? null
++                : new HudTitleUi(this.title, this.subtitle, this.activeTiming.fadeIn, this.activeTiming.stay, this.activeTiming.fadeOut,
++                this.factoryBindings).resolve(resources.getJsonUiProgram());
 +        if (scene == null) {
 +            if (!this.nativeTitle) {
 +                return null;
@@ -8754,8 +8819,16 @@ index 000000000..12884afcb
 +            return NativeHudInputs.clear(context, NativeHudInputs.Kind.TITLE);
 +        }
 +        this.nativeTitle = true;
-+        return new NativeHudInputs(context, NativeHudInputs.Kind.TITLE, NativeHudInputs.title(this.title, this.subtitle,
-+                this.activeTiming.fadeIn, this.activeTiming.stay, this.activeTiming.fadeOut).toString(), restart, this.activeTiming.ticks());
++        return new NativeHudInputs(context, NativeHudInputs.Kind.TITLE, inputs.toString(), restart, this.activeTiming.ticks());
++    }
++
++    private boolean inPeriod() {
++        if (this.period && this.clock.getAsLong() - this.periodEnd >= 0) {
++            this.period = false;
++            this.factory = false;
++            this.nativeTitle = false;
++        }
++        return this.period;
 +    }
 +
 +    private record Timing(int fadeIn, int stay, int fadeOut) {
@@ -39314,10 +39387,10 @@ index 000000000..fe494d318
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java
 new file mode 100644
-index 000000000..4545f72bb
+index 000000000..faa2faf32
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudTitleUiTest.java
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,177 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -39433,7 +39506,8 @@ index 000000000..4545f72bb
 +        assertEquals(initial.ticks(), revised.ticks());
 +        assertTrue(state.update(SetTitlePacket_TitleType.Clear, "", 0, 0, 0, resources, 1).inputs().isEmpty());
 +        assertEquals(24, state.update(SetTitlePacket_TitleType.Title, title, 0, 0, 0, resources, 1).ticks());
-+        assertTrue(state.update(SetTitlePacket_TitleType.Reset, "", 0, 0, 0, resources, 1).inputs().isEmpty());
++        // Native Reset keeps the visible factory and only restores the timing of later titles.
++        assertNull(state.update(SetTitlePacket_TitleType.Reset, "", 0, 0, 0, resources, 1));
 +        assertEquals(100, state.update(SetTitlePacket_TitleType.Title, title, 0, 0, 0, resources, 1).ticks());
 +        assertNull(state.update(SetTitlePacket_TitleType.Actionbar, title, 0, 0, 0, resources, 1));
 +    }
@@ -42523,6 +42597,146 @@ index 000000000..598722d57
 +        }
 +        for (final var child : node.getAsJsonArray("children")) {
 +            ids(child.getAsJsonObject(), ids);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleStateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleStateTest.java
+new file mode 100644
+index 000000000..2895405ba
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeHudTitleStateTest.java
+@@ -0,0 +1,134 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.NativeHudInputs;
++import net.raphimc.viabedrock.api.resourcepack.ui.JsonUiProgram;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SetTitlePacket_TitleType;
++import org.junit.jupiter.api.Test;
++
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++/** Stages from the paired installed native/add-on title fixtures, Bedrock 1.26.60.5 protocol 2225. */
++final class NativeHudTitleStateTest {
++
++    private static final JsonUiProgram PROGRAM = new JsonUiProgram(List.of(Map.of("ui/hud_screen.json", """
++            {"namespace":"hud","hud_screen":{"type":"screen","$screen_content":"hud.root_panel"},
++             "root_panel":{"type":"panel","controls":[
++               {"titles":{"type":"panel","factory":{"name":"hud_title_text_factory","control_ids":{"hud_title_text":"hud.title"}}}}]},
++             "title":{"type":"panel","controls":[
++               {"once":{"type":"label","text":"#once","bindings":[
++                 {"binding_name":"#hud_subtitle_text_string","binding_name_override":"#once","binding_condition":"once"}]}},
++               {"always":{"type":"label","text":"#always","bindings":[
++                 {"binding_name":"#hud_subtitle_text_string","binding_name_override":"#always","binding_condition":"always"}]}}]}}
++            """.getBytes(StandardCharsets.UTF_8))));
++
++    private final long[] now = {0L};
++    private final NativeHudTitleState state = new NativeHudTitleState(() -> this.now[0]);
++    private final ResourcePackStorage resources = new ResourcePackStorage(List.of()) {
++        @Override
++        public JsonUiProgram getJsonUiProgram() {
++            return PROGRAM;
++        }
++    };
++    private List<String> factory = List.of();
++
++    private void send(final SetTitlePacket_TitleType type, final String text) {
++        this.send(type, text, -1, -1, -1);
++    }
++
++    private void send(final SetTitlePacket_TitleType type, final String text, final int in, final int stay, final int out) {
++        final NativeHudInputs message = this.state.update(type, text, in, stay, out, this.resources, 1);
++        if (message == null) {
++            return;
++        }
++        if (message.inputs().isEmpty()) {
++            this.factory = List.of();
++            return;
++        }
++        final List<String> labels = new ArrayList<>();
++        collect(JsonParser.parseString(message.resolve(PROGRAM).scene()).getAsJsonObject().getAsJsonObject("root"), labels);
++        this.factory = labels;
++    }
++
++    private void expire(final int ticks) {
++        this.now[0] += ticks * 50_000_000L;
++        // The frontend retires the expired factory itself.
++        this.factory = List.of();
++    }
++
++    private void assertStage(final List<String> factory, final String title, final String subtitle) {
++        assertEquals(factory, this.factory);
++        assertEquals(title, this.state.title());
++        assertEquals(subtitle, this.state.subtitle());
++    }
++
++    @Test
++    void replacementAndClearSeparatePublishedTextFromTheFactory() {
++        this.send(SetTitlePacket_TitleType.Times, "", 0, 1200, 0);
++        this.send(SetTitlePacket_TitleType.Subtitle, "A");
++        this.send(SetTitlePacket_TitleType.Title, "ONE");
++        this.assertStage(List.of("A", "A"), "ONE", "A");
++        this.send(SetTitlePacket_TitleType.Subtitle, "BBBBBBBB");
++        this.assertStage(List.of("A", "BBBBBBBB"), "ONE", "BBBBBBBB");
++        this.send(SetTitlePacket_TitleType.Title, "TWO");
++        this.assertStage(List.of("", ""), "TWO", "");
++        this.send(SetTitlePacket_TitleType.Subtitle, "CC");
++        this.assertStage(List.of("", "CC"), "TWO", "CC");
++        this.send(SetTitlePacket_TitleType.Clear, "");
++        this.assertStage(List.of(), "TWO", "CC");
++        this.send(SetTitlePacket_TitleType.Subtitle, "DDDD");
++        this.assertStage(List.of(), "TWO", "DDDD");
++        this.send(SetTitlePacket_TitleType.Title, "THREE");
++        this.assertStage(List.of("", ""), "THREE", "");
++        this.send(SetTitlePacket_TitleType.Subtitle, "EEEEEEEE");
++        this.assertStage(List.of("", "EEEEEEEE"), "THREE", "EEEEEEEE");
++        this.send(SetTitlePacket_TitleType.Title, "FOUR");
++        this.assertStage(List.of("", ""), "FOUR", "");
++    }
++
++    @Test
++    void naturalExpiryStagesSubtitlesAndResetKeepsTheVisibleFactory() {
++        this.send(SetTitlePacket_TitleType.Times, "", 0, 100, 0);
++        this.send(SetTitlePacket_TitleType.Subtitle, "A");
++        this.send(SetTitlePacket_TitleType.Title, "ONE");
++        this.assertStage(List.of("A", "A"), "ONE", "A");
++        this.send(SetTitlePacket_TitleType.Subtitle, "BBBBBBBB");
++        this.assertStage(List.of("A", "BBBBBBBB"), "ONE", "BBBBBBBB");
++        this.expire(140);
++        this.assertStage(List.of(), "ONE", "BBBBBBBB");
++        this.send(SetTitlePacket_TitleType.Subtitle, "CC");
++        this.assertStage(List.of(), "ONE", "BBBBBBBB");
++        this.send(SetTitlePacket_TitleType.Times, "", 0, 400, 0);
++        this.send(SetTitlePacket_TitleType.Title, "TWO");
++        this.assertStage(List.of("CC", "CC"), "TWO", "CC");
++        this.send(SetTitlePacket_TitleType.Reset, "");
++        this.assertStage(List.of("CC", "CC"), "TWO", "CC");
++        this.send(SetTitlePacket_TitleType.Subtitle, "DDDD");
++        this.assertStage(List.of("CC", "DDDD"), "TWO", "DDDD");
++        this.send(SetTitlePacket_TitleType.Title, "THREE");
++        this.assertStage(List.of("", ""), "THREE", "");
++        this.expire(140);
++        this.assertStage(List.of(), "THREE", "");
++    }
++
++    private static void collect(final JsonObject node, final List<String> labels) {
++        if ("label".equals(node.get("type").getAsString())) {
++            labels.add(node.get("text").getAsString());
++        }
++        for (final var child : node.getAsJsonArray("children")) {
++            collect(child.getAsJsonObject(), labels);
 +        }
 +    }
 +
