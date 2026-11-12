@@ -42,13 +42,13 @@ Legacy-only player updates, full HUD definition overrides, custom textures, and 
 
 Requires the [HUD visibility hooks](0021-apply-server-element-visibility-restrictions.pr.md).
 
-## Shared UI images
+## Source-backed UI images
 
-The converter can remove a UI image whose bytes exist elsewhere in the same pack and record it in an alias table. When no pack provides a requested server UI image, the namespace resource manager returns the shared bytes from the pack that wrote the table, under the requested identifier. Textures load through their normal identifier, a direct override of that identifier still wins, and an override of the shared target cannot change UI pixels. Each resource manager generation owns its table cache. `BedrockServerUiTexturesTest` covers target-only and direct overrides, missing and malformed tables, and pack replacement.
+The converter names each UI image with a texture identifier but does not copy it into the Java pack. When no pack provides a requested server UI image, the namespace resource manager converts it from the bundled UI layer and the accepted Bedrock packs nested in the server pack, and attributes it to that server pack. A direct override of the identifier still wins, and local packs cannot supply the accepted sources. Each resource manager generation owns its index and converted images. `BedrockServerUiTexturesTest` covers layer priority, server-pack ownership, direct overrides, unknown identifiers and local packs.
 
-A private probe inside the real client loads a removed UI image through the resource manager, the UI image loader and the texture manager. Its bytes match the shared target read directly from the alias-table pack, and the requested identifier remains unchanged. The full 2,895-image archive comparison also preserves every original image byte. Existing unresolved mappings still fail broad replay rendering checks; these controls establish the shared-image lookup, not complete native appearance.
+Existing unresolved mappings still fail broad replay rendering checks; these controls establish the source-backed lookup, not complete native appearance.
 
 ## Upstream prerequisites
 
 - [viafabricplus-bedrock patch](../../viafabricplus-bedrock/upstreamable/0021-apply-server-element-visibility-restrictions.pr.md): Land HUD visibility hooks before integrating locator draws with them.
-- [viabedrock patch](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md): Publish the converted UI texture alias table that locator images resolve.
+- [viabedrock patch](../../viabedrock/upstreamable/0095-share-native-ui-programs-and-resources.pr.md): Resolve converted UI texture identifiers from accepted sources.

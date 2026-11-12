@@ -1,9 +1,9 @@
-From 2c0287eb51a8d3cc160395b480dd9c19bb794416 Mon Sep 17 00:00:00 2001
+From 6321c810b6e4bac128e7485a7f0bc9a1efa1b325 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
 
-Use the preceding sound wire codecs as the protocol prerequisite. Own the versioned rendering capability marker with accepted native resources, including proxy sessions.
+Use the preceding sound wire codecs as the protocol prerequisite. Own the versioned rendering capability with accepted native resources, including proxy sessions. The format and Bedrock protocol of the accepted-source section in pack.mcmeta mark that capability, so the pack needs no separate marker file.
 
 Native 1.26.51.1 captures on protocol 2193 establish that PlaySound uses
 signed eighth-block positions and signed loop counts. UpdateSoundData
@@ -174,7 +174,7 @@ client parsers can read complete sources without changing backend export.
  .../protocol/packet/MultiStatePackets.java    |   6 +
  .../protocol/packet/WorldEffectPackets.java   |  29 +-
  .../protocol/rewriter/BlockStateRewriter.java |  12 +
- .../rewriter/ResourcePackRewriter.java        |  16 +-
+ .../rewriter/ResourcePackRewriter.java        |  12 +-
  .../NativeEffectsResourceRewriter.java        |  33 +++
  .../protocol/storage/ChunkTracker.java        | 105 +++++++-
  .../protocol/storage/ResourcePackStorage.java |  43 ++-
@@ -188,7 +188,7 @@ client parsers can read complete sources without changing backend export.
  .../protocol/packet/SoundUpdateTest.java      |   5 +
  .../storage/NativeBlockSectionTest.java       |  60 +++++
  .../storage/NativeFluidLayersTest.java        | 113 ++++++++
- 31 files changed, 2905 insertions(+), 15 deletions(-)
+ 31 files changed, 2901 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
@@ -1892,7 +1892,7 @@ index d16e08e63..44de06705 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index b7c529edf..c887860d0 100644
+index 3b0f9270f..2becb508c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -21,6 +21,7 @@ import net.raphimc.viabedrock.ViaBedrock;
@@ -1900,10 +1900,10 @@ index b7c529edf..c887860d0 100644
  import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +import net.raphimc.viabedrock.api.resourcepack.content.SubpackContent;
- import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
  import net.raphimc.viabedrock.api.util.FileSystemUtil;
  import net.raphimc.viabedrock.platform.ViaBedrockConfig;
-@@ -54,9 +55,9 @@ import java.util.logging.Level;
+ import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
+@@ -52,9 +53,9 @@ import java.util.logging.Level;
  public class ConvertedResourcePackCache {
  
      private static final int ZIP_FORMAT_VERSION = 2;
@@ -1911,11 +1911,11 @@ index b7c529edf..c887860d0 100644
 +    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-and-offsets-8";
      // Advance when the set or format of emitted resources changes independently of converter profiles.
 -    private static final int RESOURCE_FORMAT_VERSION = 7;
-+    private static final int RESOURCE_FORMAT_VERSION = 11;
++    private static final int RESOURCE_FORMAT_VERSION = 12;
  
      private final Path directory;
      private final ViaBedrockConfig.PackCacheMode mode;
-@@ -278,12 +279,14 @@ public class ConvertedResourcePackCache {
+@@ -252,12 +253,14 @@ public class ConvertedResourcePackCache {
              writeString(output, CONVERSION_VERSION);
              for (ResourcePack pack : packs) {
                  writeString(output, pack.key().toString());
@@ -2059,7 +2059,7 @@ index c9adc71cb..a4ce7054d 100644
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-index 07a19fa95..5531d5abc 100644
+index 07a19fa95..af81b8a20 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 @@ -18,6 +18,7 @@
@@ -2086,7 +2086,7 @@ index 07a19fa95..5531d5abc 100644
      }
  
      public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage) throws InterruptedException {
-@@ -66,7 +69,18 @@ public final class ResourcePackRewriter {
+@@ -66,7 +69,14 @@ public final class ResourcePackRewriter {
          for (CompletableFuture<Content> task : tasks) {
              javaContent.putAll(task.getNow(null));
          }
@@ -2099,10 +2099,6 @@ index 07a19fa95..5531d5abc 100644
 +            }
 +        }
 +        javaContent.putJson("pack.mcmeta", metadata);
-+        final JsonObject rendering = new JsonObject();
-+        rendering.addProperty("format", 1);
-+        rendering.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
-+        javaContent.putJson("assets/viabedrock/client_rendering.json", rendering);
          return javaContent;
      }
  
@@ -3340,7 +3336,7 @@ index 000000000..c05fd528d
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-index 9e5137e3f..04d6590c3 100644
+index 785ab4d6e..3469ca2c8 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 @@ -19,6 +19,7 @@ package net.raphimc.viabedrock.api.resourcepack.http;

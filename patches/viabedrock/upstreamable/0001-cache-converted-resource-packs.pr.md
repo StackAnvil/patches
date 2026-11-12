@@ -18,8 +18,9 @@ Disk-cache misses stream into the temporary ZIP while calculating SHA-1.
 Memory and disabled modes retain their byte-array output.
 
 Typed converter metadata survives fresh conversions, shared hits and reopened disk caches.
+It stays on the backend: a per-key disk index names the content-addressed ZIP and holds the metadata, and the downloadable pack contains only converted resources.
 Finite model scales retain their float type.
-Malformed metadata or truncated archives trigger conversion and atomic replacement.
+Malformed indexes or truncated archives trigger conversion and atomic replacement. The ZIP is published before its index.
 The fallback renderer accepts numeric scale metadata through `Number.floatValue()`.
 
 Completed downloads verify hashes and decode ZIPs on bounded workers.

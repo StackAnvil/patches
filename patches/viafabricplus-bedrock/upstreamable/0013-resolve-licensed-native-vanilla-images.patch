@@ -1,4 +1,4 @@
-From 452207f3188fd344019647c2b565b7a8977a0b74 Mon Sep 17 00:00:00 2001
+From 157eb58bc5c047d4d94b39e2222411d743174f1f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(resources): select native libraries by world version
@@ -64,6 +64,10 @@ cost or bypass manifest, resource, version or persona validation.
 Regressions cover a join waiting for in-flight startup preparation, repeated
 requests reusing one load, and startup failures reaching joining without retry.
 
+Reuse the decoded archive for the same source pack instance, so UI image
+lookups in a namespace resource manager share the actor loaders' archive
+instead of verifying the nested packs again.
+
 Reuse decoded accepted native sources across resource-manager generations
 by ordered metadata and verified ZIP digests, including protocol and world
 version. Keep current-generation success and error ownership unchanged.
@@ -93,7 +97,7 @@ unknown source files cannot be hidden by a decoded cache hit.
  .../appearance/BedrockServerResources.java    |  15 +-
  ...FabricPlusBuiltinResourcePackProvider.java |  76 ++++++++
  .../render/BedrockAcceptedArchiveCache.java   | 110 +++++++++++
- .../render/BedrockAcceptedResources.java      |  21 +-
+ .../render/BedrockAcceptedResources.java      |  55 ++++--
  .../bedrock/render/BedrockActorResources.java |   4 +-
  .../BedrockActorDependenciesTest.java         | 109 +++++++++++
  .../BedrockResourceLibraryTest.java           |  23 ++-
@@ -104,7 +108,7 @@ unknown source files cannot be hidden by a decoded cache hit.
  ...icPlusBuiltinResourcePackProviderTest.java | 184 ++++++++++++++++++
  .../BedrockAcceptedArchiveCacheTest.java      |  92 +++++++++
  .../render/BedrockAcceptedResourcesTest.java  |   1 +
- 19 files changed, 1002 insertions(+), 52 deletions(-)
+ 19 files changed, 1028 insertions(+), 60 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java
@@ -759,10 +763,10 @@ index 0000000..dd1188b
 +    private record Entry(NativeActorLibrary.Archive archive, long weight) { }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
-index 466771c..eceec20 100644
+index 3ec04ad..e87f388 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
-@@ -16,28 +16,35 @@ import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
+@@ -18,36 +18,56 @@ import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
  import java.io.IOException;
  import java.nio.charset.StandardCharsets;
  import java.util.List;
@@ -786,42 +790,64 @@ index 466771c..eceec20 100644
 +    public static synchronized Optional<NativeActorLibrary.Archive> archive(final ResourceManager resources) throws IOException {
          if (snapshot == null || snapshot.resources != resources) {
              try {
-                 snapshot = new Snapshot(resources, read(resources), null);
+-                snapshot = new Snapshot(resources, read(resources), null);
++                final Source source = source(resources);
++                snapshot = source == null ? new Snapshot(resources, null, null, null) : decode(resources, source);
              } catch (IOException | RuntimeException invalid) {
 -                snapshot = new Snapshot(resources, List.of(), new IOException("Could not read accepted native resources", invalid));
-+                snapshot = new Snapshot(resources, null, new IOException("Could not read accepted native resources", invalid));
++                snapshot = new Snapshot(resources, null, null, new IOException("Could not read accepted native resources", invalid));
              }
          }
-         if (snapshot.error != null) throw snapshot.error;
+-        if (snapshot.error != null) throw snapshot.error;
 -        return snapshot.layers;
-+        return Optional.ofNullable(snapshot.archive);
++        return snapshot.result();
      }
  
 -    private static List<NativeActorLibrary.Layer> read(final ResourceManager resources) throws IOException {
-+    private static NativeActorLibrary.Archive read(final ResourceManager resources) throws IOException {
-         final var packs = resources.listPacks().toList();
-         for (int index = packs.size() - 1; index >= 0; index--) {
-             final var pack = packs.get(index);
-@@ -54,17 +61,17 @@ public final class BedrockAcceptedResources {
-                                     Identifier.fromNamespaceAndPath("viabedrock", BedrockResourcePackPayloads.RESOURCE_DIRECTORY + sha + ".mcpack"));
-                             return resource == null ? null : resource.get();
-                         });
--                        return BedrockResourcePackPayloads.decode(sources);
-+                        return ARCHIVES.decode(sources);
-                     }
-                 }
-             }
-         }
--        return List.of();
-+        return null;
+-        final Source source = source(resources);
+-        if (source == null) return List.of();
+-        final var sources = BedrockResourcePackPayloads.prepare(source.index(), sha -> {
+-            final var resource = source.pack().getResource(PackType.CLIENT_RESOURCES,
+-                    Identifier.fromNamespaceAndPath("viabedrock", BedrockResourcePackPayloads.RESOURCE_DIRECTORY + sha + ".mcpack"));
+-            return resource == null ? null : resource.get();
+-        });
+-        return BedrockResourcePackPayloads.decode(sources);
++    /** Reuses the archive decoded for the same source pack instance, which belongs to one resource generation. */
++    public static synchronized Optional<NativeActorLibrary.Archive> archive(final Source source) throws IOException {
++        if (snapshot == null || snapshot.pack != source.pack()) {
++            snapshot = decode(null, source);
++        }
++        return snapshot.result();
++    }
++
++    private static Snapshot decode(final ResourceManager resources, final Source source) {
++        if (snapshot != null && snapshot.pack == source.pack()) {
++            return new Snapshot(resources, source.pack(), snapshot.archive, snapshot.error);
++        }
++        try {
++            final var sources = BedrockResourcePackPayloads.prepare(source.index(), sha -> {
++                final var resource = source.pack().getResource(PackType.CLIENT_RESOURCES,
++                        Identifier.fromNamespaceAndPath("viabedrock", BedrockResourcePackPayloads.RESOURCE_DIRECTORY + sha + ".mcpack"));
++                return resource == null ? null : resource.get();
++            });
++            return new Snapshot(resources, source.pack(), ARCHIVES.decode(sources), null);
++        } catch (IOException | RuntimeException invalid) {
++            return new Snapshot(resources, source.pack(), null, new IOException("Could not read accepted native resources", invalid));
++        }
      }
  
-     public static synchronized void clear() {
-         snapshot = null;
-     }
+     /** The highest server pack whose pack.mcmeta indexes accepted Bedrock packs, or null when none does. */
+@@ -77,5 +97,10 @@ public final class BedrockAcceptedResources {
+     /** A server pack and the accepted-source index from its pack.mcmeta. */
+     public record Source(PackResources pack, JsonObject index) {}
  
 -    private record Snapshot(ResourceManager resources, List<NativeActorLibrary.Layer> layers, IOException error) {}
-+    private record Snapshot(ResourceManager resources, NativeActorLibrary.Archive archive, IOException error) {}
++    private record Snapshot(ResourceManager resources, PackResources pack, NativeActorLibrary.Archive archive, IOException error) {
++        Optional<NativeActorLibrary.Archive> result() throws IOException {
++            if (this.error != null) throw this.error;
++            return Optional.ofNullable(this.archive);
++        }
++    }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
 index da726c2..eb6c3eb 100644

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Use the preceding sound wire codecs as the protocol prerequisite. Own the versioned rendering capability marker with accepted native resources, including proxy sessions.
+Use the preceding sound wire codecs as the protocol prerequisite. Own the versioned rendering capability with accepted native resources, including proxy sessions. The format and Bedrock protocol in the `pack.mcmeta` source section mark that capability, so the pack has no separate `client_rendering.json`.
 
 ## Design constraints
 
@@ -15,9 +15,9 @@ Prerequisites:
 
 Complete accepted Bedrock ZIPs travel as stored `.mcpack` assets inside the ordinary Java resource pack. Its `pack.mcmeta` section records pack order, provenance, selected subpacks, protocol and base-game version. Unchanged received ZIPs pass through. Decrypted or edited content becomes a complete accepted ZIP. No native-library binary envelope or separate asset transfer remains.
 
-The shared archive exposes every source file and selected subpack metadata. Existing actor and effect consumers retain their established resource view so unrelated block/UI definitions do not enter actor reconstruction. Future parsers can use the complete sources without changing backend export. Java resources, the block supplement and their loading sequence remain intact. Existing addon-only UI and block metadata remain in the Java packs pending a separate transport decision.
+The shared archive exposes every source file and selected subpack metadata. Existing actor and effect consumers retain their established resource view so unrelated block/UI definitions do not enter actor reconstruction. Future parsers can use the complete sources without changing backend export. Java resources, the block supplement and their loading sequence remain intact. UI images now resolve from these sources. Block supplement metadata remains in the Java packs because it depends on StartGame state that the sources do not carry.
 
-The frontend opens each referenced ZIP directly from the server pack that owns its metadata. It verifies length and SHA-256 before a decoded-cache hit, then bounds ZIP directories, expanded bytes, file counts and paths and validates entry checksums. ZIP64, prepended and directory-heavy inputs use complete accepted snapshots. Cache accounting includes source-only bytes. The old `actor_library.bin` reader and writer are removed; converted-pack cache revision 11 regenerates older local outputs.
+The frontend opens each referenced ZIP directly from the server pack that owns its metadata. It verifies length and SHA-256 before a decoded-cache hit, then bounds ZIP directories, expanded bytes, file counts and paths and validates entry checksums. ZIP64, prepended and directory-heavy inputs use complete accepted snapshots. Cache accounting includes source-only bytes. The old `actor_library.bin` reader and writer are removed; converted-pack cache revision 12 regenerates older local outputs.
 
 Caption translations load per locale on first use. The table keeps pack order and server overrides, falls back to English, and caches only locales that the packs provide. Splitting on a literal newline avoids a regular expression for every language file. An isolated benchmark of the actual classes constructs the caption table and resolves one English caption in a median 9.2 ms versus 207.7 ms in the eager baseline, across seven measured rounds after three warmups. Temporary allocation falls from 325.9 MiB to 36.4 MiB. All 29 bundled locale values compare equal outside the timed section. This measures first-use caption work, not complete join time.
 

@@ -1,4 +1,4 @@
-From 056db609265523dbd1a567d0a3001fe8cf1914ce Mon Sep 17 00:00:00 2001
+From e65d7f0f18346be0987e526f52bf51b15d093800 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -861,7 +861,7 @@ without changing backend export.
  .../render/MixinPlayerSkinRenderCache.java    |  55 +++
  .../render/MixinPlayerSkinWidget.java         |  28 ++
  .../render/MixinPlayerTabOverlay.java         |  22 +
- .../render/BedrockAcceptedResources.java      |  70 +++
+ .../render/BedrockAcceptedResources.java      |  81 +++
  .../bedrock/render/BedrockActorDepth.java     |  52 ++
  .../bedrock/render/BedrockActorGlint.java     |  42 ++
  .../render/BedrockActorGlintFrames.java       |  37 ++
@@ -938,7 +938,7 @@ without changing backend export.
  .../bedrock/render/EglTestContext.java        |  52 ++
  .../compat/iris/BedrockIrisAlphaGpuTest.java  | 464 ++++++++++++++++++
  .../compat/iris/BedrockIrisGlintGpuTest.java  | 253 ++++++++++
- 124 files changed, 9243 insertions(+)
+ 124 files changed, 9254 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorDynamicData.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorPreparedRenderType.java
@@ -3139,10 +3139,10 @@ index 0000000..8886282
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
 new file mode 100644
-index 0000000..466771c
+index 0000000..3ec04ad
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3150,8 +3150,10 @@ index 0000000..466771c
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
 +
++import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
 +import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.PackResources;
 +import net.minecraft.server.packs.PackType;
 +import net.minecraft.server.packs.repository.PackSource;
 +import net.minecraft.server.packs.resources.ResourceManager;
@@ -3183,33 +3185,42 @@ index 0000000..466771c
 +    }
 +
 +    private static List<NativeActorLibrary.Layer> read(final ResourceManager resources) throws IOException {
++        final Source source = source(resources);
++        if (source == null) return List.of();
++        final var sources = BedrockResourcePackPayloads.prepare(source.index(), sha -> {
++            final var resource = source.pack().getResource(PackType.CLIENT_RESOURCES,
++                    Identifier.fromNamespaceAndPath("viabedrock", BedrockResourcePackPayloads.RESOURCE_DIRECTORY + sha + ".mcpack"));
++            return resource == null ? null : resource.get();
++        });
++        return BedrockResourcePackPayloads.decode(sources);
++    }
++
++    /** The highest server pack whose pack.mcmeta indexes accepted Bedrock packs, or null when none does. */
++    public static Source source(final ResourceManager resources) throws IOException {
 +        final var packs = resources.listPacks().toList();
 +        for (int index = packs.size() - 1; index >= 0; index--) {
 +            final var pack = packs.get(index);
 +            if (pack.location().source() != PackSource.SERVER) continue;
 +            final var metadata = pack.getRootResource("pack.mcmeta");
-+            if (metadata != null) {
-+                try (var input = metadata.get()) {
-+                    final byte[] bytes = input.readNBytes(BedrockResourcePackPayloads.MAX_METADATA_BYTES + 1);
-+                    if (bytes.length > BedrockResourcePackPayloads.MAX_METADATA_BYTES) throw new IOException("Native pack metadata exceeds limits");
-+                    final var root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
-+                    if (root.has(BedrockResourcePackPayloads.METADATA_SECTION)) {
-+                        final var sources = BedrockResourcePackPayloads.prepare(root.getAsJsonObject(BedrockResourcePackPayloads.METADATA_SECTION), sha -> {
-+                            final var resource = pack.getResource(PackType.CLIENT_RESOURCES,
-+                                    Identifier.fromNamespaceAndPath("viabedrock", BedrockResourcePackPayloads.RESOURCE_DIRECTORY + sha + ".mcpack"));
-+                            return resource == null ? null : resource.get();
-+                        });
-+                        return BedrockResourcePackPayloads.decode(sources);
-+                    }
++            if (metadata == null) continue;
++            try (var input = metadata.get()) {
++                final byte[] bytes = input.readNBytes(BedrockResourcePackPayloads.MAX_METADATA_BYTES + 1);
++                if (bytes.length > BedrockResourcePackPayloads.MAX_METADATA_BYTES) throw new IOException("Native pack metadata exceeds limits");
++                final var root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
++                if (root.has(BedrockResourcePackPayloads.METADATA_SECTION)) {
++                    return new Source(pack, root.getAsJsonObject(BedrockResourcePackPayloads.METADATA_SECTION));
 +                }
 +            }
 +        }
-+        return List.of();
++        return null;
 +    }
 +
 +    public static synchronized void clear() {
 +        snapshot = null;
 +    }
++
++    /** A server pack and the accepted-source index from its pack.mcmeta. */
++    public record Source(PackResources pack, JsonObject index) {}
 +
 +    private record Snapshot(ResourceManager resources, List<NativeActorLibrary.Layer> layers, IOException error) {}
 +}
