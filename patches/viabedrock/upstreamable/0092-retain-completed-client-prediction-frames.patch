@@ -1,4 +1,4 @@
-From 0279cea9b0eb0417c5f0c9dd912f3127dd05ef62 Mon Sep 17 00:00:00 2001
+From b08475838291982b247605330781affc2ad66101 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -767,11 +767,24 @@ motion; it leaves ground untouched, so teleport comparisons ignore
 ground. Riding players, channels without replay and ticks outside the
 retained inputs keep the previous Java teleport. The native exclusion
 tags and the final transfer acceptance gate remain unidentified.
+
+Recover admitted shallow ActorMove overlaps before the later requested axes.
+The original 1.26.60.5 contact kernel selects the least penetration with
+X/Y/Z tie order, admits the policy boundary inclusively, and traverses
+colliders backwards for each Y/X/Z pass. Preserve float body stores and
+accumulated recovery when a later axis moves away. Return to ordinary
+contact clipping when no initial overlap fits the supplied allowance.
+
+A fresh local-player trace observes flags 0x10, an empty exclusion list
+and allowance 0.01 on all axes. Original callback controls cover mirrored
+faces, the boundary, competing walls and zero requests. The adapter owns
+player admission; this shared helper does not assume that policy for mobs,
+flight, liquids or other native component configurations.
 ---
  build.gradle                                  |   29 +
  .../api/model/ActorMotionCommand.java         |   72 ++
  .../api/model/ActorSpatialCommand.java        |   80 ++
- .../api/model/CollisionContact.java           |   80 ++
+ .../api/model/CollisionContact.java           |  164 +++
  .../viabedrock/api/model/FlightMovement.java  |   79 ++
  .../api/model/FlightMovementContext.java      |   50 +
  .../viabedrock/api/model/FluidCurrent.java    |   57 +
@@ -828,7 +841,7 @@ tags and the final transfer acceptance gate remain unidentified.
  .../storage/VehiclePredictionStorage.java     |  150 +++
  .../api/model/ActorMotionCommandTest.java     |   76 ++
  .../api/model/ActorSpatialCommandTest.java    |   70 +
- .../api/model/CollisionContactTest.java       |   60 +
+ .../api/model/CollisionContactTest.java       |   97 ++
  .../api/model/FlightMovementTest.java         |  112 ++
  .../api/model/FluidCurrentTest.java           |   56 +
  .../model/GeyserMovementReferenceTest.java    |   50 +
@@ -876,7 +889,7 @@ tags and the final transfer acceptance gate remain unidentified.
  .../packet/TickedMotionPacketTest.java        |  156 +++
  .../NativeBlockGeometryRegistrationTest.java  |    1 +
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 108 files changed, 10140 insertions(+), 97 deletions(-)
+ 108 files changed, 10261 insertions(+), 97 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
@@ -1165,10 +1178,10 @@ index 000000000..2df5cf0f4
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java b/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
 new file mode 100644
-index 000000000..925b0654a
+index 000000000..d27747160
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,164 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1178,12 +1191,94 @@ index 000000000..925b0654a
 +
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +
-+/** Native 1.26.51 separated-axis contact clipping. Actor overlap recovery is a separate operation. */
++import java.util.List;
++
++/** Native separated-axis contact clipping and bounded ActorMove overlap recovery. */
 +public final class CollisionContact {
 +
 +    private static final float CONTACT_EPSILON = 0.000001F;
 +
 +    private CollisionContact() {
++    }
++
++    /**
++     * Resolves Y, X, then Z using native float stores when an initial overlap fits the supplied per-axis allowance.
++     * Returns null otherwise so a caller can retain its ordinary contact path and its precise face boundaries.
++     */
++    public static Position3f recover(final Box body, final Position3f requested, final List<Box> obstacles,
++                                     final Position3f allowance) {
++        boolean admitted = false;
++        for (final Box obstacle : obstacles) {
++            final Overlap overlap = overlap(obstacle, body);
++            if (overlap != null && overlap.depth <= component(allowance, overlap.axis)) {
++                admitted = true;
++                break;
++            }
++        }
++        if (!admitted) {
++            return null;
++        }
++        Box moving = body;
++        Position3f result = Position3f.ZERO;
++        for (final int axis : new int[]{1, 0, 2}) {
++            Position3f motion = with(Position3f.ZERO, axis, component(requested, axis));
++            // Native 0x14332bb10 visits the captured collider vector backwards on every axis pass.
++            for (int i = obstacles.size() - 1; i >= 0; i--) {
++                final Box obstacle = obstacles.get(i);
++                final Overlap overlap = overlap(obstacle, moving);
++                if (overlap == null || overlap.depth > component(allowance, overlap.axis)) {
++                    motion = clip(obstacle, moving, motion);
++                } else {
++                    final float current = component(motion, overlap.axis);
++                    motion = with(motion, overlap.axis, overlap.amount > 0F
++                            ? Math.max(current, overlap.amount) : Math.min(current, overlap.amount));
++                }
++            }
++            result = new Position3f(result.x() + motion.x(), result.y() + motion.y(), result.z() + motion.z());
++            moving = new Box(moving.minX + motion.x(), moving.minY + motion.y(), moving.minZ + motion.z(),
++                    moving.maxX + motion.x(), moving.maxY + motion.y(), moving.maxZ + motion.z());
++        }
++        return result;
++    }
++
++    private static Overlap overlap(final Box obstacle, final Box moving) {
++        int selectedAxis = -1;
++        float depth = Float.MAX_VALUE;
++        float amount = 0F;
++        for (int axis = 0; axis < 3; axis++) {
++            if (obstacle.max(axis) <= obstacle.min(axis)) {
++                return null;
++            }
++            final float lower = contactDistance(moving.max(axis) - obstacle.min(axis));
++            final float upper = contactDistance(obstacle.max(axis) - moving.min(axis));
++            if (lower <= 0F || upper <= 0F) {
++                return null;
++            }
++            final float candidate = Math.min(lower, upper);
++            // Equal axis depths prefer X, then Y, then Z. Equal opposing faces prefer the positive side.
++            if (candidate < depth) {
++                selectedAxis = axis;
++                depth = candidate;
++                amount = upper <= lower ? upper : -lower;
++            }
++        }
++        return new Overlap(selectedAxis, depth, amount);
++    }
++
++    private static float component(final Position3f vector, final int axis) {
++        return switch (axis) {
++            case 0 -> vector.x();
++            case 1 -> vector.y();
++            default -> vector.z();
++        };
++    }
++
++    private static Position3f with(final Position3f vector, final int axis, final float value) {
++        return switch (axis) {
++            case 0 -> new Position3f(value, vector.y(), vector.z());
++            case 1 -> new Position3f(vector.x(), value, vector.z());
++            default -> new Position3f(vector.x(), vector.y(), value);
++        };
 +    }
 +
 +    public static Position3f clip(final Box obstacle, final Box moving, final Position3f requested) {
@@ -1227,6 +1322,8 @@ index 000000000..925b0654a
 +    private static float contactDistance(final float distance) {
 +        return Math.abs(distance) > CONTACT_EPSILON ? distance : 0F;
 +    }
++
++    private record Overlap(int axis, float depth, float amount) { }
 +
 +    public record Box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
 +
@@ -6378,10 +6475,10 @@ index 000000000..a3173cc03
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
 new file mode 100644
-index 000000000..c79bb3f28
+index 000000000..af59f504d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,97 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6392,10 +6489,47 @@ index 000000000..c79bb3f28
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +import org.junit.jupiter.api.Test;
 +
++import java.util.List;
++
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
 +import static org.junit.jupiter.api.Assertions.assertSame;
 +
 +class CollisionContactTest {
++
++    @Test
++    void recoversTheCapturedOverlapBeforeTheRequestedAxes() {
++        // Original 1.26.60.5 ActorMove instructions, using the observed local-player allowance.
++        final CollisionContact.Box body = new CollisionContact.Box(0.405F, 65F, 0.2F, 1.005F, 66.8F, 0.8F);
++        final List<CollisionContact.Box> obstacles = List.of(
++                new CollisionContact.Box(0F, 64F, 0F, 1F, 65F, 1F),
++                new CollisionContact.Box(1F, 65F, 0F, 2F, 67F, 1F));
++        final Position3f result = CollisionContact.recover(body, new Position3f(0F, -0.0784F, 0F), obstacles,
++                new Position3f(0.01F, 0.01F, 0.01F));
++        assertEquals(new Position3f(Float.intBitsToFloat(0xBBA3D700), 0F, 0F), result);
++    }
++
++    @Test
++    void retainsRecoveryWhenMovingAwayFromTheWall() {
++        final CollisionContact.Box body = new CollisionContact.Box(0F, 0F, 0F, 0.6F, 1.8F, 0.6F);
++        final List<CollisionContact.Box> obstacles = List.of(new CollisionContact.Box(0.595F, -1F, -1F, 1.5F, 3F, 1.5F));
++        final Position3f result = CollisionContact.recover(body, new Position3f(-0.1F, 0F, 0F), obstacles,
++                new Position3f(0.01F, 0.01F, 0.01F));
++        // The zero Y pass first recovers X; the X pass then adds the movement away.
++        assertEquals(new Position3f(Float.intBitsToFloat(0xBDD70A3D), 0F, 0F), result);
++    }
++
++    @Test
++    void keepsDeepOverlapAndSeparatedBodiesOnTheOrdinaryContactPath() {
++        final CollisionContact.Box body = new CollisionContact.Box(0F, 0F, 0F, 0.6F, 1.8F, 0.6F);
++        final Position3f allowance = new Position3f(0.01F, 0.01F, 0.01F);
++        assertNull(CollisionContact.recover(body, Position3f.ZERO,
++                List.of(new CollisionContact.Box(0.5899F, -1F, -1F, 1.5F, 3F, 1.5F)), allowance));
++        assertNull(CollisionContact.recover(body, new Position3f(0.5F, 0F, 0F),
++                List.of(new CollisionContact.Box(1F, -1F, -1F, 2F, 3F, 2F)), allowance));
++        assertNull(CollisionContact.recover(body, Position3f.ZERO,
++                List.of(new CollisionContact.Box(0.595F, -1F, -1F, 1.5F, 3F, 1.5F)), Position3f.ZERO));
++    }
 +
 +    @Test
 +    void clipsEveryFaceAndPreservesTangentialMotion() {
