@@ -1,4 +1,4 @@
-From 762a10a9b56dbbfb40fcd37719e839c6ccfa75cb Mon Sep 17 00:00:00 2001
+From 056db609265523dbd1a567d0a3001fe8cf1914ce Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -807,6 +807,12 @@ inputs. Current original SM60 fragment bytecode passes 512 independent
 host arithmetic controls. Retain GPU comparisons as optional private
 fixture tests. Shader-pack sampling composes the same ordered layers
 before pack shading, with per-draw inputs cleared for ordinary Java draws.
+
+Read nested Bedrock .mcpack assets through their owning server pack and
+use pack.mcmeta for order, provenance and subpack selection. Ignore local
+metadata when selecting accepted server resources. Remove the old binary
+library reader. Full source files remain available to future client parsers
+without changing backend export.
 ---
  build.gradle.kts                              |   6 +
  settings.gradle.kts                           |   3 +
@@ -855,7 +861,7 @@ before pack shading, with per-draw inputs cleared for ordinary Java draws.
  .../render/MixinPlayerSkinRenderCache.java    |  55 +++
  .../render/MixinPlayerSkinWidget.java         |  28 ++
  .../render/MixinPlayerTabOverlay.java         |  22 +
- .../render/BedrockAcceptedResources.java      |  53 ++
+ .../render/BedrockAcceptedResources.java      |  70 +++
  .../bedrock/render/BedrockActorDepth.java     |  52 ++
  .../bedrock/render/BedrockActorGlint.java     |  42 ++
  .../render/BedrockActorGlintFrames.java       |  37 ++
@@ -901,7 +907,7 @@ before pack shading, with per-draw inputs cleared for ordinary Java draws.
  .../shaders/include/bedrock_player_fade.glsl  |  15 +
  .../viafabricplus-bedrock.accesswidener       |   6 +
  .../viafabricplus-bedrock.mixins.json         |  39 ++
- .../render/BedrockAcceptedResourcesTest.java  | 118 +++++
+ .../render/BedrockAcceptedResourcesTest.java  | 188 +++++++
  .../render/BedrockActorDepthGpuTest.java      | 123 +++++
  .../render/BedrockActorGlintFramesTest.java   |  41 ++
  .../render/BedrockActorGlintGpuTest.java      | 327 ++++++++++++
@@ -932,7 +938,7 @@ before pack shading, with per-draw inputs cleared for ordinary Java draws.
  .../bedrock/render/EglTestContext.java        |  52 ++
  .../compat/iris/BedrockIrisAlphaGpuTest.java  | 464 ++++++++++++++++++
  .../compat/iris/BedrockIrisGlintGpuTest.java  | 253 ++++++++++
- 124 files changed, 9156 insertions(+)
+ 124 files changed, 9243 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/BedrockMixinPlugin.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorDynamicData.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorPreparedRenderType.java
@@ -3133,10 +3139,10 @@ index 0000000..8886282
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
 new file mode 100644
-index 0000000..76f93d2
+index 0000000..466771c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,70 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3144,12 +3150,16 @@ index 0000000..76f93d2
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
 +
++import com.viaversion.viaversion.libs.gson.JsonParser;
 +import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.PackType;
 +import net.minecraft.server.packs.repository.PackSource;
 +import net.minecraft.server.packs.resources.ResourceManager;
 +import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
 +
 +import java.io.IOException;
++import java.nio.charset.StandardCharsets;
 +import java.util.List;
 +
 +/** Actor and effect loaders share one decoded accepted archive during each resource generation. */
@@ -3173,12 +3183,25 @@ index 0000000..76f93d2
 +    }
 +
 +    private static List<NativeActorLibrary.Layer> read(final ResourceManager resources) throws IOException {
-+        final var stack = resources.getResourceStack(Identifier.fromNamespaceAndPath("viabedrock", "actor_library.bin"));
-+        for (int index = stack.size() - 1; index >= 0; index--) {
-+            final var resource = stack.get(index);
-+            if (resource.source().location().source() != PackSource.SERVER) continue;
-+            try (var input = resource.open()) {
-+                return NativeActorLibrary.decode(input);
++        final var packs = resources.listPacks().toList();
++        for (int index = packs.size() - 1; index >= 0; index--) {
++            final var pack = packs.get(index);
++            if (pack.location().source() != PackSource.SERVER) continue;
++            final var metadata = pack.getRootResource("pack.mcmeta");
++            if (metadata != null) {
++                try (var input = metadata.get()) {
++                    final byte[] bytes = input.readNBytes(BedrockResourcePackPayloads.MAX_METADATA_BYTES + 1);
++                    if (bytes.length > BedrockResourcePackPayloads.MAX_METADATA_BYTES) throw new IOException("Native pack metadata exceeds limits");
++                    final var root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
++                    if (root.has(BedrockResourcePackPayloads.METADATA_SECTION)) {
++                        final var sources = BedrockResourcePackPayloads.prepare(root.getAsJsonObject(BedrockResourcePackPayloads.METADATA_SECTION), sha -> {
++                            final var resource = pack.getResource(PackType.CLIENT_RESOURCES,
++                                    Identifier.fromNamespaceAndPath("viabedrock", BedrockResourcePackPayloads.RESOURCE_DIRECTORY + sha + ".mcpack"));
++                            return resource == null ? null : resource.get();
++                        });
++                        return BedrockResourcePackPayloads.decode(sources);
++                    }
++                }
 +            }
 +        }
 +        return List.of();
@@ -6895,10 +6918,10 @@ index 8e4e3dd..3c5f315 100644
      "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
 new file mode 100644
-index 0000000..ac26125
+index 0000000..0571d04
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,188 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6907,12 +6930,17 @@ index 0000000..ac26125
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import net.minecraft.network.chat.Component;
++import net.minecraft.resources.Identifier;
 +import net.minecraft.server.packs.PackLocationInfo;
 +import net.minecraft.server.packs.PackResources;
 +import net.minecraft.server.packs.repository.PackSource;
 +import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.IoSupplier;
 +import net.minecraft.server.packs.resources.ResourceManager;
 +import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import org.junit.jupiter.api.AfterEach;
@@ -6920,6 +6948,7 @@ index 0000000..ac26125
 +
 +import java.io.ByteArrayInputStream;
 +import java.io.IOException;
++import java.io.InputStream;
 +import java.lang.reflect.Proxy;
 +import java.util.List;
 +import java.util.Optional;
@@ -6971,7 +7000,9 @@ index 0000000..ac26125
 +    @Test
 +    void retainsDecodeErrorsUntilReloadAndThenRetriesTheAcceptedArchive() throws Exception {
 +        final var opens = new AtomicInteger();
-+        final var bytes = new AtomicReference<>(new byte[]{1, 2});
++        final Content invalid = new InMemoryContent();
++        invalid.putString("pack.mcmeta", "{");
++        final var bytes = new AtomicReference<>(invalid);
 +        final var manager = resources(List.of(resource(PackSource.SERVER, bytes, opens)));
 +        assertThrows(IOException.class, () -> BedrockAcceptedResources.layers(manager));
 +        bytes.set(archive((byte) 4).get());
@@ -6986,11 +7017,60 @@ index 0000000..ac26125
 +    void ignoresLocalResourcesAndAllowsNoAcceptedArchive() throws Exception {
 +        final var opens = new AtomicInteger();
 +        assertTrue(BedrockAcceptedResources.layers(resources(List.of())).isEmpty());
-+        assertTrue(BedrockAcceptedResources.layers(resources(List.of(resource(PackSource.DEFAULT, new AtomicReference<>(new byte[]{1}), opens)))).isEmpty());
++        assertTrue(BedrockAcceptedResources.layers(resources(List.of(resource(PackSource.DEFAULT, new AtomicReference<>(payloads((byte) 1)), opens)))).isEmpty());
 +        assertEquals(0, opens.get());
 +    }
 +
-+    private static AtomicReference<byte[]> archive(final byte texture) throws IOException {
++    @Test
++    void readsNestedBedrockPacksFromTheSameServerPackThatOwnsTheirMetadata() throws Exception {
++        final Content source = payloads((byte) 7);
++        final var ownerOpens = new AtomicInteger();
++        final var overrideOpens = new AtomicInteger();
++        final var manager = resources(List.of(payloadResource(PackSource.SERVER, source, ownerOpens),
++                payloadResource(PackSource.DEFAULT, payloads((byte) 99), overrideOpens)));
++        final var layers = BedrockAcceptedResources.layers(manager);
++        assertArrayEquals(new byte[]{7}, layers.getLast().resources().get("textures/shared.png"));
++        assertArrayEquals(new byte[]{42}, layers.getLast().sourceResources().get("future/context.custom"));
++        assertEquals(0, overrideOpens.get());
++        assertTrue(ownerOpens.get() > 0);
++    }
++
++    @Test
++    void anotherPackCannotSupplyAMissingReferencedBedrockPayload() throws Exception {
++        final Content source = payloads((byte) 8);
++        final Content missing = new InMemoryContent();
++        missing.put("pack.mcmeta", source.get("pack.mcmeta"));
++        final var overrideOpens = new AtomicInteger();
++        final var manager = resources(List.of(payloadResource(PackSource.SERVER, missing, new AtomicInteger()),
++                payloadResource(PackSource.DEFAULT, source, overrideOpens)));
++        assertThrows(IOException.class, () -> BedrockAcceptedResources.layers(manager));
++        assertEquals(0, overrideOpens.get());
++    }
++
++    @Test
++    void decodedCacheCannotHideChangedPayloadBytesUnderTheSameMetadata() throws Exception {
++        final Content source = payloads((byte) 9);
++        assertFalse(BedrockAcceptedResources.layers(resources(List.of(payloadResource(PackSource.SERVER, source, new AtomicInteger())))).isEmpty());
++        final String path = source.getFilesDeep(BedrockResourcePackPayloads.PAYLOAD_DIRECTORY, ".mcpack").getFirst();
++        source.get(path)[0] ^= 1;
++        final var replacement = resources(List.of(payloadResource(PackSource.SERVER, source, new AtomicInteger())));
++        assertThrows(IOException.class, () -> BedrockAcceptedResources.layers(replacement));
++    }
++
++    private static Content payloads(final byte texture) throws IOException {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\""
++                + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
++        content.put("textures/shared.png", new byte[]{texture});
++        content.put("future/context.custom", new byte[]{42});
++        return BedrockResourcePackPayloads.export(ProtocolConstants.BEDROCK_VERSION_NAME, List.of(new ResourcePack(content)), ignored -> true);
++    }
++
++    private static Resource payloadResource(final PackSource source, final Content content, final AtomicInteger opens) {
++        return resource(source, new AtomicReference<>(content), opens);
++    }
++
++    private static AtomicReference<Content> archive(final byte texture) throws IOException {
 +        final InMemoryContent lower = new InMemoryContent();
 +        final InMemoryContent upper = new InMemoryContent();
 +        for (final var content : List.of(lower, upper)) {
@@ -6999,22 +7079,35 @@ index 0000000..ac26125
 +        }
 +        upper.put("textures/shared.png", new byte[]{texture});
 +        final var packs = List.of(new ResourcePack(lower), new ResourcePack(upper));
-+        return new AtomicReference<>(NativeActorLibrary.encode(packs, pack -> pack == packs.getLast()));
++        return new AtomicReference<>(BedrockResourcePackPayloads.export(ProtocolConstants.BEDROCK_VERSION_NAME, packs, pack -> pack == packs.getLast()));
 +    }
 +
-+    private static Resource resource(final PackSource source, final AtomicReference<byte[]> bytes, final AtomicInteger opens) {
++    private static Resource resource(final PackSource source, final AtomicReference<Content> content, final AtomicInteger opens) {
 +        final var location = new PackLocationInfo("test", Component.empty(), source, Optional.empty());
-+        final var pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class[]{PackResources.class},
-+                (proxy, method, arguments) -> method.getName().equals("location") ? location : null);
-+        return new Resource(pack, () -> {
-+            opens.incrementAndGet();
-+            return new ByteArrayInputStream(bytes.get());
++        final var pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class[]{PackResources.class}, (proxy, method, arguments) -> {
++            if (method.getName().equals("location")) return location;
++            final String path;
++            if (method.getName().equals("getRootResource")) path = String.join("/", (String[]) arguments[0]);
++            else if (method.getName().equals("getResource")) {
++                final var id = (Identifier) arguments[1];
++                path = "assets/" + id.getNamespace() + '/' + id.getPath();
++            } else return null;
++            final byte[] bytes = content.get().get(path);
++            return bytes == null ? null : (IoSupplier<InputStream>) () -> {
++                if (path.equals("pack.mcmeta")) opens.incrementAndGet();
++                return new ByteArrayInputStream(bytes);
++            };
 +        });
++        return new Resource(pack, () -> new ByteArrayInputStream(new byte[0]));
 +    }
 +
 +    private static ResourceManager resources(final List<Resource> stack) {
-+        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
-+                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? stack : null);
++        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class}, (proxy, method, arguments) -> {
++            if (method.getName().equals("listPacks")) return stack.stream().map(Resource::source);
++            if (method.getName().equals("getResourceStack")) return stack;
++            if (method.getName().equals("getResource")) throw new AssertionError("Referenced payloads must use their owning pack");
++            return null;
++        });
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorDepthGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorDepthGpuTest.java
