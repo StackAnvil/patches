@@ -82,8 +82,10 @@ An immutable visual cache retains compiled models and logical carrier assignment
 
 The keepalive task also checks native outbound codec readiness on the event loop. The add-on reports the temporary configuration encoder as unavailable. A regression covers this transition without publishing a packet through an unconfigured codec.
 
-Two fresh-process Galaxite disk-cache recordings build block states on a worker in 0.71 and 0.75 seconds. A same-JVM reconnect takes 0.44 seconds. Both conversions hit cache in these cases. A forced conversion using restored prepared data matches all 2,220 custom models and the physical and culling metadata from fresh compilation.
+The final cold Galaxite recordings build block states on a worker in 0.74 and 0.86 seconds. A fresh JVM with a populated disk cache takes 0.57 seconds, and a same-JVM reconnect takes 0.29 seconds. The cached cases skip both conversions. Two cold recordings count 3.53 and 3.92 seconds of overlapping processing windows once, against the previous build's single 4.51-second recording. The 2-second cold target remains open. These totals exclude gaps, vanilla reloads and bundle startup work. They do not measure a native-client latency difference. The comparison includes main's native-lighting correction.
 
-The combined four-project build passes 3,984 tests with 336 optional skips. All final recordings pass complete-payload transport checks. Timings count overlapping processing windows once and exclude gaps, vanilla reloads and network pacing. They do not measure a native-client latency difference. The comparison includes the selector and barrier corrections from main. Existing unresolved mappings still fail broad rendering checks.
+Cold compilation also reuses each accepted geometry within one preparation pass. Each state receives a copy before material binding, transforms and culling. The compiler belongs to that pass and retains no connection state afterward. A regression alternates carriers, materials and transforms on one geometry and checks independent output.
+
+The full four-project build passes 3,991 tests with 336 optional skips. Final transport, UI alias and outbound codec probes pass. All 2,220 custom models, physical metadata and culling metadata match the previous build. JSON object order and unordered direction sets are normalized. Existing unresolved mappings still fail broad rendering checks.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.

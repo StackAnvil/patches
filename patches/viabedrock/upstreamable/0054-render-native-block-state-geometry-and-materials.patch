@@ -1,4 +1,4 @@
-From 5515bd13b644c4fbbe9493e62963d7b89140545f Mon Sep 17 00:00:00 2001
+From 8f208f93a48e617ebbf8610821fef99faaf8f053 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -545,6 +545,13 @@ ready by default. Extend the transition regression to cover this boundary.
 Cache regressions verify reopened-disk equivalence, immutable snapshots,
 source ownership, typed definition/resource/carrier invalidation, eviction,
 corruption recovery and unavailable storage.
+
+Compile each accepted geometry once per block preparation pass, before
+state-specific material binding, culling and transforms. Copy the unbound
+model before those edits and keep the compiler local to that pass. This
+avoids repeated CubeConverter work even when all persistent caches are
+disabled. A regression alternates carriers, materials and transforms on
+one geometry and verifies independent output and unchanged earlier states.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -580,7 +587,7 @@ corruption recovery and unavailable storage.
  .../protocol/rewriter/BlockStateRewriter.java |  322 +++--
  .../rewriter/ResourcePackRewriter.java        |    2 +
  .../CustomBlockCullingCompiler.java           |  162 +++
- .../resourcepack/CustomBlockModel.java        |  561 +++++++++
+ .../resourcepack/CustomBlockModel.java        |  588 +++++++++
  .../CustomBlockResourceRewriter.java          |  250 ++++
  .../CustomBlockStateDefinitions.java          |  225 ++++
  .../resourcepack/CustomBlockTextures.java     |   95 ++
@@ -620,7 +627,7 @@ corruption recovery and unavailable storage.
  .../protocol/model/CustomBlockStatesTest.java |  139 ++
  .../packet/BlockStatePreparationTest.java     |   91 ++
  .../rewriter/CustomBlockBoneGeometryTest.java |  213 ++++
- .../CustomBlockModelSelectionTest.java        |  723 +++++++++++
+ .../CustomBlockModelSelectionTest.java        |  743 +++++++++++
  .../CustomBlockPlaneGeometryTest.java         |  170 +++
  .../NativeBlockGeometryRegistrationTest.java  |  145 +++
  .../CustomBlockCullingCompilerTest.java       |  140 ++
@@ -633,7 +640,7 @@ corruption recovery and unavailable storage.
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  255 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   89 ++
- 87 files changed, 12474 insertions(+), 160 deletions(-)
+ 87 files changed, 12521 insertions(+), 160 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -3020,7 +3027,7 @@ index ba8c2db5..5c6717be 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 1c8710c6..4de62dac 100644
+index 0cb7b1cc..e8c4ab8f 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -17,7 +17,9 @@
@@ -3760,7 +3767,7 @@ index 550e64c0..b39052b4 100644
       * Enables compression/decompression for the given user. May get called multiple times for the same user.
       *
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index a4ce7054..f668c145 100644
+index a4ce7054..a7a50158 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 @@ -17,23 +17,37 @@
@@ -4049,7 +4056,7 @@ index a4ce7054..f668c145 100644
 +        final Map<Integer, CustomBlockVisual> visuals = new LinkedHashMap<>();
 +        final Map<String, Integer> stateMappings = new LinkedHashMap<>();
 +        final Map<VisualKey, Integer> sharedVisuals = new HashMap<>();
-+        final CustomBlockTextures textures = new CustomBlockTextures(storage);
++        final CustomBlockModel.Compiler compiler = new CustomBlockModel.Compiler(storage, new CustomBlockTextures(storage));
 +        final List<BedrockBlockState> orderedCustomStates = customBlockStates.stream()
 +                .sorted(Comparator.comparing(BlockState::toBlockStateString)).toList();
 +        int exhaustedStates = 0;
@@ -4061,7 +4068,7 @@ index a4ce7054..f668c145 100644
 +                }
 +                // Continue checking shared visuals after capacity is reached.
 +                final int carrier = carriers.get(Math.min(visuals.size(), carriers.size() - 1));
-+                final CustomBlockVisual visual = CustomBlockModel.compile(storage, textures, customState.toBlockStateString(), carrier, components);
++                final CustomBlockVisual visual = compiler.compile(customState.toBlockStateString(), carrier, components);
 +                if (visual != null) {
 +                    final VisualKey key = new VisualKey(visual.textures(),
 +                            visual.modelJson().replace("viabedrock:block/custom/slot_" + carrier, "viabedrock:block/custom/slot"),
@@ -4385,10 +4392,10 @@ index 00000000..5a7981fc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..0cf7ebcd
+index 00000000..41f6a22a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,561 @@
+@@ -0,0 +1,588 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4409,6 +4416,7 @@ index 00000000..0cf7ebcd
 +import org.cube.converter.model.impl.java.JavaItemModel;
 +
 +import java.util.List;
++import java.util.IdentityHashMap;
 +import java.util.Comparator;
 +import java.util.Map;
 +import java.util.LinkedHashMap;
@@ -4432,6 +4440,12 @@ index 00000000..0cf7ebcd
 +
 +    public static CustomBlockVisual compile(final ResourcePackStorage storage, final CustomBlockTextures textures, final String state,
 +                                            final int javaState, final CompoundTag components) {
++        return new Compiler(storage, textures).compile(state, javaState, components);
++    }
++
++    private static CustomBlockVisual compile(final ResourcePackStorage storage, final CustomBlockTextures textures,
++                                             final Map<BedrockGeometryModel, JsonObject> geometries, final String state,
++                                             final int javaState, final CompoundTag components) {
 +        final Tag geometryTag = components.get("minecraft:geometry");
 +        String geometry = geometryTag instanceof StringTag name ? name.getValue()
 +                : geometryTag instanceof CompoundTag details && details.get("identifier") instanceof StringTag name ? name.getValue() : "";
@@ -4515,7 +4529,11 @@ index 00000000..0cf7ebcd
 +            if (bedrockModel == null) {
 +                return null;
 +            }
-+            model = geometry(bedrockModel, textureIds);
++            model = geometries.computeIfAbsent(bedrockModel, original -> geometry(original, textureIds)).deepCopy();
++            final JsonObject bindings = model.getAsJsonObject("textures");
++            for (final String key : List.copyOf(bindings.keySet())) {
++                bindings.addProperty(key, textureIds.get(Direction.valueOf(key.toUpperCase(java.util.Locale.ROOT))));
++            }
 +        }
 +        final JsonObject modelTextures = model.getAsJsonObject("textures");
 +        for (String key : List.copyOf(modelTextures.keySet())) {
@@ -4886,6 +4904,22 @@ index 00000000..0cf7ebcd
 +            }
 +        }
 +        return result;
++    }
++
++    /** Reuses unbound geometry only within one compilation pass. State-specific edits apply to copies. */
++    public static final class Compiler {
++        private final ResourcePackStorage storage;
++        private final CustomBlockTextures textures;
++        private final Map<BedrockGeometryModel, JsonObject> geometries = new IdentityHashMap<>();
++
++        public Compiler(final ResourcePackStorage storage, final CustomBlockTextures textures) {
++            this.storage = storage;
++            this.textures = textures;
++        }
++
++        public CustomBlockVisual compile(final String state, final int javaState, final CompoundTag components) {
++            return CustomBlockModel.compile(this.storage, this.textures, this.geometries, state, javaState, components);
++        }
 +    }
 +
 +    static final class Transform {
@@ -11870,10 +11904,10 @@ index 00000000..61c3a60c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..638bed76
+index 00000000..aa931b04
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,723 @@
+@@ -0,0 +1,743 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -11889,6 +11923,7 @@ index 00000000..638bed76
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.api.resourcepack.definition.CustomBlockDefinition;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockTextures;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResourceRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
@@ -11903,6 +11938,25 @@ index 00000000..638bed76
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class CustomBlockModelSelectionTest {
++
++    @Test
++    void sharedGeometryKeepsCarrierMaterialsAndStateTransformsIndependent() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final var compiler = new CustomBlockModel.Compiler(storage,
++                new CustomBlockTextures(storage));
++        final CompoundTag original = components("geometry.test", "ruby", "opaque");
++        final var first = compiler.compile("test:first", 42, original);
++        final CompoundTag changed = components("geometry.test", "gold", "blend");
++        final CompoundTag transform = new CompoundTag();
++        transform.putFloat("TX", 3);
++        changed.put("minecraft:transformation", transform);
++        final var second = compiler.compile("test:second", 43, changed);
++        assertEquals(CustomBlockModel.compile(storage, "test:second", 43, changed), second);
++        assertNotEquals(first.modelJson(), second.modelJson());
++        assertFalse(second.modelJson().contains("slot_42"));
++        assertEquals("gold", second.textures().get("all"));
++        assertEquals(first, compiler.compile("test:first", 42, original));
++    }
 +
 +    @Test
 +    void carriesServerPixelOffsetRangesWithoutApplyingThemToCullingOrModelVertices() {

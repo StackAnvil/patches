@@ -1,4 +1,4 @@
-From bc1dc378d761698aefb32984e7f59f71145a9f5d Mon Sep 17 00:00:00 2001
+From 0d22139d66969c62693110f83c5daebd8e797f34 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -941,6 +941,18 @@ Normalize resources independently of file iteration order. Hash sorted names
 and bytes, then apply cached declaration and image lookups in the current
 source order. This preserves layering, metadata and admission behavior while
 avoiding cache misses caused by unordered host-file sets across fresh JVMs.
+
+Validate encoded UI dimensions through a memory-backed ImageIO stream. Each
+image already resides in memory; the convenience stream otherwise spools to
+a temporary file and drops valid images when that cache is unavailable.
+Keep reader selection, dimension limits and global ImageIO policy unchanged.
+A regression removes the configured cache directory before loading a PNG.
+
+Prepare independent UI layers on two local bounded workers while applying
+results in accepted pack order. Retain at most three in-flight layers,
+then close the workers after construction or failure. Fonts, declarations,
+metadata and image overrides publish on the constructing thread in their
+original order. No persistent cache is required for this overlap.
 ---
  build.gradle                                  |   11 +
  .../api/model/NativeContainerAction.java      |   94 +
@@ -983,7 +995,7 @@ avoiding cache misses caused by unordered host-file sets across fresh JVMs.
  .../api/resourcepack/ui/HudTitleUi.java       |   28 +
  .../resourcepack/ui/InventoryItemFilter.java  |   43 +
  .../resourcepack/ui/InventoryStackCount.java  |   21 +
- .../api/resourcepack/ui/JsonUiProgram.java    | 2201 +++++++++++++++++
+ .../api/resourcepack/ui/JsonUiProgram.java    | 2229 +++++++++++++++++
  .../resourcepack/ui/NativeRecipeSearch.java   |  124 +
  .../ui/NativeSearchNormalization.java         |  189 ++
  .../api/resourcepack/ui/NpcDialogueUi.java    |  316 +++
@@ -1003,7 +1015,7 @@ avoiding cache misses caused by unordered host-file sets across fresh JVMs.
  .../resourcepack/ui/UiRetainedBindings.java   |   49 +
  .../api/resourcepack/ui/UiTextureAliases.java |  136 +
  .../api/resourcepack/ui/UiTextureLimits.java  |   24 +
- .../api/resourcepack/ui/UiTextures.java       |  132 +
+ .../api/resourcepack/ui/UiTextures.java       |  133 +
  .../viabedrock/api/util/NativeSort.java       |  168 ++
  .../protocol/packet/EntityPackets.java        |    9 +
  .../protocol/packet/ResourcePackPackets.java  |   36 +-
@@ -1061,10 +1073,11 @@ avoiding cache misses caused by unordered host-file sets across fresh JVMs.
  .../api/resourcepack/ui/UiFontsTest.java      |  311 +++
  .../resourcepack/ui/UiPreparedLayerTest.java  |  128 +
  .../resourcepack/ui/UiTextureAliasesTest.java |   77 +
- .../api/resourcepack/ui/UiTexturesTest.java   |  231 ++
+ .../ui/UiTextureImageCacheTest.java           |   48 +
+ .../api/resourcepack/ui/UiTexturesTest.java   |  263 ++
  .../ui/native-inventory-item-filter.json      |  311 +++
  .../generator/SearchUnicodeDataGenerator.java |  126 +
- 122 files changed, 19596 insertions(+), 78 deletions(-)
+ 123 files changed, 19705 insertions(+), 78 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerItems.java
@@ -1177,6 +1190,7 @@ avoiding cache misses caused by unordered host-file sets across fresh JVMs.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiFontsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiPreparedLayerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureAliasesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureImageCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
  create mode 100644 src/test/resources/ui/native-inventory-item-filter.json
  create mode 100644 src/tool/java/net/raphimc/viabedrock/tool/generator/SearchUnicodeDataGenerator.java
@@ -3263,7 +3277,7 @@ index 00000000..f7b0cb2a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index d7786a5a..2bed270e 100644
+index 4952eff7..532780e7 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -18,6 +18,7 @@
@@ -3277,7 +3291,7 @@ index d7786a5a..2bed270e 100644
 @@ -56,9 +57,9 @@ import java.util.logging.Level;
  public class ConvertedResourcePackCache {
  
-     private static final int ZIP_FORMAT_VERSION = 1;
+     private static final int ZIP_FORMAT_VERSION = 2;
 -    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-and-offsets-11";
 +    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-offsets-and-forms-17";
      // Advance when the set or format of emitted resources changes independently of converter profiles.
@@ -5794,10 +5808,10 @@ index 00000000..5dfbb3f8
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 00000000..c847f71f
+index 00000000..30e362ac
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,2201 @@
+@@ -0,0 +1,2229 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5833,10 +5847,12 @@ index 00000000..c847f71f
 +import java.util.Map;
 +import java.util.Set;
 +import java.util.function.UnaryOperator;
++import java.util.concurrent.CompletableFuture;
 +import java.util.stream.IntStream;
 +import java.util.regex.Pattern;
 +import java.util.zip.ZipInputStream;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
 +import net.raphimc.viabedrock.api.resourcepack.definition.TextFormattingDefinitions;
 +import net.raphimc.viabedrock.api.util.TextUtil;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -5873,34 +5889,47 @@ index 00000000..c847f71f
 +        this.nativeHurtPolicy = true;
 +        this.translator = storage.getTexts()::translate;
 +        final Map<String, byte[]> builtin = Builtins.FILES;
-+        this.loadLayer(builtin, builtin, false);
-+        this.fonts.load(builtin);
-+        for (final ResourcePack pack : storage.getPackStackBottomToTop()) {
-+            final Map<String, byte[]> files = new LinkedHashMap<>();
-+            for (final String path : loadedPaths(pack)) {
-+                final byte[] bytes = pack.content().get(path);
-+                if (bytes != null && bytes.length <= MAX_FILE_BYTES) {
-+                    files.put(path, bytes);
++        final ResourcePackExecutor workers = new ResourcePackExecutor(2, 3, "ViaBedrock UI Layer Preparation");
++        final Deque<PendingLayer> pending = new ArrayDeque<>();
++        try {
++            pending.add(new PendingLayer(builtin, builtin, builtin, false,
++                    workers.submit(() -> UiPreparedLayer.load(builtin, builtin))));
++            for (final ResourcePack pack : storage.getPackStackBottomToTop()) {
++                // Keep at most three layers in flight and publish strictly in accepted pack order.
++                if (pending.size() == 3) {
++                    this.finishLayer(pending.removeFirst());
 +                }
-+            }
-+            final Map<String, byte[]> textures = new LinkedHashMap<>();
-+            for (final String path : pack.content().getFilesDeep("textures/", "")) {
-+                if (safePath(path)) {
++                final Map<String, byte[]> files = new LinkedHashMap<>();
++                for (final String path : loadedPaths(pack)) {
 +                    final byte[] bytes = pack.content().get(path);
-+                    if (bytes.length <= 16 * MAX_FILE_BYTES && textures.size() < UiTextures.MAX_FILES) {
-+                        textures.put(path, bytes);
++                    if (bytes != null && bytes.length <= MAX_FILE_BYTES) {
++                        files.put(path, bytes);
 +                    }
 +                }
-+            }
-+            this.loadLayer(files, textures, storage.isServerPack(pack));
-+            final Map<String, byte[]> fontFiles = new LinkedHashMap<>();
-+            for (final String path : pack.content().getFilesDeep("font/", "")) {
-+                final byte[] bytes = pack.content().get(path);
-+                if (safePath(path) && bytes != null && bytes.length <= 16 * MAX_FILE_BYTES && fontFiles.size() < 1024) {
-+                    fontFiles.put(path, bytes);
++                final Map<String, byte[]> textures = new LinkedHashMap<>();
++                for (final String path : pack.content().getFilesDeep("textures/", "")) {
++                    if (safePath(path)) {
++                        final byte[] bytes = pack.content().get(path);
++                        if (bytes.length <= 16 * MAX_FILE_BYTES && textures.size() < UiTextures.MAX_FILES) {
++                            textures.put(path, bytes);
++                        }
++                    }
 +                }
++                final Map<String, byte[]> fontFiles = new LinkedHashMap<>();
++                for (final String path : pack.content().getFilesDeep("font/", "")) {
++                    final byte[] bytes = pack.content().get(path);
++                    if (safePath(path) && bytes != null && bytes.length <= 16 * MAX_FILE_BYTES && fontFiles.size() < 1024) {
++                        fontFiles.put(path, bytes);
++                    }
++                }
++                pending.add(new PendingLayer(files, textures, fontFiles, storage.isServerPack(pack),
++                        workers.submit(() -> UiPreparedLayer.load(files, textures))));
 +            }
-+            this.fonts.load(fontFiles, !storage.isServerPack(pack));
++            while (!pending.isEmpty()) {
++                this.finishLayer(pending.removeFirst());
++            }
++        } finally {
++            workers.stop();
 +        }
 +    }
 +
@@ -6479,8 +6508,17 @@ index 00000000..c847f71f
 +        this.loadDocuments(files, server, true);
 +    }
 +
++    private void finishLayer(final PendingLayer layer) {
++        this.loadLayer(layer.files(), layer.textures(), layer.server(), layer.prepared().join());
++        this.fonts.load(layer.fonts(), !layer.server());
++    }
++
 +    private void loadLayer(final Map<String, byte[]> files, final Map<String, byte[]> textures, final boolean server) {
-+        final UiPreparedLayer.Prepared prepared = UiPreparedLayer.load(files, textures);
++        this.loadLayer(files, textures, server, UiPreparedLayer.load(files, textures));
++    }
++
++    private void loadLayer(final Map<String, byte[]> files, final Map<String, byte[]> textures, final boolean server,
++                           final UiPreparedLayer.Prepared prepared) {
 +        final Map<String, byte[]> orderedDocuments = new LinkedHashMap<>();
 +        for (final String path : files.keySet()) {
 +            final byte[] document = prepared.documents().get(path);
@@ -7952,6 +7990,10 @@ index 00000000..c847f71f
 +            return binding.has("target_property_name") ? bindingName(binding, "target_property_name", values)
 +                    : binding.has("binding_name_override") ? bindingName(binding, "binding_name_override", values) : expression;
 +        }
++    }
++
++    private record PendingLayer(Map<String, byte[]> files, Map<String, byte[]> textures, Map<String, byte[]> fonts,
++                                boolean server, CompletableFuture<UiPreparedLayer.Prepared> prepared) {
 +    }
 +
 +    private static final class Builtins {
@@ -12183,10 +12225,10 @@ index 00000000..cc526d4c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
 new file mode 100644
-index 00000000..ff2c71b2
+index 00000000..1a88c4ec
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,133 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -12201,6 +12243,7 @@ index 00000000..ff2c71b2
 +import java.util.Map;
 +import java.util.Set;
 +import javax.imageio.ImageIO;
++import javax.imageio.stream.MemoryCacheImageInputStream;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +
 +/** Normalizes a pack layer using the same image format priority as Bedrock content lookups, retaining JPEG encoding. */
@@ -12297,7 +12340,7 @@ index 00000000..ff2c71b2
 +                    Byte.toUnsignedInt(bytes[14]) | Byte.toUnsignedInt(bytes[15]) << 8);
 +            return;
 +        }
-+        try (var input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
++        try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
 +            final var readers = ImageIO.getImageReaders(input);
 +            if (!readers.hasNext()) {
 +                throw new IOException("Unsupported UI texture");
@@ -21795,12 +21838,66 @@ index 00000000..023ac32d
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureImageCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureImageCacheTest.java
+new file mode 100644
+index 00000000..dc89ef68
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureImageCacheTest.java
+@@ -0,0 +1,48 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++import org.junit.jupiter.api.parallel.Isolated;
++
++import javax.imageio.ImageIO;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Base64;
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++@Isolated("Changes ImageIO's disk-cache configuration")
++class UiTextureImageCacheTest {
++
++    @TempDir
++    Path directory;
++
++    @Test
++    void acceptsValidUiPixelsWhenTheConfiguredImageCacheDisappears() throws Exception {
++        final byte[] png = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVR4nGMUWm3yP2XlvwYAEYkEfZ7zExIAAAAASUVORK5CYII=");
++        final Path cache = Files.createDirectory(this.directory.resolve("image-cache"));
++        final boolean previousPolicy = ImageIO.getUseCache();
++        final var previousDirectory = ImageIO.getCacheDirectory();
++        try {
++            ImageIO.setCacheDirectory(cache.toFile());
++            ImageIO.setUseCache(true);
++            Files.delete(cache);
++            final Map<String, byte[]> textures = new HashMap<>();
++            UiTextures.load(Map.of("textures/ui/test.png", png), textures);
++            assertArrayEquals(png, textures.get("textures/ui/test.png"));
++            assertTrue(ImageIO.getUseCache());
++            assertEquals(cache.toFile(), ImageIO.getCacheDirectory());
++        } finally {
++            ImageIO.setCacheDirectory(previousDirectory);
++            ImageIO.setUseCache(previousPolicy);
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
 new file mode 100644
-index 00000000..b0cca4f9
+index 00000000..8a8b5ef7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,263 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -21813,6 +21910,8 @@ index 00000000..b0cca4f9
 +import java.io.ByteArrayInputStream;
 +import java.io.ByteArrayOutputStream;
 +import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
@@ -21829,6 +21928,36 @@ index 00000000..b0cca4f9
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class UiTexturesTest {
++
++    @Test
++    void resourceLayerPreparationPreservesOverridesAndMalformedImageFallback() throws Exception {
++        final var pixels = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
++        pixels.setRGB(0, 0, 0xFF1256AB);
++        final byte[] lower = encode(pixels, "png");
++        pixels.setRGB(0, 0, 0xFFAB5612);
++        final byte[] upper = encode(pixels, "png");
++        final var packs = new ArrayList<ResourcePack>();
++        for (int index = 0; index < 5; index++) {
++            final var content = new InMemoryContent();
++            content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                    + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++            content.put("textures/ui/shared.png", index % 2 == 0 ? lower : upper);
++            content.put("textures/ui/fallback.png", index == 2 ? new byte[]{1} : lower);
++            content.putString("textures/ui/shared.json", "{\"nineslice_size\":" + index + "}");
++            packs.add(new ResourcePack(content));
++        }
++        final var storage = new ResourcePackStorage(packs);
++        final var layers = new ArrayList<Map<String, byte[]>>();
++        for (final ResourcePack pack : storage.getPackStackBottomToTop()) {
++            final Map<String, byte[]> files = new LinkedHashMap<>();
++            pack.content().getFilesDeep("", "").forEach(path -> files.put(path, pack.content().get(path)));
++            layers.add(files);
++        }
++        final var expected = new JsonUiProgram(layers).textures();
++        final var actual = new JsonUiProgram(storage).textures();
++        expected.forEach((path, bytes) -> assertArrayEquals(bytes, actual.get(path), path));
++        assertArrayEquals(lower, actual.get("textures/ui/fallback.png"));
++    }
 +
 +    @Test
 +    void caseSensitiveNativeNamesResolveToDistinctUsableConvertedResources() throws Exception {

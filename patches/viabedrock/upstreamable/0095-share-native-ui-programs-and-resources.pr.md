@@ -17,11 +17,15 @@ Converted UI images can share an identical image elsewhere in the same Java pack
 
 Cache hits skip converters, so prepare the immutable UI program on the bounded resource workers in parallel with the converted-pack lookup. Wait for both before advertising the pack. The first HUD packet can then reuse the program without initializing it on the event loop. Publication keeps the current connection and accepted-storage guard.
 
+Cold preparation overlaps independent layers on two bounded workers, with at most three layers in flight. Declarations, fonts, texture replacement and metadata still apply in accepted pack order. Workers stop after construction or failure. Encoded image dimension checks use memory-backed streams, preserving reader selection and limits without temporary files or global ImageIO changes. Regressions compare parallel resource application with sequential layers and retain valid images after the configured disk cache disappears.
+
 ## Validation and remaining limits
 
 Prepared UI layers retain normalized image bytes and compact declarations in a versioned, checksummed cache. The limits are 64 MiB in memory, 512 MiB on disk and 128 entries. Identity uses sorted names and contents, while application preserves the current source order. Programs share private image bytes and copy exported arrays. Translations, fonts and mutable state remain local to each program. Disabled pack caching bypasses this cache.
 
-Two fresh-process Galaxite disk-cache recordings initialize UI on a preparation worker in 0.43 and 0.42 seconds. A same-JVM reconnect takes 0.12 seconds. A forced conversion using prepared data preserves all 10,318 logical UI images byte for byte, including aliases. The combined four-project build passes 3,984 tests with 336 optional skips. Live probes load an aliased image through the resource manager, UI loader and texture manager. Complete native appearance remains unverified because existing unresolved mappings fail broad rendering checks.
+Final cold Galaxite recordings initialize UI on bounded workers in 1.11 and 1.19 seconds. A fresh process with populated disk caches takes 0.36 seconds, and a same-JVM reconnect takes 0.10 seconds. These are inclusive initialization times. Layer preparation overlaps conversion and does not add to it sequentially.
+
+Final conversion preserves all 10,318 logical UI images byte for byte, including aliases. The combined four-project build passes 3,991 tests with 336 optional skips. Live probes load an aliased image through the resource manager, UI loader and texture manager. Complete native appearance remains unverified because existing unresolved mappings fail broad rendering checks.
 
 Official Bedrock 1.26.60.5 desktop controls open Encyclopedia topic 31, Furnace, from all three cooking families.
 Furnace and blast-furnace controls retain carried items after returning from Help.

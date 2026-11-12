@@ -1,4 +1,4 @@
-From 2fa7c7045f7bf34066e53fec4cc2f4a7fa797c5c Mon Sep 17 00:00:00 2001
+From f0a1122846e6e17f4e46fce683750cac28c33f74 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:33 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -147,6 +147,12 @@ deflation pass. Keep raw textures, JSON and language data compressed and
 preserve explicit storage hints. Advance the independent ZIP policy
 identity so cached output adopts this packaging choice. Cover payload
 equality, methods and determinism through small and parallel-size packs.
+
+Apply compressed-media storage to ordered archives as well as Content ZIPs.
+Native resource libraries use the ordered API and otherwise recompress PNG,
+JPEG and Ogg payloads. Keep raw TGA and definitions deflated. Advance the ZIP
+identity so cached conversions adopt the layout. The small and parallel
+archive regression checks both entry points for equal bytes and methods.
 ---
  build.gradle                                  |   2 +
  .../api/model/entity/CustomEntity.java        |   2 +-
@@ -154,7 +160,7 @@ equality, methods and determinism through small and parallel-size packs.
  .../api/resourcepack/content/Content.java     |  56 ++-
  .../content/DirectoryContent.java             |   2 +-
  .../resourcepack/content/InMemoryContent.java |   2 +-
- .../content/ResourcePackZipWriter.java        | 192 +++++++++
+ .../content/ResourcePackZipWriter.java        | 194 +++++++++
  .../api/resourcepack/content/ZipContent.java  |  11 +-
  .../http/ConvertedResourcePackCache.java      | 318 ++++++++++++++
  .../http/ConverterDataManifest.java           |  74 ++++
@@ -172,14 +178,14 @@ equality, methods and determinism through small and parallel-size packs.
  .../storage/ResourcePackLoadStateTracker.java |  98 ++++-
  .../ResourcePackExecutorTest.java             |  87 ++++
  .../content/ContentLanguageCacheTest.java     |  65 +++
- .../content/ResourcePackZipWriterTest.java    | 262 ++++++++++++
+ .../content/ResourcePackZipWriterTest.java    | 266 ++++++++++++
  .../http/ConvertedResourcePackCacheTest.java  | 399 ++++++++++++++++++
  .../packet/JavaResourcePackLifecycleTest.java | 114 +++++
  .../ResourcePackDownloadCompletionTest.java   | 206 +++++++++
  .../packet/ResourcePackPreparationTest.java   | 140 ++++++
  .../ResourcePackDownloadTrackerTest.java      | 116 +++++
  .../ResourcePackLoadStateTrackerTest.java     | 116 +++++
- 31 files changed, 2865 insertions(+), 300 deletions(-)
+ 31 files changed, 2871 insertions(+), 300 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackExecutor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
@@ -424,10 +430,10 @@ index 7717839d..ffedf052 100644
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
 new file mode 100644
-index 00000000..0b7c8d47
+index 00000000..f6e43d18
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,194 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -481,9 +487,7 @@ index 00000000..0b7c8d47
 +        try (output) {
 +            final List<Entry> entries = new ArrayList<>();
 +            for (final String path : content.getFilesDeep("", "").stream().sorted().toList()) {
-+                final boolean compressed = path.endsWith(".png") || path.endsWith(".jpg")
-+                        || path.endsWith(".jpeg") || path.endsWith(".ogg");
-+                entries.add(new Entry(path, content.get(path), content.isStored(path) || compressed));
++                entries.add(new Entry(path, content.get(path), content.isStored(path) || compressedMedia(path)));
 +            }
 +            write(entries, output);
 +        }
@@ -562,10 +566,14 @@ index 00000000..0b7c8d47
 +        }
 +    }
 +
++    private static boolean compressedMedia(final String path) {
++        return path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg") || path.endsWith(".ogg");
++    }
++
 +    /** Entry bytes remain owned by the caller and must not change during the write. */
 +    public record Entry(String path, byte[] data, boolean stored) {
 +        public Entry(final String path, final byte[] data) {
-+            this(path, data, false);
++            this(path, data, compressedMedia(path));
 +        }
 +    }
 +
@@ -644,7 +652,7 @@ index 4264b66b..d16e08e6 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 new file mode 100644
-index 00000000..dce24ced
+index 00000000..b7c529ed
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -0,0 +1,318 @@
@@ -703,7 +711,7 @@ index 00000000..dce24ced
 +
 +public class ConvertedResourcePackCache {
 +
-+    private static final int ZIP_FORMAT_VERSION = 1;
++    private static final int ZIP_FORMAT_VERSION = 2;
 +    private static final String CONVERSION_VERSION = "resolved-model-textures-and-appearance-6";
 +    // Advance when the set or format of emitted resources changes independently of converter profiles.
 +    private static final int RESOURCE_FORMAT_VERSION = 7;
@@ -2475,10 +2483,10 @@ index 00000000..c0f072f0
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
 new file mode 100644
-index 00000000..8df69c15
+index 00000000..d3f917b7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,266 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -2665,8 +2673,12 @@ index 00000000..8df69c15
 +            for (final String extension : List.of("png", "jpg", "jpeg", "ogg", "tga", "json", "lang")) {
 +                content.put("assets/pack/file." + extension, new byte[size]);
 +            }
++            final var ordered = new ByteArrayOutputStream();
++            ResourcePackZipWriter.write(content.getFilesDeep("", "").stream().sorted()
++                    .map(path -> new ResourcePackZipWriter.Entry(path, content.get(path))).toList(), ordered);
 +            final byte[] archive = content.toZip();
 +            assertArrayEquals(archive, content.toZip());
++            assertArrayEquals(archive, ordered.toByteArray());
 +            try (var zip = new ZipInputStream(new ByteArrayInputStream(archive))) {
 +                for (ZipEntry entry; (entry = zip.getNextEntry()) != null; ) {
 +                    final String path = entry.getName();
