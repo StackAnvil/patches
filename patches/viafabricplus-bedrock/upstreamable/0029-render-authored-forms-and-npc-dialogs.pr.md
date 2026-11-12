@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Present core-resolved forms and NPC dialogs through the [shared scene renderer](0029-share-native-ui-scene-rendering.pr.md).
+Resolve forms and NPC dialogs from the confirmed source program through the [shared scene renderer](0029-share-native-ui-scene-rendering.pr.md).
 Keep each original form ID, action index, and typed response.
 Container presentation has its [own patch](0029-present-authored-native-containers.pr.md).
 
 ## Design constraints
 
-The core owns pack selection, authored bindings, and scene contracts.
+The core owns pack selection and scene contracts. The add-on evaluates authored bindings from the same accepted source files.
 The client owns rendering, input, focus, scrolling, narration, and resource lifetimes.
 Shared controls retain their identities across scene refreshes.
 
@@ -40,4 +40,4 @@ Unset text: official 1.26.60.5 sends `[null]` for a Wardrobe search that never g
 
 The rebuilt client passes a live CubeCraft Wardrobe check: typed `red` is visible, its placeholder hides, and submission sends `["red"]`. Untouched, focused-empty and typed-then-cleared fields send the same responses as the native controls. Featured Loot navigation still sends numeric response `0` and restores the tiles. No purchase or multiple-field form was tested.
 
-The separately negotiated action-program payload rebuilds oversized forms with the shared resolver on the client thread. Local expansion does not pass through another 1 MiB network envelope. The form keeps its original response indices and text fields; malformed programs request ordinary controls, and queued messages from an old listener are ignored. A regression reconstructs a form larger than the wire budget and rejects a non-action program.
+The form input channel sends the original form JSON and confirmed resource generation. The client resolves action and custom forms locally. Local expansion does not pass through another 1 MiB network envelope. Original response indices and text fields remain unchanged. Missing contexts and invalid forms request ordinary controls. Queued messages from an old listener are ignored. A regression resolves a scene larger than the wire budget from a small form message.

@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Evaluate loaded JSON UI templates, scoped variables, collection bindings and bounded native string expressions against each server form. Preserve original form IDs and button indices when projecting Java dialogs or sending a negotiated native rendering scene to a client integration. Keep pack texture bytes and nine-slice metadata in the converted pack, and include the versioned built-in UI identity in conversion fingerprints.
+Evaluate loaded JSON UI templates, scoped variables, collection bindings and bounded native string expressions against each server form. Preserve original form IDs and button indices when projecting Java dialogs or sending raw inputs to a client with a confirmed UI program. The add-on reads images and nine-slice metadata from nested Bedrock packs. Keep the versioned built-in UI identity in conversion fingerprints.
 
 ## Design constraints
 
-Core owns menu identity, authoritative state, recipe actions, and response reconciliation. Publish authored presentation only through negotiated, lifetime-bound programs. Keep ordinary Java fallbacks available.
+Core owns menu identity, authoritative state, recipe actions, and response reconciliation. Publish authored presentation only after the frontend confirms the accepted program identity and resource generation. Keep ordinary Java fallbacks available.
 
 Prerequisites:
 

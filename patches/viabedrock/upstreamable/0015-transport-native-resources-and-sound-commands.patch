@@ -1,4 +1,4 @@
-From 6321c810b6e4bac128e7485a7f0bc9a1efa1b325 Mon Sep 17 00:00:00 2001
+From aeb06fd9dc476772263c12f74b2b1c561bf0abf9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
@@ -156,6 +156,8 @@ block, UI and future-format files remain in the shared archive source maps.
 Feeding those files to every existing definition constructor reparses data
 unrelated to actor loading and changes the old dependency boundary. Future
 client parsers can read complete sources without changing backend export.
+
+Expose the source index identity and selected-subpack file view for frontend consumers. Keep the actor-only resource view narrow; UI consumers select their files from the complete accepted source.
 ---
  build.gradle                                  |   7 +
  .../api/model/NativeBlockIdentifiers.java     | 236 +++++++++++++++++
@@ -163,8 +165,8 @@ client parsers can read complete sources without changing backend export.
  .../viabedrock/api/model/NativeBlockView.java | 146 ++++++++++
  .../viabedrock/api/model/SoundCaptions.java   |  94 +++++++
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
- .../BedrockResourcePackPayloads.java          | 200 ++++++++++++++
- .../api/resourcepack/NativeActorLibrary.java  | 186 +++++++++++++
+ .../BedrockResourcePackPayloads.java          | 205 ++++++++++++++
+ .../api/resourcepack/NativeActorLibrary.java  | 208 +++++++++++++++
  .../resourcepack/NativeResourceArchive.java   | 117 ++++++++
  .../api/resourcepack/SoundTranslations.java   |  85 ++++++
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++
@@ -188,7 +190,7 @@ client parsers can read complete sources without changing backend export.
  .../protocol/packet/SoundUpdateTest.java      |   5 +
  .../storage/NativeBlockSectionTest.java       |  60 +++++
  .../storage/NativeFluidLayersTest.java        | 113 ++++++++
- 31 files changed, 2901 insertions(+), 15 deletions(-)
+ 31 files changed, 2928 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
@@ -958,10 +960,10 @@ index 000000000..e20d2267d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloads.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloads.java
 new file mode 100644
-index 000000000..808b5cdea
+index 000000000..9aa106642
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloads.java
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,205 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1091,11 +1093,16 @@ index 000000000..808b5cdea
 +                }
 +                layers.add(new NativeActorLibrary.PackedLayer(role.getAsBoolean(), selection, bytes));
 +            }
-+            final String key = HexFormat.of().formatHex(digest.digest(index.toString().getBytes(StandardCharsets.UTF_8)));
++            final String key = sourcesKey(index);
 +            return new Sources(version, List.copyOf(layers), key, total);
 +        } catch (final RuntimeException invalid) {
 +            throw new IOException("Invalid Bedrock payload index", invalid);
 +        }
++    }
++
++    /** Identifies one accepted source index exactly as the frontend parses it from pack.mcmeta. */
++    public static String sourcesKey(final JsonObject index) {
++        return HexFormat.of().formatHex(digest().digest(index.toString().getBytes(StandardCharsets.UTF_8)));
 +    }
 +
 +    public static List<NativeActorLibrary.Layer> decode(final Sources sources) throws IOException {
@@ -1164,10 +1171,10 @@ index 000000000..808b5cdea
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
 new file mode 100644
-index 000000000..9c3070b3e
+index 000000000..ef29b34d9
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,208 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1348,6 +1355,28 @@ index 000000000..9c3070b3e
 +            final boolean sameView = resources == sourceResources;
 +            resources = Map.copyOf(resources);
 +            sourceResources = sameView ? resources : Map.copyOf(sourceResources);
++        }
++
++        /**
++         * The selected-subpack view of the complete source, limited to accepted paths. It shares the source arrays,
++         * so consumers that need other files read them here instead of widening the actor view.
++         */
++        public Map<String, byte[]> selectedFiles(final Predicate<String> include) {
++            final Map<String, byte[]> result = new LinkedHashMap<>();
++            this.sourceResources.forEach((path, bytes) -> {
++                if (!path.startsWith("subpacks/") && include.test(path)) {
++                    result.put(path, bytes);
++                }
++            });
++            if (!this.selectedSubpack.isEmpty()) {
++                final String prefix = "subpacks/" + this.selectedSubpack + '/';
++                this.sourceResources.forEach((path, bytes) -> {
++                    if (path.startsWith(prefix) && include.test(path.substring(prefix.length()))) {
++                        result.put(path.substring(prefix.length()), bytes);
++                    }
++                });
++            }
++            return result;
 +        }
 +    }
 +
