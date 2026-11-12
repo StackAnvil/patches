@@ -1,4 +1,4 @@
-From 0d22139d66969c62693110f83c5daebd8e797f34 Mon Sep 17 00:00:00 2001
+From 1d78d96edef6944c30be4f8cd02c5d818e9b5831 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] feat(ui): share bounded native UI programs and resource
@@ -953,8 +953,24 @@ results in accepted pack order. Retain at most three in-flight layers,
 then close the workers after construction or failure. Fonts, declarations,
 metadata and image overrides publish on the constructing thread in their
 original order. No persistent cache is required for this overlap.
+
+
+Prebuild fixed bundled TGA images with the same decoder and PNG writer
+used by runtime UI conversion. An optional deterministic catalog binds
+full source-image SHA-256 values to checksummed PNG bytes and the source
+bundle digest. Generate it in a separate source set to avoid a main
+resource/compilation cycle. Keep source TGA assets and ordinary conversion
+for unknown inputs, and perform existing source admission before lookup.
+
+Bound the catalog by entry count, encoded image size and total retained
+bytes. Reject malformed, incomplete or damaged catalogs, match dimensions
+to the admitted TGA header, and copy returned arrays. Runtime pack-cache
+settings do not disable fixed build output. Regressions cover deterministic
+generation, duplicate sources, changed inputs, ownership and invalid
+optional catalogs. Packaging validates the source identity and every PNG
+checksum before publishing core, proxy and nested client artifacts.
 ---
- build.gradle                                  |   11 +
+ build.gradle                                  |   43 +
  .../api/model/NativeContainerAction.java      |   94 +
  .../api/model/NativeContainerData.java        |   70 +
  .../api/model/NativeContainerItems.java       |  132 +
@@ -979,6 +995,7 @@ original order. No persistent cache is required for this overlap.
  .../api/model/NativeNpcDialogueMessage.java   |   60 +
  .../api/model/NativeUiHurtEvent.java          |   55 +
  .../api/model/NativeUiHurtState.java          |   48 +
+ .../content/PreparedUiImages.java             |  137 +
  .../http/ConvertedResourcePackCache.java      |    6 +-
  .../api/resourcepack/ui/BrewingStandUi.java   |   44 +
  .../api/resourcepack/ui/ContainerUi.java      |  564 +++++
@@ -1015,7 +1032,7 @@ original order. No persistent cache is required for this overlap.
  .../resourcepack/ui/UiRetainedBindings.java   |   49 +
  .../api/resourcepack/ui/UiTextureAliases.java |  136 +
  .../api/resourcepack/ui/UiTextureLimits.java  |   24 +
- .../api/resourcepack/ui/UiTextures.java       |  133 +
+ .../api/resourcepack/ui/UiTextures.java       |  135 +
  .../viabedrock/api/util/NativeSort.java       |  168 ++
  .../protocol/packet/EntityPackets.java        |    9 +
  .../protocol/packet/ResourcePackPackets.java  |   36 +-
@@ -1042,6 +1059,7 @@ original order. No persistent cache is required for this overlap.
  .../api/model/NativeItemNamesTest.java        |  123 +
  .../model/NativeNpcDialogueMessageTest.java   |   59 +
  .../api/model/NativeUiHurtStateTest.java      |   81 +
+ .../content/PreparedUiImagesTest.java         |  133 +
  .../resourcepack/ui/BrewingStandUiTest.java   |   49 +
  .../api/resourcepack/ui/ContainerUiTest.java  |  458 ++++
  .../ui/CookingNavigationTest.java             |  115 +
@@ -1077,7 +1095,8 @@ original order. No persistent cache is required for this overlap.
  .../api/resourcepack/ui/UiTexturesTest.java   |  263 ++
  .../ui/native-inventory-item-filter.json      |  311 +++
  .../generator/SearchUnicodeDataGenerator.java |  126 +
- 123 files changed, 19705 insertions(+), 78 deletions(-)
+ .../content/UiImageGenerator.java             |  123 +
+ 126 files changed, 20132 insertions(+), 78 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerItems.java
@@ -1102,6 +1121,7 @@ original order. No persistent cache is required for this overlap.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeNpcDialogueMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeUiHurtEvent.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeUiHurtState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImages.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/BrewingStandUi.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/CookingNavigation.java
@@ -1159,6 +1179,7 @@ original order. No persistent cache is required for this overlap.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeItemNamesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeNpcDialogueMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeUiHurtStateTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImagesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/BrewingStandUiTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUiTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/CookingNavigationTest.java
@@ -1194,12 +1215,13 @@ original order. No persistent cache is required for this overlap.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
  create mode 100644 src/test/resources/ui/native-inventory-item-filter.json
  create mode 100644 src/tool/java/net/raphimc/viabedrock/tool/generator/SearchUnicodeDataGenerator.java
+ create mode 100644 src/uiImageGenerator/java/net/raphimc/viabedrock/api/resourcepack/content/UiImageGenerator.java
 
 diff --git a/build.gradle b/build.gradle
-index f403183b..f9519164 100644
+index f403183b..8936bedc 100644
 --- a/build.gradle
 +++ b/build.gradle
-@@ -252,3 +252,14 @@ class MockitoAgentArgumentProvider implements org.gradle.process.CommandLineArgu
+@@ -252,3 +252,46 @@ class MockitoAgentArgumentProvider implements org.gradle.process.CommandLineArgu
          return ["-javaagent:${this.classpath.singleFile}"]
      }
  }
@@ -1211,6 +1233,38 @@ index f403183b..f9519164 100644
 +        from(builtinUi.get()) {
 +            into "assets/viabedrock"
 +            rename { "builtin_ui.zip" }
++        }
++    }
++}
++
++// Compile the image preparer separately so resource generation never depends on main resources.
++sourceSets {
++    uiImageGenerator
++}
++
++tasks.named("compileUiImageGeneratorJava") {
++    source("src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java",
++            "src/main/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImages.java",
++            "src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextureLimits.java")
++}
++
++sourceSets.test.compileClasspath += sourceSets.uiImageGenerator.output
++sourceSets.test.runtimeClasspath += sourceSets.uiImageGenerator.output
++
++def preparedUiSource = providers.gradleProperty("bedrockBuiltinImages")
++if (preparedUiSource.present) {
++    def catalog = layout.buildDirectory.file("generated/ui-images/builtin_ui_images.zip")
++    def preparation = tasks.register("prepareBuiltinUiImages", JavaExec) {
++        classpath = sourceSets.uiImageGenerator.runtimeClasspath
++        mainClass = "net.raphimc.viabedrock.api.resourcepack.content.UiImageGenerator"
++        maxHeapSize = "512m"
++        inputs.file(preparedUiSource)
++        outputs.file(catalog)
++        args(preparedUiSource.get(), catalog.get().asFile.absolutePath)
++    }
++    tasks.named("processResources") {
++        from(preparation) {
++            into "assets/viabedrock"
 +        }
 +    }
 +}
@@ -3273,6 +3327,149 @@ index 00000000..f7b0cb2a
 +    public void clear() {
 +        this.pending = false;
 +        this.counter = 0;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImages.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImages.java
+new file mode 100644
+index 00000000..6f9f7464
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImages.java
+@@ -0,0 +1,137 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import net.raphimc.viabedrock.api.resourcepack.ui.UiTextureLimits;
++
++import java.io.ByteArrayInputStream;
++import java.io.DataInputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.nio.ByteBuffer;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.Arrays;
++import java.util.HashMap;
++import java.util.HexFormat;
++import java.util.Map;
++import java.util.zip.ZipInputStream;
++
++/** Optional, content-addressed build output. Runtime pack selection and source admission remain with the caller. */
++public final class PreparedUiImages {
++
++    public static final String RESOURCE = "/assets/viabedrock/builtin_ui_images.zip";
++    public static final int MAGIC = 0x5549504E;
++    public static final int FORMAT = 1;
++    public static final int MAX_IMAGES = 32768;
++    public static final int MAX_TOTAL_BYTES = 64 << 20;
++    private static final int INDEX_HEADER_BYTES = 44;
++    private static final int INDEX_ENTRY_BYTES = 68;
++    private static final byte[] PNG_SIGNATURE = {(byte) 137, 80, 78, 71, 13, 10, 26, 10};
++
++    private PreparedUiImages() {
++    }
++
++    /** Returns independently owned PNG bytes, or null when ordinary conversion is needed. */
++    public static byte[] find(final byte[] source) {
++        return Builtin.CATALOG.find(source);
++    }
++
++    /** An absent or damaged optional catalog must not prevent normal image conversion. Closes the supplied input. */
++    public static Catalog read(final InputStream source) {
++        if (source == null) {
++            return Catalog.EMPTY;
++        }
++        try (ZipInputStream zip = new ZipInputStream(source)) {
++            final var indexEntry = zip.getNextEntry();
++            if (indexEntry == null || !indexEntry.getName().equals("0-index") || indexEntry.isDirectory()) {
++                return Catalog.EMPTY;
++            }
++            final byte[] indexBytes = zip.readNBytes(INDEX_HEADER_BYTES + MAX_IMAGES * INDEX_ENTRY_BYTES + 1);
++            final Map<String, Expected> expected = new HashMap<>();
++            try (var index = new DataInputStream(new ByteArrayInputStream(indexBytes))) {
++                if (index.readInt() != MAGIC || index.readInt() != FORMAT) {
++                    return Catalog.EMPTY;
++                }
++                // Packaging checks this source-bundle digest. Runtime lookup matches each complete source image.
++                index.skipNBytes(32);
++                final int count = index.readInt();
++                if (count < 0 || count > MAX_IMAGES || index.available() != count * INDEX_ENTRY_BYTES) {
++                    return Catalog.EMPTY;
++                }
++                long total = 0;
++                for (int i = 0; i < count; i++) {
++                    final String key = HexFormat.of().formatHex(index.readNBytes(32));
++                    final byte[] hash = index.readNBytes(32);
++                    final int length = index.readInt();
++                    total += length;
++                    if (length < 33 || length > UiTextureLimits.MAX_ENCODED_BYTES || total > MAX_TOTAL_BYTES
++                            || expected.putIfAbsent(key + ".png", new Expected(hash, length)) != null) {
++                        return Catalog.EMPTY;
++                    }
++                }
++            }
++            final Map<String, byte[]> images = new HashMap<>();
++            for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
++                final Expected image = expected.remove(entry.getName());
++                if (image == null || entry.isDirectory()) {
++                    return Catalog.EMPTY;
++                }
++                final byte[] png = zip.readNBytes(image.length() + 1);
++                if (png.length != image.length() || !Arrays.equals(digest(png), image.hash()) || !validPng(png)) {
++                    return Catalog.EMPTY;
++                }
++                images.put(entry.getName().substring(0, 64), png);
++            }
++            return expected.isEmpty() ? new Catalog(images) : Catalog.EMPTY;
++        } catch (final IOException | RuntimeException malformed) {
++            return Catalog.EMPTY;
++        }
++    }
++
++    private static boolean validPng(final byte[] png) {
++        return png.length >= 33 && Arrays.equals(PNG_SIGNATURE, Arrays.copyOf(png, 8))
++                && ByteBuffer.wrap(png).getInt(8) == 13 && ByteBuffer.wrap(png).getInt(12) == 0x49484452
++                && UiTextureLimits.supportsDimensions(ByteBuffer.wrap(png).getInt(16), ByteBuffer.wrap(png).getInt(20));
++    }
++
++    static byte[] digest(final byte[] source) {
++        try {
++            return MessageDigest.getInstance("SHA-256").digest(source);
++        } catch (final NoSuchAlgorithmException unavailable) {
++            throw new AssertionError(unavailable);
++        }
++    }
++
++    private record Expected(byte[] hash, int length) {
++    }
++
++    private static final class Builtin {
++        private static final Catalog CATALOG = read(PreparedUiImages.class.getResourceAsStream(RESOURCE));
++    }
++
++    public static final class Catalog {
++        private static final Catalog EMPTY = new Catalog(Map.of());
++        private final Map<String, byte[]> images;
++
++        private Catalog(final Map<String, byte[]> images) {
++            this.images = Map.copyOf(images);
++        }
++
++        public byte[] find(final byte[] source) {
++            if (this.images.isEmpty() || source.length < 18 || source.length > UiTextureLimits.MAX_ENCODED_BYTES) {
++                return null;
++            }
++            final byte[] png = this.images.get(HexFormat.of().formatHex(digest(source)));
++            if (png == null || ByteBuffer.wrap(png).getInt(16) != (Byte.toUnsignedInt(source[12]) | Byte.toUnsignedInt(source[13]) << 8)
++                    || ByteBuffer.wrap(png).getInt(20) != (Byte.toUnsignedInt(source[14]) | Byte.toUnsignedInt(source[15]) << 8)) {
++                return null;
++            }
++            return png.clone();
++        }
 +    }
 +
 +}
@@ -12225,10 +12422,10 @@ index 00000000..cc526d4c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
 new file mode 100644
-index 00000000..1a88c4ec
+index 00000000..8df43e22
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,135 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -12245,6 +12442,7 @@ index 00000000..1a88c4ec
 +import javax.imageio.ImageIO;
 +import javax.imageio.stream.MemoryCacheImageInputStream;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.PreparedUiImages;
 +
 +/** Normalizes a pack layer using the same image format priority as Bedrock content lookups, retaining JPEG encoding. */
 +final class UiTextures {
@@ -12317,7 +12515,8 @@ index 00000000..1a88c4ec
 +                    if (jpeg && image.getImage() == null) {
 +                        throw new IOException("Invalid UI JPEG");
 +                    }
-+                    final byte[] encoded = jpeg ? bytes : image.getPngBytes();
++                    final byte[] prepared = format.equals("tga") ? PreparedUiImages.find(bytes) : null;
++                    final byte[] encoded = prepared != null ? prepared : jpeg ? bytes : image.getPngBytes();
 +                    if (encoded.length <= UiTextureLimits.MAX_ENCODED_BYTES) {
 +                        result.remove(path + ".png");
 +                        result.remove(path + ".jpg");
@@ -15468,6 +15667,145 @@ index 00000000..55e246cf
 +        } finally {
 +            buffer.release();
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImagesTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImagesTest.java
+new file mode 100644
+index 00000000..549efc08
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PreparedUiImagesTest.java
+@@ -0,0 +1,133 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.nio.ByteBuffer;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Arrays;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipInputStream;
++import java.util.zip.ZipOutputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class PreparedUiImagesTest {
++
++    @TempDir
++    Path directory;
++
++    @Test
++    void generatedImagesMatchTheDecoderAndCannotBeMutatedOrReusedForChangedSources() throws Exception {
++        final byte[] tga = image();
++        final Path source = this.directory.resolve("native.zip");
++        Files.write(source, zip(Map.of("library/vanilla/textures/test.tga", tga,
++                "library/vanilla_1.20/textures/test.tga", tga.clone())));
++        final Path first = this.directory.resolve("first.zip");
++        final Path second = this.directory.resolve("second.zip");
++        UiImageGenerator.generate(source, first);
++        UiImageGenerator.generate(source, second);
++        assertArrayEquals(Files.readAllBytes(first), Files.readAllBytes(second));
++        assertEquals(2, files(Files.readAllBytes(first)).size());
++        final var catalog = PreparedUiImages.read(Files.newInputStream(first));
++        final byte[] expected = new Content.LazyImage(tga, "tga").getPngBytes();
++        assertArrayEquals(expected, catalog.find(tga));
++        final byte[] exposed = catalog.find(tga);
++        exposed[0] = 0;
++        assertArrayEquals(expected, catalog.find(tga));
++        final byte[] changed = tga.clone();
++        changed[changed.length - 1] = 0;
++        assertNull(catalog.find(changed));
++        assertFalse(Arrays.equals(expected, new Content.LazyImage(changed, "tga").getPngBytes()));
++    }
++
++    @Test
++    void missingCorruptOrOversizedOptionalCatalogsRequestOrdinaryConversion() throws Exception {
++        final byte[] tga = image();
++        final Path source = this.directory.resolve("native.zip");
++        final Path prepared = this.directory.resolve("prepared.zip");
++        Files.write(source, zip(Map.of("textures/test.tga", tga)));
++        UiImageGenerator.generate(source, prepared);
++        final Map<String, byte[]> files = files(Files.readAllBytes(prepared));
++        final String imagePath = files.keySet().stream().filter(path -> path.endsWith(".png")).findFirst().orElseThrow();
++        assertNull(PreparedUiImages.read(null).find(tga));
++        final byte[] corrupt = files.get(imagePath).clone();
++        corrupt[corrupt.length - 1] ^= 1;
++        assertNull(PreparedUiImages.read(new ByteArrayInputStream(zip(Map.of("0-index", files.get("0-index"), imagePath, corrupt)))).find(tga));
++        assertNull(PreparedUiImages.read(new ByteArrayInputStream(zip(Map.of("0-index", files.get("0-index"))))).find(tga));
++        final byte[] tooMany = files.get("0-index").clone();
++        ByteBuffer.wrap(tooMany).putInt(40, PreparedUiImages.MAX_IMAGES + 1);
++        assertNull(PreparedUiImages.read(new ByteArrayInputStream(zip(Map.of("0-index", tooMany)))).find(tga));
++        final byte[] oversized = files.get("0-index").clone();
++        ByteBuffer.wrap(oversized).putInt(108, Integer.MAX_VALUE);
++        assertNull(PreparedUiImages.read(new ByteArrayInputStream(zip(Map.of("0-index", oversized)))).find(tga));
++    }
++
++    @Test
++    void unsupportedNativeImagesDoNotPreventPreparingUnrelatedTextures() throws Exception {
++        final byte[] valid = image();
++        final byte[] unsupported = valid.clone();
++        unsupported[2] = 1;
++        final Path source = this.directory.resolve("native.zip");
++        final Path prepared = this.directory.resolve("prepared.zip");
++        Files.write(source, zip(Map.of("textures/valid.tga", valid, "textures/unsupported.tga", unsupported)));
++        UiImageGenerator.generate(source, prepared);
++        final var catalog = PreparedUiImages.read(Files.newInputStream(prepared));
++        assertNotNull(catalog.find(valid));
++        assertNull(catalog.find(unsupported));
++    }
++
++    private static byte[] image() {
++        final byte[] tga = new byte[26];
++        tga[2] = 2;
++        tga[12] = 2;
++        tga[14] = 1;
++        tga[16] = 32;
++        tga[17] = 0x30;
++        for (int i = 18; i < tga.length; i++) {
++            tga[i] = (byte) (i * 7);
++        }
++        return tga;
++    }
++
++    private static byte[] zip(final Map<String, byte[]> files) throws Exception {
++        final var bytes = new ByteArrayOutputStream();
++        try (var zip = new ZipOutputStream(bytes)) {
++            if (files.containsKey("0-index")) {
++                zip.putNextEntry(new ZipEntry("0-index"));
++                zip.write(files.get("0-index"));
++                zip.closeEntry();
++            }
++            for (final var entry : files.entrySet()) {
++                if (entry.getKey().equals("0-index")) {
++                    continue;
++                }
++                zip.putNextEntry(new ZipEntry(entry.getKey()));
++                zip.write(entry.getValue());
++                zip.closeEntry();
++            }
++        }
++        return bytes.toByteArray();
++    }
++
++    private static Map<String, byte[]> files(final byte[] bytes) throws Exception {
++        final Map<String, byte[]> files = new LinkedHashMap<>();
++        try (var zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
++            for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
++                files.put(entry.getName(), zip.readAllBytes());
++            }
++        }
++        return files;
 +    }
 +
 +}
@@ -22607,6 +22945,135 @@ index 00000000..468017ff
 +                    || this.decomposition.length != 0 || this.fold.length != 0;
 +        }
 +
++    }
++
++}
+diff --git a/src/uiImageGenerator/java/net/raphimc/viabedrock/api/resourcepack/content/UiImageGenerator.java b/src/uiImageGenerator/java/net/raphimc/viabedrock/api/resourcepack/content/UiImageGenerator.java
+new file mode 100644
+index 00000000..b8dd9292
+--- /dev/null
++++ b/src/uiImageGenerator/java/net/raphimc/viabedrock/api/resourcepack/content/UiImageGenerator.java
+@@ -0,0 +1,123 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import net.raphimc.viabedrock.api.resourcepack.ui.UiTextureLimits;
++
++import javax.imageio.ImageIO;
++import javax.imageio.stream.MemoryCacheImageOutputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.DataOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.security.DigestInputStream;
++import java.security.MessageDigest;
++import java.util.HexFormat;
++import java.util.Map;
++import java.util.TreeMap;
++import java.util.zip.CRC32;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipInputStream;
++import java.util.zip.ZipOutputStream;
++
++/** Prepares only fixed bundled images, using the same TGA decoder and PNG writer as ordinary conversion. */
++public final class UiImageGenerator {
++
++    private UiImageGenerator() {
++    }
++
++    public static void main(final String[] args) throws Exception {
++        if (args.length != 2) {
++            throw new IllegalArgumentException("Expected native image bundle and output catalog paths");
++        }
++        generate(Path.of(args[0]), Path.of(args[1]));
++    }
++
++    public static void generate(final Path source, final Path destination) throws Exception {
++        final Map<String, byte[]> images = new TreeMap<>();
++        long total = 0;
++        try (var zip = new ZipInputStream(Files.newInputStream(source))) {
++            for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
++                if (entry.isDirectory() || !entry.getName().endsWith(".tga")) {
++                    continue;
++                }
++                final byte[] tga = zip.readNBytes(UiTextureLimits.MAX_ENCODED_BYTES + 1);
++                if (tga.length > UiTextureLimits.MAX_ENCODED_BYTES) {
++                    continue;
++                }
++                final String key = HexFormat.of().formatHex(PreparedUiImages.digest(tga));
++                if (images.containsKey(key)) {
++                    continue;
++                }
++                final byte[] png;
++                try {
++                    final var decoded = TgaImage.read(tga);
++                    if (!UiTextureLimits.supportsDimensions(decoded.getWidth(), decoded.getHeight())) {
++                        continue;
++                    }
++                    final var bytes = new ByteArrayOutputStream();
++                    try (var output = new MemoryCacheImageOutputStream(bytes)) {
++                        if (!ImageIO.write(decoded, "png", output)) {
++                            throw new IOException("Missing PNG writer");
++                        }
++                    }
++                    png = bytes.toByteArray();
++                } catch (final IllegalArgumentException unsupported) {
++                    // Unsupported native TGA forms remain on the ordinary runtime fallback path.
++                    continue;
++                }
++                if (png.length > UiTextureLimits.MAX_ENCODED_BYTES) {
++                    continue;
++                }
++                total += png.length;
++                if (images.size() == PreparedUiImages.MAX_IMAGES || total > PreparedUiImages.MAX_TOTAL_BYTES) {
++                    throw new IOException("Prepared UI images exceed catalog limits");
++                }
++                images.put(key, png);
++            }
++        }
++        final MessageDigest sourceDigest = MessageDigest.getInstance("SHA-256");
++        try (var input = new DigestInputStream(Files.newInputStream(source), sourceDigest)) {
++            input.transferTo(OutputStream.nullOutputStream());
++        }
++        final var indexBytes = new ByteArrayOutputStream();
++        try (var index = new DataOutputStream(indexBytes)) {
++            index.writeInt(PreparedUiImages.MAGIC);
++            index.writeInt(PreparedUiImages.FORMAT);
++            index.write(sourceDigest.digest());
++            index.writeInt(images.size());
++            for (final var entry : images.entrySet()) {
++                index.write(HexFormat.of().parseHex(entry.getKey()));
++                index.write(PreparedUiImages.digest(entry.getValue()));
++                index.writeInt(entry.getValue().length);
++            }
++        }
++        Files.createDirectories(destination.toAbsolutePath().getParent());
++        try (var zip = new ZipOutputStream(Files.newOutputStream(destination))) {
++            put(zip, "0-index", indexBytes.toByteArray());
++            for (final var entry : images.entrySet()) {
++                put(zip, entry.getKey() + ".png", entry.getValue());
++            }
++        }
++    }
++
++    private static void put(final ZipOutputStream zip, final String name, final byte[] bytes) throws IOException {
++        final var entry = new ZipEntry(name);
++        entry.setTime(0);
++        entry.setMethod(ZipEntry.STORED);
++        entry.setSize(bytes.length);
++        entry.setCompressedSize(bytes.length);
++        final var crc = new CRC32();
++        crc.update(bytes);
++        entry.setCrc(crc.getValue());
++        zip.putNextEntry(entry);
++        zip.write(bytes);
++        zip.closeEntry();
 +    }
 +
 +}
