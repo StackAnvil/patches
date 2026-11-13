@@ -4,9 +4,13 @@
 
 Provide immutable JSON UI declarations, scoped expression evaluation, domain bindings and bounded scene contracts before packet integration. Keep accepted pack layering, textures, fonts and builtin UI identity in one resource lifecycle.
 
+The frontend builds its complete UI program from the accepted nested Bedrock packs and their English texts. A confirmation binds the program to the source index, Bedrock protocol, exact core build and bundled UI identity. Every UI input message names the confirmed resource generation. Distinct input channels keep incompatible clients on ordinary Java presentation. Converted-pack identification reads only `pack.mcmeta`.
+
+The wire carries form JSON, HUD values and retained bindings, NPC/editor inputs, and authoritative container/recipe state. It carries no exported UI programs or resolved UI scenes. Backend resolution remains for presentation selection and vanilla dialogs. Ordinary Java fonts remain available to clients without the add-on.
+
 ## Design constraints
 
-Transport shared authored programs and resources before domain-specific adapters. Preserve accepted pack order, immutable snapshots, resource ownership, and bounded decoding on direct and proxy routes.
+Share authored programs and resources before domain-specific adapters. Preserve accepted pack order, immutable snapshots, resource ownership, and bounded decoding on direct and proxy routes.
 
 Prerequisites:
 
@@ -14,7 +18,7 @@ Prerequisites:
 - viabedrock/0001-cache-converted-resource-packs.patch: Provide converted-pack futures and bounded resource preparation before warming UI programs on cache hits.
 - viabedrock/0050-decode-bedrock-tga-textures.patch: Share the native TGA decoder with build-time image preparation.
 
-Converted UI images can share an identical image elsewhere in the same Java pack. Controls keep their path-derived identifiers, because bindings choose paths at runtime. The pack drops the duplicate and maps its identifier in `server_ui_textures.json`. A shared target uses the same format and has no `.mcmeta` sidecar. The add-on serves the shared bytes under the requested identifier from the pack that wrote the table, so overrides of the shared target do not change UI pixels. The current Galaxite conversion removes 2,895 duplicate UI images, including 2,290 shared with non-UI exports. All removed images resolve to the same bytes as the previous build, saving 7,680,755 bytes of duplicate encoded images. `UiTextureAliasesTest` covers format, sidecar, determinism and malformed-table cases.
+The Java pack no longer copies UI images. Scenes keep path-derived texture identifiers, because bindings choose paths at runtime. `UiTextureSources` resolves an identifier from the bundled UI layer and the accepted Bedrock packs nested in the same Java pack. It uses the program's layer order, format priority, validation and conversion, and converts an image only when a client requests it. Both sides sort each accepted pack's texture paths before the per-pack file limit, so admission does not depend on map iteration. Above the program's total file limit, `UiTextureSources` replays the program's admission eagerly. In the recorded Galaxite conversion this removes 7,424 UI images (22,649,245 bytes) and the 170,944-byte compressed `server_ui_textures.json` alias table. `UiTexturesTest` compares every image the backend program selects with client resolution, including an unusable top image, JPEG naming and over-limit admission with a reversed file order and a selected subpack.
 
 Cache hits skip converters, so prepare the immutable UI program on the bounded resource workers in parallel with the converted-pack lookup. Wait for both before advertising the pack. The first HUD packet can then reuse the program without initializing it on the event loop. Publication keeps the current connection and accepted-storage guard.
 
@@ -35,13 +39,13 @@ Both cold conversions preserve all 10,318 logical UI images byte for byte, inclu
 Official Bedrock 1.26.60.5 desktop controls open Encyclopedia topic 31, Furnace, from all three cooking families.
 Furnace and blast-furnace controls retain carried items after returning from Help.
 Language data distinguishes encyclopedia topic labels from Survival guide title keys.
-Regressions retain the selected topic, localized heading, body text, and cooking payload bound across program transport.
+Regressions retain the selected topic, localized heading, body text, and cooking payload bound across local scene resolution.
 Player inventory uses the same Help resolver with its existing guide choice.
 Native multiplayer Help traffic and complete visual parity remain unverified.
 
-Storage programs export and resolve the complete host graph, including backdrop, close controls, and animation tracks.
+Storage views resolve the complete host graph, including backdrop, close controls, and animation tracks.
 Synthetic screen fixtures declare their content controls explicitly.
-The bundled-family regression retains authoritative slots and the host hurt policy across program transport.
+The bundled-family regression retains authoritative slots and the host hurt policy across local scene resolution.
 
 The versioned hurt payload retains the original cause and local actor lifetime before Java damage translation.
 Native Bedrock 1.26.60.5 runtime controls establish the cause filter, pending-state consumption, and 100-update gate.
@@ -53,7 +57,7 @@ Client-predicted damage and the live producer for event 81 remain unverified.
 
 Grid factories populate each collection once and respect the bound maximum item count. Relative cell templates use the defining namespace.
 The captured Lifeboat Navigator now resolves eight main cells, matching native Bedrock 1.26.60.5, instead of 46 duplicated cells.
-Reduced regressions cover factory ownership, template lookup, and item limits. Event-driven factories accept immutable creation snapshots, keep event properties and control bindings local, and retain creation IDs across refreshes. Tests cover dormant factories, per-event control IDs, exact-name exclusivity, late retirement, and program transport. Native 1.26.60.5 controls verify strict boolean exclusivity and complete runtime-name matching; full factory construction and pixels remain outside those controls.
+Reduced regressions cover factory ownership, template lookup, and item limits. Event-driven factories accept immutable creation snapshots, keep event properties and control bindings local, and retain creation IDs across refreshes. Tests cover dormant factories, per-event control IDs, exact-name exclusivity, late retirement, and local scene resolution. Native 1.26.60.5 controls verify strict boolean exclusivity and complete runtime-name matching; full factory construction and pixels remain outside those controls.
 The rebuilt add-on shows two columns and four rows during a live join.
 World Games, Mini Games, and SkyWars open through their authored controls. Selecting Solo reaches the waiting lobby.
 The recorded replies retain the original button indices. Complete native appearance remains unverified.
@@ -73,17 +77,17 @@ These controls supply property lookup and ABI storage. Complete item geometry, m
 `UiBindings.Window` selects cell views from a complete collection without changing its size or source indices.
 A separate retained range supports offscreen keyboard focus and its neighbors.
 Only fixed horizontal grids qualify. Row-dependent dimensions and redirected root indices are rejected.
-Regression coverage compares complete and windowed sources, exported programs, source replacement, and the pinned inventory grid.
+Regression coverage compares complete and windowed sources, source-built programs, source replacement, and the pinned inventory grid.
 The scene node budget remains unchanged.
 
-Program compilation, resource, and transport tests cover supported content. Transport acceptance does not establish screen interaction or visual parity.
+Source compilation, resource selection and input codec tests cover supported content. These checks do not establish screen interaction or visual parity.
 
 TrueType labels use one font for the visible formatted string.
 NUL ends that string before font selection, while the original binding values remain intact.
 Missing glyphs select the bitmap or Unicode fallback and exclude the declared TrueType line metrics.
-Compressed Unicode coverage accompanies exported font identifiers, so bound-text refresh retains this decision on both routes.
+Each side derives bounded Unicode coverage from the same accepted font bytes, so bound-text refresh selects the same fallback.
 Native Bedrock 1.26.60.5 MinecraftTen controls cover newline, tab, carriage return, space, formatting, accent, Han, and snowman text.
-The parser matches all eight captured selections with the original font bytes, including after coverage transport.
+The parser matches all eight captured selections with the original font bytes, including during local resolution.
 
 Native controls also cover all 32 C0 inputs in bitmap and MinecraftTen labels, plus distinguishing NUL suffixes.
 Bitmap conversion retains raw control cells alongside printable aliases. CR/LF keeps the CR glyph on the first line.
@@ -93,7 +97,7 @@ The installed add-on matches all 63 selected bitmap glyph masks at 1280 × 720 a
 Java GUI scales 1, 2, 3, and return to 1 retain these masks.
 The complete 180-second replay preserves the source scene payload and verifies the installed JAR.
 
-Regressions cover bound-text changes across program transport, winning-file replacement, missing glyphs before and after delta adjustment, and supplementary coverage.
+Regressions cover bound-text changes across local scene resolution, winning-file replacement, missing glyphs before and after delta adjustment, and supplementary coverage.
 Malformed tables and truncated or oversized coverage are rejected or select the bitmap fallback.
 Disabling coverage selection makes the binding-refresh regression fail.
 The target native font uses cmap format 4. Supplementary format-12 behavior has synthetic coverage and still needs matching native controls.
@@ -112,18 +116,18 @@ The fixture supplies atlas placement and external allocation, memory, and roundi
 It does not execute cache I/O, GPU upload, shaders, or complete native screens.
 Original page packing and raster instructions produce a 1,024-pixel atlas with 256 glyph records.
 All atlas bytes and packed records match LWJGL STB with the native placements.
-Selected TrueType labels carry their 1.5 display grid through program transport. Bitmap fallbacks retain their own grid.
+Selected TrueType labels carry their 1.5 display grid through local scene resolution. Bitmap fallbacks retain their own grid.
 TrueType exports retain original font bytes and a descriptor with the native cache height.
 The add-on reads that descriptor from the selected font pack. Older exports retain Java font loading.
 The [client provider](../../viafabricplus-bedrock/upstreamable/0029-share-native-ui-scene-rendering.pr.md) owns bounded outline rendering and resource retirement.
 
-Native font registrations survive downloaded font metadata. Unrestricted, unscaled primary aliases retain their face, coverage, and line height across transport.
+Native font registrations survive downloaded font metadata. Unrestricted, unscaled primary aliases retain their face, coverage, and line height during local resolution.
 Explicit `unicode` labels select Unicode even for ASCII. Canonical font-file overrides remain unverified.
 Regressions cover these selection boundaries and cyclic alias rejection.
 Native Bedrock 1.26.60.5 controls cover server declarations, the built-in primary alias, and explicit Unicode.
 
 UI labels and dynamic domain text use the fully merged globals, including the bundled default palette.
-Program transport retains these colors. Protocol text keeps server-only overrides.
+Local scene resolution retains these colors. Protocol text keeps server-only overrides.
 Help regressions cover translated components and exported program round trips.
 
 The [owning patch](0095-share-native-ui-programs-and-resources.patch) retains implementation rationale and versioned evidence.
@@ -216,7 +220,7 @@ HUD chat factories receive independent, bounded creation snapshots and retain th
 
 Custom-form transport omits the resolved root because the client reconstructs it from the retained program and typed input state. The same payload limit remains in force. A large-form regression verifies that the transported program rebuilds identical controls and inputs without the duplicate root. This addresses Mineville Settings exceeding the previous combined size.
 
-Program transport retains the texture metadata the UI resolver consumes: nine-slice dimensions and Aseprite frames/metadata. Generic item/terrain atlas indexes and geometry JSON stay out of that payload. The installed Mineville program included a 197-KiB item atlas it could not use; this made Settings exceed the bound even after removing the duplicate root. A regression rebuilds identical nine-slice controls with a large unrelated atlas present, and the Aseprite controls retain their animation metadata.
+Local scene resolution retains the texture metadata the UI resolver consumes: nine-slice dimensions and Aseprite frames/metadata. Generic item/terrain atlas indexes and geometry JSON stay out of that payload. The installed Mineville program included a 197-KiB item atlas it could not use; this made Settings exceed the bound even after removing the duplicate root. A regression rebuilds identical nine-slice controls with a large unrelated atlas present, and the Aseprite controls retain their animation metadata.
 
 The final installed Mineville check opens Settings through the authored PvP Pit menu. It shows the clean SETTINGS heading, toggles and sliders; the former generic routing-title fallback no longer appears. The captured form also round-trips through the codec in 880,464 bytes and rebuilds all twelve inputs. Full native appearance remains unverified.
 
@@ -260,3 +264,19 @@ UI files drop the `null` that Gson's lenient reader inserts for a trailing array
 Optional texture metadata no longer rejects an entire authored screen when its JSON syntax is malformed. The valid image remains available without slicing hints; valid higher-priority metadata and semantic animation validation retain their existing behavior. The Venity selector supplied the failing metadata. A small form regression covers retained pixels, texture identity and response indices. Rendered validation is recorded separately from parser behavior.
 
 Validation: the full dependency build passes with 2,519 core tests and 1,720 add-on tests, no failures, plus Checkstyle. The 111-patch stack replays to the tested source tree. The selector is verified live with original response indices; the recorded Fate/Mace arena now has a lit floor and skylight 15 below its double barrier roof. A fresh live arena match and official-client visual parity were not established.
+
+## Source-built presentation validation
+
+The full four-project build passes: CubeConverter 46 tests, ViaBedrock 2,562 tests, the add-on 1,733 tests and ViaProxy 4 tests. Optional fixtures skip 336 tests in total. Tooling and offline patch validation pass.
+
+A paired Galaxite cold replay records one form and 13 HUD payloads. The form drops from 328,862 to 5,046 bytes. HUD payloads drop from 26,984 to 752 bytes. The form retains its ID, 761 nodes, 13 interactive or tooltip controls, and every recorded path/action identity. The independent pack audit finds identical standard Java resources, fonts, source indexes and nested payload bytes.
+
+JFR records client UI construction at 281 ms on a resource worker. Source decoding moves from the client main thread around 14.1 seconds to a resource worker around 2.7 seconds. Selected backend windows, counted without overlap, total 2.63 seconds before and 2.63 seconds after. First gameplay input occurs at 23.28 and 23.49 seconds. These single replays retain recorded packet timing and do not establish a join-latency improvement.
+
+Direct cold, populated disk-cache and ViaProxy runs retain the known unresolved-mapping failure. A 90-second same-JVM reconnect has the same additional skin failures on both builds, with 82 installed skins, 76 geometry installs and no rejected skins. It does not establish full skin parity. The frontend builds its UI program once and confirms it on both connections. Raw traces, pack audits, JAR receipts and detailed timelines remain private under `.stackanvil/research/resource-cleanup/codex-ui/`.
+
+An add-on-free Java run loads the custom-block supplement with ViaFabricPlus and the Bedrock add-on absent. It uses only a passive Fabric observer. All 117 baseline warning/error messages remain after normalizing download paths and hashes. The release adds two warnings from a failed Mojang profile lookup. It adds no pack or model errors; the eight known invalid models remain. The observer has no native renderer audit, as expected. This verifies the ordinary Java pack path, not a pristine official-client installation or native rendering parity.
+
+## Once bindings and factory identity
+
+Retained state now keeps a `once` binding's first evaluated value, including a valid empty value, for the control's lifetime; an unsupplied source stays pending. Each created title factory has its own retained state, carried to the frontend with its inputs. Event-created factory children key retained state by creation identity. Regressions cover the installed A/B/C persistent-label pair, factory retention across a subtitle update, a fresh factory, snapshot transport and concurrent/replacing factory instances. No shipped controller combines retained state with event factory instances yet. Collection recycling is unmeasured.

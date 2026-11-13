@@ -149,10 +149,10 @@ Both routes preserve the occupied cursor, leave empty slots unchanged, and retai
 The installed add-ons and proxy match the rebuilt artifact hashes.
 Passive hover notifications do not trigger the fallback for unsupported recipe actions.
 Installed direct and ViaProxy controls retain all 1,980 catalog entries from a local protocol-2225 server.
-Physical category and layout changes preserve their native indices through exported programs.
+Physical category and layout changes preserve their native indices through source-built programs.
 Physical Shift-left and Shift-right catalog controls bind the authored menu_auto_place source to the bulk action.
 Mouse release retains the pressed source even after Shift is released.
-Screen regressions repeat both chords and then perform an ordinary click through the exported player program.
+Screen regressions repeat both chords and then perform an ordinary click through the source-built player program.
 Both routes search for rails and place a server-accepted stack of 64 in the hotbar.
 ViaProxy retains both stacks after reopening.
 Installed direct and ViaProxy controls cover initial bundle insertion, extraction, reinsertion, and retention after reopening through ordinary Java controls.
@@ -165,7 +165,7 @@ Both installed add-ons and the running proxy match the rebuilt artifact hashes.
 Bulk Survival recipe actions remain unresolved.
 Complete cooking integration, live transfers, and filled-bundle pixels also remain unresolved.
 
-Player snapshot revisions retain the parsed UI while its program bytes are unchanged.
+Player snapshot revisions retain the parsed UI while the confirmed program generation is unchanged.
 The presentation consumer decodes each accepted snapshot once.
 Regression coverage retains search through changed resources and rejects malformed replacement bytes.
 Installed E-opened Creative controls complete 24 physical queries on each route with program reuse.
@@ -246,7 +246,7 @@ Stationary hover and cell selection survive a delayed server reply. An overlappi
 Each complete journal contains nine successful requests. These controls use an admitted authored furnace fixture with explicit navigation mappings.
 They do not establish native physical bindings, complete default-screen support, or native pixels.
 
-Desktop player/workbench bundle inputs use the optional core transport and share the presentation's request sequence, reply handling, timeout, and retirement with search and crafting. Real exported-program tests exercise insertion and default extraction with either cursor or clicked roots, including filled hover views and a bundle moved to the cursor. They check exact payload scope, buffered search, stale replies, desktop cell/hide callbacks, and suppression of duplicate Java actions while a request is pending. A frame-extraction regression covers physical bundle hover.
+Desktop player/workbench bundle inputs use the optional core transport and share the presentation's request sequence, reply handling, timeout, and retirement with search and crafting. Real source-program tests exercise insertion and default extraction with either cursor or clicked roots, including filled hover views and a bundle moved to the cursor. They check exact payload scope, buffered search, stale replies, desktop cell/hide callbacks, and suppression of duplicate Java actions while a request is pending. A frame-extraction regression covers physical bundle hover.
 
 The optional bundle-result channel plays a sound only for the matching pending bundle command. Duplicate, unrelated, retired, and wrong-kind replies cannot play it or release a different command. Playback uses current accepted Bedrock level-event resources, bank definitions, and captions. Original Bedrock 1.26.60.5 sound helper 144fe5060 and position helper 140ba2af0 select the actor AABB center with float arithmetic; 24 combined insertion-handler controls verify success and failure dispatch. Client regressions cover reply lifetime, resource selection, missing actors, and body-center coordinates. Installed direct and ViaProxy controls each observe seven level-event requests followed by decoded native PCM channel starts with the matching caption keys, including a full-bundle insertion failure. Ordinary pickups, placements, close, and reopen add no bundle sounds. Silent lab audio does not establish audible comparison or exact timing.
 

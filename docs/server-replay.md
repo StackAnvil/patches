@@ -217,7 +217,9 @@ Native Bedrock 1.26.51.1 server measurements distinguish slab states. Single sla
 
 Water filtering also follows the native measurements. Waterlogged stairs, fences, and chains filter one skylight level. Secondary water uses the greater of water’s filter and the primary block’s filter. Light snapshots retain water by position, including custom carriers whose Java states cannot hold water. Fluid rendering remains a separate limitation.
 
-The Bedrock lightmap uses formulas recovered from the licensed Windows 1.26.51.1 executable with PistonDecompiler and local Ghidra analysis. Its Overworld day angle, sunrise tint, weather response, block-light color, Nether brightness offset, and per-channel brightness correction differ from Java’s renderer. The native caller applies two small ambient bias stages. Its brightness slider reads `gfx_gamma` directly, with a default of 0.5. The separate fullscreen gamma calibration does not define this slider.
+The existing Bedrock lightmap port records findings from the licensed Windows 1.26.51.1 executable. That earlier work used PistonDecompiler and local Ghidra analysis. Treat its binary claims as historical until they are re-established through the [REA workflow](bedrock-development-sources.md#analyze-a-native-artifact-with-rea). Do not reuse the old analysis files for new changes.
+
+The port changes the Overworld day angle, sunrise tint, weather response, block-light color, Nether brightness offset, and per-channel brightness correction. It also includes two ambient bias stages and reads `gfx_gamma` directly, with a default of 0.5. The separate fullscreen gamma calibration does not define this slider.
 
 The lightmap applies to supported vanilla dimensions on direct Bedrock connections or proxy sessions with accepted converted server packs. Ordinary Java connections retain Java lighting.
 

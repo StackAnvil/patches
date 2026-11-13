@@ -37,7 +37,7 @@ export async function runLabCommand<A, E>(program: Effect.Effect<A, E>) {
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   try {
-    await Effect.runPromise(program, { signal: controller.signal });
+    return await Effect.runPromise(program, { signal: controller.signal });
   } finally {
     process.off("SIGINT", interrupt);
     process.off("SIGTERM", interrupt);

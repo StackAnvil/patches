@@ -1,10 +1,12 @@
-From fffbb19cafc60e87d5246973392774bce300c7f4 Mon Sep 17 00:00:00 2001
+From bdf1d5af3d5cdd4738dfc1af71c1300d51586e54 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:34 +0200
 Subject: [PATCH] feat(bedrock): render Character Creator geometry and face
  animations
 
 Character Creator skins can split the body and animated face into separate geometry models and textures. Parse the bound models together, validate their layout, and render the face as a synchronized layer. Keep a visible vanilla fallback for unsupported geometry and animation data instead of installing a blank renderer.
+
+Activate native rendering only when the highest server pack's pack.mcmeta has a supported accepted-source section. Its format and Bedrock protocol identify a compatible converter, so local packs cannot activate it and removing the server pack restores Java rendering.
 
 A native Bedrock 1.26.51, protocol 2193 login with the owned Helli Arm added a type-2 image (32 by 512, 16 frames) and animated_32x32 resource-patch binding alongside a type-1 face (32 by 64, two blinking frames). Both geometry descriptions used the full strip height. Normalize their texture size to one frame, remap bottom-origin mesh UVs, and render each bound surface on its own animated texture. Support the corresponding animated_128x128 binding with the same validated strip layout. Body coverage includes surfaces nested below the player bones.
 
@@ -68,14 +70,14 @@ one-element binding list and unchanged ordinary material flags.
  .../bedrock/render/BedrockPlayerRenderer.java |  53 +++-
  .../bedrock/render/BedrockPlayerSkins.java    | 273 ++++++++++++++++--
  .../bedrock/render/BedrockSkinAnimation.java  | 220 ++++++++++++++
- .../light/BedrockRenderingMetadata.java       |  75 +++++
+ .../light/BedrockRenderingMetadata.java       |  70 +++++
  .../viafabricplus-bedrock.mixins.json         |   1 +
  .../render/BedrockPersonaCaptureTest.java     |  70 +++++
  .../render/BedrockPersonaGeometryTest.java    | 243 ++++++++++++++++
  .../render/BedrockPersonaHandsTest.java       |  75 +++++
  .../render/BedrockSkinAnimationTest.java      | 157 ++++++++++
- .../light/BedrockRenderingMetadataTest.java   | 107 +++++++
- 15 files changed, 1456 insertions(+), 29 deletions(-)
+ .../light/BedrockRenderingMetadataTest.java   | 115 ++++++++
+ 15 files changed, 1459 insertions(+), 29 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
@@ -1109,10 +1111,10 @@ index 0000000..d4bb2ec
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadata.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadata.java
 new file mode 100644
-index 0000000..3b16598
+index 0000000..1c4eb1d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadata.java
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,70 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1120,10 +1122,8 @@ index 0000000..3b16598
 + */
 +package com.viaversion.viafabricplus.bedrock.render.light;
 +
++import com.viaversion.viafabricplus.bedrock.render.BedrockAcceptedResources;
 +import com.viaversion.viaversion.libs.gson.JsonElement;
-+import com.viaversion.viaversion.libs.gson.JsonParser;
-+import net.minecraft.resources.Identifier;
-+import net.minecraft.server.packs.repository.PackSource;
 +import net.minecraft.server.packs.resources.ResourceManager;
 +import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
 +import net.minecraft.util.profiling.ProfilerFiller;
@@ -1133,13 +1133,14 @@ index 0000000..3b16598
 +
 +import java.io.IOException;
 +import java.math.BigDecimal;
-+import java.nio.charset.StandardCharsets;
 +import java.util.concurrent.atomic.AtomicReference;
 +
-+/** Versioned, reload-scoped appearance provenance supplied by a converted server pack. */
++/**
++ * Versioned, reload-scoped appearance provenance supplied by a converted server pack. The accepted-source section in
++ * the server pack's pack.mcmeta carries the format and Bedrock protocol, so no separate marker file is needed.
++ */
 +public final class BedrockRenderingMetadata extends SimplePreparableReloadListener<BedrockRenderingMetadata.Prepared> {
 +    private static final Logger LOGGER = LogManager.getLogger("Bedrock rendering metadata");
-+    private static final Identifier LOCATION = Identifier.fromNamespaceAndPath("viabedrock", "client_rendering.json");
 +    private static final AtomicReference<State> STATE = new AtomicReference<>(new State(false));
 +
 +    public static boolean active() {
@@ -1153,17 +1154,13 @@ index 0000000..3b16598
 +    @Override
 +    protected Prepared prepare(final ResourceManager resources, final ProfilerFiller profiler) {
 +        final State pending = STATE.updateAndGet(previous -> new State(previous.active));
-+        for (final var resource : resources.getResourceStack(LOCATION)) {
-+            if (resource.source().location().source() != PackSource.SERVER) continue;
-+            try (final var input = resource.open()) {
-+                final byte[] content = input.readNBytes(513);
-+                if (content.length > 512) continue;
-+                if (supported(JsonParser.parseString(new String(content, StandardCharsets.UTF_8)))) return new Prepared(pending, true);
-+            } catch (final IOException | RuntimeException error) {
-+                LOGGER.debug("Ignoring invalid Bedrock rendering metadata", error);
-+            }
++        try {
++            final var source = BedrockAcceptedResources.source(resources);
++            return new Prepared(pending, source != null && supported(source.index()));
++        } catch (final IOException | RuntimeException error) {
++            LOGGER.debug("Ignoring invalid Bedrock rendering metadata", error);
++            return new Prepared(pending, false);
 +        }
-+        return new Prepared(pending, false);
 +    }
 +
 +    @Override
@@ -1771,10 +1768,10 @@ index 0000000..8cc01bf
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadataTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadataTest.java
 new file mode 100644
-index 0000000..9874af0
+index 0000000..1e05e3a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadataTest.java
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,115 @@
 +package com.viaversion.viafabricplus.bedrock.render.light;
 +
 +import com.viaversion.viaversion.libs.gson.JsonObject;
@@ -1782,13 +1779,15 @@ index 0000000..9874af0
 +import net.minecraft.server.packs.PackLocationInfo;
 +import net.minecraft.server.packs.PackResources;
 +import net.minecraft.server.packs.repository.PackSource;
-+import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.IoSupplier;
 +import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +import org.junit.jupiter.api.AfterEach;
 +import org.junit.jupiter.api.Test;
 +
 +import java.io.ByteArrayInputStream;
++import java.io.InputStream;
 +import java.lang.reflect.Proxy;
 +import java.nio.charset.StandardCharsets;
 +import java.util.List;
@@ -1872,14 +1871,20 @@ index 0000000..9874af0
 +    }
 +
 +    private static ResourceManager resources(final PackSource... sources) {
-+        final List<Resource> resources = java.util.Arrays.stream(sources).map(source -> {
++        final JsonObject root = new JsonObject();
++        root.add(BedrockResourcePackPayloads.METADATA_SECTION, metadata());
++        final List<PackResources> packs = java.util.Arrays.stream(sources).map(source -> {
 +            final PackLocationInfo location = new PackLocationInfo("fixture", Component.empty(), source, Optional.empty());
-+            final PackResources pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class<?>[]{PackResources.class},
-+                (proxy, method, args) -> method.getName().equals("location") ? location : null);
-+            return new Resource(pack, () -> new ByteArrayInputStream(metadata().toString().getBytes(StandardCharsets.UTF_8)));
++            return (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class<?>[]{PackResources.class},
++                (proxy, method, args) -> switch (method.getName()) {
++                    case "location" -> location;
++                    case "getRootResource" -> args.length == 1 && "pack.mcmeta".equals(((String[]) args[0])[0])
++                        ? (IoSupplier<InputStream>) () -> new ByteArrayInputStream(root.toString().getBytes(StandardCharsets.UTF_8)) : null;
++                    default -> null;
++                });
 +        }).toList();
 +        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class<?>[]{ResourceManager.class},
-+            (proxy, method, args) -> method.getName().equals("getResourceStack") ? resources : null);
++            (proxy, method, args) -> method.getName().equals("listPacks") ? packs.stream() : null);
 +    }
 +}
 -- 

@@ -1,4 +1,4 @@
-From fd1cf5fddd863f436dc7eb81d71a151974ab8832 Mon Sep 17 00:00:00 2001
+From 157eb58bc5c047d4d94b39e2222411d743174f1f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(resources): select native libraries by world version
@@ -64,20 +64,30 @@ cost or bypass manifest, resource, version or persona validation.
 Regressions cover a join waiting for in-flight startup preparation, repeated
 requests reusing one load, and startup failures reaching joining without retry.
 
-Reuse decoded accepted native archives across resource-manager generations by
-SHA-256 of the selected archive bytes, including their protocol and world
-version header. Keep current-generation success and error ownership unchanged.
+Reuse the decoded archive for the same source pack instance, so UI image
+lookups in a namespace resource manager share the actor loaders' archive
+instead of verifying the nested packs again.
+
+Reuse decoded accepted native sources across resource-manager generations
+by ordered metadata and verified ZIP digests, including protocol and world
+version. Keep current-generation success and error ownership unchanged.
 Retain at most 128 MiB of decoded resource data and four content identities;
 never retain resource managers, packs or open streams. Cache copies own their
 arrays, and each resource generation receives independent bytes.
 
-The 96 MiB encoded cache limit does not change archive admission. For larger
-inputs, prepend the already-read bytes to the remaining stream and let the
-existing bounded codec validate the complete archive without caching it.
+The 96 MiB encoded cache limit does not change source admission. Larger
+source sets still reach the bounded codec without entering the cache.
 Failed decodes remain retryable after the resource generation changes.
 
 Regressions cover decode reuse, independent arrays across generations, changed
-content, entry/byte eviction, uncacheable large streams and failed decoding.
+content, entry/byte eviction, uncacheable large source sets and failed decoding.
+
+Preserve complete source maps and selected subpack metadata when caching
+accepted native archives. Clone both views with shared-byte identity and
+charge all retained source-only bytes to the same bounded cache budget.
+The cache key covers ordered pack metadata and the digest of each nested
+ZIP. Verify same-pack ZIP bytes before cache lookup, so changed or missing
+unknown source files cannot be hidden by a decoded cache hit.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   7 +
  .../appearance/BedrockActorAnimation.java     |   4 +-
@@ -86,19 +96,19 @@ content, entry/byte eviction, uncacheable large streams and failed decoding.
  .../appearance/BedrockResourceLibrary.java    | 143 +++++++++++++-
  .../appearance/BedrockServerResources.java    |  15 +-
  ...FabricPlusBuiltinResourcePackProvider.java |  76 ++++++++
- .../render/BedrockAcceptedArchiveCache.java   |  94 +++++++++
- .../render/BedrockAcceptedResources.java      |  21 +-
+ .../render/BedrockAcceptedArchiveCache.java   | 110 +++++++++++
+ .../render/BedrockAcceptedResources.java      |  55 ++++--
  .../bedrock/render/BedrockActorResources.java |   4 +-
  .../BedrockActorDependenciesTest.java         | 109 +++++++++++
- .../BedrockResourceLibraryTest.java           |  24 ++-
+ .../BedrockResourceLibraryTest.java           |  23 ++-
  .../BedrockServerActorResourcesTest.java      |   3 +-
  .../BedrockServerEntityAnimationTest.java     |  14 +-
- .../BedrockServerResourcesTest.java           |  42 +++-
+ .../BedrockServerResourcesTest.java           |  69 ++++++-
  .../BedrockWorldResourceVersionsTest.java     |  85 ++++++++
  ...icPlusBuiltinResourcePackProviderTest.java | 184 ++++++++++++++++++
- .../BedrockAcceptedArchiveCacheTest.java      |  81 ++++++++
- .../render/BedrockAcceptedResourcesTest.java  |   3 +-
- 19 files changed, 958 insertions(+), 45 deletions(-)
+ .../BedrockAcceptedArchiveCacheTest.java      |  92 +++++++++
+ .../render/BedrockAcceptedResourcesTest.java  |   1 +
+ 19 files changed, 1028 insertions(+), 60 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorDependencies.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java
@@ -638,10 +648,10 @@ index 0000000..bebcc3f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java
 new file mode 100644
-index 0000000..2081a3a
+index 0000000..dd1188b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCache.java
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,110 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -650,16 +660,14 @@ index 0000000..2081a3a
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
++import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
 +
-+import java.io.ByteArrayInputStream;
 +import java.io.IOException;
-+import java.io.InputStream;
-+import java.io.SequenceInputStream;
-+import java.security.MessageDigest;
-+import java.security.NoSuchAlgorithmException;
 +import java.util.ArrayList;
-+import java.util.HexFormat;
++import java.util.IdentityHashMap;
 +import java.util.LinkedHashMap;
++import java.util.List;
 +import java.util.Map;
 +
 +/** Reuses decoded bytes across resource generations without retaining their managers, packs or streams. */
@@ -678,23 +686,24 @@ index 0000000..2081a3a
 +        this.maxEncodedBytes = maxEncodedBytes;
 +    }
 +
-+    synchronized NativeActorLibrary.Archive decode(final InputStream source) throws IOException {
-+        final byte[] bytes = source.readNBytes(this.maxEncodedBytes + 1);
-+        if (bytes.length > this.maxEncodedBytes) {
-+            // This is a cache limit, not an archive admission limit. The codec still sees the complete stream.
-+            return this.decoder.decode(new SequenceInputStream(new ByteArrayInputStream(bytes), source));
-+        }
-+        final String key;
++    synchronized NativeActorLibrary.Archive decode(final BedrockResourcePackPayloads.Sources sources) throws IOException {
++        final BaseGameVersion version;
 +        try {
-+            key = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-+        } catch (final NoSuchAlgorithmException impossible) {
-+            throw new IllegalStateException(impossible);
++            version = BaseGameVersion.parse(sources.baseGameVersion());
++        } catch (final IllegalArgumentException invalid) {
++            throw new IOException("Invalid Bedrock source base version", invalid);
 +        }
++        return load("packs:" + sources.cacheKey(), () -> new NativeActorLibrary.Archive(version,
++                this.decoder.decode(sources)), sources.encodedBytes() <= this.maxEncodedBytes);
++    }
++
++    private NativeActorLibrary.Archive load(final String key, final Loader loader, final boolean cacheable) throws IOException {
++        if (!cacheable) return loader.load();
 +        final Entry cached = this.entries.get(key);
 +        if (cached != null) {
 +            return copy(cached.archive);
 +        }
-+        final NativeActorLibrary.Archive archive = this.decoder.decode(new ByteArrayInputStream(bytes));
++        final NativeActorLibrary.Archive archive = loader.load();
 +        final long weight = weight(archive);
 +        if (weight <= this.budget) {
 +            this.entries.put(key, new Entry(copy(archive), weight));
@@ -710,39 +719,56 @@ index 0000000..2081a3a
 +
 +    private static NativeActorLibrary.Archive copy(final NativeActorLibrary.Archive archive) {
 +        final var layers = new ArrayList<NativeActorLibrary.Layer>(archive.layers().size());
++        final Map<byte[], byte[]> copies = new IdentityHashMap<>();
 +        for (final var layer : archive.layers()) {
-+            final Map<String, byte[]> files = new LinkedHashMap<>();
-+            layer.resources().forEach((path, bytes) -> files.put(path, bytes.clone()));
-+            layers.add(new NativeActorLibrary.Layer(layer.server(), files));
++            final Map<String, byte[]> files = copyFiles(layer.resources(), copies);
++            final Map<String, byte[]> source = layer.sourceResources() == layer.resources() ? files : copyFiles(layer.sourceResources(), copies);
++            layers.add(new NativeActorLibrary.Layer(layer.server(), files, source, layer.selectedSubpack()));
 +        }
 +        return new NativeActorLibrary.Archive(archive.version(), layers);
 +    }
 +
++    private static Map<String, byte[]> copyFiles(final Map<String, byte[]> files, final Map<byte[], byte[]> copies) {
++        final Map<String, byte[]> result = new LinkedHashMap<>();
++        files.forEach((path, bytes) -> result.put(path, copies.computeIfAbsent(bytes, byte[]::clone)));
++        return result;
++    }
++
 +    private static long weight(final NativeActorLibrary.Archive archive) {
 +        long weight = 256;
++        final Map<byte[], Boolean> counted = new IdentityHashMap<>();
 +        for (final var layer : archive.layers()) {
-+            weight += 128;
-+            for (final var entry : layer.resources().entrySet()) {
-+                weight += 128L + entry.getKey().length() * 2L + entry.getValue().length;
++            weight += 128L + layer.selectedSubpack().length() * 2L;
++            final var views = layer.resources() == layer.sourceResources() ? List.of(layer.resources()) : List.of(layer.resources(), layer.sourceResources());
++            for (final var files : views) {
++                for (final var entry : files.entrySet()) {
++                    weight += 128L + entry.getKey().length() * 2L;
++                    if (counted.put(entry.getValue(), Boolean.TRUE) == null) weight += entry.getValue().length;
++                }
 +            }
 +        }
 +        return weight;
 +    }
 +
 +    @FunctionalInterface
++    private interface Loader {
++        NativeActorLibrary.Archive load() throws IOException;
++    }
++
++    @FunctionalInterface
 +    interface Decoder {
-+        NativeActorLibrary.Archive decode(InputStream input) throws IOException;
++        List<NativeActorLibrary.Layer> decode(BedrockResourcePackPayloads.Sources sources) throws IOException;
 +    }
 +
 +    private record Entry(NativeActorLibrary.Archive archive, long weight) { }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
-index 76f93d2..5ce6caf 100644
+index 3ec04ad..e87f388 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
-@@ -12,42 +12,49 @@ import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
- 
+@@ -18,36 +18,56 @@ import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
  import java.io.IOException;
+ import java.nio.charset.StandardCharsets;
  import java.util.List;
 +import java.util.Optional;
  
@@ -750,7 +776,7 @@ index 76f93d2..5ce6caf 100644
  public final class BedrockAcceptedResources {
  
 +    private static final BedrockAcceptedArchiveCache ARCHIVES = new BedrockAcceptedArchiveCache(
-+            NativeActorLibrary::decode, 128L << 20, 4, 96 << 20);
++            BedrockResourcePackPayloads::decode, 128L << 20, 4, 96 << 20);
      private static Snapshot snapshot;
  
      private BedrockAcceptedResources() {}
@@ -764,38 +790,64 @@ index 76f93d2..5ce6caf 100644
 +    public static synchronized Optional<NativeActorLibrary.Archive> archive(final ResourceManager resources) throws IOException {
          if (snapshot == null || snapshot.resources != resources) {
              try {
-                 snapshot = new Snapshot(resources, read(resources), null);
+-                snapshot = new Snapshot(resources, read(resources), null);
++                final Source source = source(resources);
++                snapshot = source == null ? new Snapshot(resources, null, null, null) : decode(resources, source);
              } catch (IOException | RuntimeException invalid) {
 -                snapshot = new Snapshot(resources, List.of(), new IOException("Could not read accepted native resources", invalid));
-+                snapshot = new Snapshot(resources, null, new IOException("Could not read accepted native resources", invalid));
++                snapshot = new Snapshot(resources, null, null, new IOException("Could not read accepted native resources", invalid));
              }
          }
-         if (snapshot.error != null) throw snapshot.error;
+-        if (snapshot.error != null) throw snapshot.error;
 -        return snapshot.layers;
-+        return Optional.ofNullable(snapshot.archive);
++        return snapshot.result();
      }
  
 -    private static List<NativeActorLibrary.Layer> read(final ResourceManager resources) throws IOException {
-+    private static NativeActorLibrary.Archive read(final ResourceManager resources) throws IOException {
-         final var stack = resources.getResourceStack(Identifier.fromNamespaceAndPath("viabedrock", "actor_library.bin"));
-         for (int index = stack.size() - 1; index >= 0; index--) {
-             final var resource = stack.get(index);
-             if (resource.source().location().source() != PackSource.SERVER) continue;
-             try (var input = resource.open()) {
--                return NativeActorLibrary.decode(input);
-+                return ARCHIVES.decode(input);
-             }
-         }
--        return List.of();
-+        return null;
+-        final Source source = source(resources);
+-        if (source == null) return List.of();
+-        final var sources = BedrockResourcePackPayloads.prepare(source.index(), sha -> {
+-            final var resource = source.pack().getResource(PackType.CLIENT_RESOURCES,
+-                    Identifier.fromNamespaceAndPath("viabedrock", BedrockResourcePackPayloads.RESOURCE_DIRECTORY + sha + ".mcpack"));
+-            return resource == null ? null : resource.get();
+-        });
+-        return BedrockResourcePackPayloads.decode(sources);
++    /** Reuses the archive decoded for the same source pack instance, which belongs to one resource generation. */
++    public static synchronized Optional<NativeActorLibrary.Archive> archive(final Source source) throws IOException {
++        if (snapshot == null || snapshot.pack != source.pack()) {
++            snapshot = decode(null, source);
++        }
++        return snapshot.result();
++    }
++
++    private static Snapshot decode(final ResourceManager resources, final Source source) {
++        if (snapshot != null && snapshot.pack == source.pack()) {
++            return new Snapshot(resources, source.pack(), snapshot.archive, snapshot.error);
++        }
++        try {
++            final var sources = BedrockResourcePackPayloads.prepare(source.index(), sha -> {
++                final var resource = source.pack().getResource(PackType.CLIENT_RESOURCES,
++                        Identifier.fromNamespaceAndPath("viabedrock", BedrockResourcePackPayloads.RESOURCE_DIRECTORY + sha + ".mcpack"));
++                return resource == null ? null : resource.get();
++            });
++            return new Snapshot(resources, source.pack(), ARCHIVES.decode(sources), null);
++        } catch (IOException | RuntimeException invalid) {
++            return new Snapshot(resources, source.pack(), null, new IOException("Could not read accepted native resources", invalid));
++        }
      }
  
-     public static synchronized void clear() {
-         snapshot = null;
-     }
+     /** The highest server pack whose pack.mcmeta indexes accepted Bedrock packs, or null when none does. */
+@@ -77,5 +97,10 @@ public final class BedrockAcceptedResources {
+     /** A server pack and the accepted-source index from its pack.mcmeta. */
+     public record Source(PackResources pack, JsonObject index) {}
  
 -    private record Snapshot(ResourceManager resources, List<NativeActorLibrary.Layer> layers, IOException error) {}
-+    private record Snapshot(ResourceManager resources, NativeActorLibrary.Archive archive, IOException error) {}
++    private record Snapshot(ResourceManager resources, PackResources pack, NativeActorLibrary.Archive archive, IOException error) {
++        Optional<NativeActorLibrary.Archive> result() throws IOException {
++            if (this.error != null) throw this.error;
++            return Optional.ofNullable(this.archive);
++        }
++    }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
 index da726c2..eb6c3eb 100644
@@ -928,7 +980,7 @@ index 0000000..6ebabf6
 +    private static byte[] bytes(final String json) { return json.getBytes(StandardCharsets.UTF_8); }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
-index e429c80..f07a19a 100644
+index e429c80..c6645b8 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
 @@ -9,6 +9,7 @@ import com.google.gson.JsonParser;
@@ -939,18 +991,17 @@ index e429c80..f07a19a 100644
  import java.io.IOException;
  import java.nio.charset.StandardCharsets;
  import java.nio.file.Path;
-@@ -36,8 +37,8 @@ final class BedrockResourceLibraryTest {
+@@ -36,8 +37,7 @@ final class BedrockResourceLibraryTest {
              content.putString("particles/probe.json", document.toString());
              content.put(path + ".png", encoded.toByteArray());
              final var pack = new net.raphimc.viabedrock.api.resourcepack.ResourcePack(content);
 -            final byte[] archive = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.encode(List.of(pack), ignored -> true);
 -            final var layers = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.decode(new java.io.ByteArrayInputStream(archive));
-+            final byte[] archive = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.encode(BaseGameVersion.CURRENT, List.of(pack), ignored -> true);
-+            final var layers = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.decode(new java.io.ByteArrayInputStream(archive)).layers();
++            final var layers = net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.resources(List.of(pack), ignored -> true);
              final var resources = BedrockResourceLibrary.withServerPacks(null, layers.stream()
                      .map(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.Layer::resources).toList());
              final var effect = BedrockParticleEffect.read(resources.particle("test:burst"));
-@@ -156,6 +157,25 @@ final class BedrockResourceLibraryTest {
+@@ -156,6 +156,25 @@ final class BedrockResourceLibraryTest {
          files.put("library/" + pack + "/" + path, json.getBytes(StandardCharsets.UTF_8));
      }
  
@@ -1040,21 +1091,40 @@ index 14ccd22..74c64c4 100644
      }
  
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
-index 9a364b5..27a0326 100644
+index 9a364b5..cbb270a 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
-@@ -12,6 +12,7 @@ import net.minecraft.server.packs.PackResources;
+@@ -7,12 +7,15 @@ package com.viaversion.viafabricplus.bedrock.appearance;
+ 
+ import com.viaversion.viafabricplus.bedrock.render.BedrockAcceptedResources;
+ import net.minecraft.network.chat.Component;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
+ import net.minecraft.server.packs.PackLocationInfo;
+ import net.minecraft.server.packs.PackResources;
  import net.minecraft.server.packs.repository.PackSource;
- import net.minecraft.server.packs.resources.Resource;
+-import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.IoSupplier;
  import net.minecraft.server.packs.resources.ResourceManager;
+-import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
 +import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
- import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
  import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
-@@ -53,12 +54,51 @@ class BedrockServerResourcesTest {
+ import org.junit.jupiter.api.AfterEach;
+@@ -20,6 +23,7 @@ import org.junit.jupiter.api.Test;
+ 
+ import java.io.ByteArrayInputStream;
+ import java.io.IOException;
++import java.io.InputStream;
+ import java.lang.reflect.Proxy;
+ import java.util.List;
+ import java.util.Optional;
+@@ -53,20 +57,67 @@ class BedrockServerResourcesTest {
          assertArrayEquals(new byte[]{3}, replaced.file("textures/shared.png"));
      }
  
+-    private static byte[] archive(final byte texture) throws IOException {
 +    @Test
 +    void refreshesTheWorldVersionWithoutLeakingThePreviousVanillaResources() throws Exception {
 +        final var raw = BedrockResourceLibrary.read(java.util.Map.of(
@@ -1086,24 +1156,45 @@ index 9a364b5..27a0326 100644
 +    @Test
 +    void refusesToGuessLatestResourcesWhenTheWorldContextIsAbsent() {
 +        final var manager = (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
-+                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? List.of() : null);
++                (proxy, method, arguments) -> method.getName().equals("listPacks") ? java.util.stream.Stream.empty() : null);
 +        assertThrows(IOException.class, () -> BedrockServerResources.library(manager, null));
 +    }
 +
-     private static byte[] archive(final byte texture) throws IOException {
++    private static Content archive(final byte texture) throws IOException {
 +        return archive(texture, BaseGameVersion.CURRENT);
 +    }
 +
-+    private static byte[] archive(final byte texture, final BaseGameVersion version) throws IOException {
++    private static Content archive(final byte texture, final BaseGameVersion version) throws IOException {
          final var content = new InMemoryContent();
          content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\""
                  + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
          content.put("textures/shared.png", new byte[]{texture});
 -        return NativeActorLibrary.encode(List.of(new ResourcePack(content)), ignored -> true);
-+        return NativeActorLibrary.encode(version, List.of(new ResourcePack(content)), ignored -> true);
++        return BedrockResourcePackPayloads.export(version.toString(), List.of(new ResourcePack(content)), ignored -> true);
      }
  
-     private static ResourceManager resources(final AtomicReference<byte[]> bytes) {
+-    private static ResourceManager resources(final AtomicReference<byte[]> bytes) {
++    private static ResourceManager resources(final AtomicReference<Content> bytes) {
+         final var location = new PackLocationInfo("test", Component.empty(), PackSource.SERVER, Optional.empty());
+-        final var pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class[]{PackResources.class},
+-                (proxy, method, arguments) -> method.getName().equals("location") ? location : null);
+-        final var resource = new Resource(pack, () -> new ByteArrayInputStream(bytes.get()));
++        final var pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class[]{PackResources.class}, (proxy, method, arguments) -> {
++            if (method.getName().equals("location")) return location;
++            final String path;
++            if (method.getName().equals("getRootResource")) path = String.join("/", (String[]) arguments[0]);
++            else if (method.getName().equals("getResource")) {
++                final var id = (Identifier) arguments[1];
++                path = "assets/" + id.getNamespace() + '/' + id.getPath();
++            } else return null;
++            final byte[] data = bytes.get().get(path);
++            return data == null ? null : (IoSupplier<InputStream>) () -> new ByteArrayInputStream(data);
++        });
+         return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
+-                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? List.of(resource) : null);
++                (proxy, method, arguments) -> method.getName().equals("listPacks") ? java.util.stream.Stream.of(pack) : null);
+     }
+ }
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldResourceVersionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldResourceVersionsTest.java
 new file mode 100644
 index 0000000..a589612
@@ -1387,10 +1478,10 @@ index 0000000..e30f094
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCacheTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCacheTest.java
 new file mode 100644
-index 0000000..b07bf62
+index 0000000..5c672f4
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedArchiveCacheTest.java
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,92 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1399,13 +1490,14 @@ index 0000000..b07bf62
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
-+import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
 +import org.junit.jupiter.api.Test;
 +
 +import java.io.ByteArrayInputStream;
++import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import java.io.IOException;
 +import java.util.List;
-+import java.util.Map;
 +import java.util.concurrent.atomic.AtomicInteger;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -1416,20 +1508,24 @@ index 0000000..b07bf62
 +        final var decodes = new AtomicInteger();
 +        final var cache = new BedrockAcceptedArchiveCache(input -> {
 +            decodes.incrementAndGet();
-+            return archive(input.readAllBytes());
-+        }, 4096, 2, 64);
++            return BedrockResourcePackPayloads.decode(input);
++        }, 4096, 2, 4096);
 +        final byte[] encoded = {1, 2, 3};
-+        final var first = cache.decode(new ByteArrayInputStream(encoded));
++        final var first = cache.decode(source(encoded));
 +        first.layers().getFirst().resources().get("textures/probe.png")[0] = 99;
-+        final var second = cache.decode(new ByteArrayInputStream(encoded));
++        final var second = cache.decode(source(encoded));
 +        assertEquals(1, decodes.get());
 +        assertNotSame(first, second);
 +        assertEquals(first.version(), second.version());
++        assertEquals("", second.layers().getFirst().selectedSubpack());
++        assertArrayEquals(encoded, second.layers().getFirst().sourceResources().get("future/probe.custom"));
++        second.layers().getFirst().sourceResources().get("future/probe.custom")[0] = 88;
++        assertArrayEquals(encoded, cache.decode(source(encoded)).layers().getFirst().sourceResources().get("future/probe.custom"));
 +        assertArrayEquals(encoded, second.layers().getFirst().resources().get("textures/probe.png"));
 +        second.layers().getFirst().resources().get("textures/probe.png")[1] = 99;
-+        assertArrayEquals(encoded, cache.decode(new ByteArrayInputStream(encoded)).layers().getFirst().resources().get("textures/probe.png"));
++        assertArrayEquals(encoded, cache.decode(source(encoded)).layers().getFirst().resources().get("textures/probe.png"));
 +        assertEquals(1, decodes.get());
-+        assertArrayEquals(new byte[]{4}, cache.decode(new ByteArrayInputStream(new byte[]{4})).layers().getFirst().resources().get("textures/probe.png"));
++        assertArrayEquals(new byte[]{4}, cache.decode(source(new byte[]{4})).layers().getFirst().resources().get("textures/probe.png"));
 +        assertEquals(2, decodes.get());
 +    }
 +
@@ -1438,14 +1534,14 @@ index 0000000..b07bf62
 +        final var decodes = new AtomicInteger();
 +        final BedrockAcceptedArchiveCache.Decoder decoder = input -> {
 +            decodes.incrementAndGet();
-+            return archive(input.readAllBytes());
++            return BedrockResourcePackPayloads.decode(input);
 +        };
-+        final var oneEntry = new BedrockAcceptedArchiveCache(decoder, 4096, 1, 64);
-+        for (final int marker : List.of(1, 2, 1)) oneEntry.decode(new ByteArrayInputStream(new byte[]{(byte) marker}));
++        final var oneEntry = new BedrockAcceptedArchiveCache(decoder, 4096, 1, 4096);
++        for (final int marker : List.of(1, 2, 1)) oneEntry.decode(source(new byte[]{(byte) marker}));
 +        assertEquals(3, decodes.get());
-+        final var noSpace = new BedrockAcceptedArchiveCache(decoder, 1, 2, 64);
-+        noSpace.decode(new ByteArrayInputStream(new byte[]{3}));
-+        noSpace.decode(new ByteArrayInputStream(new byte[]{3}));
++        final var noSpace = new BedrockAcceptedArchiveCache(decoder, 1, 2, 4096);
++        noSpace.decode(source(new byte[]{3}));
++        noSpace.decode(source(new byte[]{3}));
 +        assertEquals(5, decodes.get());
 +    }
 +
@@ -1454,44 +1550,41 @@ index 0000000..b07bf62
 +        final var decodes = new AtomicInteger();
 +        final var cache = new BedrockAcceptedArchiveCache(input -> {
 +            decodes.incrementAndGet();
-+            final byte[] bytes = input.readAllBytes();
++            final var layers = BedrockResourcePackPayloads.decode(input);
++            final byte[] bytes = layers.getFirst().resources().get("textures/probe.png");
 +            if (bytes[0] == 0) throw new IOException("Invalid archive");
-+            return archive(bytes);
++            return layers;
 +        }, 4096, 2, 2);
 +        final byte[] large = {1, 2, 3, 4, 5};
-+        assertArrayEquals(large, cache.decode(new ByteArrayInputStream(large)).layers().getFirst().resources().get("textures/probe.png"));
-+        cache.decode(new ByteArrayInputStream(large));
++        assertArrayEquals(large, cache.decode(source(large)).layers().getFirst().resources().get("textures/probe.png"));
++        cache.decode(source(large));
 +        assertEquals(2, decodes.get());
-+        assertThrows(IOException.class, () -> cache.decode(new ByteArrayInputStream(new byte[]{0})));
-+        assertThrows(IOException.class, () -> cache.decode(new ByteArrayInputStream(new byte[]{0})));
++        assertThrows(IOException.class, () -> cache.decode(source(new byte[]{0})));
++        assertThrows(IOException.class, () -> cache.decode(source(new byte[]{0})));
 +        assertEquals(4, decodes.get());
 +    }
 +
-+    private static NativeActorLibrary.Archive archive(final byte[] bytes) {
-+        return new NativeActorLibrary.Archive(BaseGameVersion.CURRENT,
-+                List.of(new NativeActorLibrary.Layer(true, Map.of("textures/probe.png", bytes))));
++    private static BedrockResourcePackPayloads.Sources source(final byte[] bytes) throws IOException {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"cache\",\"uuid\":\"00000000-0000-0000-0000-000000000001\",\"version\":[1,0,0]}}");
++        content.put("textures/probe.png", bytes);
++        content.put("future/probe.custom", bytes.clone());
++        final var exported = BedrockResourcePackPayloads.export(BaseGameVersion.CURRENT.toString(), List.of(new ResourcePack(content)), ignored -> true);
++        return BedrockResourcePackPayloads.prepare(exported.getJson("pack.mcmeta").getAsJsonObject(BedrockResourcePackPayloads.METADATA_SECTION),
++                sha -> new ByteArrayInputStream(exported.get(BedrockResourcePackPayloads.PAYLOAD_DIRECTORY + sha + ".mcpack")));
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
-index ac26125..4fc603f 100644
+index 0571d04..bf4955b 100644
 --- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
-@@ -11,6 +11,7 @@ import net.minecraft.server.packs.PackResources;
- import net.minecraft.server.packs.repository.PackSource;
+@@ -13,6 +13,7 @@ import net.minecraft.server.packs.repository.PackSource;
  import net.minecraft.server.packs.resources.Resource;
+ import net.minecraft.server.packs.resources.IoSupplier;
  import net.minecraft.server.packs.resources.ResourceManager;
 +import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
  import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
- import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
- import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
-@@ -98,7 +99,7 @@ class BedrockAcceptedResourcesTest {
-         }
-         upper.put("textures/shared.png", new byte[]{texture});
-         final var packs = List.of(new ResourcePack(lower), new ResourcePack(upper));
--        return new AtomicReference<>(NativeActorLibrary.encode(packs, pack -> pack == packs.getLast()));
-+        return new AtomicReference<>(NativeActorLibrary.encode(BaseGameVersion.CURRENT, packs, pack -> pack == packs.getLast()));
-     }
- 
-     private static Resource resource(final PackSource source, final AtomicReference<byte[]> bytes, final AtomicInteger opens) {
+ import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
 -- 
 2.56.0

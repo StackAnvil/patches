@@ -91,3 +91,9 @@ The keepalive task also checks native outbound codec readiness on the event loop
 Cold compilation also reuses each accepted geometry within one preparation pass. Each state receives a copy before material binding, transforms and culling. The compiler belongs to that pass and retains no connection state afterward. A regression alternates carriers, materials and transforms on one geometry and checks independent output.
 
 The [owning patch](0054-render-native-block-state-geometry-and-materials.patch) retains implementation rationale and versioned evidence.
+
+## Native material shading
+
+Protocol 2225 materials carry face dimming in bit 0 of `packed_bools`; the explicit `face_dimming` field remains supported. The emitter applies `clamp(directional * powf(AO, exponent), 0, 1)`, and the shared dimming rule weights a continuous normal by the coefficient for each component's sign. Inset faces use the native per-vertex sampler: biased-centroid cache cell, dependency and skip masks, center weight 1.331558, radius 1.5 and `1 / (d² + 0.001)` weights.
+
+Regressions use original Bedrock 1.26.60.5 results: emitter cases for exponents 0, 1 and 2, axis and 30-degree tilted dimming factors, serialized `packed_bools` 4 and 5, and the live-captured inset neighborhood. That neighborhood reproduces the native AO values 0.8888823, 0.7967659, 0.7549734 and 0.8560161 bit for bit, with block light 14 on all four vertices. Outer-plane faces keep the corner path. Registered screenshot parity, Java runtime light propagation and other render modes are not established.

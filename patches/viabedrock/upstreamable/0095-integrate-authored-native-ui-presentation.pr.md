@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Evaluate loaded JSON UI templates, scoped variables, collection bindings and bounded native string expressions against each server form. Preserve original form IDs and button indices when projecting Java dialogs or sending a negotiated native rendering scene to a client integration. Keep pack texture bytes and nine-slice metadata in the converted pack, and include the versioned built-in UI identity in conversion fingerprints.
+Evaluate loaded JSON UI templates, scoped variables, collection bindings and bounded native string expressions against each server form. Preserve original form IDs and button indices when projecting Java dialogs or sending raw inputs to a client with a confirmed UI program. The add-on reads images and nine-slice metadata from nested Bedrock packs. Keep the versioned built-in UI identity in conversion fingerprints.
 
 ## Design constraints
 
-Core owns menu identity, authoritative state, recipe actions, and response reconciliation. Publish authored presentation only through negotiated, lifetime-bound programs. Keep ordinary Java fallbacks available.
+Core owns menu identity, authoritative state, recipe actions, and response reconciliation. Publish authored presentation only after the frontend confirms the accepted program identity and resource generation. Keep ordinary Java fallbacks available.
 
 Prerequisites:
 
@@ -83,3 +83,7 @@ Accepted scoreboard scenes use the independent `viabedrock:native_hud_scoreboard
 HUD root snapshots include current boss-bar progress and refresh when the server changes it. This keeps an authored progress image current after its duplicate Java fallback has been suppressed.
 
 HUD root snapshots also carry the current title and subtitle strings, which the native HUD controller publishes to persistent controls as well as title factories. Each title update refreshes the root; a repeated title that leaves the scene unchanged sends nothing. The title state retains the root's `visibility_changed` binding values for the connection. MegaSMP repeats a `%obj%Tutorial` title every second, and its accepted pack hides that text from `hud_title_text` and shows it in a small top objective panel. `NativeHudPacketTest` drives SET_TITLE packets through a reduced copy of that pack. The routed title cancels the Java title, the root shows the objective, a repeat resends only the title scene, and an unrelated title leaves the objective in place. Removing the root refresh makes the test fail. Native visual parity was not compared.
+
+## Title lifetimes
+
+`NativeHudTitleState` separates published root text, the staged subtitle and the visible factory. `NativeHudTitleStateTest` replays both nine-stage installed-client sequences (replacement/Clear and expiry/Reset) with a controllable clock. The fixtures send Times and Title together, so publication of the staged subtitle at title creation is the smallest rule that fits them, not an isolated observation. Reset's effect on an active title's remaining time, subtitles before the first title, pack reload and controller reuse are unmeasured.

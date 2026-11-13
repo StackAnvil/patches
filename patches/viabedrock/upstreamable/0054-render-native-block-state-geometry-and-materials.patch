@@ -1,4 +1,4 @@
-From f0109700eadba10f9eaf921726d1297f2bbf186d Mon Sep 17 00:00:00 2001
+From 1e25b8d38ccf4317e8816fe2b14ed6d6774eeee8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -189,11 +189,10 @@ solver or vanilla per-type collision provider.
 Retain the material AO exponent on each authored face in the converted
 model, including aliases and generated reverse-winding planes. One face
 with exponent zero must not disable AO on all other faces. Bedrock
-1.26.51.1 retains a float exponent and applies it to the product of
-corner ambient light and directional dimming, before tint and lightmap.
-Native instruction probes cover six faces and 2,304 corner outputs with
-unchanged light coordinates. The core carries metadata on both routes;
-faithful per-face evaluation requires client renderer integration.
+1.26.60.5 raises ambient light to the float exponent before multiplying
+by directional dimming, tint and lightmap. The core carries this metadata
+on both routes; faithful per-face evaluation requires client renderer
+integration.
 
 Native corner light takes independent maxima across block and sky
 channels, without Java's zero replacement or arithmetic average.
@@ -577,6 +576,35 @@ failure inert before it can register HTTP access, advertise above a new
 base or kick its join. Regressions cover both completions. Remove the
 retired terrain-exporter texture wrappers and exercise the shared pass
 texture API directly in the existing pixel and precedence regressions.
+
+Decode face dimming from bit 0 of packed_bools. Bedrock 1.26.60.5 with
+BDS 1.26.60.6 serializes materials with packed_bools 5 when dimming is
+enabled and 4 when disabled, without a face_dimming field. The compiler
+read only face_dimming, so every serialized material kept dimming, and
+installed-client on/off pairs rendered identically. Keep the explicit
+field for definitions that still carry it.
+
+Apply the material exponent to ambient occlusion before directional
+dimming. Native emitter 0x1468c33f3 computes
+clamp(directional * powf(AO, exponent), 0, 1); the previous
+pow(AO * directional, exponent) changed axis faces with exponent 0 or 2.
+Export the native dimming-stage rule for continuous normals: weight each
+component by the coefficient for its sign and take the vector length.
+
+Sample inset faces per actual vertex, as native callback 0x146acea60
+does when the material has an exponent and the diagonal squared is at
+most 3.515625. The cache cell is the floor of the centroid biased 0.01
+along the normal. Builder 0x146acfe0d records a 3x3x3 neighborhood with
+a no-light mask for opaque or unreachable cells and a skip mask for cells
+whose faces or edges are all blocked. Each vertex weights the center by
+1.331558 and every reachable neighbor within radius 1.5 on the normal's
+side by 1 / (distance^2 + 0.001), and keeps per-channel light maxima.
+Two live cache tuples and eight live vertices from an admitted installed
+inset face replay exactly in the original instructions. The same
+captured neighborhood gives the native AO values and block light 14 on
+all four occluded vertices here. Outer-plane faces keep the corner path:
+their full-face controls predate this capture, and no native control
+compares the per-vertex path with them.
 ---
  Data Asset Sources.md                         |   53 +-
  .../chunk/blockstate/BlockItemDescriptor.java |   29 +
@@ -586,8 +614,8 @@ texture API directly in the existing pixel and precedence regressions.
  .../chunk/blockstate/RuntimeBlockPalette.java |   68 +
  .../chunk/blockstate/VanillaBlockStates.java  |   40 +
  .../api/model/CustomBlockCulling.java         |  211 ++++
- .../api/model/CustomBlockFaceLighting.java    |   98 ++
- .../api/model/CustomBlockLighting.java        |   59 +
+ .../api/model/CustomBlockFaceLighting.java    |  231 ++++
+ .../api/model/CustomBlockLighting.java        |   75 ++
  .../api/model/CustomBlockOffset.java          |   97 ++
  .../api/model/CustomBlockProperties.java      |  146 +++
  .../api/model/CustomBlockVisual.java          |   27 +
@@ -611,7 +639,7 @@ texture API directly in the existing pixel and precedence regressions.
  .../protocol/rewriter/BlockStateRewriter.java |  322 +++--
  .../rewriter/ResourcePackRewriter.java        |   12 +
  .../CustomBlockCullingCompiler.java           |  162 +++
- .../resourcepack/CustomBlockModel.java        |  588 +++++++++
+ .../resourcepack/CustomBlockModel.java        |  599 +++++++++
  .../CustomBlockResourceRewriter.java          |  175 +++
  .../CustomBlockStateDefinitions.java          |  225 ++++
  .../resourcepack/CustomBlockTextures.java     |   95 ++
@@ -619,7 +647,6 @@ texture API directly in the existing pixel and precedence regressions.
  .../resourcepack/NativeBlockCollision.java    |   82 ++
  .../resourcepack/NativeBlockSelection.java    |   54 +
  .../resourcepack/NativeBlockTransform.java    |  189 +++
- .../NativeEffectsResourceRewriter.java        |    3 +-
  .../protocol/storage/ChunkTracker.java        |   40 +-
  .../storage/CustomBlockPackStorage.java       |   37 +
  .../storage/JavaResourcePackRequest.java      |    2 +-
@@ -638,7 +665,7 @@ texture API directly in the existing pixel and precedence regressions.
  .../blockstate/RuntimeBlockPaletteTest.java   |   61 +
  .../blockstate/VanillaBlockStatesTest.java    |   87 ++
  .../api/model/CustomBlockCullingTest.java     |   68 +
- .../api/model/CustomBlockLightingTest.java    |  171 +++
+ .../api/model/CustomBlockLightingTest.java    |  224 ++++
  .../api/model/CustomBlockOffsetTest.java      |   80 ++
  .../api/model/CustomBlockPropertiesTest.java  |   92 ++
  .../api/model/NativeBlockGeometryTest.java    |   31 +
@@ -653,7 +680,7 @@ texture API directly in the existing pixel and precedence regressions.
  .../CustomBlockPackPublicationTest.java       |   91 ++
  .../packet/JavaResourcePackLifecycleTest.java |   29 +-
  .../rewriter/CustomBlockBoneGeometryTest.java |  213 ++++
- .../CustomBlockModelSelectionTest.java        |  746 +++++++++++
+ .../CustomBlockModelSelectionTest.java        |  770 +++++++++++
  .../CustomBlockPlaneGeometryTest.java         |  170 +++
  .../NativeBlockGeometryRegistrationTest.java  |  145 +++
  .../CustomBlockCullingCompilerTest.java       |  140 ++
@@ -666,7 +693,7 @@ texture API directly in the existing pixel and precedence regressions.
  .../storage/VoxelShapeRegistryTest.java       |  130 ++
  .../storage/WorldPacketBufferTest.java        |  255 ++++
  .../protocol/task/KeepAliveTaskTest.java      |   89 ++
- 88 files changed, 12454 insertions(+), 177 deletions(-)
+ 87 files changed, 12689 insertions(+), 176 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
@@ -737,7 +764,7 @@ texture API directly in the existing pixel and precedence regressions.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java
 
 diff --git a/Data Asset Sources.md b/Data Asset Sources.md
-index 10ba092a..9d80118a 100644
+index 10ba092ad..9d80118af 100644
 --- a/Data Asset Sources.md	
 +++ b/Data Asset Sources.md	
 @@ -25,6 +25,49 @@ The Java data generator and its setup steps are in [generator/README.md](generat
@@ -813,7 +840,7 @@ index 10ba092a..9d80118a 100644
 +Namespace fallback and complete runtime registration still need native comparison.
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
 new file mode 100644
-index 00000000..bd235231
+index 000000000..bd235231f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptor.java
 @@ -0,0 +1,29 @@
@@ -848,7 +875,7 @@ index 00000000..bd235231
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
 new file mode 100644
-index 00000000..2d290afe
+index 000000000..2d290afe6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptors.java
 @@ -0,0 +1,141 @@
@@ -995,7 +1022,7 @@ index 00000000..2d290afe
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
 new file mode 100644
-index 00000000..492e3ed4
+index 000000000..492e3ed40
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStates.java
 @@ -0,0 +1,134 @@
@@ -1135,7 +1162,7 @@ index 00000000..492e3ed4
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java
 new file mode 100644
-index 00000000..f9ca3790
+index 000000000..f9ca37907
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNames.java
 @@ -0,0 +1,145 @@
@@ -1286,7 +1313,7 @@ index 00000000..f9ca3790
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/RuntimeBlockPalette.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/RuntimeBlockPalette.java
 new file mode 100644
-index 00000000..72d7bd19
+index 000000000..72d7bd191
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/RuntimeBlockPalette.java
 @@ -0,0 +1,68 @@
@@ -1360,7 +1387,7 @@ index 00000000..72d7bd19
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/VanillaBlockStates.java b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/VanillaBlockStates.java
 new file mode 100644
-index 00000000..81c7a59b
+index 000000000..81c7a59b0
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/chunk/blockstate/VanillaBlockStates.java
 @@ -0,0 +1,40 @@
@@ -1406,7 +1433,7 @@ index 00000000..81c7a59b
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
 new file mode 100644
-index 00000000..21c0870c
+index 000000000..21c0870c6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
 @@ -0,0 +1,211 @@
@@ -1623,10 +1650,10 @@ index 00000000..21c0870c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
 new file mode 100644
-index 00000000..ef477d59
+index 000000000..a2e11c087
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,231 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1696,8 +1723,141 @@ index 00000000..ef477d59
 +        return new Face(corners[0], corners[1], corners[2], corners[3]);
 +    }
 +
++    /**
++     * Native classic terrain uses the per-vertex sampler of callback 0x146acea60 when the material has an AO
++     * exponent and the first/third vertex diagonal squared is at most 3.515625. Other faces use the per-face path.
++     */
++    public static boolean perVertex(final CustomBlockLighting material, final float[][] positions) {
++        final float x = positions[0][0] - positions[2][0];
++        final float y = positions[0][1] - positions[2][1];
++        final float z = positions[0][2] - positions[2][2];
++        return material.ambientOcclusion() != 0F && x * x + y * y + z * z <= 3.515625F;
++    }
++
++    /**
++     * Sample each actual vertex like the native per-vertex callback. The cache cell is the floor of the
++     * centroid biased 0.01 along the normal. Its 3x3x3 neighborhood records AO, light and two masks: cells
++     * without light (opaque or unreachable) and cells skipped entirely. Each vertex then weights the cache
++     * center and the reachable neighbors within radius 1.5 on the normal's side of the vertex by
++     * 1 / (distance^2 + 0.001) and keeps the per-channel light maximum.
++     */
++    public static Vertex[] sampleVertices(final float[][] positions, final float[] normal, final Neighborhood neighborhood) {
++        final float bias = 0.01F;
++        final int ox = (int) Math.floor(((positions[0][0] + positions[1][0] + positions[2][0] + positions[3][0]) * 0.25F) + normal[0] * bias);
++        final int oy = (int) Math.floor(((positions[0][1] + positions[1][1] + positions[2][1] + positions[3][1]) * 0.25F) + normal[1] * bias);
++        final int oz = (int) Math.floor(((positions[0][2] + positions[1][2] + positions[2][2] + positions[3][2]) * 0.25F) + normal[2] * bias);
++        final Cache cache = Cache.build(ox, oy, oz, neighborhood);
++        final Vertex[] vertices = new Vertex[4];
++        for (int i = 0; i < 4; i++) {
++            vertices[i] = cache.vertex(ox, oy, oz, positions[i], normal);
++        }
++        return vertices;
++    }
++
 +    private static int step(final Direction direction, final int axis) {
 +        return direction.axis() == axis ? (direction.positive() ? 1 : -1) : 0;
++    }
++
++    /** One sampled vertex: Java-packed light and the AO value before the material exponent. */
++    public record Vertex(int light, float ambient) {
++    }
++
++    private record Cache(int lightMask, int skipMask, int[] lights, float[] ambient) {
++
++        // Neighbor offsets from cache origin - 1 and the faces/edges each one is reached through.
++        private static final int[][] OFFSETS = {
++            {0, 1, 1}, {1, 1, 0}, {1, 0, 1}, {1, 2, 1}, {1, 1, 2}, {2, 1, 1}, {0, 1, 0}, {0, 0, 1}, {0, 2, 1},
++            {0, 1, 2}, {1, 0, 0}, {1, 2, 0}, {1, 0, 2}, {1, 2, 2}, {2, 1, 0}, {2, 0, 1}, {2, 2, 1}, {2, 1, 2},
++            {0, 0, 0}, {0, 2, 0}, {0, 0, 2}, {0, 2, 2}, {2, 0, 0}, {2, 2, 0}, {2, 0, 2}, {2, 2, 2}
++        };
++        private static final int[] DEPENDENCIES = {
++            0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x6, 0xA, 0x12, 0x22, 0xC, 0x14, 0x28, 0x30, 0x44, 0x48, 0x50, 0x60,
++            0x980, 0x1280, 0x2500, 0x4600, 0x188, 0x290, 0x520, 0x640
++        };
++        private static final float NORMAL_BIAS = 0.45F;
++        private static final float CENTER_WEIGHT = Float.intBitsToFloat(0x3FAA707E);
++        private static final float RADIUS_SQUARED = 2.25F;
++        private static final float WEIGHT_EPSILON = 0.001F;
++
++        /** Cache builder 0x146acfe0d: neighbors behind opaque cells on every path are skipped. */
++        private static Cache build(final int ox, final int oy, final int oz, final Neighborhood neighborhood) {
++            final int[] lights = new int[27];
++            final float[] ambient = new float[27];
++            final Sample center = neighborhood.sample(ox, oy, oz);
++            ambient[0] = center.ambient();
++            if (center.opaque()) {
++                return new Cache(0xFFFFFFFF, 0xFFFFFFFE, lights, ambient);
++            }
++            lights[0] = center.light();
++            int lightMask = 0;
++            int skipMask = 0;
++            for (int i = 0; i < OFFSETS.length; i++) {
++                final int bit = 1 << (i + 1);
++                if ((DEPENDENCIES[i] & ~lightMask) == 0) {
++                    skipMask |= bit;
++                    lightMask |= bit;
++                    continue;
++                }
++                final Sample sample = neighborhood.sample(ox - 1 + OFFSETS[i][0], oy - 1 + OFFSETS[i][1], oz - 1 + OFFSETS[i][2]);
++                ambient[i + 1] = sample.ambient();
++                if (sample.opaque()) {
++                    lightMask |= bit;
++                } else {
++                    lights[i + 1] = sample.light();
++                }
++            }
++            return new Cache(lightMask, skipMask, lights, ambient);
++        }
++
++        /** Vertex loop 0x146ad01a5..0x146ad0384, with its float operation order. */
++        private Vertex vertex(final int ox, final int oy, final int oz, final float[] position, final float[] normal) {
++            final float px = position[0];
++            final float py = position[1];
++            final float pz = position[2];
++            final float nx = normal[0];
++            final float ny = normal[1];
++            final float nz = normal[2];
++            final float bx = nx * NORMAL_BIAS;
++            final float by = ny * NORMAL_BIAS;
++            final float bz = nz * NORMAL_BIAS;
++            int skip = this.skipMask;
++            int light = 0;
++            float total = 0F;
++            float weights = 0F;
++            if ((skip & 1) == 0 && 0F <= ((((oz + 0.5F) - pz) + bz) * nz + (((ox + 0.5F) - px) + bx) * nx) + (((oy + 0.5F) - py) + by) * ny) {
++                if ((this.lightMask & 1) == 0) {
++                    light = this.lights[0];
++                }
++                total = this.ambient[0] * CENTER_WEIGHT + 0F;
++                weights = CENTER_WEIGHT;
++            }
++            for (int i = 0; i < OFFSETS.length; i++) {
++                final int bit = 1 << (i + 1);
++                if ((skip & bit) != 0) {
++                    continue;
++                }
++                if ((DEPENDENCIES[i] & ~skip) != 0) {
++                    final float dy = ((float) (OFFSETS[i][1] + oy - 1) + 0.5F) - py;
++                    final float dz = ((float) (OFFSETS[i][2] + oz - 1) + 0.5F) - pz;
++                    final float dx = ((float) (OFFSETS[i][0] + ox - 1) + 0.5F) - px;
++                    final float distance = dz * dz + dx * dx + dy * dy;
++                    if (distance <= RADIUS_SQUARED) {
++                        if (0F <= ((dz + bz) * nz + (dx + bx) * nx) + (dy + by) * ny) {
++                            if ((this.lightMask & bit) == 0) {
++                                light = CustomBlockLighting.maximumLight(light, this.lights[i + 1], 0, 0);
++                            }
++                            final float weight = 1F / (distance + WEIGHT_EPSILON);
++                            weights += weight;
++                            total += weight * this.ambient[i + 1];
++                        }
++                        continue;
++                    }
++                }
++                skip |= bit;
++            }
++            final float ambient = weights != 0F ? total / weights : 0F;
++            return new Vertex(light, Math.min(Math.max(ambient, 0F), 1F));
++        }
 +    }
 +
 +    @FunctionalInterface
@@ -1727,10 +1887,10 @@ index 00000000..ef477d59
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
 new file mode 100644
-index 00000000..17ad336e
+index 000000000..acbc867c5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,75 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1784,15 +1944,31 @@ index 00000000..17ad336e
 +        return lower * (1F - outer) + upper * outer;
 +    }
 +
-+    /** Native terrain applies the exponent after corner averaging and directional attenuation, before tint and world light. */
++    /**
++     * Native emitter 0x1468c33f3 multiplies the dimming factor by powf(AO, exponent) and clamps the product.
++     * Dimming stays outside the exponent; a disabled material uses factor 1.
++     */
 +    public float shade(final float ambient, final float directional) {
-+        return (float) Math.pow(ambient * (this.faceDimming ? directional : 1F), this.ambientOcclusion);
++        final float factor = (this.faceDimming ? directional : 1F) * (float) Math.pow(ambient, this.ambientOcclusion);
++        return Math.clamp(factor, 0F, 1F);
++    }
++
++    /**
++     * Native dimming stage weights each normal component by the coefficient for its sign and returns the
++     * length of the weighted vector. Axis-aligned normals give the cardinal coefficient unchanged.
++     */
++    public static float directional(final float nx, final float ny, final float nz, final float west, final float east,
++                                    final float down, final float up, final float north, final float south) {
++        final float x = nx * (nx < 0F ? west : east);
++        final float y = ny * (ny < 0F ? down : up);
++        final float z = nz * (nz < 0F ? north : south);
++        return (float) Math.sqrt(x * x + y * y + z * z);
 +    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
 new file mode 100644
-index 00000000..e3b4c919
+index 000000000..e3b4c9196
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
 @@ -0,0 +1,97 @@
@@ -1895,7 +2071,7 @@ index 00000000..e3b4c919
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
 new file mode 100644
-index 00000000..a8805d8e
+index 000000000..a8805d8ee
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
 @@ -0,0 +1,146 @@
@@ -2047,7 +2223,7 @@ index 00000000..a8805d8e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
 new file mode 100644
-index 00000000..59498966
+index 000000000..594989663
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
 @@ -0,0 +1,27 @@
@@ -2080,7 +2256,7 @@ index 00000000..59498966
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockGeometry.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockGeometry.java
 new file mode 100644
-index 00000000..4acaaa8c
+index 000000000..4acaaa8ca
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockGeometry.java
 @@ -0,0 +1,79 @@
@@ -2165,7 +2341,7 @@ index 00000000..4acaaa8c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockPrimaryGeometry.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockPrimaryGeometry.java
 new file mode 100644
-index 00000000..e50e1d0d
+index 000000000..e50e1d0de
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockPrimaryGeometry.java
 @@ -0,0 +1,297 @@
@@ -2468,7 +2644,7 @@ index 00000000..e50e1d0d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeSlabGeometry.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeSlabGeometry.java
 new file mode 100644
-index 00000000..07c85994
+index 000000000..07c859942
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeSlabGeometry.java
 @@ -0,0 +1,82 @@
@@ -2556,7 +2732,7 @@ index 00000000..07c85994
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java
 new file mode 100644
-index 00000000..039f1d46
+index 000000000..039f1d46c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java
 @@ -0,0 +1,86 @@
@@ -2647,7 +2823,7 @@ index 00000000..039f1d46
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockDefinitions.java
-index e15aef6f..bc698fc3 100644
+index e15aef6f1..bc698fc3a 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockDefinitions.java
 @@ -19,6 +19,7 @@ package net.raphimc.viabedrock.api.resourcepack.definition;
@@ -2697,7 +2873,7 @@ index e15aef6f..bc698fc3 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
 new file mode 100644
-index 00000000..2cac120f
+index 000000000..2cac120f6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
 @@ -0,0 +1,73 @@
@@ -2775,7 +2951,7 @@ index 00000000..2cac120f
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
-index d267ff7f..6f116c12 100644
+index d267ff7fe..6f116c12c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
 @@ -31,6 +31,7 @@ import java.util.logging.Level;
@@ -2805,7 +2981,7 @@ index d267ff7f..6f116c12 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
-index ba8c2db5..5c6717be 100644
+index ba8c2db57..5c6717bea 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
 @@ -29,9 +29,44 @@ import java.util.logging.Level;
@@ -2918,7 +3094,7 @@ index ba8c2db5..5c6717be 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 0cb7b1cc..c0e6e6c6 100644
+index 2becb508c..f91f88ea5 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -17,7 +17,9 @@
@@ -2931,7 +3107,7 @@ index 0cb7b1cc..c0e6e6c6 100644
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
-@@ -76,7 +78,8 @@ public class ConvertedResourcePackCache {
+@@ -75,7 +77,8 @@ public class ConvertedResourcePackCache {
          this(directory, mode, storage -> {
              try {
                  final long start = System.nanoTime();
@@ -2941,7 +3117,7 @@ index 0cb7b1cc..c0e6e6c6 100644
                  ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted resource packs in " + ((System.nanoTime() - start) / 1_000_000L) + "ms");
                  return content;
              } catch (final Exception e) {
-@@ -102,7 +105,7 @@ public class ConvertedResourcePackCache {
+@@ -101,7 +104,7 @@ public class ConvertedResourcePackCache {
          if (this.mode == ViaBedrockConfig.PackCacheMode.DISABLED) {
              return this.executor.submit(() -> this.convert(storage));
          }
@@ -2950,8 +3126,8 @@ index 0cb7b1cc..c0e6e6c6 100644
                  this.prepare(key, storage).thenApply(pack -> {
                      storage.getConverterData().putAll(pack.converterData());
                      return pack;
-@@ -269,7 +272,8 @@ public class ConvertedResourcePackCache {
-         }
+@@ -244,7 +247,8 @@ public class ConvertedResourcePackCache {
+         return new Pack(null, bytes, bytes.length, sha1, id, converterData);
      }
  
 -    static String fingerprint(final Collection<ResourcePack> packs) {
@@ -2960,7 +3136,7 @@ index 0cb7b1cc..c0e6e6c6 100644
          final MessageDigest digest = digest("SHA-256");
          try (var output = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
              writeString(output, ViaBedrock.IMPL_VERSION);
-@@ -294,6 +298,29 @@ public class ConvertedResourcePackCache {
+@@ -271,6 +275,29 @@ public class ConvertedResourcePackCache {
          return HexFormat.of().formatHex(digest.digest());
      }
  
@@ -2991,7 +3167,7 @@ index 0cb7b1cc..c0e6e6c6 100644
          final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
          output.writeInt(bytes.length);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index 44e1ff72..f0acf800 100644
+index 44e1ff721..f0acf800d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -53,7 +53,12 @@ import net.raphimc.viabedrock.protocol.task.*;
@@ -3060,7 +3236,7 @@ index 44e1ff72..f0acf800 100644
                  final PacketWrapper playStatus = PacketWrapper.create(ClientboundBedrockPackets.PLAY_STATUS, wrapper.user());
                  playStatus.write(Types.INT, PlayStatus.LoginSuccess.getValue()); // status
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BlockProperties.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BlockProperties.java
-index 77ec076e..adae8584 100644
+index 77ec076ec..adae85849 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/BlockProperties.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BlockProperties.java
 @@ -18,6 +18,16 @@
@@ -3082,7 +3258,7 @@ index 77ec076e..adae8584 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BlockTraitStates.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BlockTraitStates.java
 new file mode 100644
-index 00000000..6447cfb6
+index 000000000..6447cfb60
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BlockTraitStates.java
 @@ -0,0 +1,195 @@
@@ -3283,7 +3459,7 @@ index 00000000..6447cfb6
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CustomBlockStates.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CustomBlockStates.java
 new file mode 100644
-index 00000000..ee311d9b
+index 000000000..ee311d9b5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CustomBlockStates.java
 @@ -0,0 +1,88 @@
@@ -3376,7 +3552,7 @@ index 00000000..ee311d9b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 6b6a97d8..bffaab89 100644
+index 6b6a97d8b..bffaab895 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -62,6 +62,12 @@ import net.raphimc.viabedrock.protocol.storage.*;
@@ -3524,7 +3700,7 @@ index 6b6a97d8..bffaab89 100644
  
      static long initialDayTime(final int dayCycleStopTime, final long levelTime) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 4e938607..ef873bc2 100644
+index 4e9386072..ef873bc2f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -40,6 +40,8 @@ import net.raphimc.viabedrock.protocol.storage.JavaResourcePackRequest;
@@ -3640,7 +3816,7 @@ index 4e938607..ef873bc2 100644
          resourcePack.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java
 new file mode 100644
-index 00000000..9c9d6637
+index 000000000..9c9d66373
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java
 @@ -0,0 +1,35 @@
@@ -3680,7 +3856,7 @@ index 00000000..9c9d6637
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/NettyPipelineProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/NettyPipelineProvider.java
-index 550e64c0..b39052b4 100644
+index 550e64c08..b39052b48 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/provider/NettyPipelineProvider.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/NettyPipelineProvider.java
 @@ -25,6 +25,11 @@ import javax.crypto.SecretKey;
@@ -3696,7 +3872,7 @@ index 550e64c0..b39052b4 100644
       * Enables compression/decompression for the given user. May get called multiple times for the same user.
       *
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index a4ce7054..a7a50158 100644
+index a4ce7054d..a7a50158b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 @@ -17,23 +17,37 @@
@@ -4132,10 +4308,10 @@ index a4ce7054..a7a50158 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-index 21454ca3..1cd9c568 100644
+index af81b8a20..fd96cf804 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-@@ -22,6 +22,7 @@ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+@@ -23,6 +23,7 @@ import net.raphimc.viabedrock.api.resourcepack.content.Content;
  import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
@@ -4143,7 +4319,7 @@ index 21454ca3..1cd9c568 100644
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
-@@ -76,6 +77,17 @@ public final class ResourcePackRewriter {
+@@ -80,6 +81,17 @@ public final class ResourcePackRewriter {
          return javaContent;
      }
  
@@ -4163,7 +4339,7 @@ index 21454ca3..1cd9c568 100644
          pack.addProperty("description", "ViaBedrock Resource Pack");
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompiler.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompiler.java
 new file mode 100644
-index 00000000..5a7981fc
+index 000000000..5a7981fc9
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompiler.java
 @@ -0,0 +1,162 @@
@@ -4331,10 +4507,10 @@ index 00000000..5a7981fc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..41f6a22a
+index 000000000..f20927ce3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,588 @@
+@@ -0,0 +1,599 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4451,7 +4627,7 @@ index 00000000..41f6a22a
 +            if (!Float.isFinite(exponent) || exponent < 0F || exponent > 10F) {
 +                return null;
 +            }
-+            faceLighting.put(face, new CustomBlockLighting(exponent, !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0));
++            faceLighting.put(face, new CustomBlockLighting(exponent, faceDimming(material)));
 +            opaque &= method.equals("opaque") || !method.equals("blend") && textures.hasOpaquePixels(image);
 +            ao |= exponent != 0F;
 +            if (method.equals("blend") || renderMethod.equals("opaque")) {
@@ -4582,6 +4758,17 @@ index 00000000..41f6a22a
 +            }
 +            faces.add(opposite, back);
 +        }
++    }
++
++    /**
++     * Protocol 2225 serializes the material's face dimming in bit 0 of packed_bools, without a face_dimming field.
++     * Keep the explicit field for definitions that still carry it. Absent values default to dimming.
++     */
++    static boolean faceDimming(final CompoundTag material) {
++        if (material.get("packed_bools") instanceof NumberTag packed) {
++            return (packed.asInt() & 1) != 0;
++        }
++        return !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0;
 +    }
 +
 +    private static void applyFaceMaterials(final JsonObject model, final Map<String, CustomBlockLighting> faceLighting, final Map<Direction, String> methods) {
@@ -4925,7 +5112,7 @@ index 00000000..41f6a22a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
 new file mode 100644
-index 00000000..92aa986c
+index 000000000..92aa986cc
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
 @@ -0,0 +1,175 @@
@@ -5106,7 +5293,7 @@ index 00000000..92aa986c
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
 new file mode 100644
-index 00000000..a063da13
+index 000000000..a063da135
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
 @@ -0,0 +1,225 @@
@@ -5337,7 +5524,7 @@ index 00000000..a063da13
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextures.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextures.java
 new file mode 100644
-index 00000000..7492049f
+index 000000000..7492049fe
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextures.java
 @@ -0,0 +1,95 @@
@@ -5438,7 +5625,7 @@ index 00000000..7492049f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java
 new file mode 100644
-index 00000000..faddc8bd
+index 000000000..faddc8bdd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCache.java
 @@ -0,0 +1,287 @@
@@ -5731,7 +5918,7 @@ index 00000000..faddc8bd
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockCollision.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockCollision.java
 new file mode 100644
-index 00000000..cb349154
+index 000000000..cb349154a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockCollision.java
 @@ -0,0 +1,82 @@
@@ -5819,7 +6006,7 @@ index 00000000..cb349154
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java
 new file mode 100644
-index 00000000..3f5ae8ad
+index 000000000..3f5ae8add
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockSelection.java
 @@ -0,0 +1,54 @@
@@ -5879,7 +6066,7 @@ index 00000000..3f5ae8ad
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
 new file mode 100644
-index 00000000..09e03da3
+index 000000000..09e03da39
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeBlockTransform.java
 @@ -0,0 +1,189 @@
@@ -6072,22 +6259,8 @@ index 00000000..09e03da3
 +    }
 +
 +}
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
-index d045933a..ee78127b 100644
---- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
-@@ -20,7 +20,8 @@ public final class NativeEffectsResourceRewriter implements ResourcePackRewriter
- 
-     @Override
-     public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
--        submitter.accept(() -> archive(NativeActorLibrary.PATH, () -> NativeActorLibrary.encode(storage.getPackStackBottomToTop(), storage::isServerPack)));
-+        submitter.accept(() -> archive(NativeActorLibrary.PATH,
-+                () -> NativeActorLibrary.encode(storage.getPackStackBottomToTop(), storage::isServerPack)));
-     }
- 
-     private static Content archive(final String path, final Encoder encoder) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index 130e0b82..6510122f 100644
+index 130e0b824..6510122f3 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -52,6 +52,7 @@ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
@@ -6216,7 +6389,7 @@ index 130e0b82..6510122f 100644
                      return;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
 new file mode 100644
-index 00000000..0fef4f5c
+index 000000000..0fef4f5c2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
 @@ -0,0 +1,37 @@
@@ -6258,7 +6431,7 @@ index 00000000..0fef4f5c
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/JavaResourcePackRequest.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/JavaResourcePackRequest.java
-index d680e930..223f515a 100644
+index d680e930a..223f515ad 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/JavaResourcePackRequest.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/JavaResourcePackRequest.java
 @@ -8,5 +8,5 @@ package net.raphimc.viabedrock.protocol.storage;
@@ -6269,7 +6442,7 @@ index d680e930..223f515a 100644
 +/** Correlates Java acknowledgements with the base or block supplement currently advertised. */
  public record JavaResourcePackRequest(UUID id) implements StorableObject { }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-index ea436f25..8082865c 100644
+index e71e98953..caa0e0223 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 @@ -18,6 +18,7 @@
@@ -6360,7 +6533,7 @@ index ea436f25..8082865c 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
 new file mode 100644
-index 00000000..d8425be5
+index 000000000..d8425be58
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
 @@ -0,0 +1,125 @@
@@ -6491,7 +6664,7 @@ index 00000000..d8425be5
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBuffer.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBuffer.java
 new file mode 100644
-index 00000000..95b4e7d8
+index 000000000..95b4e7d84
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBuffer.java
 @@ -0,0 +1,105 @@
@@ -6601,7 +6774,7 @@ index 00000000..95b4e7d8
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java b/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
-index 3f0dc0ae..83d03816 100644
+index 3f0dc0aec..83d038163 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/task/KeepAliveTask.java
 @@ -21,10 +21,12 @@ import com.viaversion.viaversion.api.Via;
@@ -6640,7 +6813,7 @@ index 3f0dc0ae..83d03816 100644
                      } catch (final Throwable e) {
 diff --git a/src/main/resources/META-INF/licenses/cloudburst-data.txt b/src/main/resources/META-INF/licenses/cloudburst-data.txt
 new file mode 100644
-index 00000000..261eeb9e
+index 000000000..261eeb9e9
 --- /dev/null
 +++ b/src/main/resources/META-INF/licenses/cloudburst-data.txt
 @@ -0,0 +1,201 @@
@@ -6847,7 +7020,7 @@ index 00000000..261eeb9e
 +   limitations under the License.
 diff --git a/src/main/resources/assets/viabedrock/data/bedrock/block_item_states.json b/src/main/resources/assets/viabedrock/data/bedrock/block_item_states.json
 new file mode 100644
-index 00000000..450ca96e
+index 000000000..450ca96e2
 --- /dev/null
 +++ b/src/main/resources/assets/viabedrock/data/bedrock/block_item_states.json
 @@ -0,0 +1,1121 @@
@@ -7974,7 +8147,7 @@ index 00000000..450ca96e
 +}
 diff --git a/src/main/resources/assets/viabedrock/data/bedrock/block_property_values.json b/src/main/resources/assets/viabedrock/data/bedrock/block_property_values.json
 new file mode 100644
-index 00000000..0b44099a
+index 000000000..0b44099a8
 --- /dev/null
 +++ b/src/main/resources/assets/viabedrock/data/bedrock/block_property_values.json
 @@ -0,0 +1,979 @@
@@ -8959,7 +9132,7 @@ index 00000000..0b44099a
 +}
 diff --git a/src/main/resources/assets/viabedrock/data/bedrock/block_registry_aliases.json b/src/main/resources/assets/viabedrock/data/bedrock/block_registry_aliases.json
 new file mode 100644
-index 00000000..f2dcda53
+index 000000000..f2dcda532
 --- /dev/null
 +++ b/src/main/resources/assets/viabedrock/data/bedrock/block_registry_aliases.json
 @@ -0,0 +1,66 @@
@@ -9031,7 +9204,7 @@ index 00000000..f2dcda53
 +}
 diff --git a/src/main/resources/assets/viabedrock/data/bedrock/block_restriction_groups.json b/src/main/resources/assets/viabedrock/data/bedrock/block_restriction_groups.json
 new file mode 100644
-index 00000000..0343c445
+index 000000000..0343c4459
 --- /dev/null
 +++ b/src/main/resources/assets/viabedrock/data/bedrock/block_restriction_groups.json
 @@ -0,0 +1,549 @@
@@ -9586,7 +9759,7 @@ index 00000000..0343c445
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java
 new file mode 100644
-index 00000000..56bc85da
+index 000000000..56bc85da9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemDescriptorsTest.java
 @@ -0,0 +1,119 @@
@@ -9711,7 +9884,7 @@ index 00000000..56bc85da
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStatesTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStatesTest.java
 new file mode 100644
-index 00000000..c9d8158b
+index 000000000..c9d8158b0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockItemStatesTest.java
 @@ -0,0 +1,135 @@
@@ -9852,7 +10025,7 @@ index 00000000..c9d8158b
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java
 new file mode 100644
-index 00000000..5718411d
+index 000000000..5718411d7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/BlockRegistryNamesTest.java
 @@ -0,0 +1,107 @@
@@ -9965,7 +10138,7 @@ index 00000000..5718411d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/RuntimeBlockPaletteTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/RuntimeBlockPaletteTest.java
 new file mode 100644
-index 00000000..0ce3c2bd
+index 000000000..0ce3c2bde
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/RuntimeBlockPaletteTest.java
 @@ -0,0 +1,61 @@
@@ -10032,7 +10205,7 @@ index 00000000..0ce3c2bd
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/VanillaBlockStatesTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/VanillaBlockStatesTest.java
 new file mode 100644
-index 00000000..d9b5a94d
+index 000000000..d9b5a94dc
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/chunk/blockstate/VanillaBlockStatesTest.java
 @@ -0,0 +1,87 @@
@@ -10125,7 +10298,7 @@ index 00000000..d9b5a94d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java
 new file mode 100644
-index 00000000..44c7e38b
+index 000000000..44c7e38bf
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java
 @@ -0,0 +1,68 @@
@@ -10199,10 +10372,10 @@ index 00000000..44c7e38b
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
 new file mode 100644
-index 00000000..2f5290ce
+index 000000000..53c27a564
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,224 @@
 +package net.raphimc.viabedrock.api.model;
 +
 +import com.viaversion.viaversion.libs.gson.JsonParser;
@@ -10219,12 +10392,65 @@ index 00000000..2f5290ce
 +class CustomBlockLightingTest {
 +
 +    @Test
-+    void exponentIncludesDimmingAndKeepsUntintedWorldLightSeparate() {
-+        assertEquals(0.16F, new CustomBlockLighting(2F, true).shade(0.5F, 0.8F), 1E-7F);
++    void exponentAppliesToAmbientOcclusionBeforeDirectionalDimming() {
++        // Original Bedrock 1.26.60.5 emitter 0x1468c33f3 results.
++        assertEquals(0.6000000238418579F, new CustomBlockLighting(0F, true).shade(0.5F, 0.6F));
++        assertEquals(0.30000001192092896F, new CustomBlockLighting(1F, true).shade(0.5F, 0.6F));
++        assertEquals(0.15000000596046448F, new CustomBlockLighting(2F, true).shade(0.5F, 0.6F));
++        for (float exponent : new float[]{0F, 1F, 2F}) {
++            assertEquals(0.5F, new CustomBlockLighting(exponent, true).shade(1F, 0.5F));
++        }
 +        assertEquals(0.25F, new CustomBlockLighting(2F, false).shade(0.5F, 0.8F));
-+        assertEquals(1F, new CustomBlockLighting(0F, true).shade(0.2F, 0.5F));
-+        assertEquals(0.4F, new CustomBlockLighting(1F, true).shade(0.5F, 0.8F));
++        assertEquals(1F, new CustomBlockLighting(0F, false).shade(0.2F, 0.5F));
 +        assertEquals(0F, new CustomBlockLighting(10F, true).shade(0F, 0.8F));
++    }
++
++    @Test
++    void directionalDimmingUsesTheWeightedContinuousNormal() {
++        // Native dimension-0 coefficients and dimming-stage results for axis and 30-degree tilted normals.
++        final float[][] normals = {
++            {0F, -1F, 0F}, {0F, 1F, 0F}, {0F, 0F, -1F}, {-1F, 0F, 0F},
++            {0F, 0.5F, -0.8660254F}, {0.5F, 0.8660254F, 0F}, {0.5F, -0.8660254F, 0F}, {0.8660254F, 0F, 0.5F}
++        };
++        final float[] expected = {
++            0.5F, 1F, 0.800000011920929F, 0.6000000238418579F,
++            0.8544003963470459F, 0.9165151715278625F, 0.5267826914787292F, 0.6557438373565674F
++        };
++        for (int i = 0; i < normals.length; i++) {
++            assertEquals(expected[i], CustomBlockLighting.directional(normals[i][0], normals[i][1], normals[i][2],
++                    0.6F, 0.6F, 0.5F, 1F, 0.8F, 0.8F), 1E-7F);
++        }
++    }
++
++    @Test
++    void insetVerticesUseTheCapturedNativeNeighborhood() {
++        // Bedrock 1.26.60.5 live capture: north inset quad at z=0.25 with stone at -X and -Y, glowstone at +X-Y.
++        final float[][] positions = {{0.75F, 0.75F, 0.25F}, {0.75F, 0.25F, 0.25F}, {0.25F, 0.25F, 0.25F}, {0.25F, 0.75F, 0.25F}};
++        final float[] normal = {0F, 0F, -1F};
++        assertTrue(CustomBlockFaceLighting.perVertex(new CustomBlockLighting(1F, true), positions));
++        assertFalse(CustomBlockFaceLighting.perVertex(new CustomBlockLighting(0F, true), positions));
++        final var uniform = CustomBlockFaceLighting.sampleVertices(positions, normal,
++                (x, y, z) -> new CustomBlockFaceLighting.Sample(15 << 20, 1F, false));
++        for (final var vertex : uniform) {
++            assertEquals(1F, vertex.ambient());
++            assertEquals(15 << 20, vertex.light());
++        }
++        // Block light of the captured cells, indexed [x + 1][y + 1][z + 1].
++        final int[][][] block = {
++            {{12, 11, 12}, {11, 0, 11}, {10, 11, 10}},
++            {{13, 0, 13}, {12, 13, 12}, {11, 12, 11}},
++            {{14, 15, 14}, {13, 14, 13}, {12, 13, 12}}
++        };
++        final var occluded = CustomBlockFaceLighting.sampleVertices(positions, normal, (x, y, z) -> {
++            final boolean opaque = x == -1 && y == 0 && z == 0 || x == 0 && y == -1 && z == 0 || x == 1 && y == -1 && z == 0;
++            final int sky = opaque ? 0 : x == -1 && y == -1 && z == 0 ? 14 : 15;
++            return new CustomBlockFaceLighting.Sample(block[x + 1][y + 1][z + 1] << 4 | sky << 20, opaque ? 0.2F : 1F, opaque);
++        });
++        final float[] expected = {0.8888822793960571F, 0.7967658638954163F, 0.7549734115600586F, 0.8560160994529724F};
++        for (int i = 0; i < 4; i++) {
++            assertEquals(expected[i], occluded[i].ambient(), 0F);
++            assertEquals(14 << 4 | 15 << 20, occluded[i].light());
++        }
 +    }
 +
 +    @Test
@@ -10376,7 +10602,7 @@ index 00000000..2f5290ce
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
 new file mode 100644
-index 00000000..2615420e
+index 000000000..2615420e9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
 @@ -0,0 +1,80 @@
@@ -10462,7 +10688,7 @@ index 00000000..2615420e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
 new file mode 100644
-index 00000000..872ce5e2
+index 000000000..872ce5e25
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
 @@ -0,0 +1,92 @@
@@ -10560,7 +10786,7 @@ index 00000000..872ce5e2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockGeometryTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockGeometryTest.java
 new file mode 100644
-index 00000000..b8e45975
+index 000000000..b8e45975e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockGeometryTest.java
 @@ -0,0 +1,31 @@
@@ -10597,7 +10823,7 @@ index 00000000..b8e45975
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockPrimaryGeometryTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockPrimaryGeometryTest.java
 new file mode 100644
-index 00000000..db26803d
+index 000000000..db26803d6
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockPrimaryGeometryTest.java
 @@ -0,0 +1,46 @@
@@ -10649,7 +10875,7 @@ index 00000000..db26803d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeSlabGeometryTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeSlabGeometryTest.java
 new file mode 100644
-index 00000000..6ea74aac
+index 000000000..6ea74aacc
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeSlabGeometryTest.java
 @@ -0,0 +1,48 @@
@@ -10703,7 +10929,7 @@ index 00000000..6ea74aac
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java
 new file mode 100644
-index 00000000..9b0790e1
+index 000000000..9b0790e12
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitionsTest.java
 @@ -0,0 +1,42 @@
@@ -10750,7 +10976,7 @@ index 00000000..9b0790e1
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-index 9e5137e3..a746f042 100644
+index 3469ca2c8..de5e39aa6 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 @@ -17,7 +17,10 @@
@@ -10762,9 +10988,9 @@ index 9e5137e3..a746f042 100644
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
 +import net.raphimc.viabedrock.api.model.CustomBlockProperties;
  import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+ import net.raphimc.viabedrock.api.resourcepack.content.SubpackContent;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
- import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
-@@ -32,6 +35,7 @@ import java.io.OutputStream;
+@@ -33,6 +36,7 @@ import java.io.OutputStream;
  import java.nio.file.Files;
  import java.nio.file.Path;
  import java.util.List;
@@ -10772,7 +10998,7 @@ index 9e5137e3..a746f042 100644
  import java.util.UUID;
  import java.util.Map;
  import java.util.Random;
-@@ -147,6 +151,68 @@ class ConvertedResourcePackCacheTest {
+@@ -159,6 +163,68 @@ class ConvertedResourcePackCacheTest {
          }
      }
  
@@ -10843,7 +11069,7 @@ index 9e5137e3..a746f042 100644
          final ResourcePack first = pack(UUID.randomUUID(), new byte[]{1});
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/BlockPropertiesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/BlockPropertiesTest.java
 new file mode 100644
-index 00000000..15e2c245
+index 000000000..15e2c245b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/BlockPropertiesTest.java
 @@ -0,0 +1,85 @@
@@ -10934,7 +11160,7 @@ index 00000000..15e2c245
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/BlockTraitStatesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/BlockTraitStatesTest.java
 new file mode 100644
-index 00000000..739a3aa6
+index 000000000..739a3aa6d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/BlockTraitStatesTest.java
 @@ -0,0 +1,291 @@
@@ -11231,7 +11457,7 @@ index 00000000..739a3aa6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CustomBlockStatesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CustomBlockStatesTest.java
 new file mode 100644
-index 00000000..a35a9143
+index 000000000..a35a91430
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CustomBlockStatesTest.java
 @@ -0,0 +1,139 @@
@@ -11376,7 +11602,7 @@ index 00000000..a35a9143
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/BlockStatePreparationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/BlockStatePreparationTest.java
 new file mode 100644
-index 00000000..47e9f319
+index 000000000..47e9f3194
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/BlockStatePreparationTest.java
 @@ -0,0 +1,91 @@
@@ -11473,7 +11699,7 @@ index 00000000..47e9f319
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CustomBlockPackPublicationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CustomBlockPackPublicationTest.java
 new file mode 100644
-index 00000000..a3a5732f
+index 000000000..a3a5732fa
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CustomBlockPackPublicationTest.java
 @@ -0,0 +1,91 @@
@@ -11569,7 +11795,7 @@ index 00000000..a3a5732f
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java
-index 4469ae24..c59e4419 100644
+index 4469ae242..c59e4419c 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java
 @@ -36,7 +36,16 @@ import static org.mockito.Mockito.*;
@@ -11619,7 +11845,7 @@ index 4469ae24..c59e4419 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
 new file mode 100644
-index 00000000..61c3a60c
+index 000000000..61c3a60cb
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
 @@ -0,0 +1,213 @@
@@ -11838,10 +12064,10 @@ index 00000000..61c3a60c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..74dd2f6e
+index 000000000..e77679a5e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,770 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -12442,6 +12668,30 @@ index 00000000..74dd2f6e
 +    }
 +
 +    @Test
++    void decodesSerializedFaceDimmingFromPackedBoolsBitZero() {
++        // Protocol 2225 BDS definitions carry packed_bools 5 (enabled) or 4 (disabled) and no face_dimming field.
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        for (byte packed : new byte[]{4, 5}) {
++            final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
++            final CompoundTag material = components.getCompoundTag("minecraft:material_instances").getCompoundTag("*");
++            material.putFloat("ambient_occlusion", 1F);
++            material.putByte("packed_bools", packed);
++            final var visual = CustomBlockModel.compile(storage, "test:packed", 12, components);
++            final var elements = JsonParser.parseString(visual.modelJson()).getAsJsonObject().getAsJsonArray("elements");
++            assertEquals(1, elements.size());
++            final var element = elements.get(0).getAsJsonObject();
++            assertEquals(6, element.getAsJsonObject("faces").size());
++            assertEquals(packed == 4, element.has("shade_direction_override"));
++            for (var face : element.getAsJsonObject("faces").entrySet()) {
++                final var lighting = net.raphimc.viabedrock.api.model.CustomBlockLighting.fromJson(face.getValue().getAsJsonObject()
++                        .getAsJsonObject(net.raphimc.viabedrock.api.model.CustomBlockLighting.KEY));
++                assertEquals(packed == 5, lighting.faceDimming());
++                assertEquals(1F, lighting.ambientOcclusion());
++            }
++        }
++    }
++
++    @Test
 +    void retainsIndependentFaceExponentsWithMixedAmbientOcclusion() {
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
 +        final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
@@ -12590,7 +12840,7 @@ index 00000000..74dd2f6e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
 new file mode 100644
-index 00000000..dfcb667a
+index 000000000..dfcb667a9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
 @@ -0,0 +1,170 @@
@@ -12766,7 +13016,7 @@ index 00000000..dfcb667a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java
 new file mode 100644
-index 00000000..d763dcee
+index 000000000..d763dceea
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java
 @@ -0,0 +1,145 @@
@@ -12917,7 +13167,7 @@ index 00000000..d763dcee
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompilerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompilerTest.java
 new file mode 100644
-index 00000000..0cc309b7
+index 000000000..0cc309b77
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompilerTest.java
 @@ -0,0 +1,140 @@
@@ -13063,7 +13313,7 @@ index 00000000..0cc309b7
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
 new file mode 100644
-index 00000000..d7f6a4e4
+index 000000000..d7f6a4e42
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
 @@ -0,0 +1,108 @@
@@ -13177,7 +13427,7 @@ index 00000000..d7f6a4e4
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
 new file mode 100644
-index 00000000..7fe228fa
+index 000000000..7fe228fa9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
 @@ -0,0 +1,286 @@
@@ -13469,7 +13719,7 @@ index 00000000..7fe228fa
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java
 new file mode 100644
-index 00000000..8c9a77ac
+index 000000000..8c9a77acf
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockTextureReuseTest.java
 @@ -0,0 +1,179 @@
@@ -13654,7 +13904,7 @@ index 00000000..8c9a77ac
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java
 new file mode 100644
-index 00000000..dad2a798
+index 000000000..dad2a7983
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockVisualCacheTest.java
 @@ -0,0 +1,184 @@
@@ -13843,7 +14093,7 @@ index 00000000..dad2a798
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-index 1ed8c905..d155c215 100644
+index 1ed8c9057..d155c2158 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 @@ -10,39 +10,39 @@
@@ -13929,7 +14179,7 @@ index 1ed8c905..d155c215 100644
          final BedrockDataPalette palette = new BedrockDataPalette();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
 new file mode 100644
-index 00000000..4d1cdb37
+index 000000000..4d1cdb37c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
 @@ -0,0 +1,31 @@
@@ -13966,7 +14216,7 @@ index 00000000..4d1cdb37
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
 new file mode 100644
-index 00000000..7359689d
+index 000000000..7359689d9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
 @@ -0,0 +1,130 @@
@@ -14102,7 +14352,7 @@ index 00000000..7359689d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java
 new file mode 100644
-index 00000000..4f41dd8a
+index 000000000..4f41dd8a4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldPacketBufferTest.java
 @@ -0,0 +1,255 @@
@@ -14363,7 +14613,7 @@ index 00000000..4f41dd8a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java b/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java
 new file mode 100644
-index 00000000..15eb23a4
+index 000000000..15eb23a4d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/task/KeepAliveTaskTest.java
 @@ -0,0 +1,89 @@

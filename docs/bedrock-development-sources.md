@@ -104,6 +104,53 @@ Build files are release attachments. The Git tags themselves point to README com
 Use the target release rather than the newest preview, and verify the executable digest before reusing recorded native addresses.
 Keep downloaded packages, executables and extracted content in private local research storage.
 
+## Analyze a native artifact with REA
+
+Follow the [reverse-engineering rules](../AGENTS.md#reverse-engineering).
+Run the commands from this repository's root. Replace the uppercase values with the artifact's verified checksum, version, protocol and linked address.
+
+```bash
+bun run rea import --artifact /path/to/Minecraft.Windows.exe --sha256 SHA256 --version VERSION --protocol PROTOCOL
+bun run rea function --va VA
+bun run rea analyze --va VA
+```
+
+Import copies the artifact into `.stackanvil/rea/` and checks its checksum before selecting it.
+Each analysis extracts one AMD64 exception-table span and runs REA with Ghidra at the original address.
+Set `GHIDRA_INSTALL_DIR` to an existing Ghidra installation.
+Set `REA_CLI` to an existing REA executable, or let the command use its pinned package.
+The command does not install an analysis provider or change MCP configuration.
+
+Each run keeps the full Evidence, source identity and stderr in a fresh private directory.
+Raw slices exclude external tables, globals and callees. Preserve those limits when interpreting pseudocode.
+For a leaf without an exception-table entry, supply `--end` explicitly. The output then makes no function-boundary claim.
+Use `bun run rea --help` for byte reads, import-slot lookup and tentative reference scans.
+
+For comparison controls, install Python 3.11 or newer and run `bun run rea setup-controls`.
+It installs pinned Unicorn, Capstone and NumPy packages under `.stackanvil/tools/rea-controls-venv/`.
+The shared [PE reader](../native/rea-controls/pe.py) and [emulation loader](../native/rea-controls/emulation.py) use the selected checksum-pinned artifact.
+The installation records the interpreter and package paths in that environment's `environment.json`.
+Run a repository Python fixture with `bun run rea control --script .stackanvil/research/your-control.py`.
+REA captures the process with a maximum duration of 60 seconds and retains its exit status and cleanup evidence.
+Keep target-specific fixtures, binaries and results private. A supplied emulation fixture does not establish game admission or visible parity.
+
+To use the shared helpers from a fixture, add their repository directory to the Python import path:
+
+```python
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path.cwd() / "native/rea-controls"))
+from pe import PE
+
+pe = PE()  # Uses the target snapshot supplied by `bun run rea control`.
+```
+
+`PeMachine` in `emulation.py` loads original file-backed pages into Unicorn and zero-fills unbacked section tails.
+The fixture supplies memory, entry and stop addresses, instruction limits, and any external-call stubs.
+Record those inputs and stubs with each result. The loader does not provide an operating system, game world, or scheduler.
+Use REA for disassembly and decompilation. The PE helpers provide bytes and candidate addresses for that analysis.
+
 ## Independent protocol implementations
 
 Use these to compare behavior and identify gaps. Match each project's supported protocol before borrowing a packet layout or enum value.
