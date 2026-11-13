@@ -1,4 +1,4 @@
-From ff3aef81e511cd4151319564ff713275d138b4d6 Mon Sep 17 00:00:00 2001
+From 5b71c5827d972cbee0c42e723b75bc6990ebb33b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:35 +0200
 Subject: [PATCH] feat(runtime): share native actor animation and resource
@@ -541,18 +541,20 @@ transitions; matching ViaVersion states alone do not mean an immediate native
 keepalive response can be encoded. Resume keepalives when the encoder returns.
 The original client recording failed in UnconfiguredPipelineHandler.Outbound
 while ViaFabricPlus forced a keepalive reply from the network thread.
+
+Apply a controller's incoming weight to its completed pose contribution as well as its child-state evaluation. Original 1.26.60.5 native controls with weights 0.25, 0.5 and 1 show settled 64-unit position contributions of 4, 16 and 64; the old add-on produces 16, 32 and 64. During shortest-path crossfades native retains one incoming factor while the old add-on loses it entirely. Blend only the controller's change from the entering pose, keeping previous layers intact. Unit weight follows the unchanged fast path. Retain the versioned weighted-controller transition and settled-pose regression.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   10 +
  .../bedrock/ViaFabricPlusBedrock.java         |   58 +
- .../appearance/BedrockActorAnimation.java     | 1087 +++++++++++++++++
+ .../appearance/BedrockActorAnimation.java     | 1090 +++++++++++++++++
  .../appearance/BedrockActorQueries.java       |  102 ++
  .../bedrock/appearance/BedrockActorScale.java |   33 +
  .../appearance/BedrockActorVisibility.java    |  110 ++
  .../appearance/BedrockAnimationParticle.java  |   70 ++
  .../appearance/BedrockAnimationSound.java     |   67 +
  .../appearance/BedrockAppearanceStore.java    |    2 +-
- .../appearance/BedrockBoneAnimation.java      |  544 +++++++++
+ .../appearance/BedrockBoneAnimation.java      |  560 +++++++++
  .../appearance/BedrockBonePattern.java        |   31 +
  .../appearance/BedrockBuiltinAssets.java      |  315 +++++
  .../appearance/BedrockClassicModel.java       |    1 +
@@ -688,7 +690,7 @@ while ViaFabricPlus forced a keepalive reply from the network thread.
  .../appearance/BedrockAnimationSoundTest.java |  146 +++
  .../appearance/BedrockBoneAnimationTest.java  |  469 +++++++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 ++
- .../BedrockControllerAnimationTest.java       |  386 ++++++
+ .../BedrockControllerAnimationTest.java       |  413 +++++++
  .../BedrockControllerSoundTest.java           |  150 +++
  .../appearance/BedrockEmitterEventsTest.java  |  181 +++
  .../appearance/BedrockEmoteMessagesTest.java  |   94 ++
@@ -761,7 +763,7 @@ while ViaFabricPlus forced a keepalive reply from the network thread.
  .../render/BedrockWalkingAnimationTest.java   |   65 +
  .../render/NativeActorColorPayloadTest.java   |   50 +
  src/test/resources/vorbis/sine-8k-mono.ogg    |  Bin 0 -> 2810 bytes
- 219 files changed, 25566 insertions(+), 16 deletions(-)
+ 219 files changed, 25612 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
@@ -971,7 +973,7 @@ while ViaFabricPlus forced a keepalive reply from the network thread.
  create mode 100644 src/test/resources/vorbis/sine-8k-mono.ogg
 
 diff --git a/.gitignore b/.gitignore
-index d845caa..e1f9fb5 100644
+index d845caa5..e1f9fb53 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -33,4 +33,6 @@ DS_Store
@@ -984,7 +986,7 @@ index d845caa..e1f9fb5 100644
 +# Bundled package helper build output
 +/native/persona-assets/target/
 diff --git a/build.gradle.kts b/build.gradle.kts
-index 417e7dd..ad7d3c5 100644
+index 417e7dda..ad7d3c51 100644
 --- a/build.gradle.kts
 +++ b/build.gradle.kts
 @@ -40,6 +40,10 @@ dependencies {
@@ -1010,7 +1012,7 @@ index 417e7dd..ad7d3c5 100644
 +    sourceSets.main { resources.srcDir(bundledBedrockAssets) }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 779891c..7179ef5 100644
+index 779891c4..7179ef51 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 @@ -25,8 +25,24 @@ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
@@ -1089,10 +1091,10 @@ index 779891c..7179ef5 100644
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 new file mode 100644
-index 0000000..ecd9581
+index 00000000..d600e490
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -0,0 +1,1087 @@
+@@ -0,0 +1,1090 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1835,6 +1837,8 @@ index 0000000..ecd9581
 +                    return;
 +                }
 +                if (this.controller == null) return;
++                final Map<String, BedrockBoneAnimation.Transform> previousPose =
++                        weight == 1F ? null : new LinkedHashMap<>(pose);
 +                final var saved = molang.saveVariables(this.controller.variables);
 +                StatePlayback entered = null;
 +                try {
@@ -1887,6 +1891,7 @@ index 0000000..ecd9581
 +                        }
 +                    }
 +                    this.applyStates(time, weight, queries, pose);
++                    if (previousPose != null) BedrockBoneAnimation.weightController(pose, previousPose, weight);
 +                    // The native controller queues entry sounds after its sampled children.
 +                    if (entered != null && eventsEnabled) {
 +                        entered.definition.particles.forEach(declaration -> Playback.this.particle(
@@ -2182,7 +2187,7 @@ index 0000000..ecd9581
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
 new file mode 100644
-index 0000000..b8957b0
+index 00000000..b8957b0a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueries.java
 @@ -0,0 +1,102 @@
@@ -2290,7 +2295,7 @@ index 0000000..b8957b0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
 new file mode 100644
-index 0000000..1fb1c1b
+index 00000000..1fb1c1b0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScale.java
 @@ -0,0 +1,33 @@
@@ -2329,7 +2334,7 @@ index 0000000..1fb1c1b
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
 new file mode 100644
-index 0000000..a2e6394
+index 00000000..a2e6394d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibility.java
 @@ -0,0 +1,110 @@
@@ -2445,7 +2450,7 @@ index 0000000..a2e6394
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticle.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticle.java
 new file mode 100644
-index 0000000..949af62
+index 00000000..949af621
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticle.java
 @@ -0,0 +1,70 @@
@@ -2521,7 +2526,7 @@ index 0000000..949af62
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSound.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSound.java
 new file mode 100644
-index 0000000..5283369
+index 00000000..52833695
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSound.java
 @@ -0,0 +1,67 @@
@@ -2593,7 +2598,7 @@ index 0000000..5283369
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
-index 5ed89d0..85d5028 100644
+index 5ed89d0f..85d5028a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
 @@ -310,7 +310,7 @@ public final class BedrockAppearanceStore {
@@ -2607,10 +2612,10 @@ index 5ed89d0..85d5028 100644
                  List.of(), List.of(), false, "False", "");
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java
 new file mode 100644
-index 0000000..6a53b73
+index 00000000..2ed6652f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java
-@@ -0,0 +1,544 @@
+@@ -0,0 +1,560 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2847,6 +2852,22 @@ index 0000000..6a53b73
 +                                    || old.entityRelativeRotation
 +                                    || next.entityRelativeRotation));
 +        }
++    }
++
++    static void weightController(
++            final Map<String, Transform> pose,
++            final Map<String, Transform> previous,
++            final float weight) {
++        final Transform identity = new Transform(ZERO, ZERO, ONE, false);
++        // A native controller weights its completed contribution in addition to its state children.
++        pose.replaceAll((name, next) -> {
++            final Transform before = previous.getOrDefault(name, identity);
++            if (before == next) return next;
++            return new Transform(
++                    before.position.interpolate(next.position, weight),
++                    before.rotation.interpolate(next.rotation, weight),
++                    before.scale.interpolate(next.scale, weight), next.entityRelativeRotation);
++        });
 +    }
 +
 +    private static float angle(final float before, final float after, final float fraction) {
@@ -3157,7 +3178,7 @@ index 0000000..6a53b73
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBonePattern.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBonePattern.java
 new file mode 100644
-index 0000000..fddf325
+index 00000000..fddf3255
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBonePattern.java
 @@ -0,0 +1,31 @@
@@ -3194,7 +3215,7 @@ index 0000000..fddf325
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
 new file mode 100644
-index 0000000..8f7408c
+index 00000000..8f7408c9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
 @@ -0,0 +1,315 @@
@@ -3514,7 +3535,7 @@ index 0000000..8f7408c
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
-index 14ea700..14f82fe 100644
+index 14ea7007..14f82fe0 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
 @@ -71,6 +71,7 @@ public record BedrockClassicModel(String geometry, String identifier) {
@@ -3527,7 +3548,7 @@ index 14ea700..14f82fe 100644
                          || parents.putIfAbsent(
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEvents.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEvents.java
 new file mode 100644
-index 0000000..741f3b3
+index 00000000..741f3b3a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEvents.java
 @@ -0,0 +1,74 @@
@@ -3607,7 +3628,7 @@ index 0000000..741f3b3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessages.java
 new file mode 100644
-index 0000000..1e1b478
+index 00000000..1e1b478b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessages.java
 @@ -0,0 +1,124 @@
@@ -3737,7 +3758,7 @@ index 0000000..1e1b478
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java
 new file mode 100644
-index 0000000..a6c7571
+index 00000000..a6c75712
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java
 @@ -0,0 +1,193 @@
@@ -3936,7 +3957,7 @@ index 0000000..a6c7571
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadata.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadata.java
 new file mode 100644
-index 0000000..e5639be
+index 00000000..e5639bef
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadata.java
 @@ -0,0 +1,46 @@
@@ -3988,7 +4009,7 @@ index 0000000..e5639be
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLevelSounds.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLevelSounds.java
 new file mode 100644
-index 0000000..4a8c1ef
+index 00000000..4a8c1efe
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLevelSounds.java
 @@ -0,0 +1,164 @@
@@ -4158,7 +4179,7 @@ index 0000000..4a8c1ef
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSide.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSide.java
 new file mode 100644
-index 0000000..b3b9cb0
+index 00000000..b3b9cb07
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSide.java
 @@ -0,0 +1,67 @@
@@ -4231,7 +4252,7 @@ index 0000000..b3b9cb0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceAssets.java
 new file mode 100644
-index 0000000..b887250
+index 00000000..b8872508
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceAssets.java
 @@ -0,0 +1,330 @@
@@ -4567,7 +4588,7 @@ index 0000000..b887250
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
 new file mode 100644
-index 0000000..6e3fe9c
+index 00000000..6e3fe9c6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
 @@ -0,0 +1,342 @@
@@ -4915,7 +4936,7 @@ index 0000000..6e3fe9c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangColor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangColor.java
 new file mode 100644
-index 0000000..8fcf8d1
+index 00000000..8fcf8d14
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangColor.java
 @@ -0,0 +1,40 @@
@@ -4961,7 +4982,7 @@ index 0000000..8fcf8d1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangVariables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangVariables.java
 new file mode 100644
-index 0000000..5ba86c7
+index 00000000..5ba86c72
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangVariables.java
 @@ -0,0 +1,108 @@
@@ -5075,7 +5096,7 @@ index 0000000..5ba86c7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlockUpdates.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlockUpdates.java
 new file mode 100644
-index 0000000..105cc63
+index 00000000..105cc635
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlockUpdates.java
 @@ -0,0 +1,72 @@
@@ -5153,7 +5174,7 @@ index 0000000..105cc63
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlocks.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlocks.java
 new file mode 100644
-index 0000000..6e47d33
+index 00000000..6e47d33f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlocks.java
 @@ -0,0 +1,97 @@
@@ -5256,7 +5277,7 @@ index 0000000..6e47d33
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAttachment.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAttachment.java
 new file mode 100644
-index 0000000..414df47
+index 00000000..414df47f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAttachment.java
 @@ -0,0 +1,167 @@
@@ -5429,7 +5450,7 @@ index 0000000..414df47
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleBlocks.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleBlocks.java
 new file mode 100644
-index 0000000..1d508e5
+index 00000000..1d508e5f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleBlocks.java
 @@ -0,0 +1,67 @@
@@ -5502,7 +5523,7 @@ index 0000000..1d508e5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildren.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildren.java
 new file mode 100644
-index 0000000..0c178b0
+index 00000000..0c178b0b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildren.java
 @@ -0,0 +1,93 @@
@@ -5601,7 +5622,7 @@ index 0000000..0c178b0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollision.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollision.java
 new file mode 100644
-index 0000000..f12d3f8
+index 00000000..f12d3f87
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollision.java
 @@ -0,0 +1,210 @@
@@ -5817,7 +5838,7 @@ index 0000000..f12d3f8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCounts.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCounts.java
 new file mode 100644
-index 0000000..3b1e5bb
+index 00000000..3b1e5bb8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCounts.java
 @@ -0,0 +1,58 @@
@@ -5881,7 +5902,7 @@ index 0000000..3b1e5bb
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCurves.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCurves.java
 new file mode 100644
-index 0000000..815c770
+index 00000000..815c770a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCurves.java
 @@ -0,0 +1,173 @@
@@ -6060,7 +6081,7 @@ index 0000000..815c770
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinition.java
 new file mode 100644
-index 0000000..15dc80a
+index 00000000..15dc80a5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinition.java
 @@ -0,0 +1,261 @@
@@ -6327,7 +6348,7 @@ index 0000000..15dc80a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
 new file mode 100644
-index 0000000..cb4a905
+index 00000000..cb4a9058
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
 @@ -0,0 +1,898 @@
@@ -7231,7 +7252,7 @@ index 0000000..cb4a905
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEvents.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEvents.java
 new file mode 100644
-index 0000000..33abc15
+index 00000000..33abc157
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEvents.java
 @@ -0,0 +1,170 @@
@@ -7407,7 +7428,7 @@ index 0000000..33abc15
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFacing.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFacing.java
 new file mode 100644
-index 0000000..7767a3f
+index 00000000..7767a3f6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFacing.java
 @@ -0,0 +1,151 @@
@@ -7564,7 +7585,7 @@ index 0000000..7767a3f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFrames.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFrames.java
 new file mode 100644
-index 0000000..74c20e9
+index 00000000..74c20e9b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFrames.java
 @@ -0,0 +1,50 @@
@@ -7620,7 +7641,7 @@ index 0000000..74c20e9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraph.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraph.java
 new file mode 100644
-index 0000000..30c4da6
+index 00000000..30c4da61
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraph.java
 @@ -0,0 +1,44 @@
@@ -7670,7 +7691,7 @@ index 0000000..30c4da6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleInterpolation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleInterpolation.java
 new file mode 100644
-index 0000000..4a05f8d
+index 00000000..4a05f8d2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleInterpolation.java
 @@ -0,0 +1,56 @@
@@ -7732,7 +7753,7 @@ index 0000000..4a05f8d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLayouts.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLayouts.java
 new file mode 100644
-index 0000000..e638562
+index 00000000..e638562a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLayouts.java
 @@ -0,0 +1,413 @@
@@ -8151,7 +8172,7 @@ index 0000000..e638562
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetime.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetime.java
 new file mode 100644
-index 0000000..c827ffb
+index 00000000..c827ffb3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetime.java
 @@ -0,0 +1,100 @@
@@ -8257,7 +8278,7 @@ index 0000000..c827ffb
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeEvents.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeEvents.java
 new file mode 100644
-index 0000000..99dc06a
+index 00000000..99dc06ac
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeEvents.java
 @@ -0,0 +1,64 @@
@@ -8327,7 +8348,7 @@ index 0000000..99dc06a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePending.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePending.java
 new file mode 100644
-index 0000000..812303f
+index 00000000..812303f3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePending.java
 @@ -0,0 +1,44 @@
@@ -8377,7 +8398,7 @@ index 0000000..812303f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
 new file mode 100644
-index 0000000..37df6f5
+index 00000000..37df6f5d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
 @@ -0,0 +1,393 @@
@@ -8776,7 +8797,7 @@ index 0000000..37df6f5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueries.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueries.java
 new file mode 100644
-index 0000000..651fdaa
+index 00000000..651fdaa0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueries.java
 @@ -0,0 +1,35 @@
@@ -8817,7 +8838,7 @@ index 0000000..651fdaa
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRenderTypes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRenderTypes.java
 new file mode 100644
-index 0000000..3440f2c
+index 00000000..3440f2c6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRenderTypes.java
 @@ -0,0 +1,93 @@
@@ -8916,7 +8937,7 @@ index 0000000..3440f2c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleShape.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleShape.java
 new file mode 100644
-index 0000000..928a532
+index 00000000..928a5322
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleShape.java
 @@ -0,0 +1,165 @@
@@ -9087,7 +9108,7 @@ index 0000000..928a532
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpace.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpace.java
 new file mode 100644
-index 0000000..da3515b
+index 00000000..da3515bc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpace.java
 @@ -0,0 +1,43 @@
@@ -9136,7 +9157,7 @@ index 0000000..da3515b
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleTexture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleTexture.java
 new file mode 100644
-index 0000000..a2189b5
+index 00000000..a2189b5c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleTexture.java
 @@ -0,0 +1,29 @@
@@ -9171,7 +9192,7 @@ index 0000000..a2189b5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStream.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStream.java
 new file mode 100644
-index 0000000..d4037fc
+index 00000000..d4037fcc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStream.java
 @@ -0,0 +1,70 @@
@@ -9247,7 +9268,7 @@ index 0000000..d4037fc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimations.java
 new file mode 100644
-index 0000000..1d1ca67
+index 00000000..1d1ca67d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimations.java
 @@ -0,0 +1,128 @@
@@ -9381,7 +9402,7 @@ index 0000000..1d1ca67
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaSources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaSources.java
 new file mode 100644
-index 0000000..a207474
+index 00000000..a2074749
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaSources.java
 @@ -0,0 +1,228 @@
@@ -9615,7 +9636,7 @@ index 0000000..a207474
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerAnimations.java
 new file mode 100644
-index 0000000..f9335b1
+index 00000000..f9335b1e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerAnimations.java
 @@ -0,0 +1,33 @@
@@ -9654,7 +9675,7 @@ index 0000000..f9335b1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 new file mode 100644
-index 0000000..71b1e4c
+index 00000000..71b1e4c1
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 @@ -0,0 +1,235 @@
@@ -9895,7 +9916,7 @@ index 0000000..71b1e4c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 new file mode 100644
-index 0000000..803ff83
+index 00000000..803ff839
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 @@ -0,0 +1,447 @@
@@ -10348,7 +10369,7 @@ index 0000000..803ff83
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
 new file mode 100644
-index 0000000..def1887
+index 00000000..def18870
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
 @@ -0,0 +1,94 @@
@@ -10448,7 +10469,7 @@ index 0000000..def1887
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
 new file mode 100644
-index 0000000..e274777
+index 00000000..e274777d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
 @@ -0,0 +1,46 @@
@@ -10500,7 +10521,7 @@ index 0000000..e274777
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java
 new file mode 100644
-index 0000000..5dcbcbc
+index 00000000..5dcbcbcc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java
 @@ -0,0 +1,69 @@
@@ -10575,7 +10596,7 @@ index 0000000..5dcbcbc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBank.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBank.java
 new file mode 100644
-index 0000000..79aa2cd
+index 00000000..79aa2cdc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBank.java
 @@ -0,0 +1,137 @@
@@ -10718,7 +10739,7 @@ index 0000000..79aa2cd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundCaptions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundCaptions.java
 new file mode 100644
-index 0000000..dac8476
+index 00000000..dac84763
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundCaptions.java
 @@ -0,0 +1,142 @@
@@ -10866,7 +10887,7 @@ index 0000000..dac8476
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelope.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelope.java
 new file mode 100644
-index 0000000..17d67df
+index 00000000..17d67df6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelope.java
 @@ -0,0 +1,40 @@
@@ -10912,7 +10933,7 @@ index 0000000..17d67df
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEvent.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEvent.java
 new file mode 100644
-index 0000000..1f26efd
+index 00000000..1f26efdf
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEvent.java
 @@ -0,0 +1,190 @@
@@ -11108,7 +11129,7 @@ index 0000000..1f26efd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFile.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFile.java
 new file mode 100644
-index 0000000..f4330a7
+index 00000000..f4330a70
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFile.java
 @@ -0,0 +1,104 @@
@@ -11218,7 +11239,7 @@ index 0000000..f4330a7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
 new file mode 100644
-index 0000000..5ed3a86
+index 00000000..5ed3a869
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
 @@ -0,0 +1,431 @@
@@ -11655,7 +11676,7 @@ index 0000000..5ed3a86
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeBlockIdentifiersPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeBlockIdentifiersPayload.java
 new file mode 100644
-index 0000000..65da0f6
+index 00000000..65da0f6a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeBlockIdentifiersPayload.java
 @@ -0,0 +1,22 @@
@@ -11683,7 +11704,7 @@ index 0000000..65da0f6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeParticlePlaybackPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeParticlePlaybackPayload.java
 new file mode 100644
-index 0000000..b1a8114
+index 00000000..b1a81146
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/NativeParticlePlaybackPayload.java
 @@ -0,0 +1,22 @@
@@ -11711,7 +11732,7 @@ index 0000000..b1a8114
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SoundPlaybackPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SoundPlaybackPayload.java
 new file mode 100644
-index 0000000..f7fef8a
+index 00000000..f7fef8a4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SoundPlaybackPayload.java
 @@ -0,0 +1,22 @@
@@ -11739,7 +11760,7 @@ index 0000000..f7fef8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockChannelAccess.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockChannelAccess.java
 new file mode 100644
-index 0000000..08369d6
+index 00000000..08369d6a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockChannelAccess.java
 @@ -0,0 +1,12 @@
@@ -11757,7 +11778,7 @@ index 0000000..08369d6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockNativeFluidView.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockNativeFluidView.java
 new file mode 100644
-index 0000000..43ab0b3
+index 00000000..43ab0b32
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockNativeFluidView.java
 @@ -0,0 +1,14 @@
@@ -11777,7 +11798,7 @@ index 0000000..43ab0b3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSoundEngine.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSoundEngine.java
 new file mode 100644
-index 0000000..fc4c038
+index 00000000..fc4c0384
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSoundEngine.java
 @@ -0,0 +1,15 @@
@@ -11798,7 +11819,7 @@ index 0000000..fc4c038
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluid.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluid.java
 new file mode 100644
-index 0000000..13a9218
+index 00000000..13a92185
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluid.java
 @@ -0,0 +1,36 @@
@@ -11840,7 +11861,7 @@ index 0000000..13a9218
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluidMesh.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluidMesh.java
 new file mode 100644
-index 0000000..2bcf926
+index 00000000..2bcf926f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluidMesh.java
 @@ -0,0 +1,44 @@
@@ -11890,7 +11911,7 @@ index 0000000..2bcf926
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluidNeighbors.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluidNeighbors.java
 new file mode 100644
-index 0000000..ade97ee
+index 00000000..ade97ee2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/sodium/MixinSodiumNativeFluidNeighbors.java
 @@ -0,0 +1,57 @@
@@ -11953,7 +11974,7 @@ index 0000000..ade97ee
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticleEngine.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticleEngine.java
 new file mode 100644
-index 0000000..3b998a1
+index 00000000..3b998a15
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticleEngine.java
 @@ -0,0 +1,30 @@
@@ -11989,7 +12010,7 @@ index 0000000..3b998a1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticlePipelines.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticlePipelines.java
 new file mode 100644
-index 0000000..23ec497
+index 00000000..23ec497a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticlePipelines.java
 @@ -0,0 +1,26 @@
@@ -12021,7 +12042,7 @@ index 0000000..23ec497
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticleRenderType.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticleRenderType.java
 new file mode 100644
-index 0000000..1e15694
+index 00000000..1e156945
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticleRenderType.java
 @@ -0,0 +1,19 @@
@@ -12046,7 +12067,7 @@ index 0000000..1e15694
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java
 new file mode 100644
-index 0000000..a09d242
+index 00000000..a09d242a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java
 @@ -0,0 +1,40 @@
@@ -12092,7 +12113,7 @@ index 0000000..a09d242
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockModelPartTransforms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockModelPartTransforms.java
 new file mode 100644
-index 0000000..34d743a
+index 00000000..34d743ae
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockModelPartTransforms.java
 @@ -0,0 +1,34 @@
@@ -12132,7 +12153,7 @@ index 0000000..34d743a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockWalkingAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockWalkingAnimation.java
 new file mode 100644
-index 0000000..95fa67a
+index 00000000..95fa67a4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockWalkingAnimation.java
 @@ -0,0 +1,35 @@
@@ -12173,7 +12194,7 @@ index 0000000..95fa67a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java
 new file mode 100644
-index 0000000..89c5db6
+index 00000000..89c5db63
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityBodyRotation.java
 @@ -0,0 +1,37 @@
@@ -12216,7 +12237,7 @@ index 0000000..89c5db6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityRenderer.java
 new file mode 100644
-index 0000000..44781a3
+index 00000000..44781a3e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntityRenderer.java
 @@ -0,0 +1,26 @@
@@ -12248,7 +12269,7 @@ index 0000000..44781a3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorAttack.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorAttack.java
 new file mode 100644
-index 0000000..ffb802a
+index 00000000..ffb802a4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorAttack.java
 @@ -0,0 +1,29 @@
@@ -12283,7 +12304,7 @@ index 0000000..ffb802a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java
 new file mode 100644
-index 0000000..62a9be5
+index 00000000..62a9be5e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingEntity.java
 @@ -0,0 +1,58 @@
@@ -12347,7 +12368,7 @@ index 0000000..62a9be5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingLocalPlayer.java
 new file mode 100644
-index 0000000..ece12ea
+index 00000000..ece12eac
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeActorPickingLocalPlayer.java
 @@ -0,0 +1,54 @@
@@ -12407,7 +12428,7 @@ index 0000000..ece12ea
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeChunkFluid.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeChunkFluid.java
 new file mode 100644
-index 0000000..6c1b4a4
+index 00000000..6c1b4a4e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeChunkFluid.java
 @@ -0,0 +1,29 @@
@@ -12442,7 +12463,7 @@ index 0000000..6c1b4a4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeFluidMesh.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeFluidMesh.java
 new file mode 100644
-index 0000000..0fff4d5
+index 00000000..0fff4d56
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeFluidMesh.java
 @@ -0,0 +1,44 @@
@@ -12492,7 +12513,7 @@ index 0000000..0fff4d5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeFluidNeighbors.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeFluidNeighbors.java
 new file mode 100644
-index 0000000..bc67176
+index 00000000..bc671765
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeFluidNeighbors.java
 @@ -0,0 +1,78 @@
@@ -12576,7 +12597,7 @@ index 0000000..bc67176
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeRegionFluid.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeRegionFluid.java
 new file mode 100644
-index 0000000..8a77e86
+index 00000000..8a77e86d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinNativeRegionFluid.java
 @@ -0,0 +1,35 @@
@@ -12617,7 +12638,7 @@ index 0000000..8a77e86
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/JOrbisStaticCodeBookAccess.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/JOrbisStaticCodeBookAccess.java
 new file mode 100644
-index 0000000..eecb446
+index 00000000..eecb4460
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/JOrbisStaticCodeBookAccess.java
 @@ -0,0 +1,24 @@
@@ -12647,7 +12668,7 @@ index 0000000..eecb446
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannel.java
 new file mode 100644
-index 0000000..12e7853
+index 00000000..12e78532
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannel.java
 @@ -0,0 +1,17 @@
@@ -12670,7 +12691,7 @@ index 0000000..12e7853
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannelAccess.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannelAccess.java
 new file mode 100644
-index 0000000..80b66e9
+index 00000000..80b66e9c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannelAccess.java
 @@ -0,0 +1,32 @@
@@ -12708,7 +12729,7 @@ index 0000000..80b66e9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockPcmChannel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockPcmChannel.java
 new file mode 100644
-index 0000000..d586e51
+index 00000000..d586e51c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockPcmChannel.java
 @@ -0,0 +1,25 @@
@@ -12739,7 +12760,7 @@ index 0000000..d586e51
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundCaptions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundCaptions.java
 new file mode 100644
-index 0000000..e5bc513
+index 00000000..e5bc5134
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundCaptions.java
 @@ -0,0 +1,23 @@
@@ -12768,7 +12789,7 @@ index 0000000..e5bc513
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundEngine.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundEngine.java
 new file mode 100644
-index 0000000..7193996
+index 00000000..71939960
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundEngine.java
 @@ -0,0 +1,50 @@
@@ -12824,7 +12845,7 @@ index 0000000..7193996
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundManager.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundManager.java
 new file mode 100644
-index 0000000..05b8f8a
+index 00000000..05b8f8ae
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundManager.java
 @@ -0,0 +1,16 @@
@@ -12846,7 +12867,7 @@ index 0000000..05b8f8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinJOrbisCodeBook.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinJOrbisCodeBook.java
 new file mode 100644
-index 0000000..fdbeca4
+index 00000000..fdbeca4a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinJOrbisCodeBook.java
 @@ -0,0 +1,30 @@
@@ -12882,7 +12903,7 @@ index 0000000..fdbeca4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinMinecraftServerSounds.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinMinecraftServerSounds.java
 new file mode 100644
-index 0000000..9433e74
+index 00000000..9433e744
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinMinecraftServerSounds.java
 @@ -0,0 +1,22 @@
@@ -12909,7 +12930,7 @@ index 0000000..9433e74
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/impl/provider/viabedrock/ViaFabricPlusNettyPipelineProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/impl/provider/viabedrock/ViaFabricPlusNettyPipelineProvider.java
-index 35cf96d..1ff1554 100644
+index 35cf96d1..1ff15547 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/impl/provider/viabedrock/ViaFabricPlusNettyPipelineProvider.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/impl/provider/viabedrock/ViaFabricPlusNettyPipelineProvider.java
 @@ -33,6 +33,12 @@ import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
@@ -12926,7 +12947,7 @@ index 35cf96d..1ff1554 100644
      public void enableCompression(final UserConnection user, final PacketCompressionAlgorithm preferredCompressionAlgorithm, final int threshold) {
          final Channel channel = user.getChannel();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/impl/provider/viabedrock/ViaFabricPlusSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/impl/provider/viabedrock/ViaFabricPlusSkinProvider.java
-index 620300f..39a1e1f 100644
+index 620300f3..39a1e1f5 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/impl/provider/viabedrock/ViaFabricPlusSkinProvider.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/impl/provider/viabedrock/ViaFabricPlusSkinProvider.java
 @@ -22,6 +22,7 @@
@@ -12939,7 +12960,7 @@ index 620300f..39a1e1f 100644
  import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java
 new file mode 100644
-index 0000000..aca8b70
+index 00000000..aca8b709
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java
 @@ -0,0 +1,148 @@
@@ -13093,7 +13114,7 @@ index 0000000..aca8b70
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingState.java
 new file mode 100644
-index 0000000..d05c95f
+index 00000000..d05c95f2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingState.java
 @@ -0,0 +1,99 @@
@@ -13198,7 +13219,7 @@ index 0000000..d05c95f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
 new file mode 100644
-index 0000000..de07020
+index 00000000..de070200
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
 @@ -0,0 +1,100 @@
@@ -13304,7 +13325,7 @@ index 0000000..de07020
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 new file mode 100644
-index 0000000..bbeebe6
+index 00000000..bbeebe69
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 @@ -0,0 +1,193 @@
@@ -13503,7 +13524,7 @@ index 0000000..bbeebe6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockBoneTransform.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockBoneTransform.java
 new file mode 100644
-index 0000000..1cde5b9
+index 00000000..1cde5b90
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockBoneTransform.java
 @@ -0,0 +1,31 @@
@@ -13540,7 +13561,7 @@ index 0000000..1cde5b9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java
 new file mode 100644
-index 0000000..d4b3416
+index 00000000..d4b34161
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java
 @@ -0,0 +1,38 @@
@@ -13584,7 +13605,7 @@ index 0000000..d4b3416
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonCamera.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonCamera.java
 new file mode 100644
-index 0000000..32d6cd8
+index 00000000..32d6cd84
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonCamera.java
 @@ -0,0 +1,61 @@
@@ -13651,7 +13672,7 @@ index 0000000..32d6cd8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
 new file mode 100644
-index 0000000..27d46f4
+index 00000000..27d46f42
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
 @@ -0,0 +1,42 @@
@@ -13699,7 +13720,7 @@ index 0000000..27d46f4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonItemRendering.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonItemRendering.java
 new file mode 100644
-index 0000000..33ac94d
+index 00000000..33ac94df
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonItemRendering.java
 @@ -0,0 +1,27 @@
@@ -13732,7 +13753,7 @@ index 0000000..33ac94d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonProjection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonProjection.java
 new file mode 100644
-index 0000000..9234b83
+index 00000000..9234b83b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonProjection.java
 @@ -0,0 +1,28 @@
@@ -13766,7 +13787,7 @@ index 0000000..9234b83
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFluidRendering.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFluidRendering.java
 new file mode 100644
-index 0000000..1f5bc09
+index 00000000..1f5bc093
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFluidRendering.java
 @@ -0,0 +1,34 @@
@@ -13805,7 +13826,7 @@ index 0000000..1f5bc09
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index 8da79f3..ef30827 100644
+index 8da79f33..ef30827e 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -74,16 +74,62 @@ public final class BedrockGeometry {
@@ -13888,7 +13909,7 @@ index 8da79f3..ef30827 100644
              final String name = player ? playerPartName(bone.definition.getName()) : bone.definition.getName();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueries.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueries.java
 new file mode 100644
-index 0000000..3443a7a
+index 00000000..3443a7a8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueries.java
 @@ -0,0 +1,77 @@
@@ -13971,7 +13992,7 @@ index 0000000..3443a7a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocators.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocators.java
 new file mode 100644
-index 0000000..73a8827
+index 00000000..73a88278
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocators.java
 @@ -0,0 +1,122 @@
@@ -14099,7 +14120,7 @@ index 0000000..73a8827
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransforms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransforms.java
 new file mode 100644
-index 0000000..455db2e
+index 00000000..455db2ee
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransforms.java
 @@ -0,0 +1,82 @@
@@ -14187,7 +14208,7 @@ index 0000000..455db2e
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAnimationState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAnimationState.java
 new file mode 100644
-index 0000000..f10740a
+index 00000000..f10740a3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAnimationState.java
 @@ -0,0 +1,21 @@
@@ -14214,7 +14235,7 @@ index 0000000..f10740a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotation.java
 new file mode 100644
-index 0000000..be56b68
+index 00000000..be56b685
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotation.java
 @@ -0,0 +1,43 @@
@@ -14263,7 +14284,7 @@ index 0000000..be56b68
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
 new file mode 100644
-index 0000000..4bedd7f
+index 00000000..4bedd7fe
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
 @@ -0,0 +1,53 @@
@@ -14321,7 +14342,7 @@ index 0000000..4bedd7f
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
-index 6363d97..7068808 100644
+index 6363d973..7068808a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
 @@ -32,6 +32,7 @@ import net.minecraft.client.renderer.entity.state.AvatarRenderState;
@@ -14352,7 +14373,7 @@ index 6363d97..7068808 100644
                                  final Identifier skinTexture, final boolean hasSleeve) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java
 new file mode 100644
-index 0000000..389807a
+index 00000000..389807aa
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java
 @@ -0,0 +1,51 @@
@@ -14409,7 +14430,7 @@ index 0000000..389807a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java
 new file mode 100644
-index 0000000..0888be7
+index 00000000..0888be78
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java
 @@ -0,0 +1,35 @@
@@ -14450,7 +14471,7 @@ index 0000000..0888be7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorAttackPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorAttackPayload.java
 new file mode 100644
-index 0000000..7bc0843
+index 00000000..7bc08432
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorAttackPayload.java
 @@ -0,0 +1,24 @@
@@ -14480,7 +14501,7 @@ index 0000000..7bc0843
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorBoundsPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorBoundsPayload.java
 new file mode 100644
-index 0000000..795683b
+index 00000000..795683b5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorBoundsPayload.java
 @@ -0,0 +1,22 @@
@@ -14508,7 +14529,7 @@ index 0000000..795683b
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorColorPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorColorPayload.java
 new file mode 100644
-index 0000000..fdf2cfa
+index 00000000..fdf2cfaf
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorColorPayload.java
 @@ -0,0 +1,24 @@
@@ -14538,7 +14559,7 @@ index 0000000..fdf2cfa
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java
 new file mode 100644
-index 0000000..4af2e7a
+index 00000000..4af2e7aa
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorIdentityPayload.java
 @@ -0,0 +1,24 @@
@@ -14568,7 +14589,7 @@ index 0000000..4af2e7a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorMetadataPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorMetadataPayload.java
 new file mode 100644
-index 0000000..12d2dbd
+index 00000000..12d2dbd9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorMetadataPayload.java
 @@ -0,0 +1,24 @@
@@ -14598,7 +14619,7 @@ index 0000000..12d2dbd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPayload.java
 new file mode 100644
-index 0000000..6fce15f
+index 00000000..6fce15fc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPayload.java
 @@ -0,0 +1,24 @@
@@ -14628,7 +14649,7 @@ index 0000000..6fce15f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPickingPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPickingPayload.java
 new file mode 100644
-index 0000000..97ff000
+index 00000000..97ff0005
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorPickingPayload.java
 @@ -0,0 +1,24 @@
@@ -14658,7 +14679,7 @@ index 0000000..97ff000
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorQueryPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorQueryPayload.java
 new file mode 100644
-index 0000000..3dc6797
+index 00000000..3dc6797f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeActorQueryPayload.java
 @@ -0,0 +1,24 @@
@@ -14688,7 +14709,7 @@ index 0000000..3dc6797
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/CaptionDuration.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/CaptionDuration.java
 new file mode 100644
-index 0000000..87001d9
+index 00000000..87001d93
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/CaptionDuration.java
 @@ -0,0 +1,26 @@
@@ -14720,7 +14741,7 @@ index 0000000..87001d9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/CaptionPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/CaptionPosition.java
 new file mode 100644
-index 0000000..a86d037
+index 00000000..a86d037a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/CaptionPosition.java
 @@ -0,0 +1,18 @@
@@ -14743,7 +14764,7 @@ index 0000000..a86d037
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java
-index f2def64..3ee1544 100644
+index f2def64a..3ee15440 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java
 @@ -21,8 +21,13 @@
@@ -14812,7 +14833,7 @@ index f2def64..3ee1544 100644
 +
  }
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 99dd937..e4baf68 100644
+index 99dd937c..e4baf680 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -2,7 +2,6 @@
@@ -14893,7 +14914,7 @@ index 99dd937..e4baf68 100644
  }
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/licenses/brarchive-extractor.txt b/src/main/resources/assets/viafabricplus-bedrock/licenses/brarchive-extractor.txt
 new file mode 100644
-index 0000000..df00b36
+index 00000000..df00b366
 --- /dev/null
 +++ b/src/main/resources/assets/viafabricplus-bedrock/licenses/brarchive-extractor.txt
 @@ -0,0 +1,21 @@
@@ -14920,7 +14941,7 @@ index 0000000..df00b36
 +SOFTWARE.
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/licenses/vgmstream.txt b/src/main/resources/assets/viafabricplus-bedrock/licenses/vgmstream.txt
 new file mode 100644
-index 0000000..74c95da
+index 00000000..74c95daa
 --- /dev/null
 +++ b/src/main/resources/assets/viafabricplus-bedrock/licenses/vgmstream.txt
 @@ -0,0 +1,23 @@
@@ -14949,7 +14970,7 @@ index 0000000..74c95da
 +OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_particle.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_particle.fsh
 new file mode 100644
-index 0000000..ff0be71
+index 00000000..ff0be713
 --- /dev/null
 +++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_particle.fsh
 @@ -0,0 +1,52 @@
@@ -15006,7 +15027,7 @@ index 0000000..ff0be71
 +    #endif
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 123e230..c7b4f64 100644
+index 123e230d..c7b4f641 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -7,6 +7,13 @@
@@ -15068,7 +15089,7 @@ index 123e230..c7b4f64 100644
      "defaultRequire": 1
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
 new file mode 100644
-index 0000000..f34f032
+index 00000000..f34f0321
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
 @@ -0,0 +1,705 @@
@@ -15779,7 +15800,7 @@ index 0000000..f34f032
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java
 new file mode 100644
-index 0000000..bf7415f
+index 00000000..bf7415fd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorQueriesTest.java
 @@ -0,0 +1,222 @@
@@ -16007,7 +16028,7 @@ index 0000000..bf7415f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java
 new file mode 100644
-index 0000000..27e9619
+index 00000000..27e9619e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorRenderSelectionTest.java
 @@ -0,0 +1,128 @@
@@ -16141,7 +16162,7 @@ index 0000000..27e9619
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScaleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScaleTest.java
 new file mode 100644
-index 0000000..b20cb36
+index 00000000..b20cb367
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorScaleTest.java
 @@ -0,0 +1,77 @@
@@ -16224,7 +16245,7 @@ index 0000000..b20cb36
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibilityTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibilityTest.java
 new file mode 100644
-index 0000000..bd0c515
+index 00000000..bd0c5158
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorVisibilityTest.java
 @@ -0,0 +1,142 @@
@@ -16372,7 +16393,7 @@ index 0000000..bd0c515
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationCommandsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationCommandsTest.java
 new file mode 100644
-index 0000000..223ecab
+index 00000000..223ecab0
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationCommandsTest.java
 @@ -0,0 +1,180 @@
@@ -16558,7 +16579,7 @@ index 0000000..223ecab
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticleTest.java
 new file mode 100644
-index 0000000..99acae1
+index 00000000..99acae15
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticleTest.java
 @@ -0,0 +1,104 @@
@@ -16668,7 +16689,7 @@ index 0000000..99acae1
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSoundTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSoundTest.java
 new file mode 100644
-index 0000000..3c74e01
+index 00000000..3c74e014
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSoundTest.java
 @@ -0,0 +1,146 @@
@@ -16820,7 +16841,7 @@ index 0000000..3c74e01
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java
 new file mode 100644
-index 0000000..56b6009
+index 00000000..56b60096
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java
 @@ -0,0 +1,469 @@
@@ -17295,7 +17316,7 @@ index 0000000..56b6009
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBrArchive.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBrArchive.java
 new file mode 100644
-index 0000000..61a8010
+index 00000000..61a80105
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBrArchive.java
 @@ -0,0 +1,73 @@
@@ -17374,10 +17395,10 @@ index 0000000..61a8010
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java
 new file mode 100644
-index 0000000..da11d28
+index 00000000..6fe1ec23
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java
-@@ -0,0 +1,386 @@
+@@ -0,0 +1,413 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -17494,6 +17515,33 @@ index 0000000..da11d28
 +        assertEquals(50, pose.rotation().x());
 +        assertEquals(new BedrockBoneAnimation.Vector(0.375F, 0.25F, 0), pose.position());
 +        assertEquals(100, actor.sample(1.25F, FRAME).get("head").rotation().x());
++    }
++
++    @Test
++    void appliesControllerWeightDuringShortestTransitionsAndSettledStates() throws IOException {
++        // Native 1.26.60.5 three-row control: a 64-unit position ends at 4, 16 and 64 for these weights.
++        for (final float weight : new float[]{0.25F, 0.5F, 1F}) {
++            final var definition = json("""
++                    {"animations":{"root":"controller.animation.root","a":"animation.a","b":"animation.b"},
++                     "scripts":{"animate":[{"root":1}]}}
++                    """);
++            definition.getAsJsonObject("scripts").getAsJsonArray("animate").get(0).getAsJsonObject().addProperty("root", weight);
++            final var actor = BedrockActorAnimation.read(definition, Map.of(), json("""
++                    {"animation.a":{"loop":true,"bones":{"moving":{"position":[0,0,0]}}},
++                     "animation.b":{"loop":true,"bones":{"moving":{"position":[64,0,0]}}}}
++                    """), json("""
++                    {"controller.animation.root":{"states":{
++                      "default":{"animations":["a"],"blend_transition":10,"blend_via_shortest_path":true,
++                        "transitions":[{"next":"q.variant == 1"}]},
++                      "next":{"animations":["b"]}}}}
++                    """), "1.18.10").playback();
++            assertEquals(0F, actor.sample(0, new BedrockActorAnimation.Frame(Map.of("variant", 0), Map.of()))
++                    .get("moving").position().x());
++            final var after = new BedrockActorAnimation.Frame(Map.of("variant", 1), Map.of());
++            actor.sample(0.1F, after);
++            assertEquals(64F * 0.8F * weight, actor.sample(8, after).get("moving").position().x(), 1E-5F);
++            assertEquals(64F * weight * weight, actor.sample(12, after).get("moving").position().x());
++        }
 +    }
 +
 +    @Test
@@ -17766,7 +17814,7 @@ index 0000000..da11d28
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerSoundTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerSoundTest.java
 new file mode 100644
-index 0000000..fec4182
+index 00000000..fec41820
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerSoundTest.java
 @@ -0,0 +1,150 @@
@@ -17922,7 +17970,7 @@ index 0000000..fec4182
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEventsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEventsTest.java
 new file mode 100644
-index 0000000..9967f68
+index 00000000..9967f68b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmitterEventsTest.java
 @@ -0,0 +1,181 @@
@@ -18109,7 +18157,7 @@ index 0000000..9967f68
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java
 new file mode 100644
-index 0000000..ff33158
+index 00000000..ff33158c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java
 @@ -0,0 +1,94 @@
@@ -18209,7 +18257,7 @@ index 0000000..ff33158
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java
 new file mode 100644
-index 0000000..a2d8350
+index 00000000..a2d8350e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java
 @@ -0,0 +1,448 @@
@@ -18663,7 +18711,7 @@ index 0000000..a2d8350
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadataTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadataTest.java
 new file mode 100644
-index 0000000..a10a07e
+index 00000000..a10a07ea
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemMetadataTest.java
 @@ -0,0 +1,108 @@
@@ -18777,7 +18825,7 @@ index 0000000..a10a07e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSideTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSideTest.java
 new file mode 100644
-index 0000000..97d768f
+index 00000000..97d768f9
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSideTest.java
 @@ -0,0 +1,89 @@
@@ -18872,7 +18920,7 @@ index 0000000..97d768f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangColorTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangColorTest.java
 new file mode 100644
-index 0000000..f14cd28
+index 00000000..f14cd28f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangColorTest.java
 @@ -0,0 +1,110 @@
@@ -18988,7 +19036,7 @@ index 0000000..f14cd28
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java
 new file mode 100644
-index 0000000..15de66b
+index 00000000..15de66b4
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java
 @@ -0,0 +1,231 @@
@@ -19225,7 +19273,7 @@ index 0000000..15de66b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangVariablesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangVariablesTest.java
 new file mode 100644
-index 0000000..7b4f70f
+index 00000000..7b4f70f2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangVariablesTest.java
 @@ -0,0 +1,72 @@
@@ -19303,7 +19351,7 @@ index 0000000..7b4f70f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlockUpdatesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlockUpdatesTest.java
 new file mode 100644
-index 0000000..f07cb9f
+index 00000000..f07cb9f1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeBlockUpdatesTest.java
 @@ -0,0 +1,70 @@
@@ -19379,7 +19427,7 @@ index 0000000..f07cb9f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeFluidTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeFluidTest.java
 new file mode 100644
-index 0000000..61d128e
+index 00000000..61d128e7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeFluidTest.java
 @@ -0,0 +1,34 @@
@@ -19419,7 +19467,7 @@ index 0000000..61d128e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeGeometryTest.java
 new file mode 100644
-index 0000000..1ae0c63
+index 00000000..1ae0c63f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockNativeGeometryTest.java
 @@ -0,0 +1,54 @@
@@ -19479,7 +19527,7 @@ index 0000000..1ae0c63
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAgingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAgingTest.java
 new file mode 100644
-index 0000000..70d7c4b
+index 00000000..70d7c4b2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAgingTest.java
 @@ -0,0 +1,118 @@
@@ -19603,7 +19651,7 @@ index 0000000..70d7c4b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleBlocksTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleBlocksTest.java
 new file mode 100644
-index 0000000..c3e6069
+index 00000000..c3e6069a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleBlocksTest.java
 @@ -0,0 +1,149 @@
@@ -19758,7 +19806,7 @@ index 0000000..c3e6069
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildrenTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildrenTest.java
 new file mode 100644
-index 0000000..64127e7
+index 00000000..64127e7a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleChildrenTest.java
 @@ -0,0 +1,300 @@
@@ -20064,7 +20112,7 @@ index 0000000..64127e7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionEventsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionEventsTest.java
 new file mode 100644
-index 0000000..a044376
+index 00000000..a0443768
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionEventsTest.java
 @@ -0,0 +1,175 @@
@@ -20245,7 +20293,7 @@ index 0000000..a044376
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionTest.java
 new file mode 100644
-index 0000000..bc368c4
+index 00000000..bc368c4e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionTest.java
 @@ -0,0 +1,124 @@
@@ -20375,7 +20423,7 @@ index 0000000..bc368c4
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCountsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCountsTest.java
 new file mode 100644
-index 0000000..25b53bc
+index 00000000..25b53bc5
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCountsTest.java
 @@ -0,0 +1,216 @@
@@ -20597,7 +20645,7 @@ index 0000000..25b53bc
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCurvesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCurvesTest.java
 new file mode 100644
-index 0000000..7f7c39c
+index 00000000..7f7c39ce
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCurvesTest.java
 @@ -0,0 +1,120 @@
@@ -20723,7 +20771,7 @@ index 0000000..7f7c39c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinitionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinitionTest.java
 new file mode 100644
-index 0000000..93eb9f7
+index 00000000..93eb9f7f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinitionTest.java
 @@ -0,0 +1,190 @@
@@ -20919,7 +20967,7 @@ index 0000000..93eb9f7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDispatchTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDispatchTest.java
 new file mode 100644
-index 0000000..778d29f
+index 00000000..778d29f1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDispatchTest.java
 @@ -0,0 +1,101 @@
@@ -21026,7 +21074,7 @@ index 0000000..778d29f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 new file mode 100644
-index 0000000..e3de532
+index 00000000..e3de5329
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 @@ -0,0 +1,673 @@
@@ -21705,7 +21753,7 @@ index 0000000..e3de532
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java
 new file mode 100644
-index 0000000..9af438b
+index 00000000..9af438b9
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java
 @@ -0,0 +1,301 @@
@@ -22012,7 +22060,7 @@ index 0000000..9af438b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFacingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFacingTest.java
 new file mode 100644
-index 0000000..eda5846
+index 00000000..eda5846c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFacingTest.java
 @@ -0,0 +1,153 @@
@@ -22171,7 +22219,7 @@ index 0000000..eda5846
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFramesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFramesTest.java
 new file mode 100644
-index 0000000..a98e723
+index 00000000..a98e7237
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFramesTest.java
 @@ -0,0 +1,110 @@
@@ -22287,7 +22335,7 @@ index 0000000..a98e723
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraphTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraphTest.java
 new file mode 100644
-index 0000000..54dfc31
+index 00000000..54dfc31d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraphTest.java
 @@ -0,0 +1,74 @@
@@ -22367,7 +22415,7 @@ index 0000000..54dfc31
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleInterpolationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleInterpolationTest.java
 new file mode 100644
-index 0000000..2bf35e1
+index 00000000..2bf35e16
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleInterpolationTest.java
 @@ -0,0 +1,164 @@
@@ -22537,7 +22585,7 @@ index 0000000..2bf35e1
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeTest.java
 new file mode 100644
-index 0000000..b348f55
+index 00000000..b348f559
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeTest.java
 @@ -0,0 +1,148 @@
@@ -22691,7 +22739,7 @@ index 0000000..b348f55
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePendingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePendingTest.java
 new file mode 100644
-index 0000000..8759f93
+index 00000000..8759f93c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePendingTest.java
 @@ -0,0 +1,62 @@
@@ -22759,7 +22807,7 @@ index 0000000..8759f93
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java
 new file mode 100644
-index 0000000..ab47f40
+index 00000000..ab47f400
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java
 @@ -0,0 +1,260 @@
@@ -23025,7 +23073,7 @@ index 0000000..ab47f40
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRatesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRatesTest.java
 new file mode 100644
-index 0000000..0d368a3
+index 00000000..0d368a32
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRatesTest.java
 @@ -0,0 +1,143 @@
@@ -23174,7 +23222,7 @@ index 0000000..0d368a3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRegistryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRegistryTest.java
 new file mode 100644
-index 0000000..9fb002e
+index 00000000..9fb002e2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRegistryTest.java
 @@ -0,0 +1,130 @@
@@ -23310,7 +23358,7 @@ index 0000000..9fb002e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRenderTypesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRenderTypesTest.java
 new file mode 100644
-index 0000000..5ba2beb
+index 00000000..5ba2bebd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleRenderTypesTest.java
 @@ -0,0 +1,69 @@
@@ -23385,7 +23433,7 @@ index 0000000..5ba2beb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleShapeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleShapeTest.java
 new file mode 100644
-index 0000000..b4096ae
+index 00000000..b4096aeb
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleShapeTest.java
 @@ -0,0 +1,164 @@
@@ -23555,7 +23603,7 @@ index 0000000..b4096ae
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSoundTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSoundTest.java
 new file mode 100644
-index 0000000..42fefbb
+index 00000000..42fefbb9
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSoundTest.java
 @@ -0,0 +1,176 @@
@@ -23737,7 +23785,7 @@ index 0000000..42fefbb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpaceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpaceTest.java
 new file mode 100644
-index 0000000..727ba3b
+index 00000000..727ba3b4
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpaceTest.java
 @@ -0,0 +1,160 @@
@@ -23903,7 +23951,7 @@ index 0000000..727ba3b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStreamTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStreamTest.java
 new file mode 100644
-index 0000000..1aa8e73
+index 00000000..1aa8e733
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStreamTest.java
 @@ -0,0 +1,63 @@
@@ -23972,7 +24020,7 @@ index 0000000..1aa8e73
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerHeadwearTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerHeadwearTest.java
 new file mode 100644
-index 0000000..cfa37f3
+index 00000000..cfa37f3f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerHeadwearTest.java
 @@ -0,0 +1,91 @@
@@ -24069,7 +24117,7 @@ index 0000000..cfa37f3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
 new file mode 100644
-index 0000000..3e4fead
+index 00000000..3e4feada
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
 @@ -0,0 +1,571 @@
@@ -24646,7 +24694,7 @@ index 0000000..3e4fead
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorResourcesTest.java
 new file mode 100644
-index 0000000..a3d9891
+index 00000000..a3d98919
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerActorResourcesTest.java
 @@ -0,0 +1,140 @@
@@ -24792,7 +24840,7 @@ index 0000000..a3d9891
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticlesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticlesTest.java
 new file mode 100644
-index 0000000..56b5beb
+index 00000000..56b5bebf
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticlesTest.java
 @@ -0,0 +1,70 @@
@@ -24868,7 +24916,7 @@ index 0000000..56b5beb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
 new file mode 100644
-index 0000000..9a364b5
+index 00000000..9a364b56
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
 @@ -0,0 +1,72 @@
@@ -24946,7 +24994,7 @@ index 0000000..9a364b5
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBankTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBankTest.java
 new file mode 100644
-index 0000000..faffb83
+index 00000000..faffb832
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBankTest.java
 @@ -0,0 +1,122 @@
@@ -25074,7 +25122,7 @@ index 0000000..faffb83
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelopeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelopeTest.java
 new file mode 100644
-index 0000000..c44a276
+index 00000000..c44a276c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelopeTest.java
 @@ -0,0 +1,30 @@
@@ -25110,7 +25158,7 @@ index 0000000..c44a276
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEventTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEventTest.java
 new file mode 100644
-index 0000000..161ec43
+index 00000000..161ec439
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEventTest.java
 @@ -0,0 +1,300 @@
@@ -25416,7 +25464,7 @@ index 0000000..161ec43
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java
 new file mode 100644
-index 0000000..29132b6
+index 00000000..29132b6a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java
 @@ -0,0 +1,173 @@
@@ -25595,7 +25643,7 @@ index 0000000..29132b6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlaybackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlaybackTest.java
 new file mode 100644
-index 0000000..50c39fb
+index 00000000..50c39fb1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlaybackTest.java
 @@ -0,0 +1,31 @@
@@ -25632,7 +25680,7 @@ index 0000000..50c39fb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTintMaskTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTintMaskTest.java
 new file mode 100644
-index 0000000..9dcddce
+index 00000000..9dcddced
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTintMaskTest.java
 @@ -0,0 +1,61 @@
@@ -25699,7 +25747,7 @@ index 0000000..9dcddce
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeAssetFixture.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeAssetFixture.java
 new file mode 100644
-index 0000000..027af99
+index 00000000..027af99d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeAssetFixture.java
 @@ -0,0 +1,86 @@
@@ -25791,7 +25839,7 @@ index 0000000..027af99
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorAttackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorAttackTest.java
 new file mode 100644
-index 0000000..63597cb
+index 00000000..63597cbc
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorAttackTest.java
 @@ -0,0 +1,75 @@
@@ -25872,7 +25920,7 @@ index 0000000..63597cb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingStateTest.java
 new file mode 100644
-index 0000000..db32dd0
+index 00000000..db32dd04
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPickingStateTest.java
 @@ -0,0 +1,158 @@
@@ -26036,7 +26084,7 @@ index 0000000..db32dd0
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java
 new file mode 100644
-index 0000000..d2f305b
+index 00000000..d2f305bf
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java
 @@ -0,0 +1,207 @@
@@ -26249,7 +26297,7 @@ index 0000000..d2f305b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java
 new file mode 100644
-index 0000000..0ab89b1
+index 00000000..0ab89b13
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java
 @@ -0,0 +1,87 @@
@@ -26342,7 +26390,7 @@ index 0000000..0ab89b1
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockBoneTransformTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockBoneTransformTest.java
 new file mode 100644
-index 0000000..6d6690a
+index 00000000..6d6690a6
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockBoneTransformTest.java
 @@ -0,0 +1,69 @@
@@ -26417,7 +26465,7 @@ index 0000000..6d6690a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java
 new file mode 100644
-index 0000000..720a3c4
+index 00000000..720a3c4e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java
 @@ -0,0 +1,117 @@
@@ -26540,7 +26588,7 @@ index 0000000..720a3c4
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonCameraTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonCameraTest.java
 new file mode 100644
-index 0000000..a820ceb
+index 00000000..a820ceb7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonCameraTest.java
 @@ -0,0 +1,86 @@
@@ -26632,7 +26680,7 @@ index 0000000..a820ceb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
 new file mode 100644
-index 0000000..a594483
+index 00000000..a594483e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
 @@ -0,0 +1,151 @@
@@ -26789,7 +26837,7 @@ index 0000000..a594483
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonItemRenderingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonItemRenderingTest.java
 new file mode 100644
-index 0000000..eab20f4
+index 00000000..eab20f4a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonItemRenderingTest.java
 @@ -0,0 +1,53 @@
@@ -26848,7 +26896,7 @@ index 0000000..eab20f4
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonProjectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonProjectionTest.java
 new file mode 100644
-index 0000000..7116a95
+index 00000000..7116a95c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonProjectionTest.java
 @@ -0,0 +1,88 @@
@@ -26942,7 +26990,7 @@ index 0000000..7116a95
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFluidRenderingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFluidRenderingTest.java
 new file mode 100644
-index 0000000..0f0d87e
+index 00000000..0f0d87e3
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFluidRenderingTest.java
 @@ -0,0 +1,39 @@
@@ -26987,7 +27035,7 @@ index 0000000..0f0d87e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueriesTest.java
 new file mode 100644
-index 0000000..43e497e
+index 00000000..43e497e2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueriesTest.java
 @@ -0,0 +1,129 @@
@@ -27122,7 +27170,7 @@ index 0000000..43e497e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHumanoidVisibilityTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHumanoidVisibilityTest.java
 new file mode 100644
-index 0000000..b2e4356
+index 00000000..b2e4356a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockHumanoidVisibilityTest.java
 @@ -0,0 +1,85 @@
@@ -27213,7 +27261,7 @@ index 0000000..b2e4356
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockMaterialGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockMaterialGeometryTest.java
 new file mode 100644
-index 0000000..d185f38
+index 00000000..d185f381
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockMaterialGeometryTest.java
 @@ -0,0 +1,87 @@
@@ -27306,7 +27354,7 @@ index 0000000..d185f38
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorsTest.java
 new file mode 100644
-index 0000000..fdf0e9a
+index 00000000..fdf0e9ab
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorsTest.java
 @@ -0,0 +1,112 @@
@@ -27424,7 +27472,7 @@ index 0000000..fdf0e9a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransformsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransformsTest.java
 new file mode 100644
-index 0000000..51be474
+index 00000000..51be4745
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransformsTest.java
 @@ -0,0 +1,97 @@
@@ -27527,7 +27575,7 @@ index 0000000..51be474
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotationTest.java
 new file mode 100644
-index 0000000..45ef342
+index 00000000..45ef3424
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerBodyRotationTest.java
 @@ -0,0 +1,77 @@
@@ -27610,7 +27658,7 @@ index 0000000..45ef342
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
 new file mode 100644
-index 0000000..166bca7
+index 00000000..166bca7d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
 @@ -0,0 +1,145 @@
@@ -27761,7 +27809,7 @@ index 0000000..166bca7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderOffsetTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderOffsetTest.java
 new file mode 100644
-index 0000000..2103746
+index 00000000..2103746f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderOffsetTest.java
 @@ -0,0 +1,58 @@
@@ -27825,7 +27873,7 @@ index 0000000..2103746
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java
 new file mode 100644
-index 0000000..0c92c0e
+index 00000000..0c92c0e2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java
 @@ -0,0 +1,93 @@
@@ -27924,7 +27972,7 @@ index 0000000..0c92c0e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimationTest.java
 new file mode 100644
-index 0000000..8692908
+index 00000000..8692908b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimationTest.java
 @@ -0,0 +1,65 @@
@@ -27995,7 +28043,7 @@ index 0000000..8692908
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/NativeActorColorPayloadTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/NativeActorColorPayloadTest.java
 new file mode 100644
-index 0000000..d62398c
+index 00000000..d62398c1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/NativeActorColorPayloadTest.java
 @@ -0,0 +1,50 @@

@@ -1,0 +1,203 @@
+From b5ca83f4def609dd9fdaa120e59d6324367686fc Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 00:44:11 +0100
+Subject: [PATCH] fix(inventory): honor server-selected local equipment slots
+
+Apply a local-player MobEquipment selection to the inventory and Java held slot instead of discarding it. A paired protocol-2225 control against Bedrock 1.26.60.5 and BDS 1.26.60.6 shows the native client returning to wooden-pickaxe slot 0 after the server selects it, while the translated client keeps diamond-pickaxe slot 1 and mines with that tool.
+
+Accept matching inventory hotbar indices only. Keep inventory contents authoritative through their existing update path, and preserve remote equipment translation. Retain packet-boundary regressions locally for valid selection, rejected local updates, and remote actors.
+---
+ .../protocol/packet/EntityPackets.java        |  14 +-
+ .../packet/LocalEquipmentSelectionTest.java   | 146 ++++++++++++++++++
+ 2 files changed, 159 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/LocalEquipmentSelectionTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+index dde3d4b1b..e89f8c865 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+@@ -65,6 +65,7 @@ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.EntityPropertyTracker;
+ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+ import net.raphimc.viabedrock.protocol.storage.PlayerPredictionStorage;
+ import net.raphimc.viabedrock.protocol.storage.VehiclePredictionStorage;
+ import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+@@ -699,10 +700,21 @@ public final class EntityPackets {
+             final byte containerId = wrapper.read(Types.BYTE); // container id
+ 
+             final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(entityRuntimeId);
+-            if (entity == null || entity instanceof ClientPlayerEntity) {
++            if (entity == null) {
+                 wrapper.cancel();
+                 return;
+             }
++            if (entity instanceof ClientPlayerEntity) {
++                final var inventory = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
++                if (containerId == inventory.containerId() && slot == selectedSlot
++                        && inventory.setSelectedHotbarSlot(selectedSlot)) {
++                    wrapper.setPacketType(ClientboundPackets26_3.SET_HELD_SLOT);
++                    wrapper.write(Types.VAR_INT, (int) selectedSlot);
++                } else {
++                    wrapper.cancel();
++                }
++                return;
++            }
+ 
+             wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
+             if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue() && slot >= 0 && slot < 9 && (slot == selectedSlot || selectedSlot < 0)) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/LocalEquipmentSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/LocalEquipmentSelectionTest.java
+new file mode 100644
+index 000000000..ff32aed9f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/LocalEquipmentSelectionTest.java
+@@ -0,0 +1,146 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.packet.mapping.PacketMapping;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.util.Map;
++import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackContext;
++import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackDescriptorType;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.anyByte;
++import static org.mockito.ArgumentMatchers.anyInt;
++import static org.mockito.ArgumentMatchers.anyShort;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++final class LocalEquipmentSelectionTest {
++
++    @BeforeAll
++    static void loadItemCodecs() throws Exception {
++        Class.forName(StructuredDataKey.class.getName());
++    }
++
++    @Test
++    void localEquipmentSelectsTheAuthoritativeHotbarSlotInCoreAndJava() throws Exception {
++        final var fixture = new Fixture();
++        final var packet = fixture.receive(1, 0, 0, 0);
++
++        assertFalse(packet.isCancelled());
++        assertEquals(0, fixture.inventory.getSelectedHotbarSlot());
++        assertEquals(ClientboundPackets26_3.SET_HELD_SLOT, packet.getPacketType());
++        assertEquals(0, packet.get(Types.VAR_INT, 0));
++    }
++
++    @Test
++    void offhandAndInvalidLocalSlotsLeaveSelectionAlone() throws Exception {
++        final var fixture = new Fixture();
++
++        assertTrue(fixture.receive(1, 0, 0, 119).isCancelled());
++        assertTrue(fixture.receive(1, 9, 9, 0).isCancelled());
++        assertTrue(fixture.receive(1, 0, 1, 0).isCancelled());
++        assertEquals(1, fixture.inventory.getSelectedHotbarSlot());
++    }
++
++    @Test
++    void remoteEquipmentDoesNotSelectTheLocalHotbar() throws Exception {
++        final var fixture = new Fixture();
++        final var packet = fixture.receive(2, 0, 0, 0);
++
++        assertFalse(packet.isCancelled());
++        assertEquals(ClientboundPackets26_3.SET_EQUIPMENT, packet.getPacketType());
++        assertEquals(20, packet.get(Types.VAR_INT, 0));
++        assertEquals(1, fixture.inventory.getSelectedHotbarSlot());
++    }
++
++    private static final class Fixture {
++        private final UserConnection user = mock(UserConnection.class);
++        private final InventoryContainer inventory = new InventoryContainer(this.user);
++        private final TestProtocol protocol = new TestProtocol();
++
++        private Fixture() {
++            this.inventory.setSelectedHotbarSlot(1);
++            final var inventoryTracker = mock(InventoryTracker.class);
++            when(inventoryTracker.getInventoryContainer()).thenReturn(this.inventory);
++            final var entities = mock(EntityTracker.class);
++            when(entities.getEntityByRid(1)).thenReturn(mock(ClientPlayerEntity.class));
++            final var remote = mock(Entity.class);
++            when(remote.javaId()).thenReturn(20);
++            when(entities.getEntityByRid(2)).thenReturn(remote);
++            final var context = mock(NetworkItemStackContext.class);
++            when(context.createNetworkItem(anyInt(), anyShort(), anyByte(), anyInt()))
++                    .thenAnswer(call -> new BedrockItem((int) call.getArgument(0), (short) call.getArgument(1), (byte) call.getArgument(2)));
++            final var items = mock(ItemRewriter.class);
++            when(items.newItemType()).thenReturn(new NetworkItemStackDescriptorType(0, false, context));
++            final Map<Class<?>, Object> storage = Map.of(
++                    EntityTracker.class, entities, InventoryTracker.class, inventoryTracker, ItemRewriter.class, items);
++            when(this.user.get(any())).thenAnswer(call -> storage.get(call.getArgument(0)));
++            final var info = mock(ProtocolInfo.class);
++            when(info.getClientState()).thenReturn(State.PLAY);
++            when(this.user.getProtocolInfo()).thenReturn(info);
++        }
++
++        private PacketWrapper receive(final long actor, final int slot, final int selected, final int container) throws Exception {
++            final ByteBuf input = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(input, actor);
++                input.writeShortLE(312).writeShortLE(1);
++                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(input, 0);
++                input.writeBoolean(false);
++                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(input, 0);
++                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(input, 10);
++                input.writeZero(10);
++                input.writeByte(slot).writeByte(selected).writeByte(container);
++                final var packet = new PacketWrapperImpl(ClientboundBedrockPackets.MOB_EQUIPMENT, input, this.user);
++                final var mapping = this.protocol.mapping(packet);
++                mapping.applyType(packet);
++                mapping.handler().handle(packet);
++                assertFalse(input.isReadable());
++                return packet;
++            } finally {
++                input.release();
++            }
++        }
++
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            EntityPackets.register(this);
++        }
++
++        private PacketMapping mapping(final PacketWrapper packet) {
++            return this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++        }
++
++    }
++
++}
+-- 
+2.56.0

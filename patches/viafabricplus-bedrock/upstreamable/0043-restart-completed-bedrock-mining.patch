@@ -1,0 +1,96 @@
+From 87f904118624399086ebd879cd2b42c62f168567 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 11:15:03 +0100
+Subject: [PATCH] fix(input): restart completed Bedrock mining gestures
+
+Require an active gesture when Java recognizes the same Bedrock mining target. Java 26.3 retains the previous target after completion, so a server-restored block accumulates progress without sending Start, stays inactive, and leaves cracks when attack is released.
+
+Native Bedrock 1.26.60.5/protocol 2225 completes at 652, closes with Abort at 653 and starts the next attempt at 654, completing it at 676. Java's five-input pause advances only while hitting a block and can carry into later fresh presses. Replace it for survival continuation with a closing-frame pause advanced by game-mode ticks, including misses and released input. A count of two retains the closing frame across tick/callback order and admits continuation on the next frame. Keep the separate creative constant and Java sessions unchanged.
+
+Credit the first damage update when continueDestroyBlock starts an automatic attempt. A fresh click already runs that update in the same tick; Java otherwise returns directly from an automatic start, making its attempt 23 input frames instead of the native 22. After the start, the target and held item are active, so the nested continuation takes the ordinary damage branch and does not restart again. The core separately owns packet completion, Abort and pending Start ordering.
+
+Bounded read-only installed-client observations establish the inactive target, cooldown carry and retry-duration differences. REA retains the original native packet controls and the exact Java 26.3 runtime artifact inspection. Validate selectors, automatic progress, request framing and release behavior in the installed client; unit tests do not apply these mixins.
+---
+ .../features/misc/MixinBedrockMining.java     | 58 +++++++++++++++++++
+ .../viafabricplus-bedrock.mixins.json         |  1 +
+ 2 files changed, 59 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/misc/MixinBedrockMining.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/misc/MixinBedrockMining.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/misc/MixinBedrockMining.java
+new file mode 100644
+index 00000000..fa7293b7
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/misc/MixinBedrockMining.java
+@@ -0,0 +1,58 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.misc;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.multiplayer.MultiPlayerGameMode;
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Direction;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Constant;
++import org.spongepowered.asm.mixin.injection.ModifyConstant;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(MultiPlayerGameMode.class)
++public abstract class MixinBedrockMining {
++    @Shadow private boolean isDestroying;
++    @Unique private int viaFabricPlusBedrock$miningPause;
++
++    @ModifyReturnValue(method = "sameDestroyTarget", at = @At("RETURN"), require = 1)
++    private boolean requireActiveBedrockGesture(final boolean sameTarget) {
++        // A restored block needs a new Start; continuing an inactive Java target sends none.
++        return sameTarget && (!BedrockInputPermissions.isBedrockConnection() || this.isDestroying);
++    }
++
++    @Inject(method = "tick", at = @At("TAIL"), require = 1)
++    private void advanceBedrockMiningPause(final CallbackInfo ci) {
++        if (this.viaFabricPlusBedrock$miningPause > 0) this.viaFabricPlusBedrock$miningPause--;
++    }
++
++    @WrapOperation(method = "continueDestroyBlock", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;startDestroyBlock(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)Z"), require = 1)
++    private boolean beginBedrockContinuation(final MultiPlayerGameMode mode, final BlockPos position,
++                                             final Direction direction, final Operation<Boolean> original) {
++        final boolean bedrock = BedrockInputPermissions.isBedrockConnection();
++        if (bedrock && this.viaFabricPlusBedrock$miningPause > 0) return false;
++        final boolean started = original.call(mode, position, direction);
++        // The newly active target/item takes the damage branch, so this cannot re-enter the start branch.
++        return bedrock && started && this.isDestroying ? mode.continueDestroyBlock(position, direction) : started;
++    }
++
++    @ModifyConstant(method = "continueDestroyBlock", constant = @Constant(intValue = 5, ordinal = 1), require = 1)
++    private int closeCompletedBedrockGesture(final int javaDelay) {
++        if (!BedrockInputPermissions.isBedrockConnection()) return javaDelay;
++        // Reserve the closing input. Tick this even while a restored block is outside the current raycast.
++        this.viaFabricPlusBedrock$miningPause = 2;
++        return 0;
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 68265e01..9275081c 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -111,6 +111,7 @@
+     "features.inventory.MixinBedrockCartographySlot",
+     "features.misc.MixinBedrockProtocol",
+     "features.misc.MixinClientSuggestionProvider",
++    "features.misc.MixinBedrockMining",
+     "features.misc.MixinMinecraft",
+     "features.render.MixinNativeActorAttack",
+     "features.render.MixinNativeActorPickingEntity",
+-- 
+2.56.0

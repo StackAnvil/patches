@@ -1,4 +1,4 @@
-From 45c288a6b0e32d412259301b6f75550fc6d26895 Mon Sep 17 00:00:00 2001
+From 4581131904ac8d8061e670c252e94a77424df9d5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:37 +0200
 Subject: [PATCH] fix(mining): reconcile completed and creative block breaks
@@ -6,20 +6,26 @@ Subject: [PATCH] fix(mining): reconcile completed and creative block breaks
 Send MineBlock requests or legacy destroy transactions in PLAYER_AUTH_INPUT at the break tick, including the matching input flags. Predict damage for tagged vanilla tools and accept authoritative durability only for the same held stack. Handle creative start actions and suppress redundant mining swings; server correction remains authoritative for instant breaks.
 
 Route creative breaks through Bedrock player actions while keeping survival completed-break inventory actions in the server-authoritative request. These paths share the block-breaking transaction and should be reviewed together.
+
+Emit the completion Continue/Predict pair with its MineBlock request, then close the gesture with Abort in the following PLAYER_AUTH_INPUT frame. Paired protocol-2225 native controls separate these actions on every completed break, including rejected breaks and a tool change. Promote deferred actions after clearing the serialized frame so a subsequent Start follows the previous Abort. Actual cancellation and the legacy client-authoritative sequence retain their existing timing.
+
+Keep a fresh survival Start pending until the completed gesture's Abort input has been serialized. Suppress continuation state while that Start is pending and cancel it on a real release. Native 1.26.60.5/protocol 2225 separates completion, Abort and restart across three inputs. Installed controls show that Java cooldowns alone move both input delivery and mining progress; own this boundary in the input-frame lifecycle instead. Regressions cover ordered promotion and release before promotion.
+
+Retain direction changes while a Start waits for completion closure, without emitting Continue before that Start. The promoted action uses the latest direction.
 ---
- .../api/model/entity/ClientPlayerEntity.java  |  30 ++++
+ .../api/model/entity/ClientPlayerEntity.java  |  73 +++++++
  .../inventory/ItemStackRequestAction.java     |  10 +-
- .../protocol/packet/ClientPlayerPackets.java  | 168 ++++++++++++++++--
- .../storage/InventoryRequestTracker.java      |  80 +++++++++
+ .../protocol/packet/ClientPlayerPackets.java  | 190 +++++++++++++++---
+ .../storage/InventoryRequestTracker.java      |  80 ++++++++
  .../types/inventory/ItemStackActionType.java  |   4 +
- .../packet/ClientPlayerPacketsTest.java       |  60 +++++++
- .../InventoryRequestTrackerMiningTest.java    |  55 ++++++
- .../types/inventory/ItemStackCodecTest.java   |  10 ++
- 8 files changed, 398 insertions(+), 19 deletions(-)
+ .../packet/ClientPlayerPacketsTest.java       | 102 ++++++++++
+ .../InventoryRequestTrackerMiningTest.java    |  55 +++++
+ .../types/inventory/ItemStackCodecTest.java   |  10 +
+ 8 files changed, 500 insertions(+), 24 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerMiningTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index b1e8fa34b..b83bbd7ea 100644
+index b1e8fa34b..105e667b7 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 @@ -47,6 +47,8 @@ import net.raphimc.viabedrock.api.model.FlightMovementContext;
@@ -31,16 +37,76 @@ index b1e8fa34b..b83bbd7ea 100644
  import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  import net.raphimc.viabedrock.protocol.storage.CommandsStorage;
-@@ -85,6 +87,8 @@ public class ClientPlayerEntity extends PlayerEntity {
+@@ -85,6 +87,9 @@ public class ClientPlayerEntity extends PlayerEntity {
      private boolean prevOnGround;
      private final Set<PlayerAuthInputData> authInputData = EnumSet.noneOf(PlayerAuthInputData.class);
      private final List<AuthInputBlockAction> authInputBlockActions = new ArrayList<>();
++    private final List<AuthInputBlockAction> nextAuthInputBlockActions = new ArrayList<>();
 +    private ItemStackRequestInfo authInputItemStackRequest;
 +    private BedrockInventoryTransaction authInputItemInteraction;
      private Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
      private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
      private boolean horizontalCollision;
-@@ -653,6 +657,32 @@ public class ClientPlayerEntity extends PlayerEntity {
+@@ -107,6 +112,8 @@ public class ClientPlayerEntity extends PlayerEntity {
+     private boolean cancelNextSwingPacket;
+     private boolean flightLegacyFriction;
+     private BlockBreakingInfo blockBreakingInfo;
++    private BlockBreakingInfo blockBreakingAfterClose;
++    private boolean closingCompletedBlockBreak;
+ 
+     public ClientPlayerEntity(final UserConnection user, final long runtimeId, final UUID javaUuid, final PlayerAbilities abilities) {
+         super(user, runtimeId, 1, javaUuid, abilities);
+@@ -333,6 +340,45 @@ public class ClientPlayerEntity extends PlayerEntity {
+         this.authInputBlockActions.add(blockAction);
+     }
+ 
++    public void addNextAuthInputBlockAction(final AuthInputBlockAction blockAction) {
++        this.nextAuthInputBlockActions.add(blockAction);
++    }
++
++    public boolean isClosingCompletedBlockBreak() {
++        return this.closingCompletedBlockBreak || this.nextAuthInputBlockActions.stream()
++                .anyMatch(action -> action.action() == PlayerActionType.AbortDestroyBlock);
++    }
++
++    public void startBlockBreakingAfterClose(final BlockBreakingInfo breaking) {
++        this.blockBreakingInfo = null;
++        this.blockBreakingAfterClose = breaking;
++    }
++
++    public void updateBlockBreakingAfterClose(final BlockPosition position, final Direction direction) {
++        if (this.blockBreakingAfterClose != null && this.blockBreakingAfterClose.position().equals(position)) {
++            this.blockBreakingAfterClose = new BlockBreakingInfo(position, direction);
++        }
++    }
++
++    public void completeAuthInputFrame() {
++        this.authInputData.clear();
++        this.authInputBlockActions.clear();
++        this.setAuthInputItemInteraction(null);
++        this.setAuthInputItemStackRequest(null);
++        this.closingCompletedBlockBreak = false;
++        for (final AuthInputBlockAction action : this.nextAuthInputBlockActions) {
++            this.addAuthInputBlockAction(action);
++            this.closingCompletedBlockBreak |= action.action() == PlayerActionType.AbortDestroyBlock;
++        }
++        this.nextAuthInputBlockActions.clear();
++        if (!this.closingCompletedBlockBreak && this.blockBreakingAfterClose != null) {
++            this.blockBreakingInfo = this.blockBreakingAfterClose;
++            this.blockBreakingAfterClose = null;
++            this.addAuthInputBlockAction(new AuthInputBlockAction(PlayerActionType.StartDestroyBlock,
++                    this.blockBreakingInfo.position(), this.blockBreakingInfo.direction().ordinal()));
++        }
++    }
++
+     @Override
+     public void setPosition(final Position3f position) {
+         super.setPosition(position);
+@@ -650,9 +696,36 @@ public class ClientPlayerEntity extends PlayerEntity {
+     }
+ 
+     public void setBlockBreakingInfo(final BlockBreakingInfo blockBreakingInfo) {
++        this.blockBreakingAfterClose = null;
          this.blockBreakingInfo = blockBreakingInfo;
      }
  
@@ -102,7 +168,7 @@ index ecaac963f..8d0d5ad28 100644
              implements ItemStackRequestAction {
          @Override
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 16803a789..531a753c6 100644
+index 16803a789..1a618951c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -19,6 +19,9 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -130,12 +196,38 @@ index 16803a789..531a753c6 100644
  
  import java.util.List;
  import java.util.Set;
-@@ -191,6 +197,96 @@ public final class ClientPlayerPackets {
+@@ -109,7 +115,11 @@ public final class ClientPlayerPackets {
+     static void updateDestroyDirection(final ClientPlayerEntity clientPlayer, final BlockPosition position,
+                                        final Direction direction, final boolean serverAuthoritative) {
+         final ClientPlayerEntity.BlockBreakingInfo breakingInfo = clientPlayer.blockBreakingInfo();
+-        if (breakingInfo == null || !breakingInfo.position().equals(position)) {
++        if (breakingInfo == null) {
++            clientPlayer.updateBlockBreakingAfterClose(position, direction);
++            return;
++        }
++        if (!breakingInfo.position().equals(position)) {
+             return;
+         }
+ 
+@@ -191,6 +201,109 @@ public final class ClientPlayerPackets {
          wrapper.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
      }
  
++    static void queueCompletedDestroyActions(final ClientPlayerEntity clientPlayer,
++                                             final BlockPosition position, final Direction direction) {
++        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
++        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
++        // Native completion closes the mining gesture in the following input frame.
++        clientPlayer.addNextAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, direction.ordinal()));
++    }
++
 +    static void queueStartDestroyAction(final ClientPlayerEntity clientPlayer,
 +            final BlockPosition position, final Direction direction, final boolean creative) {
++        if (!creative && clientPlayer.isClosingCompletedBlockBreak()) {
++            // Native serializes the completed gesture's Abort before admitting the next Start.
++            clientPlayer.startBlockBreakingAfterClose(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
++            return;
++        }
 +        clientPlayer.setBlockBreakingInfo(creative ? null
 +                : new ClientPlayerEntity.BlockBreakingInfo(position, direction));
 +        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
@@ -227,7 +319,7 @@ index 16803a789..531a753c6 100644
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_3.RESPAWN, wrapper -> {
              final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
-@@ -515,45 +611,59 @@ public final class ClientPlayerPackets {
+@@ -515,45 +628,57 @@ public final class ClientPlayerPackets {
  
              final boolean isMining = action == PlayerActionAction.START_DESTROY_BLOCK || action == PlayerActionAction.ABORT_DESTROY_BLOCK || action == PlayerActionAction.STOP_DESTROY_BLOCK || action == PlayerActionAction.CHANGE_DESTROY_DIRECTION;
              if (isMining && (gameSession.isImmutableWorld() || !clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Mine))) {
@@ -286,18 +378,18 @@ index 16803a789..531a753c6 100644
 -                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
 +                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, direction.ordinal()));
                      } else {
+-                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
+-                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
+-                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
 +                        queueMineBlockRequest(clientPlayer,
 +                                wrapper.user().get(InventoryTracker.class),
 +                                wrapper.user().get(InventoryRequestTracker.class),
 +                                wrapper.user().get(ItemRewriter.class));
-                         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
-                         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
--                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
-+                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, direction.ordinal()));
++                        queueCompletedDestroyActions(clientPlayer, position, direction);
                      }
  
                      chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
-@@ -734,6 +844,8 @@ public final class ClientPlayerPackets {
+@@ -734,6 +859,8 @@ public final class ClientPlayerPackets {
  
              if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
                  clientPlayer.setShieldBlockingHand(null);
@@ -306,7 +398,7 @@ index 16803a789..531a753c6 100644
                  wrapper.cancel();
                  return;
              }
-@@ -861,8 +973,23 @@ public final class ClientPlayerPackets {
+@@ -861,8 +988,23 @@ public final class ClientPlayerPackets {
              predictionStorage.remember(clientPlayer.age(), predictions.clockFrame());
              wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
              wrapper.write(BedrockTypes.POSITION_3F, velocity); // delta
@@ -332,16 +424,17 @@ index 16803a789..531a753c6 100644
              final boolean hasBlockActions = clientPlayer.authInputData().contains(PlayerAuthInputData.PerformBlockActions);
              wrapper.write(Types.BOOLEAN, hasBlockActions);
              if (hasBlockActions) {
-@@ -889,6 +1016,8 @@ public final class ClientPlayerPackets {
+@@ -887,8 +1029,7 @@ public final class ClientPlayerPackets {
+             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
+             wrapper.write(BedrockTypes.POSITION_2F, playerInput.rawInput().movement()); // raw move vector
  
-             clientPlayer.authInputData().clear();
-             clientPlayer.authInputBlockActions().clear();
-+            clientPlayer.setAuthInputItemInteraction(null);
-+            clientPlayer.setAuthInputItemStackRequest(null);
+-            clientPlayer.authInputData().clear();
+-            clientPlayer.authInputBlockActions().clear();
++            clientPlayer.completeAuthInputFrame();
          });
          protocol.registerServerbound(ServerboundPackets26_3.PLAYER_ABILITIES, null, wrapper -> {
              wrapper.cancel();
-@@ -927,16 +1056,19 @@ public final class ClientPlayerPackets {
+@@ -927,16 +1068,19 @@ public final class ClientPlayerPackets {
                  return;
              }
  
@@ -516,7 +609,7 @@ index cf1bdeee1..49bcea9e0 100644
              BedrockTypes.UNSIGNED_VAR_INT.write(buffer, action.recipeNetworkId());
              buffer.writeByte(action.numberOfRequestedCrafts());
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
-index 0b1b523f7..28f67a415 100644
+index 0b1b523f7..e416ce80b 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 @@ -9,6 +9,8 @@
@@ -548,7 +641,7 @@ index 0b1b523f7..28f67a415 100644
  
  import static org.junit.jupiter.api.Assertions.assertEquals;
  import static org.junit.jupiter.api.Assertions.assertFalse;
-@@ -38,6 +45,59 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
+@@ -38,6 +45,101 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  
  class ClientPlayerPacketsTest {
  
@@ -566,6 +659,48 @@ index 0b1b523f7..28f67a415 100644
 +        assertEquals(PlayerActionType.StartDestroyBlock,
 +                survival.authInputBlockActions().get(0).action());
 +        assertEquals(position, survival.blockBreakingInfo().position());
++    }
++
++    @Test
++    void completedMiningClosesInTheFollowingInputBeforeStartingAgain() {
++        final ClientPlayerEntity player = player();
++        final BlockPosition completed = new BlockPosition(3, 64, 5);
++        final BlockPosition next = new BlockPosition(4, 64, 5);
++        ClientPlayerPackets.queueCompletedDestroyActions(player, completed, Direction.NORTH);
++        assertEquals(List.of(PlayerActionType.ContinueDestroyBlock, PlayerActionType.PredictDestroyBlock),
++                player.authInputBlockActions().stream().map(ClientPlayerEntity.AuthInputBlockAction::action).toList());
++
++        player.completeAuthInputFrame();
++        ClientPlayerPackets.queueStartDestroyAction(player, next, Direction.EAST, false);
++        ClientPlayerPackets.updateDestroyDirection(player, next, Direction.SOUTH, true);
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.PerformBlockActions));
++        assertEquals(List.of(PlayerActionType.AbortDestroyBlock),
++                player.authInputBlockActions().stream().map(ClientPlayerEntity.AuthInputBlockAction::action).toList());
++        assertEquals(completed, player.authInputBlockActions().getFirst().position());
++        assertNull(player.blockBreakingInfo());
++
++        player.completeAuthInputFrame();
++        assertEquals(List.of(PlayerActionType.StartDestroyBlock),
++                player.authInputBlockActions().stream().map(ClientPlayerEntity.AuthInputBlockAction::action).toList());
++        assertEquals(next, player.authInputBlockActions().getFirst().position());
++        assertEquals(next, player.blockBreakingInfo().position());
++        assertEquals(Direction.SOUTH.ordinal(), player.authInputBlockActions().getFirst().direction());
++        player.completeAuthInputFrame();
++        assertTrue(player.authInputBlockActions().isEmpty());
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.PerformBlockActions));
++    }
++
++    @Test
++    void releaseCancelsPendingStartAfterCompletion() {
++        final ClientPlayerEntity player = player();
++        final BlockPosition position = new BlockPosition(3, 64, 5);
++        ClientPlayerPackets.queueCompletedDestroyActions(player, position, Direction.NORTH);
++        ClientPlayerPackets.queueStartDestroyAction(player, position, Direction.NORTH, false);
++        player.completeAuthInputFrame();
++        player.setBlockBreakingInfo(null);
++        player.completeAuthInputFrame();
++        assertTrue(player.authInputBlockActions().isEmpty());
++        assertNull(player.blockBreakingInfo());
 +    }
 +
 +    @Test

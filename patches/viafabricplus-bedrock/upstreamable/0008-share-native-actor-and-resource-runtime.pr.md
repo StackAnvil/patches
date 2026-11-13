@@ -18,7 +18,6 @@ Prerequisites:
 
 - viabedrock/0099-bridge-native-actor-picking-hitboxes.patch: Publish the negotiated picking message used by the actor adapter.
 
-
 - viabedrock/0085-resolve-server-effects-relative-to-their-actor.patch: Publish native animation-controller command snapshots consumed by the shared graph runtime.
 
 - viabedrock/0078-preserve-native-identifiers-in-java-item-data.patch: Provide the optional native air-continuation and shooter-release item fields consumed by the shared metadata cache.
@@ -117,3 +116,5 @@ Sound sample iteration follows the original Bedrock 1.26.60.5 JSON iterator: arr
 Ogg Vorbis length and codebook compatibility: a synthetic 8 kHz fixture checks that a final granule above the decoded length keeps the decoded frames without padding, and that a lower granule trims output. Private Galaxite Piercer clips (final granule 7071) decode 7040 stereo frames. Private Lifeboat Prison wheel clips with zero-entry codebooks fail in unmodified JOrbis 0.0.17; with the same codebook rewrite they decode 132300 and 140148 mono frames, against 132300 and 140020 from FFmpeg. The mixin itself is checked only at runtime, because unit tests do not apply mixins. Native audible parity is not measured.
 
 Static Bedrock voices now delete their OpenAL buffer only after vanilla releases the source. Vanilla's `ChannelHandle.release()` sets the stopped flag before the sound executor destroys the source, so the render-thread tick could delete a buffer that was still attached. OpenAL rejects that with `AL_INVALID_OPERATION`, logs `Deleting stream buffers: Invalid operation.`, and leaks the buffer. A Galaxite recording (Bedrock 1.26.60, protocol 2225) logged it five times, each a few seconds after a pair of server StopSound-all packets. Deletion now runs through the existing release hook on the single-threaded sound executor. `BedrockSoundPlaybackTest` checks that the buffer survives until that release runs. The silent lab cannot establish an audible effect, and no live recheck has confirmed the log is gone.
+
+Fractional animation-controller weights now apply to the completed pose contribution, preserving earlier layers. A native 1.26.60.5/BDS 1.26.60.6 three-row position control measures weights 1, 0.5 and 0.25 through a shortest-path crossfade and after settling. The old add-on loses the incoming crossfade factor and gives settled offsets 4, 2 and 1 reference spans instead of native 4, 1 and 0.25. The rebuilt installed add-on matches those native offsets within image measurement tolerance. The regression fails on the previous code; actor/controller tests and the combined full build pass. Separate native rotation, scale, shield placement and nested-controller controls remain unmeasured.
