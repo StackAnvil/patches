@@ -58,14 +58,18 @@ export async function clientArtifacts(artifactsDir = join(root, "dist"), pin?: V
     throw new Error("The two Fabric mod IDs do not match the expected stack");
   if (base.depends.minecraft !== addon.depends.minecraft)
     throw new Error("ViaFabricPlus and its Bedrock add-on target different Minecraft versions");
-  for (const name of ["ViaBedrock", "cubeconverter"]) {
+  for (const [library, artifactNames] of [
+    ["ViaBedrock", ["ViaBedrock"]],
+    ["CubeConverter", ["cubeconverter", "vv-json"]],
+  ] as const) {
     if (
       !addon.jars?.some(
         ({ file }) =>
-          file.toLowerCase().includes(name.toLowerCase()) && file.endsWith("-StackAnvil.jar"),
+          artifactNames.some((name) => file.toLowerCase().includes(name.toLowerCase())) &&
+          file.endsWith("-StackAnvil.jar"),
       )
     ) {
-      throw new Error(`The add-on does not embed the StackAnvil ${name} JAR`);
+      throw new Error(`The add-on does not embed the StackAnvil ${library} JAR`);
     }
   }
   const version = base.depends.minecraft;
