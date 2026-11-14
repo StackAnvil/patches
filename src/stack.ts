@@ -54,17 +54,18 @@ function stablePatchText(patch: string): string {
     .replace(/\n-- \n[^\n]+$/, "\n-- \n<git-version>");
 }
 
-function samePatchText(previous: string, generated: string): boolean {
+function retainPatchMetadata(previous: string, generated: string): string {
   const before = stablePatchText(previous).split("\n");
   const after = stablePatchText(generated).split("\n");
-  if (before.length !== after.length) return false;
+  if (before.length !== after.length) return `${generated}\n`;
   const sameObject = (left: string, right: string) => {
     if (/^0+$/.test(left) || /^0+$/.test(right)) return /^0+$/.test(left) && /^0+$/.test(right);
     return left.startsWith(right) || right.startsWith(left);
   };
   let inPatch = false;
   let inFileHeader = false;
-  return before.every((line, index) => {
+  const fullIndexes = new Map<number, string>();
+  const unchanged = before.every((line, index) => {
     const next = after[index]!;
     if (line === "---") inPatch = true;
     if (inPatch && line.startsWith("diff --git ")) inFileHeader = true;
@@ -75,15 +76,21 @@ function samePatchText(previous: string, generated: string): boolean {
     const pattern = /^index ([0-9a-f]{4,64})\.\.([0-9a-f]{4,64})( [0-7]{6})?$/;
     const left = pattern.exec(line);
     const right = pattern.exec(next);
-    // Legacy abbreviations can grow without changing the patch. Keep real object and mode changes.
-    return (
+    // Expand matching legacy IDs without changing commit headers, content or modes.
+    const matchingIndex =
       left !== null &&
       right !== null &&
       left[3] === right[3] &&
       sameObject(left[1]!, right[1]!) &&
-      sameObject(left[2]!, right[2]!)
-    );
+      sameObject(left[2]!, right[2]!);
+    if (matchingIndex) fullIndexes.set(index, next);
+    return matchingIndex;
   });
+  if (!unchanged) return `${generated}\n`;
+  return previous
+    .split("\n")
+    .map((line, index) => fullIndexes.get(index) ?? line)
+    .join("\n");
 }
 
 function seriesPaths(id: string, series: Series, mode: "full" | "pr", patchFile?: string) {
@@ -430,8 +437,9 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
       }
     }
     const previous = yield* Effect.promise(() => readFile(path, "utf8"));
-    if (!samePatchText(previous, patch)) {
-      yield* Effect.promise(() => writeFile(path, `${patch}\n`));
+    const rebuilt = retainPatchMetadata(previous, patch);
+    if (previous !== rebuilt) {
+      yield* Effect.promise(() => writeFile(path, rebuilt));
     }
   }
   if (titleChanged)

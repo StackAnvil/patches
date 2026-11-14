@@ -94,6 +94,8 @@ test("an interrupted patch apply can continue or abort without losing the series
   await git(["commit", "-m", "chore(test): first"], author);
   const firstPatch = join(project, "patches", "fixture", "setup", "0001-first.patch");
   const originalFirstPatch = await git(["format-patch", "--stdout", "-1"], author);
+  const firstNoteIndex = `index ${await git(["rev-parse", "HEAD^:note.txt"], author)}..${await git(["rev-parse", "HEAD:note.txt"], author)} 100644`;
+  const firstRegressionIndex = `index ${"0".repeat(40)}..${await git(["rev-parse", "HEAD:src/test/local.txt"], author)}`;
   await writeFile(firstPatch, originalFirstPatch);
   await git(["reset", "--hard", baseSha], author);
   await mkdir(join(author, "src", "test"), { recursive: true });
@@ -173,7 +175,9 @@ test("an interrupted patch apply can continue or abort without losing the series
   await git(["config", "core.abbrev", "12"], checkout);
   await run("bun", [cli, "stack", "rebuild", "fixture"], project);
   const rebuilt = await readFile(firstPatch, "utf8");
-  expect(rebuilt).toBe(originalFirstPatch);
+  expect(rebuilt).toContain(firstNoteIndex);
+  expect(rebuilt).toContain(firstRegressionIndex);
+  expect(rebuilt.replace(/^index .+$/gm, "")).toBe(originalFirstPatch.replace(/^index .+$/gm, ""));
   const changed = await readFile(secondPatch, "utf8");
   expect(changed).not.toBe(conflictingPatch);
   expect(changed).toMatch(/^index [0-9a-f]{40}\.\.[0-9a-f]{40}(?: [0-7]{6})?$/m);
