@@ -27,6 +27,5 @@ The stone neighbor retains a full face.
 An installed ViaProxy resource reload completes with the floor still visible and the same query results.
 A current plain client without MoreCulling also reaches gameplay and retains the floor.
 Other models, graphics mod combinations, and complete native visual parity remain open.
-The original oversized-shield and custom-skin pose reports remain unresolved.
 
 The [owning patch](0040-preserve-native-occlusion-with-moreculling.patch) records the implementation rationale.

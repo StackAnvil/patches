@@ -34,7 +34,7 @@ Regression coverage includes `BedrockActorAnimationTest`, `BedrockActorQueriesTe
 
 Native player hierarchies retain their authored crouch anchor instead of receiving Java's additional two-pixel render offset. Animated and visibility-only native trees share this rule. Passenger offsets, scale, and the Java fallback remain intact.
 
-A colored slim/wide/slim remote-peer fixture uses Bedrock 1.26.60.5/BDS 1.26.60.6 on protocol 2225. After core restores explicit remote posture metadata, the pre-fix Java renderer crouches but drops its foot anchor. The real-renderer regression fails at that extra offset and passes after compensation. The fixture isolates metadata and rendering. Broader body rotation and the original local custom-skin report remain open.
+A colored slim/wide/slim remote-peer fixture uses Bedrock 1.26.60.5/BDS 1.26.60.6 on protocol 2225. After core restores explicit remote posture metadata, the pre-fix Java renderer crouches but drops its foot anchor. The real-renderer regression fails at that extra offset and passes after compensation. The fixture isolates metadata and rendering. Broader body rotation remains open.
 
 Fresh spawn controls use the same slim skin with six new player identities at yaw 0, 180, 90, -90, -180, and 0. Official Bedrock 1.26.60.5/BDS 1.26.60.6 retains an angled body at nonzero yaw. The pre-fix Java client instead aligns body and head, despite native state present at ticks zero or one. A zero initial body seed restores the observed result on rebuilt direct and ViaProxy routes. Established Java rotation remains intact if native state arrives late.
 
@@ -46,7 +46,7 @@ Strict protocol-2225 decoders verify one spawn and identical 71 MovePlayer paylo
 
 The [remote movement integration](0041-interpolate-native-remote-player-movement.pr.md) covers interpolation after a large vertical excursion. It retains native movement modes and float steps while preserving host fallback and actor lifetimes. Rebuilt direct and proxy controls restore the selected settled marker projections, including leg visibility. Its evidence describes the observed current native steps, installed comparisons, and remaining limits.
 
-These controls establish selected settled poses and position steps. Full readiness and region admission, exact timing, mounted head updates, ground state, and locomotion animation remain open. The original custom-skin report also remains unresolved. The [pitch-only packet control](../../viabedrock/upstreamable/0075-encode-head-rotation-in-java-26-3-field-order.pr.md) describes the retained head rotation semantics.
+These controls establish selected settled poses and position steps. Full readiness and region admission, exact timing, mounted head updates, ground state, and locomotion animation remain open. The [pitch-only packet control](../../viabedrock/upstreamable/0075-encode-head-rotation-in-java-26-3-field-order.pr.md) describes the retained head rotation semantics.
 
 Rebuilt direct and ViaProxy controls restore crouching and the native foot anchor with identical skin and posture inputs. The combined four-project build passes 3,335 tests with 325 skipped and no failures or errors. Full stack replay, bundle, artifact checksums, and embedded core-class comparisons pass.
 
@@ -69,7 +69,6 @@ Opening and closing the Survival inventory leaves the resting shield transform u
 Installed direct controls also cover forward movement, strafing, and skeleton projectile blocks.
 The packet journal contains blocked-shield and damaged-shield flags, while the projectile samples retain full health.
 Releasing the controls restores the resting shield transform.
-These controls do not reproduce the reported extreme shield pose.
 Exact native movement and hit-animation timing, patterned shields, and third-party mod combinations remain open.
 
 Native Bedrock 1.26.60.5 clears current and previous actor angles before evaluating the hand graph.
@@ -78,7 +77,7 @@ The hand frame now clears inherited head pitch while preserving the camera-pitch
 The authored-arm regression fails before the correction with 37 degrees instead of zero.
 Installed direct and ViaProxy controls each retain the corrected query and camera variable across five view angles from -64 to 80 degrees.
 The full add-on build passes with 1,416 tests and 154 optional skips. A fresh saved-stack replay reproduces the tested tree.
-These controls cover the head-pitch binding. Other rotation queries, complete hand pixels, and the original shield/custom-skin reports remain open.
+These controls cover the head-pitch binding. Other rotation queries and complete hand pixels remain open.
 
 Animation timelines retain the remaining animation when an individual Molang string has a syntax error.
 The failed script keeps a zero-valued entry at its authored time. Structural validation and resource limits still reject invalid input.
@@ -118,3 +117,5 @@ Ogg Vorbis length and codebook compatibility: a synthetic 8 kHz fixture checks t
 Static Bedrock voices now delete their OpenAL buffer only after vanilla releases the source. Vanilla's `ChannelHandle.release()` sets the stopped flag before the sound executor destroys the source, so the render-thread tick could delete a buffer that was still attached. OpenAL rejects that with `AL_INVALID_OPERATION`, logs `Deleting stream buffers: Invalid operation.`, and leaks the buffer. A Galaxite recording (Bedrock 1.26.60, protocol 2225) logged it five times, each a few seconds after a pair of server StopSound-all packets. Deletion now runs through the existing release hook on the single-threaded sound executor. `BedrockSoundPlaybackTest` checks that the buffer survives until that release runs. The silent lab cannot establish an audible effect, and no live recheck has confirmed the log is gone.
 
 Fractional animation-controller weights now apply to the completed pose contribution, preserving earlier layers. A native 1.26.60.5/BDS 1.26.60.6 three-row position control measures weights 1, 0.5 and 0.25 through a shortest-path crossfade and after settling. The old add-on loses the incoming crossfade factor and gives settled offsets 4, 2 and 1 reference spans instead of native 4, 1 and 0.25. The rebuilt installed add-on matches those native offsets within image measurement tolerance. The regression fails on the previous code; actor/controller tests and the combined full build pass. Separate native rotation, scale, shield placement and nested-controller controls remain unmeasured.
+
+Animated bone angles use the native float degree-to-radians coefficient. Original Bedrock 1.26.60.5 channel-writer and cached-composer instructions produce radians bits `0x3f95adef` from 67 degrees on each axis; the prior double conversion produces `0x3f95adf0`. The original-instruction control executes the current two-bone update path without supplied trigonometric results or external-call stubs. The model-pose regression fails against the old conversion and passes with float arithmetic, alongside the existing model tests. The combined full stack build passes. This establishes the conversion boundary only. Complete matrix bits, geometry bind rotations, live costume owners and visible skin or shield improvements remain unverified.

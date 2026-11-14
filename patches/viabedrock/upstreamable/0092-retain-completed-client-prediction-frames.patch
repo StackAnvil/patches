@@ -1,4 +1,4 @@
-From b08475838291982b247605330781affc2ad66101 Mon Sep 17 00:00:00 2001
+From 1e6daef60891394c21a1410f962b9e4f2a813ea1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -780,6 +780,19 @@ and allowance 0.01 on all axes. Original callback controls cover mirrored
 faces, the boundary, competing walls and zero requests. The adapter owns
 player admission; this shared helper does not assume that policy for mobs,
 flight, liquids or other native component configurations.
+
+Retain pending completed input when a player rewind is queued for client
+replay. The tracked core position has not changed at receipt, so clearing
+the sample here can race the next CLIENT_TICK_END and emit an auth-input
+tick without its completed frame or native motion. Position validation
+still consumes the sample once; authoritative position replacements keep
+their existing discard path.
+
+The matched 1.26.60.5/protocol 2225 startup-observer control records frame
+283 completing before correction 311 arrives, then packet 312 losing its
+frame binding before client replay. The packet regression reproduces that
+loss, preserves replayed input and checks legacy position replacement and
+rejected correction behavior.
 ---
  build.gradle                                  |   29 +
  .../api/model/ActorMotionCommand.java         |   72 ++
@@ -882,14 +895,14 @@ flight, liquids or other native component configurations.
  .../packet/ControlledVehicleSpatialTest.java  |  233 ++++
  .../packet/MovementEffectPacketsTest.java     |  116 ++
  .../packet/NearTeleportReplayPacketTest.java  |  208 +++
- .../packet/PlayerCorrectionPacketTest.java    |  254 ++++
+ .../packet/PlayerCorrectionPacketTest.java    |  269 ++++
  .../packet/PlayerGameTypePacketTest.java      |   58 +-
  .../packet/PlayerPredictionPacketTest.java    |   87 ++
  .../packet/PlayerSpatialResetTest.java        |  147 +++
  .../packet/TickedMotionPacketTest.java        |  156 +++
  .../NativeBlockGeometryRegistrationTest.java  |    1 +
  .../protocol/storage/EntityTrackerTest.java   |    4 +-
- 108 files changed, 10261 insertions(+), 97 deletions(-)
+ 108 files changed, 10276 insertions(+), 97 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
@@ -969,7 +982,7 @@ flight, liquids or other native component configurations.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java
 
 diff --git a/build.gradle b/build.gradle
-index 17b3d6a53..f403183bf 100644
+index 17b3d6a53755b8748d3839d92a27e1c2e57828d2..f403183bf4dea7f95cbbfbcfa073ac107988613f 100644
 --- a/build.gradle
 +++ b/build.gradle
 @@ -27,6 +27,21 @@ checkstyleMain {
@@ -1014,7 +1027,7 @@ index 17b3d6a53..f403183bf 100644
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java b/src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
 new file mode 100644
-index 000000000..5bb7082dc
+index 0000000000000000000000000000000000000000..5bb7082dc9644f8c15c6be235441599351cb08af
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/ActorMotionCommand.java
 @@ -0,0 +1,72 @@
@@ -1092,7 +1105,7 @@ index 000000000..5bb7082dc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java b/src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
 new file mode 100644
-index 000000000..2df5cf0f4
+index 0000000000000000000000000000000000000000..2df5cf0f4aa6922d60aac39d9645c1c89a27257f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/ActorSpatialCommand.java
 @@ -0,0 +1,80 @@
@@ -1178,7 +1191,7 @@ index 000000000..2df5cf0f4
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java b/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
 new file mode 100644
-index 000000000..d27747160
+index 0000000000000000000000000000000000000000..d27747160f7e34a422f6198d6efc17f2982009bc
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
 @@ -0,0 +1,164 @@
@@ -1348,7 +1361,7 @@ index 000000000..d27747160
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
 new file mode 100644
-index 000000000..46d96c041
+index 0000000000000000000000000000000000000000..46d96c0413f2802971dc2723570b67c64744310e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
 @@ -0,0 +1,79 @@
@@ -1433,7 +1446,7 @@ index 000000000..46d96c041
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java b/src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
 new file mode 100644
-index 000000000..9c6102bcf
+index 0000000000000000000000000000000000000000..9c6102bcf44c04b0c71617da41513e255d07e0c6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
 @@ -0,0 +1,50 @@
@@ -1489,7 +1502,7 @@ index 000000000..9c6102bcf
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java b/src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
 new file mode 100644
-index 000000000..54566a4cb
+index 0000000000000000000000000000000000000000..54566a4cbfe73f470c7f50cdcbf1456d485aee5a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
 @@ -0,0 +1,57 @@
@@ -1552,7 +1565,7 @@ index 000000000..54566a4cb
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
 new file mode 100644
-index 000000000..a0b8ce34e
+index 0000000000000000000000000000000000000000..a0b8ce34ef8cb226f4de04522b7d7f5fff88717d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
 @@ -0,0 +1,87 @@
@@ -1645,7 +1658,7 @@ index 000000000..a0b8ce34e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
 new file mode 100644
-index 000000000..e3df1f47a
+index 0000000000000000000000000000000000000000..e3df1f47a9a6fef3c2eb66a5f047e020ac1731df
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
 @@ -0,0 +1,64 @@
@@ -1715,7 +1728,7 @@ index 000000000..e3df1f47a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MotionFriction.java b/src/main/java/net/raphimc/viabedrock/api/model/MotionFriction.java
 new file mode 100644
-index 000000000..801b152aa
+index 0000000000000000000000000000000000000000..801b152aa67774b8cb21bf3979d3fc3aa2b0ad11
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MotionFriction.java
 @@ -0,0 +1,23 @@
@@ -1744,7 +1757,7 @@ index 000000000..801b152aa
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java
 new file mode 100644
-index 000000000..2f0075e6a
+index 0000000000000000000000000000000000000000..2f0075e6ac4518f6a4045fb443f30519e547670a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionQuery.java
 @@ -0,0 +1,181 @@
@@ -1931,7 +1944,7 @@ index 000000000..2f0075e6a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionWorld.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionWorld.java
 new file mode 100644
-index 000000000..9ec345123
+index 0000000000000000000000000000000000000000..9ec34512360e8f92393c08d8a01631703765029a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementCollisionWorld.java
 @@ -0,0 +1,74 @@
@@ -2011,7 +2024,7 @@ index 000000000..9ec345123
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java
 new file mode 100644
-index 000000000..3018f5d39
+index 0000000000000000000000000000000000000000..3018f5d393d09c032f2c67b7bd025089d9902464
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementCorrectionTiming.java
 @@ -0,0 +1,56 @@
@@ -2073,7 +2086,7 @@ index 000000000..3018f5d39
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
 new file mode 100644
-index 000000000..28720bcdf
+index 0000000000000000000000000000000000000000..28720bcdf23db4a82331bf74300238d38d646003
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
 @@ -0,0 +1,100 @@
@@ -2179,7 +2192,7 @@ index 000000000..28720bcdf
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
 new file mode 100644
-index 000000000..a47b0a2de
+index 0000000000000000000000000000000000000000..a47b0a2de35c5d17f6e01660e9d609aacc7f8cbc
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
 @@ -0,0 +1,438 @@
@@ -2622,7 +2635,7 @@ index 000000000..a47b0a2de
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
-index 82d9ed3a8..34711a6a4 100644
+index 82d9ed3a8d0bc0836dca13eafde04e2704297629..34711a6a41913bc2f17e71beca15b1fbd604e900 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
 @@ -10,6 +10,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
@@ -2699,7 +2712,7 @@ index 82d9ed3a8..34711a6a4 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockFriction.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockFriction.java
 new file mode 100644
-index 000000000..698827046
+index 0000000000000000000000000000000000000000..698827046d3cf8a868d016e7ba2e8f7d1c78d1d4
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockFriction.java
 @@ -0,0 +1,36 @@
@@ -2740,7 +2753,7 @@ index 000000000..698827046
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
-index 7cc87f221..5ac95e6fd 100644
+index 7cc87f22102c3c69da4a68f2215cc532969786b8..5ac95e6fd46d37b07642c1aca954ded92a3d5bd4 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
 @@ -10,30 +10,32 @@ import com.viaversion.viaversion.api.type.Type;
@@ -2925,7 +2938,7 @@ index 7cc87f221..5ac95e6fd 100644
          }
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
-index 621fab759..59cfb7db5 100644
+index 621fab759ddde87dbdeda6d3bc94ab9a79130f76..59cfb7db53ede33fecdb16bf393c9a96533c18c2 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
 @@ -22,6 +22,18 @@ public final class NativeBlockView {
@@ -2958,7 +2971,7 @@ index 621fab759..59cfb7db5 100644
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeMovementSources.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeMovementSources.java
 new file mode 100644
-index 000000000..76bf5d591
+index 0000000000000000000000000000000000000000..76bf5d59109ca3898a7c32b0805aea02ce3bc71b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeMovementSources.java
 @@ -0,0 +1,137 @@
@@ -3101,7 +3114,7 @@ index 000000000..76bf5d591
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerCorrection.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerCorrection.java
 new file mode 100644
-index 000000000..6512fb83f
+index 0000000000000000000000000000000000000000..6512fb83fd509c292466e6abe5d474d51692e8b0
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerCorrection.java
 @@ -0,0 +1,159 @@
@@ -3266,7 +3279,7 @@ index 000000000..6512fb83f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerCorrectionTracker.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerCorrectionTracker.java
 new file mode 100644
-index 000000000..1a719b95d
+index 0000000000000000000000000000000000000000..1a719b95d09648cc58b6df9baba63e0564907dbd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerCorrectionTracker.java
 @@ -0,0 +1,36 @@
@@ -3308,7 +3321,7 @@ index 000000000..1a719b95d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerModeMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerModeMessage.java
 new file mode 100644
-index 000000000..8d74bae2d
+index 0000000000000000000000000000000000000000..8d74bae2d6ae8cc1c2e230d9a286c99623585627
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerModeMessage.java
 @@ -0,0 +1,175 @@
@@ -3489,7 +3502,7 @@ index 000000000..8d74bae2d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerModeTiming.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerModeTiming.java
 new file mode 100644
-index 000000000..0dd1030e2
+index 0000000000000000000000000000000000000000..0dd1030e228fe7df0eafb7c9121c4abe4e07b5b3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerModeTiming.java
 @@ -0,0 +1,52 @@
@@ -3547,7 +3560,7 @@ index 000000000..0dd1030e2
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
 new file mode 100644
-index 000000000..c66d743c2
+index 0000000000000000000000000000000000000000..c66d743c2861fc480e13ac7004c766d8142344c7
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
 @@ -0,0 +1,63 @@
@@ -3616,7 +3629,7 @@ index 000000000..c66d743c2
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
 new file mode 100644
-index 000000000..8608d8c05
+index 0000000000000000000000000000000000000000..8608d8c0544ba3a02a9e49ba7ef00bc33ccf0659
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
 @@ -0,0 +1,88 @@
@@ -3710,7 +3723,7 @@ index 000000000..8608d8c05
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java b/src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java
 new file mode 100644
-index 000000000..754a2494b
+index 0000000000000000000000000000000000000000..754a2494bc11a2cdff92b39a6f6958fbef47dfe5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java
 @@ -0,0 +1,33 @@
@@ -3749,7 +3762,7 @@ index 000000000..754a2494b
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java b/src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java
 new file mode 100644
-index 000000000..db527e9b1
+index 0000000000000000000000000000000000000000..db527e9b17f64bea86ec32754ef6b9643f5b764f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java
 @@ -0,0 +1,32 @@
@@ -3787,7 +3800,7 @@ index 000000000..db527e9b1
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/UnderwaterMovementAttribute.java b/src/main/java/net/raphimc/viabedrock/api/model/UnderwaterMovementAttribute.java
 new file mode 100644
-index 000000000..31ace03fc
+index 0000000000000000000000000000000000000000..31ace03fc7600d1b2d339e9a1f92f22ef6551d3d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/UnderwaterMovementAttribute.java
 @@ -0,0 +1,42 @@
@@ -3835,7 +3848,7 @@ index 000000000..31ace03fc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/VehiclePrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/VehiclePrediction.java
 new file mode 100644
-index 000000000..39ee02dec
+index 0000000000000000000000000000000000000000..39ee02dec309e52c056a9b825009cf0fcd4b633f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/VehiclePrediction.java
 @@ -0,0 +1,75 @@
@@ -3916,7 +3929,7 @@ index 000000000..39ee02dec
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/VehiclePredictionContext.java b/src/main/java/net/raphimc/viabedrock/api/model/VehiclePredictionContext.java
 new file mode 100644
-index 000000000..0a01bf393
+index 0000000000000000000000000000000000000000..0a01bf393e34ef82fe7c5a0e36edd6aec18ca202
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/VehiclePredictionContext.java
 @@ -0,0 +1,90 @@
@@ -4012,7 +4025,7 @@ index 000000000..0a01bf393
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/WaterMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/WaterMovement.java
 new file mode 100644
-index 000000000..bda54dd7d
+index 0000000000000000000000000000000000000000..bda54dd7d6c68a8c5be67fca08ef4d6ce59113ee
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/WaterMovement.java
 @@ -0,0 +1,69 @@
@@ -4086,7 +4099,7 @@ index 000000000..bda54dd7d
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index 785dcf399..69840f6ec 100644
+index 785dcf3999507eb4ece3af77a6b1adb8d932d6da..69840f6ec38b9177c469921399b20afe408541d6 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 @@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -4351,7 +4364,7 @@ index 785dcf399..69840f6ec 100644
  
      public record DimensionChangeInfo(Long loadingScreenId) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 255e6d073..4ebe5ed5f 100644
+index 255e6d0739c9413e0a462103b1e9b0f6a9425fc0..4ebe5ed5ff00b11716d807f59ae983ceeb61933d 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -22,14 +22,14 @@ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
@@ -4590,7 +4603,7 @@ index 255e6d073..4ebe5ed5f 100644
  
      public final NativeActorBoundsMessage nativeActorBounds() {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/LivingEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/LivingEntity.java
-index bd5e91117..d79489fc2 100644
+index bd5e9111706d9bb20f305b02730735d93063f2ce..d79489fc2df8a00ab28a59ec23644ab9600874d9 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/LivingEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/LivingEntity.java
 @@ -21,10 +21,12 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -4679,7 +4692,7 @@ index bd5e91117..d79489fc2 100644
          };
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
-index 82b9eb731..ef95055b6 100644
+index 82b9eb73172a776e14ebcafc82866d8263ee7dcd..ef95055b6c35e19d1e8159fca38a42191d0a66b1 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
 @@ -103,7 +103,7 @@ public class PlayerEntity extends LivingEntity {
@@ -4692,7 +4705,7 @@ index 82b9eb731..ef95055b6 100644
  
      public PlayerAbilities abilities() {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
-index 4c9d776ac..8a5a49326 100644
+index 4c9d776ac813e71da8530122cc1963d60ba3f3a8..8a5a49326ae1ad0e72c9c136acf8569024b16272 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
 @@ -24,6 +24,7 @@ import com.viaversion.viaversion.util.Key;
@@ -4744,7 +4757,7 @@ index 4c9d776ac..8a5a49326 100644
              return this.cooldown;
          }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
-index a760d4c52..e01e27405 100644
+index a760d4c5218371f2ae86dffb421608f862f4ed14..e01e2740591ea12a1ced646488a48e90a98ec3fc 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
 @@ -95,7 +95,7 @@ public final class MathUtil {
@@ -4768,7 +4781,7 @@ index a760d4c52..e01e27405 100644
          return new Position2f(directions[0], directions[1]);
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index 98365fa12..c145e71c1 100644
+index 98365fa126e5bde8bc1f021c0ca8a203f6a69811..c145e71c10618d37c74c9aadafc672c9fe8e58b7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -105,6 +105,7 @@ public class BedrockProtocol
@@ -4790,7 +4803,7 @@ index 98365fa12..c145e71c1 100644
          user.put(new CameraEffectsStorage(user));
          user.put(new PlayerListStorage());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
-index 64ceb8da5..a17eab494 100644
+index 64ceb8da5e3ec915edffcb647d032a666524421c..a17eab4940ef514d5bdfd8f574525a5180540e5c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
 @@ -18,8 +18,12 @@
@@ -4830,7 +4843,7 @@ index 64ceb8da5..a17eab494 100644
          throw new UnsupportedOperationException();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java
 new file mode 100644
-index 000000000..72b248f9e
+index 0000000000000000000000000000000000000000..72b248f9ebaef0e328d6cbfd548a50004f9de871
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java
 @@ -0,0 +1,50 @@
@@ -4885,7 +4898,7 @@ index 000000000..72b248f9e
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 21d20d884..ceabfddc4 100644
+index 21d20d88402f4bc91a5d84aad97baf5b0e7a3b8d..b14a8c517deb6b23c383ecaf673d10f8fef86c32 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -38,7 +38,14 @@ import net.raphimc.viabedrock.api.util.MathUtil;
@@ -4984,7 +4997,7 @@ index 21d20d884..ceabfddc4 100644
 +                                clientPlayer.nativeActorSnapshot().lifetime(), wrapper.get(Types.VAR_INT, 0), -1, timing,
 +                                position, correctedVelocity, new Position2f(0F, 0F), null, clientPlayer.eyeOffset(), 0F, onGround));
 +                        state.send(BedrockProtocol.class);
-+                        predictions.discardPending();
++                        // Replay is deferred; the next tick-end packet still owns any completed input.
 +                        break;
 +                    }
                      clientPlayer.setPosition(position);
@@ -5188,7 +5201,7 @@ index 21d20d884..ceabfddc4 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index a88292f98..1d7c6c076 100644
+index a88292f981883cafd34229a0cd1bf0544658573e..1d7c6c076774aaa9c1dba38161d781b8de8f9a49 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 @@ -37,6 +37,8 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
@@ -5313,7 +5326,7 @@ index a88292f98..1d7c6c076 100644
          final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(runtimeId);
          if (entity == null) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index ffd58e4ec..a9d25c684 100644
+index ffd58e4ec5e9c06a8c0bc093f48546b4affea291..a9d25c684cfbd0065735581955ad93df213bfad0 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -227,7 +227,8 @@ public final class JoinPackets {
@@ -5348,7 +5361,7 @@ index ffd58e4ec..a9d25c684 100644
          clientPlayer.setAbilities(clientPlayer.abilities());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java
 new file mode 100644
-index 000000000..4f888b69e
+index 0000000000000000000000000000000000000000..4f888b69e6f90335e5efe13fa88279c69263e9f6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java
 @@ -0,0 +1,54 @@
@@ -5407,7 +5420,7 @@ index 000000000..4f888b69e
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index d143d021e..60ed0e330 100644
+index d143d021e779a81ece42762b615384928358a3f4..60ed0e3307679f0e630cbf832d1f95d9e410ae8e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 @@ -38,10 +38,16 @@ import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
@@ -5516,7 +5529,7 @@ index d143d021e..60ed0e330 100644
              wrapper.user().get(HudVisibilityStorage.class).sendSnapshot();
              wrapper.user().get(CameraEffectsStorage.class).sendSnapshot();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
-index 60aeadbac..32a818d25 100644
+index 60aeadbac8a00a9a12b90041fd3ae31311aefb62..32a818d251851d33f158089712db1a9a89fa3ad0 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 @@ -27,6 +27,8 @@ import com.viaversion.viaversion.api.type.Types;
@@ -5614,7 +5627,7 @@ index 60aeadbac..32a818d25 100644
          final long uniqueId = wrapper.read(BedrockTypes.VAR_LONG); // target actor unique id
          final int variant = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index 233286823..afcc1205d 100644
+index 233286823d435646d366ed50aecfb4791f5906f9..afcc1205ddfa8a749be4d1e58fd62e8320cab262 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 @@ -198,6 +198,7 @@ public final class WorldPackets {
@@ -5626,7 +5639,7 @@ index 233286823..afcc1205d 100644
              clientPlayer.sendAttribute("minecraft:health"); // Java client always resets health on respawn, but Bedrock client keeps health when switching dimensions
              clientPlayer.sendEffects(); // Java client always resets effects on respawn. Resend them
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index a7a50158b..0577da956 100644
+index a7a50158b403732d3eed2b5ea69b5a6e28a6fb63..0577da9565e751055be33a993973b4dd68232267 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 @@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.rewriter;
@@ -5676,7 +5689,7 @@ index a7a50158b..0577da956 100644
      public CompoundTag blockComponents(final int runtimeId) {
          final CompoundTag components = this.customBlockComponents.get(this.blockState(runtimeId));
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-index ec00b1073..24da657c0 100644
+index ec00b107318aed419e5ee88162b2c73219b74672..24da657c0806f58a847cede9ffa272a5f3ef4261 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 @@ -308,14 +308,15 @@ public final class ItemDataRewriter {
@@ -5699,7 +5712,7 @@ index ec00b1073..24da657c0 100644
  
                              //Update the java item with the enchantment
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index e4e80e7c8..24a48c1fa 100644
+index e4e80e7c84218790aae044ca5320b3e2380026ad..24a48c1fafc63ee1a505baf9307b736e0a93e0cc 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -53,6 +53,7 @@ import net.raphimc.viabedrock.protocol.model.ItemCooldown;
@@ -5757,7 +5770,7 @@ index e4e80e7c8..24a48c1fa 100644
          javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA,
                  ItemDataRewriter.withBedrockItemData(javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA),
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index d3fc36ae2..969da5c29 100644
+index d3fc36ae22f233d11e877d8efb3593482f6cfb2e..969da5c29734ad48b2eb146f3a68a01cfa72cd20 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -730,7 +730,9 @@ public class ChunkTracker extends StoredObject {
@@ -5793,7 +5806,7 @@ index d3fc36ae2..969da5c29 100644
              if (!names.isEmpty() && (names.size() == 256 || bytes + size > NativeBlockIdentifiers.MAX_DICTIONARY_BYTES)) {
                  this.sendNativeBlocks(new NativeBlockIdentifiers.Dictionary(this.dimension.ordinal(), names));
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 0ca02d6ef..86238ca56 100644
+index 0ca02d6ef7580f7a4d0e46e9d5c55b0ad9904329..86238ca56c16c08a2e72d85e8a67f69db453e712 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 @@ -43,6 +43,7 @@ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
@@ -5868,7 +5881,7 @@ index 0ca02d6ef..86238ca56 100644
          return this.clientPlayerEntity;
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
-index fb054492d..0c998db0e 100644
+index fb054492d93be5e729c18ff3ba1ca65adb1367d0..0c998db0ed1a496ffd30434a3da56c348595a93f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
 @@ -25,6 +25,7 @@ import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
@@ -5918,7 +5931,7 @@ index fb054492d..0c998db0e 100644
          return this.flatGenerator;
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
-index 95391851d..f8bf20f85 100644
+index 95391851da0847a9213ded1f9bb1be8d0a7a0fde..f8bf20f857646c9a0bfdbdff41a04604025cc39d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 @@ -11,6 +11,9 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -5953,7 +5966,7 @@ index 95391851d..f8bf20f85 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerModeStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerModeStorage.java
 new file mode 100644
-index 000000000..7e4977e2f
+index 0000000000000000000000000000000000000000..7e4977e2f7aebd56df3d28b5f204e32b49b5bd69
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerModeStorage.java
 @@ -0,0 +1,63 @@
@@ -6022,7 +6035,7 @@ index 000000000..7e4977e2f
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 new file mode 100644
-index 000000000..e676aa716
+index 0000000000000000000000000000000000000000..e676aa716036f487e61517297b499435eaa487f0
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 @@ -0,0 +1,133 @@
@@ -6161,7 +6174,7 @@ index 000000000..e676aa716
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/VehiclePredictionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/VehiclePredictionStorage.java
 new file mode 100644
-index 000000000..342cea620
+index 0000000000000000000000000000000000000000..342cea6209ad09d28cfdd57bda05df76e4f7266d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/VehiclePredictionStorage.java
 @@ -0,0 +1,150 @@
@@ -6317,7 +6330,7 @@ index 000000000..342cea620
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/ActorMotionCommandTest.java b/src/test/java/net/raphimc/viabedrock/api/model/ActorMotionCommandTest.java
 new file mode 100644
-index 000000000..4a1b11009
+index 0000000000000000000000000000000000000000..4a1b110092f43c32e84e08261c583c29376f88aa
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/ActorMotionCommandTest.java
 @@ -0,0 +1,76 @@
@@ -6399,7 +6412,7 @@ index 000000000..4a1b11009
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/ActorSpatialCommandTest.java b/src/test/java/net/raphimc/viabedrock/api/model/ActorSpatialCommandTest.java
 new file mode 100644
-index 000000000..a3173cc03
+index 0000000000000000000000000000000000000000..a3173cc033a6bf5b527312573676302fabf7d231
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/ActorSpatialCommandTest.java
 @@ -0,0 +1,70 @@
@@ -6475,7 +6488,7 @@ index 000000000..a3173cc03
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
 new file mode 100644
-index 000000000..af59f504d
+index 0000000000000000000000000000000000000000..af59f504dd9ee283e2083b4cbc816c545448f54f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
 @@ -0,0 +1,97 @@
@@ -6578,7 +6591,7 @@ index 000000000..af59f504d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/FlightMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/FlightMovementTest.java
 new file mode 100644
-index 000000000..c887a2d3e
+index 0000000000000000000000000000000000000000..c887a2d3e492fa4d259faba5a439262bcf943b55
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/FlightMovementTest.java
 @@ -0,0 +1,112 @@
@@ -6696,7 +6709,7 @@ index 000000000..c887a2d3e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java b/src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java
 new file mode 100644
-index 000000000..7bbf5c907
+index 0000000000000000000000000000000000000000..7bbf5c90746191c49e16f6c8c2e4cc2f624ae977
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java
 @@ -0,0 +1,56 @@
@@ -6758,7 +6771,7 @@ index 000000000..7bbf5c907
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java
 new file mode 100644
-index 000000000..e46ebbb44
+index 0000000000000000000000000000000000000000..e46ebbb44556e425d2eefdc6e97488d9765df3c9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java
 @@ -0,0 +1,50 @@
@@ -6814,7 +6827,7 @@ index 000000000..e46ebbb44
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
 new file mode 100644
-index 000000000..a26a9542f
+index 0000000000000000000000000000000000000000..a26a9542faf0f0b7a2be91cd0c77bb4d12724226
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
 @@ -0,0 +1,131 @@
@@ -6951,7 +6964,7 @@ index 000000000..a26a9542f
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
 new file mode 100644
-index 000000000..be74f06d7
+index 0000000000000000000000000000000000000000..be74f06d7e5bcabd865b8a8be107b37b7051810f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
 @@ -0,0 +1,115 @@
@@ -7072,7 +7085,7 @@ index 000000000..be74f06d7
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MotionFrictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MotionFrictionTest.java
 new file mode 100644
-index 000000000..ce7ef0ca8
+index 0000000000000000000000000000000000000000..ce7ef0ca8101e0be46b64312aa77842efc7406fc
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MotionFrictionTest.java
 @@ -0,0 +1,38 @@
@@ -7116,7 +7129,7 @@ index 000000000..ce7ef0ca8
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java
 new file mode 100644
-index 000000000..88f1b3b20
+index 0000000000000000000000000000000000000000..88f1b3b209cac3ba7e2a6f4328f8f2418c2fb9e6
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionQueryTest.java
 @@ -0,0 +1,53 @@
@@ -7175,7 +7188,7 @@ index 000000000..88f1b3b20
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionWorldTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionWorldTest.java
 new file mode 100644
-index 000000000..9123e0e0d
+index 0000000000000000000000000000000000000000..9123e0e0d9ec6bbbc568c5e39666317e07ee356f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementCollisionWorldTest.java
 @@ -0,0 +1,54 @@
@@ -7235,7 +7248,7 @@ index 000000000..9123e0e0d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
 new file mode 100644
-index 000000000..3416ab840
+index 0000000000000000000000000000000000000000..3416ab8402837faa713a17bf4be574f91146d75b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
 @@ -0,0 +1,52 @@
@@ -7293,7 +7306,7 @@ index 000000000..3416ab840
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementCorrectionTimingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementCorrectionTimingTest.java
 new file mode 100644
-index 000000000..4d03a8b09
+index 0000000000000000000000000000000000000000..4d03a8b0905c9ceb9bc47fafb5748763a66a2101
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementCorrectionTimingTest.java
 @@ -0,0 +1,40 @@
@@ -7339,7 +7352,7 @@ index 000000000..4d03a8b09
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectPhysicsStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectPhysicsStateTest.java
 new file mode 100644
-index 000000000..1d566cf19
+index 0000000000000000000000000000000000000000..1d566cf19b1f09380dc40eadb6aff05e62947f69
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectPhysicsStateTest.java
 @@ -0,0 +1,84 @@
@@ -7429,7 +7442,7 @@ index 000000000..1d566cf19
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java
 new file mode 100644
-index 000000000..125f1d671
+index 0000000000000000000000000000000000000000..125f1d6710ac50e0cc96075d49c9cfaf8d0b9151
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectReplayTest.java
 @@ -0,0 +1,181 @@
@@ -7616,7 +7629,7 @@ index 000000000..125f1d671
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
 new file mode 100644
-index 000000000..dffd3d959
+index 0000000000000000000000000000000000000000..dffd3d959e3526ffc0817297f2082cb57313471c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
 @@ -0,0 +1,127 @@
@@ -7749,7 +7762,7 @@ index 000000000..dffd3d959
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
 new file mode 100644
-index 000000000..4ff00ed1a
+index 0000000000000000000000000000000000000000..4ff00ed1af197638303a52055ca6497d1d11c439
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
 @@ -0,0 +1,273 @@
@@ -8028,7 +8041,7 @@ index 000000000..4ff00ed1a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockFrictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockFrictionTest.java
 new file mode 100644
-index 000000000..ce3b2e663
+index 0000000000000000000000000000000000000000..ce3b2e663e0170d2f1b1aef0f380f2ec3e486336
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockFrictionTest.java
 @@ -0,0 +1,244 @@
@@ -8278,7 +8291,7 @@ index 000000000..ce3b2e663
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockGeometryTransportTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockGeometryTransportTest.java
 new file mode 100644
-index 000000000..f34c560bb
+index 0000000000000000000000000000000000000000..f34c560bb4f067129993a1625b437a9570e32fd7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockGeometryTransportTest.java
 @@ -0,0 +1,84 @@
@@ -8367,7 +8380,7 @@ index 000000000..f34c560bb
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
-index 9140b86b2..8c33b0eb5 100644
+index 9140b86b29c40272da67ea672cb24e27029ea235..8c33b0eb5c755655e0d17c17fc1bbc5d29b938dd 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
 @@ -80,11 +80,58 @@ class NativeBlockViewTest {
@@ -8455,7 +8468,7 @@ index 9140b86b2..8c33b0eb5 100644
              Types.VAR_INT.writePrimitive(buffer, 0);
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeMovementSourcesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeMovementSourcesTest.java
 new file mode 100644
-index 000000000..bdb0afe80
+index 0000000000000000000000000000000000000000..bdb0afe80bd1b70589aa248cd24991fa2c332b59
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeMovementSourcesTest.java
 @@ -0,0 +1,126 @@
@@ -8587,7 +8600,7 @@ index 000000000..bdb0afe80
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerCorrectionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerCorrectionTest.java
 new file mode 100644
-index 000000000..3783d30a5
+index 0000000000000000000000000000000000000000..3783d30a5ffead774c3caea6342b90382208e83d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerCorrectionTest.java
 @@ -0,0 +1,123 @@
@@ -8716,7 +8729,7 @@ index 000000000..3783d30a5
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerModeMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerModeMessageTest.java
 new file mode 100644
-index 000000000..69d10e540
+index 0000000000000000000000000000000000000000..69d10e540681c160900b43aeaa1196caf0d56f72
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerModeMessageTest.java
 @@ -0,0 +1,113 @@
@@ -8835,7 +8848,7 @@ index 000000000..69d10e540
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
 new file mode 100644
-index 000000000..8d870a5fb
+index 0000000000000000000000000000000000000000..8d870a5fb1737253cb98009da728d013cda9ac48
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
 @@ -0,0 +1,152 @@
@@ -8993,7 +9006,7 @@ index 000000000..8d870a5fb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 new file mode 100644
-index 000000000..4b403b7a2
+index 0000000000000000000000000000000000000000..4b403b7a27b4f2d2c3e61ec6f5670bb6e9a90cf2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 @@ -0,0 +1,256 @@
@@ -9255,7 +9268,7 @@ index 000000000..4b403b7a2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java
 new file mode 100644
-index 000000000..1af819719
+index 0000000000000000000000000000000000000000..1af819719e058b90ca140546708eb106ede46054
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java
 @@ -0,0 +1,32 @@
@@ -9293,7 +9306,7 @@ index 000000000..1af819719
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java
 new file mode 100644
-index 000000000..2ddd2d7fb
+index 0000000000000000000000000000000000000000..2ddd2d7fb50f138128d8601198c26d2ad9459012
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java
 @@ -0,0 +1,32 @@
@@ -9331,7 +9344,7 @@ index 000000000..2ddd2d7fb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/UnderwaterMovementAttributeTest.java b/src/test/java/net/raphimc/viabedrock/api/model/UnderwaterMovementAttributeTest.java
 new file mode 100644
-index 000000000..7711448ed
+index 0000000000000000000000000000000000000000..7711448edcf137f530a91fda531951a1903a41df
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/UnderwaterMovementAttributeTest.java
 @@ -0,0 +1,35 @@
@@ -9372,7 +9385,7 @@ index 000000000..7711448ed
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/VehiclePredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/VehiclePredictionTest.java
 new file mode 100644
-index 000000000..f805e8e72
+index 0000000000000000000000000000000000000000..f805e8e72bf6820a213f5b8067ab62a903312739
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/VehiclePredictionTest.java
 @@ -0,0 +1,114 @@
@@ -9492,7 +9505,7 @@ index 000000000..f805e8e72
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/WaterMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/WaterMovementTest.java
 new file mode 100644
-index 000000000..0acd6883d
+index 0000000000000000000000000000000000000000..0acd6883d4c48d28c4e00e25763503477d5e2876
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/WaterMovementTest.java
 @@ -0,0 +1,88 @@
@@ -9585,7 +9598,7 @@ index 000000000..0acd6883d
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerMovementAttributeTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerMovementAttributeTest.java
-index 17e351e83..fc8a6ae24 100644
+index 17e351e838f584158cd9444cd50dfaf669417bcd..fc8a6ae240c678145d1580f90f89f71eb22a5f18 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerMovementAttributeTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerMovementAttributeTest.java
 @@ -57,7 +57,7 @@ class ClientPlayerMovementAttributeTest {
@@ -9621,7 +9634,7 @@ index 17e351e83..fc8a6ae24 100644
          this.player.setSprinting(true);
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/FlightMovementSnapshotTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/FlightMovementSnapshotTest.java
 new file mode 100644
-index 000000000..aa3e68c3d
+index 0000000000000000000000000000000000000000..aa3e68c3dbd5a191267e462eae5fdf0e76f37366
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/FlightMovementSnapshotTest.java
 @@ -0,0 +1,189 @@
@@ -9816,7 +9829,7 @@ index 000000000..aa3e68c3d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/NativeActorPublicationTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/NativeActorPublicationTest.java
 new file mode 100644
-index 000000000..fed387d16
+index 0000000000000000000000000000000000000000..fed387d16cced0e45614b9667ed5442c2d9b062f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/NativeActorPublicationTest.java
 @@ -0,0 +1,233 @@
@@ -10055,7 +10068,7 @@ index 000000000..fed387d16
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/UnderwaterMovementTransportTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/UnderwaterMovementTransportTest.java
 new file mode 100644
-index 000000000..ea6a17119
+index 0000000000000000000000000000000000000000..ea6a17119c15b35fa1f70acb7a73f05a45ff3435
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/UnderwaterMovementTransportTest.java
 @@ -0,0 +1,129 @@
@@ -10190,7 +10203,7 @@ index 000000000..ea6a17119
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MathUtilMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MathUtilMovementTest.java
 new file mode 100644
-index 000000000..a8fa71ba3
+index 0000000000000000000000000000000000000000..a8fa71ba34538a0bb8bd0d3b2a447418e08b2c3d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/util/MathUtilMovementTest.java
 @@ -0,0 +1,44 @@
@@ -10240,7 +10253,7 @@ index 000000000..a8fa71ba3
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
 new file mode 100644
-index 000000000..b583a26ec
+index 0000000000000000000000000000000000000000..b583a26ec33f6897f3a4b02490f587b5d4f9ca64
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
 @@ -0,0 +1,73 @@
@@ -10319,7 +10332,7 @@ index 000000000..b583a26ec
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
 new file mode 100644
-index 000000000..66d8b2e0c
+index 0000000000000000000000000000000000000000..66d8b2e0c3bd62ac76b96c56f78526c0672f1875
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
 @@ -0,0 +1,55 @@
@@ -10379,7 +10392,7 @@ index 000000000..66d8b2e0c
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
-index ad55fc55c..93bdd824d 100644
+index ad55fc55c2a9392ac5a62cda0a30c0669dc4a17c..93bdd824db1013c8b39c3f24fd48358ce14a5bf8 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 @@ -75,27 +75,27 @@ class ClientPlayerPacketsTest {
@@ -10456,7 +10469,7 @@ index ad55fc55c..93bdd824d 100644
          final ClientPlayerEntity player = player();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
 new file mode 100644
-index 000000000..00721e227
+index 0000000000000000000000000000000000000000..00721e227da0f6a99b8255c8a2452f147445bfe3
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedFramePositionTest.java
 @@ -0,0 +1,1128 @@
@@ -11590,7 +11603,7 @@ index 000000000..00721e227
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedPredictionPairingTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedPredictionPairingTest.java
 new file mode 100644
-index 000000000..8da74028f
+index 0000000000000000000000000000000000000000..8da74028fa0e1c02d958a4ea1ba5c67378657974
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedPredictionPairingTest.java
 @@ -0,0 +1,132 @@
@@ -11728,7 +11741,7 @@ index 000000000..8da74028f
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java
 new file mode 100644
-index 000000000..fbed1ac0b
+index 0000000000000000000000000000000000000000..fbed1ac0b5047fd297f1bd9c1ee2a96701433e8e
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ControlledVehicleSpatialTest.java
 @@ -0,0 +1,233 @@
@@ -11967,7 +11980,7 @@ index 000000000..fbed1ac0b
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
 new file mode 100644
-index 000000000..1f5c82798
+index 0000000000000000000000000000000000000000..1f5c82798bb9d04255405590df52132029209c85
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
 @@ -0,0 +1,116 @@
@@ -12089,7 +12102,7 @@ index 000000000..1f5c82798
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NearTeleportReplayPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NearTeleportReplayPacketTest.java
 new file mode 100644
-index 000000000..7098d44bb
+index 0000000000000000000000000000000000000000..7098d44bb03c504acf2810f41440a2d8a2a30fc1
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NearTeleportReplayPacketTest.java
 @@ -0,0 +1,208 @@
@@ -12303,10 +12316,10 @@ index 000000000..7098d44bb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 new file mode 100644
-index 000000000..7aea0fedc
+index 0000000000000000000000000000000000000000..f51605cfc04d6bd5f5b2d1348f744ba548674a0c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,269 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -12433,7 +12446,7 @@ index 000000000..7aea0fedc
 +
 +    @ParameterizedTest
 +    @ValueSource(longs = {0, 1, 7, 8, 9, 10, 11, Long.MAX_VALUE, Long.MIN_VALUE, -1})
-+    void appliesAuthoritativeVelocityForEveryPoseAndCorrectionAge(final long tick) throws Exception {
++    void appliesVelocityAndRetainsCompletedInputUntilReplay(final long tick) throws Exception {
 +        for (boolean negotiated : new boolean[]{false, true}) {
 +            for (boolean onGround : new boolean[]{false, true}) {
 +                for (boolean gliding : new boolean[]{false, true}) {
@@ -12471,6 +12484,7 @@ index 000000000..7aea0fedc
 +                        final EntityTracker tracker = trackers[0] = new EntityTracker(user);
 +                        final ClientPlayerEntity player = tracker.addEntity(new ClientPlayerEntity(user, 1,
 +                                UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0)), false);
++                        player.setPosition(new Position3f(0.65F, 66.62F, 2.55F));
 +                        player.setGliding(gliding);
 +                        player.setOnGround(!onGround);
 +                        for (int i = 0; i < 10; i++) {
@@ -12478,6 +12492,10 @@ index 000000000..7aea0fedc
 +                        }
 +                        final Position3f position = new Position3f(2.5F, 65.62F, -3.5F);
 +                        final Position3f previousPosition = player.position();
++                        final PlayerPrediction completedInput = new PlayerPrediction(3, player.javaPosition(),
++                                new Position3f(0.125F, -0.0784F, 0.25F), PlayerPosture.STANDING,
++                                false, false, false, false, 1F);
++                        predictions.record(completedInput);
 +                        final var input = Unpooled.buffer();
 +                        final var output = Unpooled.buffer();
 +                        try {
@@ -12497,6 +12515,7 @@ index 000000000..7aea0fedc
 +                                assertEquals(!onGround, player.isOnGround());
 +                                assertTrue(this.sent.isEmpty());
 +                                assertFalse(input.isReadable());
++                                assertSame(completedInput, predictions.take());
 +                                continue;
 +                            }
 +                            assertFalse(packet.isCancelled());
@@ -12534,6 +12553,15 @@ index 000000000..7aea0fedc
 +                            assertEquals(0, flags & ((1 << Relative.DELTA_X.ordinal()) | (1 << Relative.DELTA_Y.ordinal()) | (1 << Relative.DELTA_Z.ordinal())));
 +                            assertEquals(negotiated ? previousPosition : position, player.position());
 +                            assertEquals(negotiated ? !onGround : onGround, player.isOnGround());
++                            if (negotiated) {
++                                final var nextInput = ClientPlayerPackets.completedPredictions(predictions, null, null, player.javaPosition());
++                                assertSame(completedInput, nextInput.player());
++                                assertSame(completedInput, nextInput.clockFrame());
++                                predictions.remember(11, nextInput.clockFrame());
++                                assertEquals(3, predictions.clientFrame(11));
++                            } else {
++                                assertNull(predictions.take());
++                            }
 +                            assertFalse(input.isReadable());
 +                            assertFalse(output.isReadable());
 +                        } finally {
@@ -12562,7 +12590,7 @@ index 000000000..7aea0fedc
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerGameTypePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerGameTypePacketTest.java
-index 677f2aa54..b92e20214 100644
+index 677f2aa547d846d43e0e496c6a8b6e2dd326aeec..b92e202143359903064c798ec7e0d4246e80980f 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerGameTypePacketTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerGameTypePacketTest.java
 @@ -28,6 +28,13 @@ import com.viaversion.viaversion.api.platform.providers.ViaProviders;
@@ -12650,7 +12678,7 @@ index 677f2aa54..b92e20214 100644
                  input.release();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
 new file mode 100644
-index 000000000..2bc45bb05
+index 0000000000000000000000000000000000000000..2bc45bb05cfce55a8af86207c55a4cc0fe1c7a28
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
 @@ -0,0 +1,87 @@
@@ -12743,7 +12771,7 @@ index 000000000..2bc45bb05
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpatialResetTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpatialResetTest.java
 new file mode 100644
-index 000000000..2ef7f72b8
+index 0000000000000000000000000000000000000000..2ef7f72b8c05faeaa22d3228799e6e3c4d4efef7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerSpatialResetTest.java
 @@ -0,0 +1,147 @@
@@ -12896,7 +12924,7 @@ index 000000000..2ef7f72b8
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java
 new file mode 100644
-index 000000000..caaa63066
+index 0000000000000000000000000000000000000000..caaa630664da8a5e65eaaf9a3c9d5a2f6d3d7422
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/TickedMotionPacketTest.java
 @@ -0,0 +1,156 @@
@@ -13057,7 +13085,7 @@ index 000000000..caaa63066
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java
-index d763dceea..80f59b253 100644
+index d763dceeabe2b332e31f38dc9ceddba3294204df..80f59b25347ba577710b82f327e4907537bb5841 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/NativeBlockGeometryRegistrationTest.java
 @@ -70,6 +70,7 @@ class NativeBlockGeometryRegistrationTest {
@@ -13069,7 +13097,7 @@ index d763dceea..80f59b253 100644
                          physical.primaryBoundsAt(-17, -64, 93));
                  assertNull(rewriter.blockGeometry(rewriter.bedrockId(BlockState.fromString("probe:slab"))));
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
-index 85498d350..3f21a65bd 100644
+index 85498d350174ccc9f910b9762db006f7ae67d315..3f21a65bd66aeb9c322a87dc1b0d4f1bd80ab90a 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
 @@ -85,14 +85,14 @@ class EntityTrackerTest {

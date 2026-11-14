@@ -18,7 +18,7 @@ Bedrock 1.26.60.5 and BDS 1.26.60.6 controls on protocol 2225 cover plain and Un
 
 Glint changes over time on idle and blocking shields. Returning to a plain shield removes it.
 
-Separate plain-shield controls vary world FOV through 60, 30, 110, and 60, with repeated idle and blocking samples. Empty-offhand references isolate the visible shield through the bottom of the screen. Across three image-difference thresholds, normalized bounds from median images differ from native by less than 1% of either viewport axis. These controls do not reproduce the reported oversized shield.
+Separate plain-shield controls vary world FOV through 60, 30, 110, and 60, with repeated idle and blocking samples. Empty-offhand references isolate the visible shield through the bottom of the screen. Across three image-difference thresholds, normalized bounds from median images differ from native by less than 1% of either viewport axis.
 
 A declared protocol-2225 inventory fixture delivers a red shield with a white bottom stripe.
 Official Bedrock 1.26.60.5 renders the patterned front while blocking and restores the wooden appearance when the tags disappear.
@@ -35,7 +35,6 @@ Shader-pack lighting is separate from native lighting parity.
 The shared material patch compares actual fragment pixels with 512 current native shader controls, including glint before fog.
 
 These controls use different appearances and viewports. Exact pixels, lighting, glint phase, and poses remain unverified.
-The reported oversized shield and distorted custom-skin pose remain unresolved.
 
 Java fallback held items retain the native arm's complete transform instead of its flattened humanoid fields.
 `BedrockPlayerModelTest` covers reflected and sheared parents, collapsed positions, slim/wide anchors, the incoming render transform, and ordinary fallback after retirement.

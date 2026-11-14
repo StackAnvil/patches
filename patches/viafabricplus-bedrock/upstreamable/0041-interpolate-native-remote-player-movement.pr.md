@@ -56,4 +56,4 @@ Fresh replay reproduces the exact built source trees. All 157 patches replay aga
 
 All owned Java/display, relay, and server processes are gone. The reset comparison restores owned server configuration and leaves the native profile untouched.
 
-Full factory, readiness, region, scheduler, and ground-state admission remain unverified. Mounted movement, broader head/body transitions, complete trajectories, and skin parity remain open. The original custom-skin report remains unresolved.
+Full factory, readiness, region, scheduler, and ground-state admission remain unverified. Mounted movement, broader head/body transitions, complete trajectories, and skin parity remain open.

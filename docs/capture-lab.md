@@ -80,7 +80,15 @@ GNOME Wayland drag input requires the private display.
 A scenario uses the same bounds and input handling:
 
 ```json
-{"action":"drag","button":"right","ms":120,"points":[{"x":0.40,"y":0.70},{"x":0.45,"y":0.70}]}
+{
+  "action": "drag",
+  "button": "right",
+  "ms": 120,
+  "points": [
+    { "x": 0.4, "y": 0.7 },
+    { "x": 0.45, "y": 0.7 }
+  ]
+}
 ```
 
 For an integration run without a capture session, pass `--output-dir` to `ui screenshot`. The gameplay probe saves its screenshots under `.stackanvil/integration/runs/`.
@@ -115,6 +123,14 @@ bun run capture video compare before after --client bedrock
 ```
 
 The comparison MP4 shows the before recording on the left and the after recording on the right. `videoStart` and `videoStop` are also scenario steps, so a JSON recipe can record exactly the same input sequence in both runs. Recordings default to 15 frames per second. For blink or strip timing, use `bun run capture video start timing --client bedrock --fps 120`. The rate must be an integer from 1 to 120. A scenario `videoStart` step accepts the same value as `fps`. Higher rates increase CPU use and file size. Session metadata records the requested rate and recorder launch time. Use the video frame timestamps to measure durations. Capture frames can repeat when the client renders more slowly.
+
+For Java 26.3 scheduling controls under headless Weston 15, use `desktop-shell.so` with the client in windowed mode.
+A kiosk shell forces fullscreen and can make the SDL client retry window-mode changes on each frame.
+Keep the shell helper, configuration and display in the owned private lab.
+
+Measure the actual client surface and frame intervals before comparing input or packet timing.
+A requested FPS cap does not prove that the client reaches it.
+Keep profiler and breakpoint overhead separate from ordinary client performance.
 
 Videos stay in the ignored capture directory. Review them before sharing because game menus can show account or player details.
 

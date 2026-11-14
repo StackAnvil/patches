@@ -206,7 +206,7 @@ Client-predicted damage, the live producer for actor event 81, and exact native 
 The historic hurt-and-heal nonclosure with a 5.6-millisecond packet gap remains unexplained.
 Shared text conversion corrects the measured one-byte label-shade difference.
 Complete screen pixels remain unverified.
-Broader modpack timing, the reported menu overlap, and shield presentation still need verification.
+Broader modpack timing and the reported menu overlap still need verification.
 
 The [owning patch](0029-present-authored-native-containers.patch) retains implementation rationale and versioned evidence.
 
@@ -398,3 +398,5 @@ Generic authored containers that declare local toggles initialize and update the
 The shared scrolling panel maps Enter to `button.destroy_selection`. It remains an admitted no-op in a count-one menu, which cannot hold a selected stack. Other unsupported keyboard mappings still reject presentation. The full-slot screen regression includes this panel and a named radio toggle, so it exercises the same admission path as the accepted shop.
 
 The final rebuilt client passes an installed captured-state shop check: all 549 slots, 171 nonempty items with complete hover descriptions, and separate Building Blocks/Favorites views across repeated tab changes. The Favorite action sends full source slot 487, encoded as byte 231, with the native source container and stack identity. Tab changes send no inventory requests. The recorder exits normally without presentation, request-timeout or disconnect errors. This is an explicitly retimed offline fixture, not a live purchase or native pixel comparison.
+
+Cooking snapshots now preserve binding state within the current opening and UI context. A title refresh updates its caption without resetting ONCE bindings. New openings and replacement programs start fresh. A production-presentation regression covers count updates, empty slots, title refresh, rejected foreign openings and program replacement. The full stack build passes. No new installed-client cooking-screen comparison ran for this change.

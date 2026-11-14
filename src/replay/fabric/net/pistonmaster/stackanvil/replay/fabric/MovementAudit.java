@@ -38,6 +38,8 @@ public final class MovementAudit {
             row.put("swimAmount", player.getClass().getMethod("getSwimAmount", float.class).invoke(player, 1F));
             row.put("sprinting", call(player, "isSprinting"));
             row.put("inWater", call(player, "isInWater"));
+            row.put("inLava", call(player, "isInLava"));
+            row.put("climbableBlock", climbableBlock(player));
             row.put("underWater", call(player, "isUnderWater"));
             row.put("pose", call(player, "getPose").toString());
             row.put("eyeY", call(player, "getEyeY"));
@@ -67,6 +69,19 @@ public final class MovementAudit {
             System.err.println("Private movement observation failed: " + error.getClass().getSimpleName());
             close();
         }
+    }
+
+    // Read the current block directly. onClimbable() writes lastClimbablePos.
+    // This tag observation does not include the trapdoor, spectator, or gliding rules.
+    private static boolean climbableBlock(Object player) throws ReflectiveOperationException {
+        Object level = call(player, "level");
+        Object position = call(player, "blockPosition");
+        Class<?> blockPos = Class.forName("net.minecraft.core.BlockPos");
+        Object state = Class.forName("net.minecraft.world.level.Level")
+                .getMethod("getBlockState", blockPos).invoke(level, position);
+        Object climbable = Class.forName("net.minecraft.tags.BlockTags").getField("CLIMBABLE").get(null);
+        return (Boolean) state.getClass().getMethod("is", Class.forName("net.minecraft.tags.TagKey"))
+                .invoke(state, climbable);
     }
 
     private static Object call(Object target, String name) throws ReflectiveOperationException {

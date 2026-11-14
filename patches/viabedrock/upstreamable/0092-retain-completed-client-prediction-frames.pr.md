@@ -8,6 +8,8 @@ Native 1.26.51.1 protocol 2193 packets distinguish completed fluid motion from a
 
 Pair input, completed motion, item state, and authoritative frame identity. Retain correction history and ordered effects without allowing stale actor or world state into replay.
 
+Queueing a player replay correction keeps completed input that has not reached `CLIENT_TICK_END`. The tracked core position has not changed at receipt. Normal position validation still consumes the input once, and authoritative position replacement still clears stale input.
+
 The version-7 native block dictionary carries physical geometry, random offsets, and friction separately from visual models.
 Verified base-factory registrations use the native default coefficient when no explicit friction component applies.
 Hardcoded types retain their pinned coefficients. Other server-defined classes retain unknown physical data.
@@ -26,6 +28,8 @@ Regression coverage includes `ActorMotionCommandTest`, `ActorSpatialCommandTest`
 The shared motion-friction policy follows the full original 1.26.60.5 callback: cut each horizontal axis at `abs(velocity) <= 2^-23` before friction, retaining signed zero. A small-impulse sequence and boundary regressions cover continued drift below Java's threshold and its eventual stop. Flight uses the same policy. Ordinary vertical motion, liquid, glide and mounted stages remain separate.
 
 History, clock, correction, and ordering regressions cover retained-frame behavior. Native world history, mixed mechanics, network conditions, and broader replay parity remain open.
+
+An installed 1.26.60.5/protocol 2225 comparison caught a completed frame being cleared between correction receipt and the next emitted input. `PlayerCorrectionPacketTest` reproduces that boundary and checks the retained input-clock binding, rejected corrections and legacy position replacement. The baseline fails on replay input retention; the fixed focused suite, Checkstyle and full stack build pass. Six installed fixed-build corrections retain all 634 observed completed input bindings. Once both clients have applied, all three motion components match native bits and forward position stays within one float ULP at target-relative offsets 4 through 8. The rare already-pending receive interleave is deterministic in the packet regression; the fixed live run does not force it. Native applies first at T+4 versus Java T+2 in the supplied slow-frame controls, so general scheduler parity remains open.
 
 Friction regressions follow registered state overlays through pack refusal, failed visual compilation, dictionary encoding, both native block layers, and world reset.
 Installed direct and proxy controls retain explicit coefficients through native block-state swaps and restoration. Verified base-factory blocks without the component now use the native coefficient of 0.6. Other custom classes retain an unknown coefficient.
