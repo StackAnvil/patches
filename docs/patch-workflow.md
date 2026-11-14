@@ -14,15 +14,15 @@ The [PaperSpigot 1.8.8 apply script](https://github.com/PaperMC/Paper-archive/bl
 
 ## What StackAnvil uses
 
-| Paper idea | StackAnvil behavior |
-| --- | --- |
-| Generated checkout with one commit per patch | `bun run stack sync <project>` applies the ordered series into `.worktrees/<project>`. |
-| Rebuild patches from commits | `bun run stack rebuild <project>` exports every series commit to its existing filename. |
-| Edit an earlier patch and replay later ones | `bun run stack edit <project> <patch-file>` saves a backup ref and resets to that commit. `stack rebuild` amends it and cherry-picks later commits. |
-| Keep generated headers out of review noise | `stack rebuild` leaves a patch file alone when only its generated commit ID or Git version footer changed. |
-| Keep failed apply state for repair | `stack sync` saves an apply session. Resolve and stage a conflict, then run `stack continue`. Run `stack abort` to discard the failed apply. |
-| Patch notes in commit messages | Put the purpose and maintenance details in the commit body. They remain in the exported patch and become the PR change summary. `stack add` requires a body, and `stack rebuild` keeps the series title aligned with the commit subject. |
-| Independently test an upstreamable patch | `bun run pr check <project>` applies the first patch to clean upstream. Add `--patch <file>` to check another patch. |
+| Paper idea                                   | StackAnvil behavior                                                                                                                                                                                                                      |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Generated checkout with one commit per patch | `bun run stack sync <project>` applies the ordered series into `.worktrees/<project>`.                                                                                                                                                   |
+| Rebuild patches from commits                 | `bun run stack rebuild <project>` exports every series commit to its existing filename.                                                                                                                                                  |
+| Edit an earlier patch and replay later ones  | `bun run stack edit <project> <patch-file>` saves a backup ref and resets to that commit. `stack rebuild` amends it and cherry-picks later commits.                                                                                      |
+| Keep generated headers out of review noise   | Exports use full object hashes. `stack rebuild` preserves existing patches when only hash abbreviation lengths, the commit ID, or the Git version footer differ.                                                                         |
+| Keep failed apply state for repair           | `stack sync` saves an apply session. Resolve and stage a conflict, then run `stack continue`. Run `stack abort` to discard the failed apply.                                                                                             |
+| Patch notes in commit messages               | Put the purpose and maintenance details in the commit body. They remain in the exported patch and become the PR change summary. `stack add` requires a body, and `stack rebuild` keeps the series title aligned with the commit subject. |
+| Independently test an upstreamable patch     | `bun run pr check <project>` applies the first patch to clean upstream. Add `--patch <file>` to check another patch.                                                                                                                     |
 
 StackAnvil keeps `setup`, `upstreamable`, and `deferred` separate in `series.json`. Full builds apply them in that order. Setup prepares StackAnvil builds. Upstreamable patches can become focused PRs. Deferred patches track work that another contributor already owns upstream, with a reason and PR link for each entry. The PR checkout applies the first upstreamable patch to the pinned upstream base.
 CubeConverter PRs include the complete feature, its regression tests, and required API migrations.
@@ -31,6 +31,12 @@ The saved patches and full-stack checkouts retain these local tests.
 After upstream merges a feature, remove its local tests when retiring the owning patch.
 Do not submit those tests as a separate upstream PR.
 The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
+
+Both `stack add` and `stack rebuild` always export with `git format-patch --binary --full-index`.
+Full blob object IDs keep new and changed exports stable as the object store grows or `core.abbrev` changes.
+Use the shared exporter for every export path. Do not rely on Git's default abbreviation length.
+Unchanged legacy patches remain byte-identical when only abbreviation lengths or other generated headers differ.
+Their next substantive export uses full object IDs.
 
 Paper's per-file source and resource patches solve the problem of editing decompiled Minecraft code. Our four patch targets are existing Git repositories, so they do not need that layer. We also apply patches one at a time instead of building a large `git am` argument list. This keeps conflict recovery tied to one explicit `series.json` entry and avoids the older Windows command-length issue. We do not add Paper-specific source markers to upstream code.
 
@@ -98,12 +104,12 @@ Use the same `--patch` option with `pr build` and `pr assign`. If a selected pat
 
 `targets.json` lists the default people for each upstream PR. `bun run pr sync <project>` assigns them and requests their reviews on a ready PR. Run `bun run pr assign <project>` to update both without pushing the branch. The tool keeps people added manually and does not request another review from someone who has already reviewed.
 
-| Project | Default assignees and reviewers |
-| --- | --- |
-| ViaBedrock | `RaphiMC` (RK_01), `Exterminate5573` |
+| Project               | Default assignees and reviewers              |
+| --------------------- | -------------------------------------------- |
+| ViaBedrock            | `RaphiMC` (RK_01), `Exterminate5573`         |
 | viafabricplus-bedrock | `RaphiMC`, `Exterminate5573`, `florianreuth` |
-| ViaProxy | `RaphiMC` (RK_01) |
-| CubeConverter | `oryxel1` |
+| ViaProxy              | `RaphiMC` (RK_01)                            |
+| CubeConverter         | `oryxel1`                                    |
 
 Draft PRs receive assignees. Review requests wait until the PR is ready; then run `bun run pr assign <project>` or `bun run pr sync <project>`. Add `--patch <file>` to target a standalone PR. Assignment needs upstream triage or write access. Review requests need upstream write access. The command reports actions it could not complete, so an upstream maintainer can finish them.
 

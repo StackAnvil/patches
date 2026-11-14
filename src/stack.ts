@@ -54,6 +54,38 @@ function stablePatchText(patch: string): string {
     .replace(/\n-- \n[^\n]+$/, "\n-- \n<git-version>");
 }
 
+function samePatchText(previous: string, generated: string): boolean {
+  const before = stablePatchText(previous).split("\n");
+  const after = stablePatchText(generated).split("\n");
+  if (before.length !== after.length) return false;
+  const sameObject = (left: string, right: string) => {
+    if (/^0+$/.test(left) || /^0+$/.test(right)) return /^0+$/.test(left) && /^0+$/.test(right);
+    return left.startsWith(right) || right.startsWith(left);
+  };
+  let inPatch = false;
+  let inFileHeader = false;
+  return before.every((line, index) => {
+    const next = after[index]!;
+    if (line === "---") inPatch = true;
+    if (inPatch && line.startsWith("diff --git ")) inFileHeader = true;
+    if (line.startsWith("@@ ") || line.startsWith("--- ") || line === "GIT binary patch")
+      inFileHeader = false;
+    if (line === next) return true;
+    if (!inFileHeader) return false;
+    const pattern = /^index ([0-9a-f]{4,64})\.\.([0-9a-f]{4,64})( [0-7]{6})?$/;
+    const left = pattern.exec(line);
+    const right = pattern.exec(next);
+    // Legacy abbreviations can grow without changing the patch. Keep real object and mode changes.
+    return (
+      left !== null &&
+      right !== null &&
+      left[3] === right[3] &&
+      sameObject(left[1]!, right[1]!) &&
+      sameObject(left[2]!, right[2]!)
+    );
+  });
+}
+
 function seriesPaths(id: string, series: Series, mode: "full" | "pr", patchFile?: string) {
   return mode === "pr"
     ? (patchFile
@@ -305,6 +337,11 @@ const commitIds = Effect.fn("commitIds")(function* (dir: string, baseSha: string
   return output ? output.split("\n") : [];
 });
 
+function exportCommit(dir: string, commit: string) {
+  // Every export uses full blob IDs, independent of object-store growth or core.abbrev.
+  return git(["format-patch", "--binary", "--full-index", "--stdout", "-1", commit], dir);
+}
+
 export const edit = Effect.fn("edit")(function* (id: string, file: string) {
   const target = yield* Effect.promise(() => getTarget(id));
   const series = yield* Effect.promise(() => getSeries(id));
@@ -379,7 +416,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
   }
   let titleChanged = false;
   for (const [index, path] of paths.entries()) {
-    const patch = yield* git(["format-patch", "--binary", "--stdout", "-1", commits[index]!], dir);
+    const patch = yield* exportCommit(dir, commits[index]!);
     const upstreamable = series.upstreamable[index - series.setup.length];
     if (upstreamable && index < series.setup.length + series.upstreamable.length) {
       const message = parsePatchMessage(patch);
@@ -393,7 +430,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
       }
     }
     const previous = yield* Effect.promise(() => readFile(path, "utf8"));
-    if (stablePatchText(previous) !== stablePatchText(patch)) {
+    if (!samePatchText(previous, patch)) {
       yield* Effect.promise(() => writeFile(path, `${patch}\n`));
     }
   }
@@ -435,7 +472,7 @@ export const addPatch = Effect.fn("addPatch")(function* (
       ),
     );
   }
-  const patch = yield* git(["format-patch", "--binary", "--stdout", "-1", commits.at(-1)!], dir);
+  const patch = yield* exportCommit(dir, commits.at(-1)!);
   const { title, description } = parsePatchMessage(patch);
   if (expectedTitle && expectedTitle !== title)
     return yield* Effect.fail(new Error(`Supplied title differs from commit subject: ${title}`));
