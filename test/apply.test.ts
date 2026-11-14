@@ -177,7 +177,16 @@ test("an interrupted patch apply can continue or abort without losing the series
   const rebuilt = await readFile(firstPatch, "utf8");
   expect(rebuilt).toContain(firstNoteIndex);
   expect(rebuilt).toContain(firstRegressionIndex);
-  expect(rebuilt.replace(/^index .+$/gm, "")).toBe(originalFirstPatch.replace(/^index .+$/gm, ""));
+  expect(rebuilt).toStartWith(`From ${"0".repeat(40)} Mon Sep 17 00:00:00 2001\n`);
+  expect(rebuilt).not.toContain("\n---\n");
+  expect(rebuilt).not.toContain("\n-- \n");
+  const payload = (patch: string) =>
+    patch
+      .slice(patch.indexOf("diff --git "))
+      .replace(/\n-- \n[^\n]+\n?$/, "\n")
+      .replace(/^index .+$/gm, "")
+      .trimEnd();
+  expect(payload(rebuilt)).toBe(payload(originalFirstPatch));
   const changed = await readFile(secondPatch, "utf8");
   expect(changed).not.toBe(conflictingPatch);
   expect(changed).toMatch(/^index [0-9a-f]{40}\.\.[0-9a-f]{40}(?: [0-7]{6})?$/m);
@@ -197,7 +206,9 @@ test("an interrupted patch apply can continue or abort without losing the series
   );
 
   await writeFile(join(checkout, "added.txt"), "new exported feature\n");
-  await git(["add", "added.txt"], checkout);
+  const binaryAsset = new Uint8Array([0, 1, 255, 0]);
+  await writeFile(join(checkout, "last.bin"), binaryAsset);
+  await git(["add", "added.txt", "last.bin"], checkout);
   await git(
     [
       "commit",
@@ -229,6 +240,13 @@ test("an interrupted patch apply can continue or abort without losing the series
   expect(added).toContain(
     `index ${"0".repeat(40)}..${await git(["rev-parse", "HEAD:added.txt"], checkout)}`,
   );
+  expect(added).toStartWith(`From ${"0".repeat(40)} Mon Sep 17 00:00:00 2001\n`);
+  expect(added).not.toContain("\n---\n");
+  expect(added).not.toContain("\n-- \n");
+  const exportedTree = await git(["rev-parse", "HEAD^{tree}"], checkout);
+  await run("bun", [cli, "stack", "sync", "fixture"], project);
+  expect(await git(["rev-parse", "HEAD^{tree}"], checkout)).toBe(exportedTree);
+  expect(await readFile(join(checkout, "last.bin"))).toEqual(Buffer.from(binaryAsset));
 
   // The rebuilt production change now depends on setup and requires a PR conflict resolution.
   await run("bun", [cli, "pr", "check", "fixture"], project, true);

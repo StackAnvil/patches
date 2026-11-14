@@ -9,6 +9,7 @@ export const command = Effect.fn("command")(function* (
   args: string[],
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
+  trimOutput = true,
 ) {
   return yield* Effect.tryPromise({
     try: async (signal) => {
@@ -20,7 +21,7 @@ export const command = Effect.fn("command")(function* (
         signal,
       });
       if (stderr.trim()) process.stderr.write(stderr);
-      return stdout.trimEnd();
+      return trimOutput ? stdout.trimEnd() : stdout;
     },
     catch: (cause) => {
       const error = cause as Error & { stdout?: string; stderr?: string };

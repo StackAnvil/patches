@@ -2,27 +2,29 @@ import { expect, test } from "bun:test";
 import { parsePatchMessage } from "../src/patch-message.ts";
 import { missingPrParticipants, prHead, renderPrBody } from "../src/pr.ts";
 
-test("format-patch message keeps a wrapped subject and multi-paragraph description", () => {
-  const patch = [
-    "From abc Mon Sep 17 00:00:00 2001",
-    "From: Contributor <contributor@example.invalid>",
-    "Subject: [PATCH] feat(test): explain a long change that wraps",
-    " across two lines",
-    "",
-    "First paragraph.",
-    "",
-    "Second paragraph.",
-    "---",
-    " file | 1 +",
-    "",
-    "diff --git a/file b/file",
-  ].join("\n");
+test.each(["legacy", "lean"])(
+  "%s format-patch message keeps a wrapped subject and multi-paragraph description",
+  (format) => {
+    const patch = [
+      "From abc Mon Sep 17 00:00:00 2001",
+      "From: Contributor <contributor@example.invalid>",
+      "Subject: [PATCH] feat(test): explain a long change that wraps",
+      " across two lines",
+      "",
+      "First paragraph.",
+      "",
+      "Second paragraph.",
+      ...(format === "legacy" ? ["---", " file | 1 +"] : []),
+      "",
+      "diff --git a/file b/file",
+    ].join("\n");
 
-  expect(parsePatchMessage(patch)).toEqual({
-    title: "feat(test): explain a long change that wraps across two lines",
-    description: "First paragraph.\n\nSecond paragraph.",
-  });
-});
+    expect(parsePatchMessage(patch)).toEqual({
+      title: "feat(test): explain a long change that wraps across two lines",
+      description: "First paragraph.\n\nSecond paragraph.",
+    });
+  },
+);
 
 test("a PR needs both the patch description and extra body", () => {
   expect(() => renderPrBody("viabedrock", "", "## Testing\n\nRun tests")).toThrow(/commit body/);
@@ -42,20 +44,29 @@ test("CubeConverter PR descriptions identify included regressions and excluded s
 test("standalone PRs use a patch-specific branch and body", () => {
   const file = "0006-encode-26-3-game-modes-correctly.patch";
   expect(prHead(file)).toBe("stackanvil/0006-encode-26-3-game-modes-correctly");
-  const body = renderPrBody("viabedrock", "Correct respawn fields", "## Evidence\n\nPacket schema", {}, file);
+  const body = renderPrBody(
+    "viabedrock",
+    "Correct respawn fields",
+    "## Evidence\n\nPacket schema",
+    {},
+    file,
+  );
   expect(body).toContain(`/viabedrock/upstreamable/${file}`);
   expect(body).toContain("applied alone to the pinned upstream base");
   expect(() => prHead("../outside.patch")).toThrow(/Invalid patch filename/);
 });
 
 test("PR participants do not receive duplicate review requests", () => {
-  const missing = missingPrParticipants(["RaphiMC", "Exterminate5573", "Reviewer", "NewReviewer", "Author"], {
-    author: { login: "Author" },
-    assignees: [{ login: "raphimc" }],
-    isDraft: false,
-    reviewRequests: [{ __typename: "User", login: "EXTERMINATE5573" }],
-    reviews: [{ author: { login: "reviewer" } }],
-  });
+  const missing = missingPrParticipants(
+    ["RaphiMC", "Exterminate5573", "Reviewer", "NewReviewer", "Author"],
+    {
+      author: { login: "Author" },
+      assignees: [{ login: "raphimc" }],
+      isDraft: false,
+      reviewRequests: [{ __typename: "User", login: "EXTERMINATE5573" }],
+      reviews: [{ author: { login: "reviewer" } }],
+    },
+  );
 
   expect(missing.assignees).toEqual(["Exterminate5573", "Reviewer", "NewReviewer", "Author"]);
   expect(missing.reviewers).toEqual(["RaphiMC", "NewReviewer"]);

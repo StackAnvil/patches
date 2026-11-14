@@ -47,7 +47,7 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 - Use Conventional Commit messages in the form `<type>(<scope>): <description>`. Add a body for non-trivial changes. Do not bypass Git hooks or Lefthook.
 - Do not create a branch unless the user explicitly asks for one.
 - Run `bun run check` after tooling changes. Add targeted tests for behavior that could lose patch work or change PR contents.
-- Always export patches through the shared exporter with `git format-patch --binary --full-index`. Keep full blob object IDs independent of `core.abbrev` and repository size. Rebuilds must expand legacy index abbreviations without changing otherwise unchanged patch text.
+- Always export patches through the shared exporter with `git format-patch --binary --full-index --zero-commit --no-signature --no-stat`. Keep full blob object IDs independent of `core.abbrev` and repository size. Rebuilds must migrate older metadata to this format and expand legacy index abbreviations without changing the source changes or commit messages.
 - Keep `targets.json` dependencies in build order. A downstream build must resolve the StackAnvil JARs that the same run built.
 - ViaFabricPlus is a pinned upstream dependency in `viafabricplus.json`, not a patch target. Verify its Jenkins build, commit, JAR, API JAR, and Maven POM checksums before building the Bedrock add-on.
 - For Bedrock development, read [the Bedrock source guide](docs/bedrock-development-sources.md). Start with metadata for the target protocol and its explicit enum values. Compare matching beta/preview schemas when values are missing or disputed. Verify numeric mappings against implementation or captures; enum values can differ from Cereal variant indexes.

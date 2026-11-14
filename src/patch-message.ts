@@ -17,6 +17,9 @@ export function parsePatchMessage(patch: string): PatchMessage {
 
   const bodyStart = headers.length + 2;
   const separator = normalized.indexOf("\n---\n", bodyStart);
-  if (separator < 0) throw new Error(`Patch ${title} has no diff separator`);
-  return { title, description: normalized.slice(bodyStart, separator).trim() };
+  const diffStart = normalized.search(/^diff --git /m);
+  const bodyEnd =
+    separator >= 0 && (diffStart < 0 || separator < diffStart) ? separator : diffStart;
+  if (bodyEnd < bodyStart) throw new Error(`Patch ${title} has no file changes`);
+  return { title, description: normalized.slice(bodyStart, bodyEnd).trim() };
 }

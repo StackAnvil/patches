@@ -168,7 +168,10 @@ export function projectPrPatch(patch: string, project?: string): PrPatch {
   if (start < 0) throw new Error("Patch has no file changes");
   if (project === "cubeconverter") return { patch: normalized, omittedTests: false };
   const separator = normalized.lastIndexOf("\n---\n", start);
-  const prefix = separator < 0 ? "" : normalized.slice(0, separator + "\n---\n".length) + "\n";
+  const prefix =
+    separator < 0
+      ? normalized.slice(0, start)
+      : normalized.slice(0, separator + "\n---\n".length) + "\n";
   const sections = normalized
     .slice(start)
     .replace(/\n-- \n[^\n]+\n?$/, "\n")

@@ -44,55 +44,6 @@ export function prMode(patchFile?: string): string {
   return `pr-${patchFile.slice(0, -".patch".length)}`;
 }
 
-function stablePatchText(patch: string): string {
-  return patch
-    .trimEnd()
-    .replace(
-      /^From [0-9a-f]{40} Mon Sep 17 00:00:00 2001$/m,
-      "From <commit> Mon Sep 17 00:00:00 2001",
-    )
-    .replace(/\n-- \n[^\n]+$/, "\n-- \n<git-version>");
-}
-
-function retainPatchMetadata(previous: string, generated: string): string {
-  const before = stablePatchText(previous).split("\n");
-  const after = stablePatchText(generated).split("\n");
-  if (before.length !== after.length) return `${generated}\n`;
-  const sameObject = (left: string, right: string) => {
-    if (/^0+$/.test(left) || /^0+$/.test(right)) return /^0+$/.test(left) && /^0+$/.test(right);
-    return left.startsWith(right) || right.startsWith(left);
-  };
-  let inPatch = false;
-  let inFileHeader = false;
-  const fullIndexes = new Map<number, string>();
-  const unchanged = before.every((line, index) => {
-    const next = after[index]!;
-    if (line === "---") inPatch = true;
-    if (inPatch && line.startsWith("diff --git ")) inFileHeader = true;
-    if (line.startsWith("@@ ") || line.startsWith("--- ") || line === "GIT binary patch")
-      inFileHeader = false;
-    if (line === next) return true;
-    if (!inFileHeader) return false;
-    const pattern = /^index ([0-9a-f]{4,64})\.\.([0-9a-f]{4,64})( [0-7]{6})?$/;
-    const left = pattern.exec(line);
-    const right = pattern.exec(next);
-    // Expand matching legacy IDs without changing commit headers, content or modes.
-    const matchingIndex =
-      left !== null &&
-      right !== null &&
-      left[3] === right[3] &&
-      sameObject(left[1]!, right[1]!) &&
-      sameObject(left[2]!, right[2]!);
-    if (matchingIndex) fullIndexes.set(index, next);
-    return matchingIndex;
-  });
-  if (!unchanged) return `${generated}\n`;
-  return previous
-    .split("\n")
-    .map((line, index) => fullIndexes.get(index) ?? line)
-    .join("\n");
-}
-
 function seriesPaths(id: string, series: Series, mode: "full" | "pr", patchFile?: string) {
   return mode === "pr"
     ? (patchFile
@@ -345,8 +296,24 @@ const commitIds = Effect.fn("commitIds")(function* (dir: string, baseSha: string
 });
 
 function exportCommit(dir: string, commit: string) {
-  // Every export uses full blob IDs, independent of object-store growth or core.abbrev.
-  return git(["format-patch", "--binary", "--full-index", "--stdout", "-1", commit], dir);
+  // Binary patches need their terminating blank line when there is no signature footer.
+  return command(
+    "git",
+    [
+      "format-patch",
+      "--binary",
+      "--full-index",
+      "--zero-commit",
+      "--no-signature",
+      "--no-stat",
+      "--stdout",
+      "-1",
+      commit,
+    ],
+    dir,
+    process.env,
+    false,
+  );
 }
 
 export const edit = Effect.fn("edit")(function* (id: string, file: string) {
@@ -437,7 +404,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
       }
     }
     const previous = yield* Effect.promise(() => readFile(path, "utf8"));
-    const rebuilt = retainPatchMetadata(previous, patch);
+    const rebuilt = patch;
     if (previous !== rebuilt) {
       yield* Effect.promise(() => writeFile(path, rebuilt));
     }
@@ -500,7 +467,7 @@ export const addPatch = Effect.fn("addPatch")(function* (
   if (group === "upstreamable") series.upstreamable.push({ file, title });
   else series.deferred.push({ file, reason: reason!.trim() });
   const path = join(root, "patches", id, group, file);
-  yield* Effect.promise(() => writeFile(path, `${patch}\n`));
+  yield* Effect.promise(() => writeFile(path, patch));
   yield* Effect.promise(() =>
     writeFile(join(root, "patches", id, "series.json"), `${JSON.stringify(series, null, 2)}\n`),
   );

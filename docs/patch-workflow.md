@@ -19,7 +19,7 @@ The [PaperSpigot 1.8.8 apply script](https://github.com/PaperMC/Paper-archive/bl
 | Generated checkout with one commit per patch | `bun run stack sync <project>` applies the ordered series into `.worktrees/<project>`.                                                                                                                                                   |
 | Rebuild patches from commits                 | `bun run stack rebuild <project>` exports every series commit to its existing filename.                                                                                                                                                  |
 | Edit an earlier patch and replay later ones  | `bun run stack edit <project> <patch-file>` saves a backup ref and resets to that commit. `stack rebuild` amends it and cherry-picks later commits.                                                                                      |
-| Keep generated headers out of review noise   | Exports use full object hashes. `stack rebuild` expands legacy index hashes while preserving the commit ID, Git version footer and all other unchanged patch text.                                                                       |
+| Keep generated metadata out of review noise  | Exports use full blob hashes, a zero commit hash, no Git version footer, and no diffstats. Rebuilds migrate older patches to this format.                                                                                                |
 | Keep failed apply state for repair           | `stack sync` saves an apply session. Resolve and stage a conflict, then run `stack continue`. Run `stack abort` to discard the failed apply.                                                                                             |
 | Patch notes in commit messages               | Put the purpose and maintenance details in the commit body. They remain in the exported patch and become the PR change summary. `stack add` requires a body, and `stack rebuild` keeps the series title aligned with the commit subject. |
 | Independently test an upstreamable patch     | `bun run pr check <project>` applies the first patch to clean upstream. Add `--patch <file>` to check another patch.                                                                                                                     |
@@ -32,11 +32,14 @@ After upstream merges a feature, remove its local tests when retiring the owning
 Do not submit those tests as a separate upstream PR.
 The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
 
-Both `stack add` and `stack rebuild` always export with `git format-patch --binary --full-index`.
+Both `stack add` and `stack rebuild` export with `git format-patch --binary --full-index --zero-commit --no-signature --no-stat`.
 Full blob object IDs keep new and changed exports stable as the object store grows or `core.abbrev` changes.
 Use the shared exporter for every export path. Do not rely on Git's default abbreviation length.
-Rebuilding expands legacy abbreviated index hashes to full object IDs, even when the patch content is unchanged.
-It preserves the existing commit header and Git version footer when only those generated fields differ.
+Rebuilds expand legacy abbreviated blob hashes and migrate older patches to the same format.
+The zero commit hash prevents header changes when earlier patches change.
+Exports omit the Git version footer and diffstats to reduce noise in GitHub commit diffs.
+Author details, commit messages, binary changes, and full blob hashes remain in the saved patches.
+Changes to blob hashes and hunk positions still appear when earlier patches change the affected source files.
 
 Paper's per-file source and resource patches solve the problem of editing decompiled Minecraft code. Our four patch targets are existing Git repositories, so they do not need that layer. We also apply patches one at a time instead of building a large `git am` argument list. This keeps conflict recovery tied to one explicit `series.json` entry and avoids the older Windows command-length issue. We do not add Paper-specific source markers to upstream code.
 
