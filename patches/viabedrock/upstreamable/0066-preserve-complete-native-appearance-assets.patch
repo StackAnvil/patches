@@ -115,6 +115,24 @@ queries, repeated random expressions, and unresolved-controller fallback.
 Raw server packs and packet captures remain private. This reduces unreachable
 conversion work; it does not establish full native actor rendering parity.
 
+The Bedrock 1.26.60.5 atlas exposes bow_standby for the inventory.
+Use it when the bow has no item icon component or direct atlas alias.
+CubeCraft's bow uses texture meshes, which yield an empty Java item
+model. For that fallback, render the pack's sprites with the Java bow
+transforms and draw timing. Keep the native attachable available to
+the client add-on and preserve converted bow models that have geometry.
+
+Exercise the hotbar and held model references with a synthetic pack.
+
+Retain whether each accepted entity geometry declares a non-empty texture
+mesh before CubeConverter discards those declarations. Apply the bow sprite
+fallback only to those geometries when conversion has no elements. Keep
+intentionally empty geometry invisible, including higher-pack overrides of
+lower texture meshes and empty texture-mesh lists. Follow the parser's
+modern and legacy identifiers and replace this metadata with each model.
+The regression exercises the complete model conversion for a hidden bow
+that overrides a lower pack's texture mesh.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 index 4e87e6acb64959a57107788013245c8a7caf630d..ed84a7aebe626036f4b66ada6bf08f69b4947558 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
@@ -214,6 +232,90 @@ index 2989d7b333938b779f4a85e1d91dcee876367633..9f4d7b7088c2af4d43197442765de82a
      }
  
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
+index 6f116c12cf3dd4678b10761542c27d48e087c138..ef397c7192a2d2eb8e34aad3486cb1355343c0bc 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
+@@ -17,6 +17,8 @@
+  */
+ package net.raphimc.viabedrock.api.resourcepack.definition;
+ 
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+@@ -25,21 +27,31 @@ import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
+ 
+ import java.util.Collections;
+ import java.util.HashMap;
++import java.util.HashSet;
+ import java.util.Map;
++import java.util.Set;
+ import java.util.logging.Level;
+ 
+ public class ModelDefinitions {
+ 
+     private final Map<String, BedrockGeometryModel> entityModels = new HashMap<>();
++    private final Set<String> entityTextureMeshes = new HashSet<>();
+     private final Map<String, BedrockGeometryModel> blockModels = new HashMap<>();
+ 
+     public ModelDefinitions(final ResourcePackStorage resourcePackStorage) {
+         for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
+             for (String modelPath : pack.content().getFilesDeep("models/", ".json")) {
+                 try {
+-                    for (BedrockGeometryModel bedrockGeometry : BedrockGeometryParser.parse(pack.content().getString(modelPath))) {
++                    final JsonObject document = pack.content().getJson(modelPath);
++                    final var models = BedrockGeometryParser.parse(document);
++                    final Map<String, Boolean> textureMeshes = textureMeshes(document);
++                    for (BedrockGeometryModel bedrockGeometry : models) {
+                         if (modelPath.startsWith("models/entity/")) {
+                             this.entityModels.put(bedrockGeometry.getIdentifier(), bedrockGeometry);
++                            this.entityTextureMeshes.remove(bedrockGeometry.getIdentifier());
++                            if (Boolean.TRUE.equals(textureMeshes.get(bedrockGeometry.getIdentifier()))) {
++                                this.entityTextureMeshes.add(bedrockGeometry.getIdentifier());
++                            }
+                         }
+                         // Blocks resolve geometry by identifier, including models stored with entities.
+                         this.blockModels.put(bedrockGeometry.getIdentifier(), bedrockGeometry);
+@@ -59,6 +71,37 @@ public class ModelDefinitions {
+         return Collections.unmodifiableMap(this.entityModels);
+     }
+ 
++    public boolean hasEntityTextureMeshes(final String identifier) {
++        return this.entityTextureMeshes.contains(identifier);
++    }
++
++    // CubeConverter retains cubes but does not retain native texture-mesh declarations.
++    private static Map<String, Boolean> textureMeshes(final JsonObject document) {
++        final Map<String, Boolean> models = new HashMap<>();
++        if (document.get("minecraft:geometry") instanceof JsonArray geometries) {
++            for (final var value : geometries) {
++                if (value instanceof JsonObject geometry) {
++                    recordTextureMeshes(models, geometry, "minecraft:geometry");
++                }
++            }
++        }
++        for (final var entry : document.entrySet()) {
++            if (entry.getKey().startsWith("geometry.") && entry.getValue() instanceof JsonObject geometry) {
++                recordTextureMeshes(models, geometry, entry.getKey());
++            }
++        }
++        return models;
++    }
++
++    private static void recordTextureMeshes(final Map<String, Boolean> models, final JsonObject geometry, final String fallbackIdentifier) {
++        final JsonObject description = geometry.has("description") ? geometry.getAsJsonObject("description") : geometry;
++        final String identifier = description.has("identifier") ? description.get("identifier").getAsString() : fallbackIdentifier;
++        final JsonArray bones = geometry.getAsJsonArray("bones");
++        final boolean hasTextureMeshes = bones != null && bones.asList().stream().anyMatch(value ->
++                value.getAsJsonObject().get("texture_meshes") instanceof JsonArray meshes && !meshes.isEmpty());
++        models.put(identifier, hasTextureMeshes);
++    }
++
+     public Map<String, BedrockGeometryModel> blockModels() {
+         return Collections.unmodifiableMap(this.blockModels);
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 index de4633e5a08f391df07a052c8a8e6e7ef459b574..b78f8e516e3b04ec9da8678819c6e68cc731e5a5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
@@ -241,10 +343,10 @@ index de4633e5a08f391df07a052c8a8e6e7ef459b574..b78f8e516e3b04ec9da8678819c6e68c
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-index 40083952199718da35b75d191b00130764a43712..fcc26eee97d27fbb09fea288663aac5591e9a7d2 100644
+index 40083952199718da35b75d191b00130764a43712..19eb0d24b59d7e6944fb054dd7db119579765b05 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-@@ -17,20 +17,21 @@
+@@ -17,92 +17,160 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
  
@@ -263,13 +365,19 @@ index 40083952199718da35b75d191b00130764a43712..fcc26eee97d27fbb09fea288663aac55
  import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 -import org.cube.converter.model.impl.java.JavaItemModel;
  
++import java.util.List;
  import java.util.Map;
 +import java.util.Set;
 +import java.util.concurrent.ConcurrentHashMap;
  import java.util.function.Consumer;
  import java.util.function.Supplier;
  
-@@ -42,46 +43,69 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
+ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter {
+ 
+     private static final String SUB_FOLDER = "attachables";
++    private static final String BOW = "minecraft:bow";
+ 
+     public static ItemModel getItemModel(final String attachableIdentifier) {
          return new ItemModel(Key.of("viabedrock", SUB_FOLDER + '/' + StringUtil.makeIdentifierValueSafe(attachableIdentifier)));
      }
  
@@ -308,8 +416,14 @@ index 40083952199718da35b75d191b00130764a43712..fcc26eee97d27fbb09fea288663aac55
 -            }
 +    private static JsonObject inventoryIcon(final ResourcePackStorage packs, final String identifier) {
 +        final var definition = packs.getItems().get(identifier);
-+        final String icon = definition != null && definition.iconComponent() != null
-+                ? definition.iconComponent() : Key.stripMinecraftNamespace(identifier);
++        if (definition != null && definition.iconComponent() != null) {
++            return atlasIcon(packs, definition.iconComponent());
+         }
++        final JsonObject icon = atlasIcon(packs, Key.stripMinecraftNamespace(identifier));
++        return icon == null && BOW.equals(identifier) ? atlasIcon(packs, "bow_standby") : icon;
++    }
++
++    private static JsonObject atlasIcon(final ResourcePackStorage packs, final String icon) {
 +        final var textures = packs.getTextures().itemTextures().get(icon);
 +        if (textures == null || textures.isEmpty()) {
 +            return null;
@@ -317,7 +431,7 @@ index 40083952199718da35b75d191b00130764a43712..fcc26eee97d27fbb09fea288663aac55
 +        final String path = textures.getFirst().texturePath();
 +        if (packs.getPackStackTopToBottom().stream().noneMatch(pack -> pack.content().getShortnameImage(path) != null)) {
 +            return null;
-         }
++        }
 +        final JsonObject model = new JsonObject();
 +        model.addProperty("type", "minecraft:model");
 +        model.addProperty("model", "viabedrock:item_textures/" + StringUtil.makeIdentifierValueSafe(icon) + "/0");
@@ -327,6 +441,8 @@ index 40083952199718da35b75d191b00130764a43712..fcc26eee97d27fbb09fea288663aac55
 +    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition,
 +                                              final Map<BedrockGeometryModel, CompiledGeometry> geometries) {
 +        final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
++        final boolean bow = BOW.equals(attachableDefinition.identifier());
++        boolean spriteFallback = false;
 +        final Set<String> textures = this.copyTextures(resourcePackStorage, attachableDefinition.attachableData().getTextures().values(), javaContent);
          for (Map.Entry<String, String> modelEntry : attachableDefinition.attachableData().getGeometries().entrySet()) {
              final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
@@ -340,40 +456,100 @@ index 40083952199718da35b75d191b00130764a43712..fcc26eee97d27fbb09fea288663aac55
              }
 -            if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
 -                continue;
--            }
--
++            final String javaTexturePath = this.getJavaTexturePath(bedrockTexturePath);
++            final CompiledGeometry geometry = geometries.computeIfAbsent(bedrockGeometry, CompiledGeometry::compile);
++            final JsonObject itemModel;
++            if (bow && !geometry.hasElements() && resourcePackStorage.getModels().hasEntityTextureMeshes(modelEntry.getValue())) {
++                spriteFallback |= modelKey.equals("default");
++                // The client add-on handles the native texture mesh. The Java fallback
++                // uses a generated sprite with the standard bow transforms.
++                itemModel = new JsonObject();
++                itemModel.addProperty("parent", "minecraft:item/bow");
++                final JsonObject sprite = new JsonObject();
++                sprite.addProperty("layer0", "viabedrock:" + javaTexturePath);
++                itemModel.add("textures", sprite);
++            } else {
++                javaContent.putGeometry(geometry);
++                itemModel = geometry.withTexture("viabedrock:" + javaTexturePath);
++                final JsonArray scaling = new JsonArray();
++                scaling.add(geometry.scale());
++                scaling.add(geometry.scale());
++                scaling.add(geometry.scale());
++                final JsonObject value = new JsonObject();
++                value.add("scale", scaling);
++                final JsonObject display = new JsonObject();
++                for (final String context : List.of("firstperson_righthand", "firstperson_lefthand",
++                        "thirdperson_righthand", "thirdperson_lefthand", "head", "gui", "ground", "fixed")) {
++                    display.add(context, value);
++                }
++                itemModel.add("display", display);
+             }
+ 
 -            final String javaTexturePath = this.getJavaTexturePath(attachableDefinition.attachableData().getTextures().get(modelEntry.getKey()));
 -            final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + javaTexturePath, RotationType.POST_1_21_11);
 -            final JsonObject itemModel = itemModelData.compile();
-+            final String javaTexturePath = this.getJavaTexturePath(bedrockTexturePath);
-+            final CompiledGeometry geometry = geometries.computeIfAbsent(bedrockGeometry, CompiledGeometry::compile);
-+            javaContent.putGeometry(geometry);
-+            final JsonObject itemModel = geometry.withTexture("viabedrock:" + javaTexturePath);
- 
-             final JsonObject display = new JsonObject();
-             final JsonArray scaling = new JsonArray();
+-
+-            final JsonObject display = new JsonObject();
+-            final JsonArray scaling = new JsonArray();
 -            scaling.add(itemModelData.getScale());
 -            scaling.add(itemModelData.getScale());
 -            scaling.add(itemModelData.getScale());
-+            scaling.add(geometry.scale());
-+            scaling.add(geometry.scale());
-+            scaling.add(geometry.scale());
- 
-             final JsonObject value = new JsonObject();
-             value.add("scale", scaling);
-@@ -97,11 +121,10 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
- 
-             itemModel.add("display", display);
- 
+-
+-            final JsonObject value = new JsonObject();
+-            value.add("scale", scaling);
+-
+-            display.add("firstperson_righthand", value);
+-            display.add("firstperson_lefthand", value);
+-            display.add("thirdperson_righthand", value);
+-            display.add("thirdperson_lefthand", value);
+-            display.add("head", value);
+-            display.add("gui", value);
+-            display.add("ground", value);
+-            display.add("fixed", value);
+-
+-            itemModel.add("display", display);
+-
 -            final String modelKey = attachableDefinition.identifier() + "_" + modelEntry.getKey();
              javaContent.putModel(modelKey, itemModel);
              resourcePackStorage.getConverterData().put("ca_" + attachableDefinition.identifier() + '_' + modelKey, true);
          }
 -        javaContent.generateItemDefinition();
-+        javaContent.generateItemDefinition(inventoryIcon(resourcePackStorage, attachableDefinition.identifier()));
++        final JsonObject icon = inventoryIcon(resourcePackStorage, attachableDefinition.identifier());
++        javaContent.generateItemDefinition(icon, spriteFallback ? bowModel(javaContent) : null);
          return javaContent;
      }
  
++    private static JsonObject bowModel(final ItemModelContent content) {
++        final JsonObject standby = content.modelReference("default");
++        final JsonObject pulling = content.modelReference("bow_pulling_0");
++        // Match the vanilla Java bow's draw thresholds when using its item transforms.
++        final JsonArray entries = new JsonArray();
++        addBowStage(entries, content.modelReference("bow_pulling_1"), 13);
++        addBowStage(entries, content.modelReference("bow_pulling_2"), 18);
++        final JsonObject range = new JsonObject();
++        range.addProperty("type", "minecraft:range_dispatch");
++        range.addProperty("property", "minecraft:use_duration");
++        range.add("entries", entries);
++        range.add("fallback", pulling == null ? standby : pulling);
++
++        final JsonObject condition = new JsonObject();
++        condition.addProperty("type", "minecraft:condition");
++        condition.addProperty("property", "minecraft:using_item");
++        condition.add("on_true", entries.isEmpty() ? range.get("fallback") : range);
++        condition.add("on_false", standby);
++        return condition;
++    }
++
++    private static void addBowStage(final JsonArray entries, final JsonObject model, final int ticks) {
++        if (model != null) {
++            final JsonObject entry = new JsonObject();
++            entry.addProperty("threshold", ticks);
++            entry.add("model", model);
++            entries.add(entry);
++        }
++    }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
 index 6007035031ec4a6c4200301852d5c63e5ea1d17d..9c15e9f560150c4ed7d85a85b75bf83fa96a6dbd 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
@@ -640,7 +816,7 @@ index 0000000000000000000000000000000000000000..ddda2ab644b409dbed84e467e46b6d87
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
-index 799413e5734b549178eccb4dbe099a339c6f1e65..4deef2b9821f9547f4b8fe0f2c4269aced4c1ae3 100644
+index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc072b95b45 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
 @@ -20,11 +20,26 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
@@ -717,7 +893,7 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..4deef2b9821f9547f4b8fe0f2c4269ac
 +    }
 +
 +    /** A serialized parent is shared; each child owns its texture bindings and display transforms. */
-+    protected record CompiledGeometry(String path, byte[] data, List<String> textureKeys, float scale) {
++    protected record CompiledGeometry(String path, byte[] data, List<String> textureKeys, float scale, boolean hasElements) {
 +
 +        protected static CompiledGeometry compile(final BedrockGeometryModel geometry) {
 +            final var converted = geometry.toJavaItemModel("", RotationType.POST_1_21_11);
@@ -727,7 +903,7 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..4deef2b9821f9547f4b8fe0f2c4269ac
 +            final byte[] data = GsonUtil.getGson().toJson(model).getBytes(StandardCharsets.UTF_8);
 +            try {
 +                final String path = "geometry/" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
-+                return new CompiledGeometry(path, data, textureKeys, converted.getScale());
++                return new CompiledGeometry(path, data, textureKeys, converted.getScale(), !model.getAsJsonArray("elements").isEmpty());
 +            } catch (final NoSuchAlgorithmException impossible) {
 +                throw new IllegalStateException(impossible);
 +            }
@@ -747,7 +923,7 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..4deef2b9821f9547f4b8fe0f2c4269ac
      protected class ItemModelContent extends InMemoryContent {
  
          private final Map<String, String> modelDefinitions = new HashMap<>();
-@@ -52,13 +137,25 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
+@@ -52,32 +137,82 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
              this.itemPath = ItemModelResourceRewriter.this.subFolder + '/' + StringUtil.makeIdentifierValueSafe(itemName);
          }
  
@@ -765,30 +941,33 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..4deef2b9821f9547f4b8fe0f2c4269ac
              this.putJson("assets/viabedrock/models/" + modelPath + ".json", json);
          }
  
++        protected JsonObject modelReference(final String name) {
++            final String path = this.modelDefinitions.get(name);
++            if (path == null) {
++                return null;
++            }
++            final JsonObject model = new JsonObject();
++            model.addProperty("type", "minecraft:model");
++            model.addProperty("model", "viabedrock:" + path);
++            return model;
++        }
++
          protected void generateItemDefinition() {
+-            final JsonArray modelCases = new JsonArray();
+-            for (Map.Entry<String, String> modelDefinition : this.modelDefinitions.entrySet()) {
+-                final JsonObject model = new JsonObject();
+-                model.addProperty("type", "minecraft:model");
+-                model.addProperty("model", "viabedrock:" + modelDefinition.getValue());
 +            this.generateItemDefinition(null);
 +        }
 +
 +        protected void generateItemDefinition(final JsonObject inventoryModel) {
-             final JsonArray modelCases = new JsonArray();
-             for (Map.Entry<String, String> modelDefinition : this.modelDefinitions.entrySet()) {
-                 final JsonObject model = new JsonObject();
-@@ -72,11 +169,33 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
-             }
- 
-             final JsonObject model = new JsonObject();
--            model.addProperty("type", "minecraft:select");
--            model.addProperty("property", "minecraft:custom_model_data");
--            model.add("cases", modelCases);
-+            if (modelCases.isEmpty()) {
-+                model.addProperty("type", "minecraft:empty");
-+            } else {
-+                model.addProperty("type", "minecraft:select");
-+                model.addProperty("property", "minecraft:custom_model_data");
-+                model.add("cases", modelCases);
-+            }
-             final JsonObject itemDefinitionObj = new JsonObject();
--            itemDefinitionObj.add("model", model);
++            this.generateItemDefinition(inventoryModel, null);
++        }
++
++        protected void generateItemDefinition(final JsonObject inventoryModel, final JsonObject heldModel) {
++            final JsonObject model = heldModel != null ? heldModel : this.variantSelector();
++            final JsonObject itemDefinitionObj = new JsonObject();
 +            if (inventoryModel == null) {
 +                itemDefinitionObj.add("model", model);
 +            } else {
@@ -808,9 +987,38 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..4deef2b9821f9547f4b8fe0f2c4269ac
 +                displayModel.add("fallback", model);
 +                itemDefinitionObj.add("model", displayModel);
 +            }
-             this.putJson("assets/viabedrock/items/" + this.itemPath + ".json", itemDefinitionObj);
++            this.putJson("assets/viabedrock/items/" + this.itemPath + ".json", itemDefinitionObj);
++        }
+ 
++        private JsonObject variantSelector() {
++            final JsonArray modelCases = new JsonArray();
++            for (final String name : this.modelDefinitions.keySet()) {
+                 final JsonObject caseObj = new JsonObject();
+-                caseObj.addProperty("when", modelDefinition.getKey());
+-                caseObj.add("model", model);
++                caseObj.addProperty("when", name);
++                caseObj.add("model", this.modelReference(name));
+                 modelCases.add(caseObj);
+             }
+ 
+             final JsonObject model = new JsonObject();
+-            model.addProperty("type", "minecraft:select");
+-            model.addProperty("property", "minecraft:custom_model_data");
+-            model.add("cases", modelCases);
+-            final JsonObject itemDefinitionObj = new JsonObject();
+-            itemDefinitionObj.add("model", model);
+-            this.putJson("assets/viabedrock/items/" + this.itemPath + ".json", itemDefinitionObj);
++            if (modelCases.isEmpty()) {
++                model.addProperty("type", "minecraft:empty");
++            } else {
++                model.addProperty("type", "minecraft:select");
++                model.addProperty("property", "minecraft:custom_model_data");
++                model.add("cases", modelCases);
++            }
++            return model;
          }
  
+     }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..a488f7d487ec2b50f544b64dff90532246d8174f
@@ -1134,10 +1342,10 @@ index 0000000000000000000000000000000000000000..84c8e7df562c9e1de1f2acb4726c8f64
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef26d20b516e281323ed2a592bfdf6dbebb9b2b3
+index 0000000000000000000000000000000000000000..283f0bbc8f9d5e93855ee571abcb68caeaed74aa
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,364 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1357,6 +1565,81 @@ index 0000000000000000000000000000000000000000..ef26d20b516e281323ed2a592bfdf6db
 +        final var restored = ResourcePackStorage.nativeActors(NativeActorLibrary.resources(
 +                storage.getPackStackBottomToTop(), storage::isServerPack));
 +        assertEquals(definitions.get(alias).itemBindings(), restored.getAttachables().attachables().get(alias).itemBindings());
++    }
++
++    @Test
++    void keepsTextureMeshBowsVisibleInTheHotbarAndInTheJavaHandFallback() {
++        final ResourcePack pack = pack("minecraft:bow", true);
++        final Content content = pack.content();
++        content.putString("textures/item_texture.json", """
++                {"texture_data":{"bow_standby":{"textures":"textures/present"}}}
++                """);
++        content.putString("models/entity/test.json", """
++                {"format_version":"1.16.0","minecraft:geometry":[{
++                  "description":{"identifier":"geometry.test","texture_width":16,"texture_height":16},
++                  "bones":[{"name":"rightitem","texture_meshes":[{"texture":"default"}]}]
++                }]}
++                """);
++        final var attachable = content.getJson("attachables/test.json");
++        final var description = attachable.getAsJsonObject("minecraft:attachable").getAsJsonObject("description");
++        for (final String variant : List.of("default", "bow_pulling_0", "bow_pulling_1", "bow_pulling_2")) {
++            description.getAsJsonObject("textures").addProperty(variant, "textures/present");
++            description.getAsJsonObject("geometry").addProperty(variant, "geometry.test");
++        }
++        content.putJson("attachables/test.json", attachable);
++
++        final var storage = new ResourcePackStorage(List.of(pack));
++        final Content result = convert(storage, new CustomAttachableResourceRewriter());
++        result.putAll(convert(storage, new CustomItemTextureResourceRewriter()));
++        final var item = result.getJson("assets/viabedrock/items/attachables/minecraft/bow.json").getAsJsonObject("model");
++        final var inventory = item.getAsJsonArray("cases").get(0).getAsJsonObject();
++        assertTrue(inventory.getAsJsonArray("when").contains(new JsonPrimitive("gui")));
++        final var icon = inventory.getAsJsonObject("model").get("model").getAsString();
++        assertEquals("viabedrock:item_textures/bow_standby/0", icon);
++        assertNotNull(result.getJson("assets/viabedrock/models/item_textures/bow_standby/0.json"));
++
++        final var held = item.getAsJsonObject("fallback");
++        assertEquals("minecraft:using_item", held.get("property").getAsString());
++        assertEquals("viabedrock:attachables/minecraft/bow/default", held.getAsJsonObject("on_false").get("model").getAsString());
++        final var pull = held.getAsJsonObject("on_true");
++        assertEquals("viabedrock:attachables/minecraft/bow/bow_pulling_0", pull.getAsJsonObject("fallback").get("model").getAsString());
++        final var fullDraw = pull.getAsJsonArray("entries").get(1).getAsJsonObject();
++        assertEquals("viabedrock:attachables/minecraft/bow/bow_pulling_2", fullDraw.getAsJsonObject("model").get("model").getAsString());
++        final var sprite = result.getJson("assets/viabedrock/models/attachables/minecraft/bow/bow_pulling_2.json");
++        assertEquals("minecraft:item/bow", sprite.get("parent").getAsString());
++        assertEquals("viabedrock:item/attachables/present", sprite.getAsJsonObject("textures").get("layer0").getAsString());
++    }
++
++    @Test
++    void keepsAnEmptyBowOverrideInvisibleInsteadOfReusingLowerTextureMeshes() {
++        final ResourcePack lower = pack("minecraft:bow", true);
++        lower.content().putString("models/entity/test.json", """
++                {"format_version":"1.16.0","minecraft:geometry":[{
++                  "description":{"identifier":"geometry.test","texture_width":16,"texture_height":16},
++                  "bones":[{"name":"rightitem","texture_meshes":[{"texture":"default"}]}]
++                }]}
++                """);
++        final ResourcePack higher = pack("minecraft:bow", true);
++        final var attachable = higher.content().getJson("attachables/test.json");
++        attachable.getAsJsonObject("minecraft:attachable").getAsJsonObject("description")
++                .getAsJsonObject("textures").addProperty("default", "textures/present");
++        higher.content().putJson("attachables/test.json", attachable);
++        higher.content().putString("models/entity/test.json", """
++                {"format_version":"1.8.0","geometry.test":{
++                  "texturewidth":16,"textureheight":16,
++                  "bones":[{"name":"rightitem","texture_meshes":[]}]
++                }}
++                """);
++
++        final var storage = new ResourcePackStorage(List.of(higher, lower));
++        final Content result = convert(storage, new CustomAttachableResourceRewriter());
++        final var item = result.getJson("assets/viabedrock/items/attachables/minecraft/bow.json").getAsJsonObject("model");
++        assertEquals("minecraft:custom_model_data", item.get("property").getAsString());
++        final var model = result.getJson("assets/viabedrock/models/attachables/minecraft/bow/default.json");
++        final String parent = model.get("parent").getAsString();
++        assertTrue(parent.startsWith("viabedrock:geometry/"));
++        assertTrue(result.getJson("assets/viabedrock/models/" + parent.substring("viabedrock:".length()) + ".json")
++                .getAsJsonArray("elements").isEmpty());
 +    }
 +
 +    @Test
