@@ -124,6 +124,15 @@ the client add-on and preserve converted bow models that have geometry.
 
 Exercise the hotbar and held model references with a synthetic pack.
 
+Retain whether each accepted entity geometry declares a non-empty texture
+mesh before CubeConverter discards those declarations. Apply the bow sprite
+fallback only to those geometries when conversion has no elements. Keep
+intentionally empty geometry invisible, including higher-pack overrides of
+lower texture meshes and empty texture-mesh lists. Follow the parser's
+modern and legacy identifiers and replace this metadata with each model.
+The regression exercises the complete model conversion for a hidden bow
+that overrides a lower pack's texture mesh.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 index 4e87e6acb64959a57107788013245c8a7caf630d..ed84a7aebe626036f4b66ada6bf08f69b4947558 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
@@ -223,6 +232,90 @@ index 2989d7b333938b779f4a85e1d91dcee876367633..9f4d7b7088c2af4d43197442765de82a
      }
  
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
+index 6f116c12cf3dd4678b10761542c27d48e087c138..ef397c7192a2d2eb8e34aad3486cb1355343c0bc 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
+@@ -17,6 +17,8 @@
+  */
+ package net.raphimc.viabedrock.api.resourcepack.definition;
+ 
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+@@ -25,21 +27,31 @@ import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
+ 
+ import java.util.Collections;
+ import java.util.HashMap;
++import java.util.HashSet;
+ import java.util.Map;
++import java.util.Set;
+ import java.util.logging.Level;
+ 
+ public class ModelDefinitions {
+ 
+     private final Map<String, BedrockGeometryModel> entityModels = new HashMap<>();
++    private final Set<String> entityTextureMeshes = new HashSet<>();
+     private final Map<String, BedrockGeometryModel> blockModels = new HashMap<>();
+ 
+     public ModelDefinitions(final ResourcePackStorage resourcePackStorage) {
+         for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
+             for (String modelPath : pack.content().getFilesDeep("models/", ".json")) {
+                 try {
+-                    for (BedrockGeometryModel bedrockGeometry : BedrockGeometryParser.parse(pack.content().getString(modelPath))) {
++                    final JsonObject document = pack.content().getJson(modelPath);
++                    final var models = BedrockGeometryParser.parse(document);
++                    final Map<String, Boolean> textureMeshes = textureMeshes(document);
++                    for (BedrockGeometryModel bedrockGeometry : models) {
+                         if (modelPath.startsWith("models/entity/")) {
+                             this.entityModels.put(bedrockGeometry.getIdentifier(), bedrockGeometry);
++                            this.entityTextureMeshes.remove(bedrockGeometry.getIdentifier());
++                            if (Boolean.TRUE.equals(textureMeshes.get(bedrockGeometry.getIdentifier()))) {
++                                this.entityTextureMeshes.add(bedrockGeometry.getIdentifier());
++                            }
+                         }
+                         // Blocks resolve geometry by identifier, including models stored with entities.
+                         this.blockModels.put(bedrockGeometry.getIdentifier(), bedrockGeometry);
+@@ -59,6 +71,37 @@ public class ModelDefinitions {
+         return Collections.unmodifiableMap(this.entityModels);
+     }
+ 
++    public boolean hasEntityTextureMeshes(final String identifier) {
++        return this.entityTextureMeshes.contains(identifier);
++    }
++
++    // CubeConverter retains cubes but does not retain native texture-mesh declarations.
++    private static Map<String, Boolean> textureMeshes(final JsonObject document) {
++        final Map<String, Boolean> models = new HashMap<>();
++        if (document.get("minecraft:geometry") instanceof JsonArray geometries) {
++            for (final var value : geometries) {
++                if (value instanceof JsonObject geometry) {
++                    recordTextureMeshes(models, geometry, "minecraft:geometry");
++                }
++            }
++        }
++        for (final var entry : document.entrySet()) {
++            if (entry.getKey().startsWith("geometry.") && entry.getValue() instanceof JsonObject geometry) {
++                recordTextureMeshes(models, geometry, entry.getKey());
++            }
++        }
++        return models;
++    }
++
++    private static void recordTextureMeshes(final Map<String, Boolean> models, final JsonObject geometry, final String fallbackIdentifier) {
++        final JsonObject description = geometry.has("description") ? geometry.getAsJsonObject("description") : geometry;
++        final String identifier = description.has("identifier") ? description.get("identifier").getAsString() : fallbackIdentifier;
++        final JsonArray bones = geometry.getAsJsonArray("bones");
++        final boolean hasTextureMeshes = bones != null && bones.asList().stream().anyMatch(value ->
++                value.getAsJsonObject().get("texture_meshes") instanceof JsonArray meshes && !meshes.isEmpty());
++        models.put(identifier, hasTextureMeshes);
++    }
++
+     public Map<String, BedrockGeometryModel> blockModels() {
+         return Collections.unmodifiableMap(this.blockModels);
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 index de4633e5a08f391df07a052c8a8e6e7ef459b574..b78f8e516e3b04ec9da8678819c6e68cc731e5a5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
@@ -250,7 +343,7 @@ index de4633e5a08f391df07a052c8a8e6e7ef459b574..b78f8e516e3b04ec9da8678819c6e68c
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-index 40083952199718da35b75d191b00130764a43712..d1c68860a276efa49b09e02610b7e9798885b69d 100644
+index 40083952199718da35b75d191b00130764a43712..19eb0d24b59d7e6944fb054dd7db119579765b05 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 @@ -17,92 +17,160 @@
@@ -366,7 +459,7 @@ index 40083952199718da35b75d191b00130764a43712..d1c68860a276efa49b09e02610b7e979
 +            final String javaTexturePath = this.getJavaTexturePath(bedrockTexturePath);
 +            final CompiledGeometry geometry = geometries.computeIfAbsent(bedrockGeometry, CompiledGeometry::compile);
 +            final JsonObject itemModel;
-+            if (bow && !geometry.hasElements()) {
++            if (bow && !geometry.hasElements() && resourcePackStorage.getModels().hasEntityTextureMeshes(modelEntry.getValue())) {
 +                spriteFallback |= modelKey.equals("default");
 +                // The client add-on handles the native texture mesh. The Java fallback
 +                // uses a generated sprite with the standard bow transforms.
@@ -1249,10 +1342,10 @@ index 0000000000000000000000000000000000000000..84c8e7df562c9e1de1f2acb4726c8f64
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2584438b6833052cea63ff023258afa8a4fb90b6
+index 0000000000000000000000000000000000000000..283f0bbc8f9d5e93855ee571abcb68caeaed74aa
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-@@ -0,0 +1,332 @@
+@@ -0,0 +1,364 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1515,6 +1608,38 @@ index 0000000000000000000000000000000000000000..2584438b6833052cea63ff023258afa8
 +        final var sprite = result.getJson("assets/viabedrock/models/attachables/minecraft/bow/bow_pulling_2.json");
 +        assertEquals("minecraft:item/bow", sprite.get("parent").getAsString());
 +        assertEquals("viabedrock:item/attachables/present", sprite.getAsJsonObject("textures").get("layer0").getAsString());
++    }
++
++    @Test
++    void keepsAnEmptyBowOverrideInvisibleInsteadOfReusingLowerTextureMeshes() {
++        final ResourcePack lower = pack("minecraft:bow", true);
++        lower.content().putString("models/entity/test.json", """
++                {"format_version":"1.16.0","minecraft:geometry":[{
++                  "description":{"identifier":"geometry.test","texture_width":16,"texture_height":16},
++                  "bones":[{"name":"rightitem","texture_meshes":[{"texture":"default"}]}]
++                }]}
++                """);
++        final ResourcePack higher = pack("minecraft:bow", true);
++        final var attachable = higher.content().getJson("attachables/test.json");
++        attachable.getAsJsonObject("minecraft:attachable").getAsJsonObject("description")
++                .getAsJsonObject("textures").addProperty("default", "textures/present");
++        higher.content().putJson("attachables/test.json", attachable);
++        higher.content().putString("models/entity/test.json", """
++                {"format_version":"1.8.0","geometry.test":{
++                  "texturewidth":16,"textureheight":16,
++                  "bones":[{"name":"rightitem","texture_meshes":[]}]
++                }}
++                """);
++
++        final var storage = new ResourcePackStorage(List.of(higher, lower));
++        final Content result = convert(storage, new CustomAttachableResourceRewriter());
++        final var item = result.getJson("assets/viabedrock/items/attachables/minecraft/bow.json").getAsJsonObject("model");
++        assertEquals("minecraft:custom_model_data", item.get("property").getAsString());
++        final var model = result.getJson("assets/viabedrock/models/attachables/minecraft/bow/default.json");
++        final String parent = model.get("parent").getAsString();
++        assertTrue(parent.startsWith("viabedrock:geometry/"));
++        assertTrue(result.getJson("assets/viabedrock/models/" + parent.substring("viabedrock:".length()) + ".json")
++                .getAsJsonArray("elements").isEmpty());
 +    }
 +
 +    @Test
