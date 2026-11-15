@@ -47,6 +47,11 @@ test("theme preferences persist and missing pages remain useful", async ({ page 
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await expect(page.locator("html")).toHaveClass("dark");
+  await page.getByRole("radio", { name: /Client modpack/ }).check();
+  await expect(page.getByRole("link", { name: "Download Client modpack" })).toHaveAttribute(
+    "href",
+    /\.mrpack$/,
+  );
   await page.getByRole("button", { name: "Toggle color theme", exact: true }).click();
   await expect(page.locator("html")).toHaveClass("light");
   await page.reload();
@@ -57,7 +62,7 @@ test("theme preferences persist and missing pages remain useful", async ({ page 
   await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex");
   await page.getByRole("link", { name: "Go to homepage", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Your Java client. Bedrock servers.", exact: true }),
+    page.getByRole("heading", { name: "Play Bedrock servers from Java Edition", exact: true }),
   ).toBeVisible();
   expect(errors).toEqual([]);
 });

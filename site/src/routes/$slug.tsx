@@ -31,7 +31,8 @@ function DocumentPage() {
         sidebar={{
           footer: (
             <a className="sidebar-community" href={site.discord}>
-              Get help on Discord
+              Stuck on a step?
+              <span>Ask on Discord</span>
             </a>
           ),
         }}

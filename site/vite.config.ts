@@ -28,6 +28,39 @@ export default defineConfig({
         }
       },
     },
+    {
+      // Upstream-bound patch titles, read from the repository's patch series.
+      name: "stackanvil-patches",
+      resolveId(id) {
+        if (id === "virtual:stackanvil-patches") return `\0${id}`;
+      },
+      load(id) {
+        if (id !== "\0virtual:stackanvil-patches") return;
+        const root = new URL("../patches/", import.meta.url);
+        const projects = readdirSync(root, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map(({ name }) => {
+            const series = JSON.parse(
+              readFileSync(new URL(`${name}/series.json`, root), "utf8"),
+            ) as Record<string, (string | { file: string; title?: string })[]>;
+            this.addWatchFile(fileURLToPath(new URL(`${name}/series.json`, root)));
+            const patches = (["upstreamable", "deferred"] as const).flatMap((state) =>
+              (series[state] ?? []).map((entry) => ({
+                state,
+                title:
+                  typeof entry !== "string" && entry.title
+                    ? entry.title
+                    : (typeof entry === "string" ? entry : entry.file)
+                        .replace(/^\d+-/, "")
+                        .replace(/\.patch$/, "")
+                        .replaceAll("-", " "),
+              })),
+            );
+            return { project: name, patches };
+          });
+        return `export default ${JSON.stringify(projects)};`;
+      },
+    },
     fumadocsMdx(),
     tailwindcss(),
     tanstackStart({

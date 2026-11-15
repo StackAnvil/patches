@@ -25,7 +25,9 @@ Add new guides to the navigation in `site/src/lib/documents.ts`.
 TanStack Start generates `site/src/routeTree.gen.ts` when you run or build the site. Do not edit that file.
 
 Edit the homepage in `site/src/routes/index.tsx` and the download chooser in `site/src/routes/releases.tsx`.
-Shared site details live in `site/src/lib/site.ts`. Colors and layout styles live in `site/src/styles/app.css`.
+Shared site details live in `site/src/lib/site.ts`, and the setup choices and their steps live in `site/src/lib/setups.ts`.
+Colors, layout, and animations live in `site/src/styles/app.css`.
+The homepage patch stacks read `patches/*/series.json` at build time, so they update with the next site build.
 
 ## Check the static build
 
