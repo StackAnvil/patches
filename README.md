@@ -28,12 +28,12 @@ dependencies {
 
 This example uses release `stack-v0.2.2`. Choose the version you need from [StackAnvil releases](https://github.com/StackAnvil/patches/releases) and keep the other repositories required by your dependencies. The [Javadocs site](https://stackanvil-jd.pistonmaster.net/) documents the latest release.
 
-| Project | Artifact ID | Maven versions | API reference |
-| --- | --- | --- | --- |
-| ViaBedrock | `viabedrock-stackanvil` | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/viabedrock-stackanvil/maven-metadata.xml) | [Javadocs](https://stackanvil-jd.pistonmaster.net/viabedrock/) |
+| Project                      | Artifact ID                        | Maven versions                                                                                                                 | API reference                                                             |
+| ---------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| ViaBedrock                   | `viabedrock-stackanvil`            | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/viabedrock-stackanvil/maven-metadata.xml)            | [Javadocs](https://stackanvil-jd.pistonmaster.net/viabedrock/)            |
 | ViaFabricPlus Bedrock add-on | `viafabricplus-bedrock-stackanvil` | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/viafabricplus-bedrock-stackanvil/maven-metadata.xml) | [Javadocs](https://stackanvil-jd.pistonmaster.net/viafabricplus-bedrock/) |
-| CubeConverter | `cubeconverter-stackanvil` | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/cubeconverter-stackanvil/maven-metadata.xml) | [Javadocs](https://stackanvil-jd.pistonmaster.net/cubeconverter/) |
-| ViaProxy | `viaproxy-stackanvil` | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/viaproxy-stackanvil/maven-metadata.xml) | [Javadocs](https://stackanvil-jd.pistonmaster.net/viaproxy/) |
+| CubeConverter                | `cubeconverter-stackanvil`         | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/cubeconverter-stackanvil/maven-metadata.xml)         | [Javadocs](https://stackanvil-jd.pistonmaster.net/cubeconverter/)         |
+| ViaProxy                     | `viaproxy-stackanvil`              | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/viaproxy-stackanvil/maven-metadata.xml)              | [Javadocs](https://stackanvil-jd.pistonmaster.net/viaproxy/)              |
 
 All four coordinates use group ID `io.github.stackanvil`. The Maven repository keeps published versions. The Javadocs links show the latest release at stable paths. The [website guide](https://stackanvil.pistonmaster.net/libraries/) has the same usage steps and reference links.
 
@@ -47,12 +47,12 @@ Each project has three ordered groups in `patches/<project>/series.json`:
 
 The full build applies every group in that order. Our upstream PR branch starts at clean upstream and applies only the first upstreamable patch. It excludes setup and deferred changes.
 
-| Project | Upstream | Initial upstreamable patches |
-| --- | --- | --- |
-| ViaBedrock | [ViaVersionAddons/ViaBedrock](https://github.com/ViaVersionAddons/ViaBedrock) | [#420](https://github.com/ViaVersionAddons/ViaBedrock/pull/420), [#425](https://github.com/ViaVersionAddons/ViaBedrock/pull/425), [#427](https://github.com/ViaVersionAddons/ViaBedrock/pull/427), [#429](https://github.com/ViaVersionAddons/ViaBedrock/pull/429) |
-| viafabricplus-bedrock | [ViaVersionAddons/viafabricplus-bedrock](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | [#7](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/7), [#9](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/9), [#11](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/11) |
-| CubeConverter | [oryxel1/CubeConverter](https://github.com/oryxel1/CubeConverter/tree/vv-json) | Ready for contributions |
-| ViaProxy | [ViaVersion/ViaProxy](https://github.com/ViaVersion/ViaProxy) | Ready for contributions |
+| Project               | Upstream                                                                                            | Initial upstreamable patches                                                                                                                                                                                                                                       |
+| --------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ViaBedrock            | [ViaVersionAddons/ViaBedrock](https://github.com/ViaVersionAddons/ViaBedrock)                       | [#420](https://github.com/ViaVersionAddons/ViaBedrock/pull/420), [#425](https://github.com/ViaVersionAddons/ViaBedrock/pull/425), [#427](https://github.com/ViaVersionAddons/ViaBedrock/pull/427), [#429](https://github.com/ViaVersionAddons/ViaBedrock/pull/429) |
+| viafabricplus-bedrock | [ViaVersionAddons/viafabricplus-bedrock](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | [#7](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/7), [#9](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/9), [#11](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/11)                                           |
+| CubeConverter         | [oryxel1/CubeConverter](https://github.com/oryxel1/CubeConverter/tree/vv-json)                      | Ready for contributions                                                                                                                                                                                                                                            |
+| ViaProxy              | [ViaVersion/ViaProxy](https://github.com/ViaVersion/ViaProxy)                                       | Ready for contributions                                                                                                                                                                                                                                            |
 
 ## Try a stack
 
@@ -96,6 +96,8 @@ bun run dev
 Read the [video production guide](video/README.md) for recording and export commands. Gameplay uses the private capture lab. Raw recordings, account data, and licensed pack exports remain private.
 
 ## Contribute a patch
+
+For website changes, read the [website development guide](site/README.md).
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [patch workflow](docs/patch-workflow.md) for the edit and conflict workflow. The patch workflow also explains what StackAnvil takes from Paper's old scripts and current paperweight tooling. The common path is:
 
