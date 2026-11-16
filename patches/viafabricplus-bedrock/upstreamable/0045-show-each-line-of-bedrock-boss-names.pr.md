@@ -1,0 +1,3 @@
+Bedrock shows every line of a boss name, and servers use a second line as a subtitle. Java's boss overlay draws one line, so the line breaks appeared as stray glyphs. On Bedrock connections, multi-line boss names now use Bedrock's layout: one block as wide as its widest line, centered on the bar, lines left-aligned and 10 GUI units apart, with the bar drawn over the lines below the first. Single-line names and Java servers keep Java's layout.
+
+Validation: a Bedrock 1.26.60.5 client against a local BDS showed this layout for withers summoned with multi-line names, including a short first line above a longer second line. Mystrick Games' lobby boss bar ("MystrickGames Lobby", blank line, "New Minigame Conquests!") now matches it on the add-on client.
