@@ -546,6 +546,13 @@ Apply a controller's incoming weight to its completed pose contribution as well 
 
 Convert animated bone degrees with the native float coefficient before adding the renderer angle. The original Bedrock 1.26.60.5 cached model-update path stores degrees and multiplies by float bits 0x3c8efa35 at 0x14618e1a3. A no-stub REA channel-writer/tree/composer control on protocol 2225 (artifact SHA-256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a; Evidence ev_52abfca2a48b2aec360d6e52ec873f30447e79cb49c747728f4f71df0cabb513) produces radians 0x3f95adef for 67 degrees on every axis. Double conversion followed by a float cast produces 0x3f95adf0. Keep this conversion in float arithmetic at the model boundary. The regression reads the resulting animated bone pose. This corrects that numeric boundary; complete matrix bits and visible skin or shield parity remain unproven.
 
+Java picks an ender dragon only through its client-side parts and reports
+the dragon itself as not pickable. Judge a published dragon's eligibility
+through a part so its native picking proxies stay targetable, and keep the
+parts out while the proxies represent it. An unpublished dragon still uses
+its parts, whose ids core resolves to the dragon. Without this, the dragon
+cannot be damaged.
+
 diff --git a/.gitignore b/.gitignore
 index d845caa57c02a0321c45fd6ffd10c2e7f1ded60e..e1f9fb539aa782676017e3d5b8ed9fd089281a76 100644
 --- a/.gitignore
@@ -12534,10 +12541,10 @@ index 620300f35a20489e76541f1f2799b46e4f047fa3..39a1e1f535430d350538f1efde65f337
  import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..aca8b7092e9ab1ef10738bc1593414bc82521bab
+index 0000000000000000000000000000000000000000..2541c0b9c7c0a65d9f676912af21fd1c012d6888
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorPicking.java
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,160 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12551,6 +12558,8 @@ index 0000000000000000000000000000000000000000..aca8b7092e9ab1ef10738bc1593414bc
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.network.Connection;
 +import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
++import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
 +import net.minecraft.world.phys.AABB;
 +import net.minecraft.world.phys.BlockHitResult;
 +import net.minecraft.world.phys.EntityHitResult;
@@ -12594,6 +12603,10 @@ index 0000000000000000000000000000000000000000..aca8b7092e9ab1ef10738bc1593414bc
 +    }
 +
 +    public static Entity owner(final Entity proxy) {
++        if (proxy instanceof EnderDragonPart part) {
++            // Java picks a dragon through its parts; Bedrock attacks the dragon itself.
++            return part.parentMob;
++        }
 +        final var snapshot = STATE.proxyOwner(proxy.getUUID(), BedrockActorState::lifetime);
 +        return snapshot == null ? null : proxy.level().getEntity(snapshot.owner());
 +    }
@@ -12603,9 +12616,10 @@ index 0000000000000000000000000000000000000000..aca8b7092e9ab1ef10738bc1593414bc
 +            return vanilla;
 +        }
 +        return candidate -> {
-+            if (!STATE.eligible(candidate.getUUID(), BedrockActorState::lifetime, camera.getUUID(), uuid -> {
-+                final Entity owner = candidate.getUUID().equals(uuid) ? candidate : candidate.level().getEntity(uuid);
-+                return owner != null && !owner.isRemoved() && vanilla.test(owner);
++            final Entity identity = candidate instanceof EnderDragonPart part ? part.parentMob : candidate;
++            if (!STATE.eligible(identity.getUUID(), BedrockActorState::lifetime, camera.getUUID(), uuid -> {
++                final Entity owner = identity.getUUID().equals(uuid) ? candidate : candidate.level().getEntity(uuid);
++                return owner != null && !owner.isRemoved() && vanilla.test(pickedAs(owner));
 +            })) {
 +                return false;
 +            }
@@ -12616,6 +12630,11 @@ index 0000000000000000000000000000000000000000..aca8b7092e9ab1ef10738bc1593414bc
 +            final AABB bounds = bounds(candidate);
 +            return bounds != null && withinReach(bounds, snapshot.reachPadding(), start, end);
 +        };
++    }
++
++    /** Java never picks a dragon itself, only its parts; native picking still targets the dragon. */
++    static Entity pickedAs(final Entity owner) {
++        return owner instanceof EnderDragon dragon ? dragon.getSubEntities()[0] : owner;
 +    }
 +
 +    static boolean withinReach(final AABB pickedBounds, final float padding, final Vec3 start, final Vec3 end) {
@@ -25414,10 +25433,10 @@ index 0000000000000000000000000000000000000000..027af99d45878a49fc1b84c583750a9f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorAttackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorAttackTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..63597cbc669e58834f094c056b3466b18849e647
+index 0000000000000000000000000000000000000000..2889d694d60a92b2097d02666fb36e2f321aa9dd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorAttackTest.java
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,110 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -25428,6 +25447,9 @@ index 0000000000000000000000000000000000000000..63597cbc669e58834f094c056b3466b1
 +import net.minecraft.SharedConstants;
 +import net.minecraft.server.Bootstrap;
 +import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.EntitySelector;
++import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
++import net.minecraft.world.entity.boss.enderdragon.EnderDragonPart;
 +import net.minecraft.world.phys.BlockHitResult;
 +import net.minecraft.world.phys.EntityHitResult;
 +import net.minecraft.world.phys.Vec3;
@@ -25437,6 +25459,7 @@ index 0000000000000000000000000000000000000000..63597cbc669e58834f094c056b3466b1
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.BeforeAll;
 +
++import java.lang.reflect.Field;
 +import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -25474,6 +25497,37 @@ index 0000000000000000000000000000000000000000..63597cbc669e58834f094c056b3466b1
 +        assertEquals(owner.getUUID(), attack.owner());
 +        assertEquals(lifetime, attack.lifetime());
 +        assertEquals(new Position3f(1F, 2F, 3F), attack.position());
++    }
++
++    @Test
++    void attacksTheDragonThroughItsPickedPart() throws Exception {
++        final EnderDragonPart part = mock(EnderDragonPart.class);
++        when(part.getId()).thenReturn(12);
++        final EnderDragon dragon = mock(EnderDragon.class);
++        when(dragon.getUUID()).thenReturn(UUID.randomUUID());
++        final Field parent = EnderDragonPart.class.getField("parentMob");
++        parent.setAccessible(true);
++        parent.set(part, dragon);
++        final UUID lifetime = UUID.randomUUID();
++        final var attack = BedrockActorPicking.attack(part, new EntityHitResult(part, new Vec3(0D, 67D, 2D)),
++                uuid -> dragon.getUUID().equals(uuid) ? lifetime : null, BedrockActorPicking::owner);
++        assertNotNull(attack);
++        assertEquals(12, attack.target());
++        assertEquals(dragon.getUUID(), attack.owner());
++        assertEquals(lifetime, attack.lifetime());
++    }
++
++    @Test
++    void judgesAPublishedDragonPickableThroughItsParts() {
++        final EnderDragonPart part = mock(EnderDragonPart.class);
++        when(part.isPickable()).thenReturn(true);
++        final EnderDragon dragon = mock(EnderDragon.class);
++        when(dragon.isPickable()).thenReturn(false);
++        when(dragon.getSubEntities()).thenReturn(new EnderDragonPart[]{part});
++        assertFalse(EntitySelector.CAN_BE_PICKED.test(dragon));
++        assertTrue(EntitySelector.CAN_BE_PICKED.test(BedrockActorPicking.pickedAs(dragon)));
++        final Entity ordinary = target(3);
++        assertSame(ordinary, BedrockActorPicking.pickedAs(ordinary));
 +    }
 +
 +    @Test

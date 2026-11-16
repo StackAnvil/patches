@@ -1,0 +1,208 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 12:43:20 +0100
+Subject: [PATCH] feat(dimension): show the End credits and report their end
+
+Entering the End exit portal after the dragon fight left a Java player
+frozen on BDS 1.26.60. The server sends ShowCredits with state 0 and
+waits for the client to end the credits before it returns the player to
+the Overworld. ViaBedrock dropped the packet, so Java never showed the
+credits and never answered.
+
+A native 1.26.60.5 capture of the same portal shows the credits screen
+and, after Skip, sends ShowCredits for its own runtime id with state 1.
+The server then sends Respawn and ChangeDimension as for any respawn.
+Translate a start for the local player to Java's WIN_GAME credits event.
+Java reports the closed credits with PERFORM_RESPAWN, so send the native
+end report for that command instead of a respawn request.
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index b1e8fa34b6c16cbe14fa15f41c3513483b0b8ca6..10ac4302053b1b5f54e9a49ce60c28d16cee3604 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -72,6 +72,7 @@ public class ClientPlayerEntity extends PlayerEntity {
+     // Initial spawn and respawning
+     private boolean initiallySpawned;
+     private DimensionChangeInfo dimensionChangeInfo;
++    private boolean showingCredits;
+     private boolean wasInsideUnloadedChunk;
+ 
+     // Position syncing
+@@ -451,6 +452,14 @@ public class ClientPlayerEntity extends PlayerEntity {
+         this.initiallySpawned = true;
+     }
+ 
++    public boolean showingCredits() {
++        return this.showingCredits;
++    }
++
++    public void setShowingCredits(final boolean showingCredits) {
++        this.showingCredits = showingCredits;
++    }
++
+     public DimensionChangeInfo dimensionChangeInfo() {
+         return this.dimensionChangeInfo;
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 8261ce6d07d9cdd0890e1b4578dfcc1e9f554e0b..6686c1a022bdaa0c5621798d6aa00a8361319139 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -76,6 +76,9 @@ import java.util.logging.Level;
+ 
+ public final class ClientPlayerPackets {
+ 
++    private static final int CREDITS_START = 0;
++    private static final int CREDITS_END = 1;
++
+     private static final PacketHandler CLIENT_PLAYER_GAME_MODE_INFO_UPDATE = wrapper -> {
+         final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+ 
+@@ -237,6 +240,18 @@ public final class ClientPlayerPackets {
+                 default -> throw new IllegalStateException("Unhandled PlayerRespawnState: " + state);
+             }
+         });
++        protocol.registerClientbound(ClientboundBedrockPackets.SHOW_CREDITS, null, wrapper -> {
++            wrapper.cancel();
++            final long runtimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // player runtime id
++            final int status = wrapper.read(BedrockTypes.VAR_INT); // credits state
++            final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
++            if (runtimeId != clientPlayer.runtimeId() || status != CREDITS_START || clientPlayer.showingCredits()) {
++                return;
++            }
++            // Java shows the End credits and reports their end with PERFORM_RESPAWN.
++            clientPlayer.setShowingCredits(true);
++            PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.WIN_GAME, 1F);
++        });
+         protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_ACTION, null, wrapper -> {
+             wrapper.cancel();
+             wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
+@@ -443,6 +458,14 @@ public final class ClientPlayerPackets {
+ 
+             switch (action) {
+                 case PERFORM_RESPAWN -> {
++                    if (clientPlayer.showingCredits()) {
++                        // Native 1.26.60.5 ends the credits with ShowCredits; the server then changes dimension.
++                        clientPlayer.setShowingCredits(false);
++                        wrapper.setPacketType(ServerboundBedrockPackets.SHOW_CREDITS);
++                        wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // player runtime id
++                        wrapper.write(BedrockTypes.VAR_INT, CREDITS_END); // credits state
++                        return;
++                    }
+                     wrapper.write(BedrockTypes.POSITION_3F, Position3f.ZERO); // position
+                     wrapper.write(Types.BYTE, (byte) PlayerRespawnState.ClientReadyToSpawn.getValue()); // state
+                     wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/EndCreditsPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/EndCreditsPacketTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..33c186077f1730e6e20a7fe757e25ee572abc869
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/EndCreditsPacketTest.java
+@@ -0,0 +1,109 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class EndCreditsPacketTest {
++
++    @Test
++    void endCreditsShowOnJavaAndTheirEndReplacesTheRespawnRequest() throws Exception {
++        final var user = mock(UserConnection.class);
++        final var tracker = mock(EntityTracker.class);
++        final var player = mock(ClientPlayerEntity.class, CALLS_REAL_METHODS);
++        when(user.get(EntityTracker.class)).thenReturn(tracker);
++        when(tracker.getClientPlayer()).thenReturn(player);
++        final var protocol = new TestProtocol();
++        final List<PacketWrapper> events = new ArrayList<>();
++        try (var factory = mockStatic(PacketWrapper.class)) {
++            factory.when(() -> PacketWrapper.create(any(PacketType.class), eq(user))).thenAnswer(call -> {
++                final var packet = spy(new PacketWrapperImpl(call.getArgument(0), null, user));
++                doAnswer(_ -> events.add(packet)).when(packet).send(BedrockProtocol.class);
++                return packet;
++            });
++
++            assertTrue(protocol.clientbound(user, credits(player.runtimeId() + 1, 0)).isCancelled());
++            assertTrue(events.isEmpty());
++
++            assertTrue(protocol.clientbound(user, credits(player.runtimeId(), 0)).isCancelled());
++            assertEquals(1, events.size());
++            assertEquals(ClientboundPackets26_3.GAME_EVENT, events.getFirst().getPacketType());
++            assertEquals((short) GameEventType.WIN_GAME.ordinal(), events.getFirst().get(Types.UNSIGNED_BYTE, 0));
++            assertEquals(1F, events.getFirst().get(Types.FLOAT, 0));
++        }
++
++        final var end = protocol.serverbound(respawn(user));
++        assertFalse(end.isCancelled());
++        assertEquals(ServerboundBedrockPackets.SHOW_CREDITS, end.getPacketType());
++        assertEquals(player.runtimeId(), end.get(BedrockTypes.UNSIGNED_VAR_LONG, 0));
++        assertEquals(1, end.get(BedrockTypes.VAR_INT, 0));
++
++        assertEquals(ServerboundBedrockPackets.RESPAWN, protocol.serverbound(respawn(user)).getPacketType());
++    }
++
++    private static ByteBuf credits(final long runtimeId, final int status) {
++        final var buffer = Unpooled.buffer();
++        BedrockTypes.UNSIGNED_VAR_LONG.write(buffer, runtimeId);
++        BedrockTypes.VAR_INT.write(buffer, status);
++        return buffer;
++    }
++
++    private static PacketWrapper respawn(final UserConnection user) {
++        final var buffer = Unpooled.buffer();
++        Types.VAR_INT.writePrimitive(buffer, 0); // PERFORM_RESPAWN
++        return new PacketWrapperImpl(ServerboundPackets26_3.CLIENT_COMMAND, buffer, user);
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            ClientPlayerPackets.register(this);
++        }
++
++        private PacketWrapper clientbound(final UserConnection user, final ByteBuf input) throws Exception {
++            try {
++                final var packet = new PacketWrapperImpl(ClientboundBedrockPackets.SHOW_CREDITS, input, user);
++                final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++                mapping.applyType(packet);
++                mapping.handler().handle(packet);
++                assertFalse(input.isReadable());
++                return packet;
++            } finally {
++                input.release();
++            }
++        }
++
++        private PacketWrapper serverbound(final PacketWrapper packet) throws Exception {
++            final var mapping = this.serverboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++            return packet;
++        }
++    }
++
++}
