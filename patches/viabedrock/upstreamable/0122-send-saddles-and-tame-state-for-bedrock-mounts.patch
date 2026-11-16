@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 23:00:36 +0100
+Subject: [PATCH] fix(entities): send saddles and tame state for Bedrock mounts
+
+Bedrock reports a mount's saddle with the SADDLED actor flag and a
+tamed horse with TAMED. Java keeps the saddle in the SADDLE equipment
+slot and the tame state in AbstractHorse's flags byte, and neither was
+translated. A saddled horse therefore looked unsaddled to the Java
+client: it drew no saddle and no jump bar, although native Bedrock's
+HUD has a horse_jump_renderer inside the experience bar.
+
+Abstract horses now get Java's tame (0x02), eating (0x10) and standing
+(0x20) bits from TAMED, EATING and STANDING. Saddleable mounts (horses,
+donkeys, mules, skeleton and zombie horses, camels, pigs, striders and
+nautili, but not llamas) get a SADDLE equipment update whenever the
+SADDLED flag changes.
+
+A jumpable saddled mount makes the Java client send PLAYER_COMMAND
+START_RIDING_JUMP and STOP_RIDING_JUMP, which previously disconnected
+with "Unhandled PlayerCommandAction". A Bedrock 1.26.60.5 client riding
+a tamed, saddled horse on a local BDS sent no player action for a
+charged jump: only JumpPressedRaw, JumpDown, Jumping and WantUp while
+held, then JumpReleasedRaw, in a client-predicted vehicle. The Java
+input path already sends the same sequence, so both commands are
+accepted without sending anything.
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
+index 3218eb12dab790e2b353ff9acb5b3addfd4f3482..9f1e0c227c46c76a44922c21d7fd2ab03cf905de 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
+@@ -104,6 +104,7 @@ public class Entity {
+     protected List<Long> passengers = new ArrayList<>();
+     protected long mountRuntimeId = -1;
+     private boolean offhandShield;
++    private Boolean javaSaddled;
+ 
+     public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes26_3 javaType) {
+         this.user = user;
+@@ -509,6 +510,15 @@ public class Entity {
+         this.offhandShield = offhandShield;
+     }
+ 
++    /** The saddle last sent to Java, or null before the first saddle state. */
++    public Boolean javaSaddled() {
++        return this.javaSaddled;
++    }
++
++    public void setJavaSaddled(final Boolean javaSaddled) {
++        this.javaSaddled = javaSaddled;
++    }
++
+     public boolean isOffhandShield() {
+         return this.offhandShield;
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 6686c1a022bdaa0c5621798d6aa00a8361319139..8e852e8078fc81824ad0aecf882b6689a3ae9cc2 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -499,6 +499,9 @@ public final class ClientPlayerPackets {
+                     clientPlayer.setGliding(true);
+                     clientPlayer.addAuthInputData(PlayerAuthInputData.StartGliding);
+                 }
++                case START_RIDING_JUMP, STOP_RIDING_JUMP -> {
++                    // Native riding jumps send only the held jump input flags, which PLAYER_INPUT already carries.
++                }
+                 default -> throw new IllegalStateException("Unhandled PlayerCommandAction: " + action);
+             }
+         });
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
+index ea65636f1454d87cf2c676cf7c2bb033c21cc19c..c4f2aff35b14184246cb24279602af0ded54de51 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
+@@ -23,12 +23,15 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.api.minecraft.EulerAngle;
+ import com.viaversion.viaversion.api.minecraft.Particle;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
+ import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+ import com.viaversion.viaversion.api.minecraft.entitydata.EntityDataType;
+ import com.viaversion.viaversion.api.minecraft.item.Item;
+ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+@@ -39,6 +42,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
+ import net.raphimc.viabedrock.api.model.entity.properties.EntityProperty;
+ import net.raphimc.viabedrock.api.model.entity.properties.EntityPropertyList;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
+ import net.raphimc.viabedrock.protocol.storage.EntityPropertyTracker;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ParticleType;
+@@ -205,6 +209,14 @@ public final class EntityMetadataRewriter {
+                     javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CHEST), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.CHESTED)));
+                 }
+ 
++                if (entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_HORSE)) {
++                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, horseFlags(bedrockFlags)));
++                }
++
++                if (isSaddleable(entity.javaType())) {
++                    updateSaddle(user, entity, bedrockFlags.contains(ActorFlags.SADDLED));
++                }
++
+                 if (entity.javaType().isOrHasParent(EntityTypes26_3.TAMABLE_ANIMAL)) {
+                     byte tamableBitMask = 0;
+                     if (bedrockFlags.contains(ActorFlags.SITTING)) {
+@@ -1160,6 +1172,45 @@ public final class EntityMetadataRewriter {
+         };
+     }
+ 
++    /** Java's AbstractHorse flags: tame 0x02, eating 0x10 and standing 0x20. */
++    static byte horseFlags(final Set<ActorFlags> bedrockFlags) {
++        byte flags = 0;
++        if (bedrockFlags.contains(ActorFlags.TAMED)) {
++            flags |= 0x02;
++        }
++        if (bedrockFlags.contains(ActorFlags.EATING)) {
++            flags |= 0x10;
++        }
++        if (bedrockFlags.contains(ActorFlags.STANDING)) {
++            flags |= 0x20;
++        }
++        return flags;
++    }
++
++    /** Java mounts that keep their saddle in the SADDLE equipment slot. Llamas wear carpets instead. */
++    static boolean isSaddleable(final EntityTypes26_3 type) {
++        return type.isOrHasParent(EntityTypes26_3.ABSTRACT_HORSE) && !type.isOrHasParent(EntityTypes26_3.LLAMA)
++                || type.is(EntityTypes26_3.PIG) || type.is(EntityTypes26_3.STRIDER)
++                || type.is(EntityTypes26_3.NAUTILUS) || type.is(EntityTypes26_3.ZOMBIE_NAUTILUS);
++    }
++
++    /**
++     * Bedrock reports a saddle with the SADDLED actor flag. Java reads it from the SADDLE equipment slot, which gates
++     * mounted control, the jump bar and the saddle model.
++     */
++    private static void updateSaddle(final UserConnection user, final Entity entity, final boolean saddled) {
++        if (entity.javaSaddled() != null && entity.javaSaddled() == saddled) {
++            return;
++        }
++        entity.setJavaSaddled(saddled);
++        final PacketWrapper equipment = PacketWrapper.create(ClientboundPackets26_3.SET_EQUIPMENT, user);
++        equipment.write(Types.VAR_INT, entity.javaId()); // entity id
++        equipment.write(Types.BYTE, (byte) EquipmentSlot.SADDLE.ordinal()); // slot
++        equipment.write(VersionedTypes.V26_3.item, saddled
++                ? new StructuredItem(BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:saddle"), 1) : StructuredItem.empty()); // item
++        equipment.scheduleSend(BedrockProtocol.class);
++    }
++
+     private static Number readNumber(final EntityData data) {
+         if (data.dataType() == null || data.getValue() == null) {
+             throw new IllegalArgumentException("EntityData " + data.id() + " has null data type or value");
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/HorseMountStateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/HorseMountStateTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb8b8a060fc2eb0e894d91ffd8c75ee273ff9b75
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/HorseMountStateTest.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import org.junit.jupiter.api.Test;
++
++import java.util.EnumSet;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class HorseMountStateTest {
++
++    @Test
++    void tamedRearingHorsesUseJavaHorseFlags() {
++        assertEquals(0x02, EntityMetadataRewriter.horseFlags(EnumSet.of(ActorFlags.TAMED, ActorFlags.SADDLED)));
++        assertEquals(0x32, EntityMetadataRewriter.horseFlags(EnumSet.of(ActorFlags.TAMED, ActorFlags.EATING, ActorFlags.STANDING)));
++        assertEquals(0, EntityMetadataRewriter.horseFlags(EnumSet.noneOf(ActorFlags.class)));
++    }
++
++    @Test
++    void saddlesGoToMountsThatJavaSaddlesButNotToLlamas() {
++        assertTrue(EntityMetadataRewriter.isSaddleable(EntityTypes26_3.HORSE));
++        assertTrue(EntityMetadataRewriter.isSaddleable(EntityTypes26_3.CAMEL));
++        assertTrue(EntityMetadataRewriter.isSaddleable(EntityTypes26_3.PIG));
++        assertTrue(EntityMetadataRewriter.isSaddleable(EntityTypes26_3.STRIDER));
++        assertFalse(EntityMetadataRewriter.isSaddleable(EntityTypes26_3.LLAMA));
++        assertFalse(EntityMetadataRewriter.isSaddleable(EntityTypes26_3.TRADER_LLAMA));
++        assertFalse(EntityMetadataRewriter.isSaddleable(EntityTypes26_3.COW));
++    }
++
++}
