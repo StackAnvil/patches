@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::Result;
 
-pub const USAGE: &str = "Usage: capture-x11 list|pointer|active|pixel ID X Y|move ID X Y|screenshot ID FILE|focus ID|resize ID WIDTH HEIGHT [X Y]|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|type ID TEXT|key|double-key ID NAME|key-hold ID NAME MS|drag ID BUTTON DWELL_MS X0 Y0 X1 Y1 ...";
+pub const USAGE: &str = "Usage: capture-x11 list|pointer|active|pixel ID X Y|move ID X Y|look ID DX DY|screenshot ID FILE|focus ID|resize ID WIDTH HEIGHT [X Y]|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|type ID TEXT|key|double-key ID NAME|key-hold ID NAME MS|drag ID BUTTON DWELL_MS X0 Y0 X1 Y1 ...";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point {
@@ -60,6 +60,12 @@ pub enum Command {
         window: u32,
         point: Point,
     },
+    /// Relative pointer motion, which a pointer-locked game reads as camera look.
+    Look {
+        window: u32,
+        dx: i16,
+        dy: i16,
+    },
     Screenshot {
         window: u32,
         path: PathBuf,
@@ -101,6 +107,19 @@ pub enum Command {
         dwell: u64,
         points: Vec<Point>,
     },
+}
+
+fn look_delta(value: &str) -> Result<i16> {
+    let magnitude = value.strip_prefix('-').unwrap_or(value);
+    let delta: i16 = decimal(magnitude)?;
+    if delta > 2000 {
+        return Err(format!("Look delta must be within 2000 pixels: {value}").into());
+    }
+    Ok(if value.starts_with('-') {
+        -delta
+    } else {
+        delta
+    })
 }
 
 fn decimal<T: std::str::FromStr>(value: &str) -> Result<T> {
@@ -149,6 +168,11 @@ impl Command {
             ["move", id, x, y] => Self::Move {
                 window: window(id)?,
                 point: Point::parse(x, y)?,
+            },
+            ["look", id, dx, dy] => Self::Look {
+                window: window(id)?,
+                dx: look_delta(dx)?,
+                dy: look_delta(dy)?,
             },
             ["screenshot", id, path] => Self::Screenshot {
                 window: window(id)?,
@@ -278,6 +302,21 @@ mod tests {
         );
         assert!(parse(&["move", "0x123", "-1", "258"]).is_err());
         assert!(parse(&["move", "0x123", "639", "258", "left"]).is_err());
+    }
+
+    #[test]
+    fn accepts_bounded_signed_look_deltas() {
+        assert_eq!(
+            parse(&["look", "0x123", "-40", "15"]).unwrap(),
+            Command::Look {
+                window: 0x123,
+                dx: -40,
+                dy: 15,
+            }
+        );
+        assert!(parse(&["look", "0x123", "2001", "0"]).is_err());
+        assert!(parse(&["look", "0x123", "+5", "0"]).is_err());
+        assert!(parse(&["look", "0x123", "--5", "0"]).is_err());
     }
 
     #[test]

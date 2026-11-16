@@ -580,6 +580,15 @@ impl Display {
         match command {
             Command::List => println!("{}", serde_json::to_string(&self.windows()?)?),
             Command::Move { window, point } => self.settle_pointer(window, point, signals)?,
+            Command::Look { window, dx, dy } => {
+                signals.check()?;
+                self.focus(window)?;
+                self.connection.xtest_get_version(2, 2)?.reply()?;
+                // Detail 1 makes XTEST motion relative instead of warping to a position.
+                self.connection
+                    .xtest_fake_input(xproto::MOTION_NOTIFY_EVENT, 1, CURRENT_TIME, 0, dx, dy, 0)?
+                    .check()?;
+            }
             Command::Pointer => {
                 let pointer = self.connection.query_pointer(self.root())?.reply()?;
                 if !pointer.same_screen {

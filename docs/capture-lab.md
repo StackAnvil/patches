@@ -64,6 +64,10 @@ bun run capture ui screenshot java-connected --client java
 
 Click and pixel coordinates are fractions of the chosen client window, from 0 to 1. `ui pixel` prints the red, green, and blue values at one point without changing focus. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. Use `ui double-key space` to send both creative-flight presses in one native call. `ui key-hold`, `ui mouse-hold`, and `ui button-hold` hold input for 1 to 10000 ms on the private display. `button-hold` leaves the cursor in place. Use `bun run capture ui type "127.0.0.1"` to enter lowercase ASCII text, digits, spaces, periods, or hyphens in a focused field. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `doubleKey`, `keyHold`, `type`, `click`, `mouseHold`, `buttonHold`, `drag`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
 
+To turn the camera in a game that has captured the pointer, use `ui look <dx> <dy>`.
+It sends one relative pointer motion of up to 2000 pixels on each axis to the private display.
+Absolute `ui move` positions cannot change pitch in a captured game, and a large move can close an open screen.
+
 For menu input, use `ui move` to position the pointer before `ui button-hold`. This command requires the private X11 display. It retries motion up to three times and reads the resulting pointer position before returning. It presses no buttons. If the pointer cannot reach the requested position, it stops with an error. Confirm the intended field has focus before typing.
 
 ### Drag across inventory slots

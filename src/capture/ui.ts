@@ -156,6 +156,16 @@ export function createCaptureUi(
     );
   }
 
+  async function look(dx: number, dy: number, windowId?: string, client?: Client): Promise<void> {
+    if (![dx, dy].every((value) => Number.isInteger(value) && Math.abs(value) <= 2000))
+      throw new Error("Look deltas must be integers within 2000 pixels.");
+    const env = await uiEnvironment();
+    if (env.STACKANVIL_UI_ISOLATED !== "1")
+      throw new Error("Relative pointer motion requires the private X11 display.");
+    const window = await chosenWindow(windowId, client);
+    await run(nativeBinary, ["look", window.id, String(dx), String(dy)], root, env);
+  }
+
   async function click(
     x: number,
     y: number,
@@ -382,6 +392,9 @@ export function createCaptureUi(
       case "move":
         await move(Number(input[0]), Number(input[1]), windowId, client);
         return "";
+      case "look":
+        await look(Number(input[0]), Number(input[1]), windowId, client);
+        return "";
       case "click":
       case "double-click": {
         if (input[2] && !input[2].startsWith("--") && input[2] !== "left" && input[2] !== "right") {
@@ -454,7 +467,7 @@ export function createCaptureUi(
         return "";
     }
     throw new Error(
-      "Usage: bun run capture ui <list|screenshot|pixel|move|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
+      "Usage: bun run capture ui <list|screenshot|pixel|move|look|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
     );
   }
   return {
@@ -469,5 +482,6 @@ export function createCaptureUi(
     drag,
     typeText,
     move,
+    look,
   };
 }
