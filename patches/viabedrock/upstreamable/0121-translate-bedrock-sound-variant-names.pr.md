@@ -1,0 +1,3 @@
+Bedrock's `minecraft:sound_variant` actor property names the base variant `default` and the angry wolf `mad`. Java's sound variant registries call them `classic` and `angry`. The translation looked up the Bedrock name directly, so every base chicken, cow, pig and wolf logged "Failed to find sound variant minecraft:default" and kept Java's default instead of the variant the server selected. This maps the two differing names; the others already match.
+
+Validation: a unit test covers the name mapping. The Bedrock 1.26.60 synced property definitions recorded from BDS list chicken default/picky, cow default/moody, pig default/big/mini and wolf default/big/cute/grumpy/mad/puglin/sad.
