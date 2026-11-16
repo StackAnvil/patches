@@ -1072,6 +1072,15 @@ it: native keeps X blocked for that tick, while Java's larger-axis-first
 order moves Z first and slides X free. Lava and stationary-overlap
 recovery keep their separately verified scope.
 
+Keep full gravity for the first slow-falling tick from rest. Java lowers
+gravity to 0.01 when vertical motion is zero or negative; native 1.26.60.5
+lowers it only once the player already moves down. After a teleport into
+the air with slow falling, native reports -0.0784 and then 0.01 steps,
+while the old add-on reported -0.0098. BDS then corrected the add-on
+0.41 blocks lower and the camera jumped. BDS still sends one small
+correction after such a teleport to both clients, because it applies
+gravity one tick earlier; that correction is unchanged.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index ad7d3c5120301284b9ab0bd0ba2cead565c5ff4a..a2642cd3c08f20ff011e5f3ba107fc70cd33eedd 100644
 --- a/build.gradle.kts
@@ -2454,10 +2463,10 @@ index 0000000000000000000000000000000000000000..b6ee81c530ac895e371010e4b62107b5
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index cb89991c2e1cfb5c6714517e78994f7390d03fee..ee7ff79c73a4eae0e674a5f491d3cf05e1340048 100644
+index cb89991c2e1cfb5c6714517e78994f7390d03fee..51d7940b9d0c8055a71003b7b7907f400d6bcf5d 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,281 @@
+@@ -21,27 +21,283 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2609,8 +2618,10 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..ee7ff79c73a4eae0e674a5f491d3cf05
 +
 +    @ModifyExpressionValue(method = "travelInAir", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;getEffectiveGravity()D"), require = 1, allow = 1)
 +    private double retainNativeAirGravity(final double gravity, @Share("bedrockAirGravity") final LocalDoubleRef retained) {
-+        retained.set(gravity);
-+        return gravity;
++        final double effective = (Object) this instanceof LocalPlayer player && BedrockAirMovement.applies(player)
++                ? BedrockAirMovement.effectiveGravity(player.getDeltaMovement().y, player.getGravity(), gravity) : gravity;
++        retained.set(effective);
++        return effective;
 +    }
 +
 +    @Definition(id = "movementY", local = @Local(type = double.class, name = "movementY"))
@@ -5564,10 +5575,10 @@ index 0000000000000000000000000000000000000000..949adc60eb9fbfedd3ba32e5e9c66c93
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..569f586ce2151265cc01bc15daa1b6bfda9c24cd
+index 0000000000000000000000000000000000000000..8813df7e3ac04bc9103ecd838a5fbb7b326930af
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,48 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5597,6 +5608,14 @@ index 0000000000000000000000000000000000000000..569f586ce2151265cc01bc15daa1b6bf
 +        // Gravity handles Y separately. Preserve the surviving doubles until the existing friction stage.
 +        return new Vec3(MotionFriction.belowCutoff((float) motion.x) ? Math.copySign(0D, motion.x) : motion.x,
 +                motion.y, MotionFriction.belowCutoff((float) motion.z) ? Math.copySign(0D, motion.z) : motion.z);
++    }
++
++    /**
++     * Native slow falling lowers gravity only while the player already moves down. From rest, the first tick keeps
++     * full gravity; Java also lowers it at zero vertical motion.
++     */
++    public static double effectiveGravity(final double motionY, final double baseGravity, final double javaGravity) {
++        return motionY == 0D ? baseGravity : javaGravity;
 +    }
 +
 +    public static float afterGravity(final double motionY, final double gravity) {
@@ -9438,10 +9457,10 @@ index 0000000000000000000000000000000000000000..eac5b9e19e7267bbfcecf69b91467238
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd42751d49a37f70fde6702bbd55b3e4c32a3a09
+index 0000000000000000000000000000000000000000..26d22cf92ae8fd43faa85443976b3e1fbfda0147
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,42 @@
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
 +import net.minecraft.world.phys.Vec3;
@@ -9468,6 +9487,19 @@ index 0000000000000000000000000000000000000000..fd42751d49a37f70fde6702bbd55b3e4
 +        assertEquals(0x3EB8B476, Float.floatToRawIntBits(fallingFromColumn));
 +        assertEquals(0x3EB502C6, Float.floatToRawIntBits(BedrockAirMovement.afterVerticalDrag(fallingFromColumn, 0.98F)));
 +        assertEquals(0x3BE0C9DB, Float.floatToRawIntBits(BedrockAirMovement.afterVerticalDrag(0.007D, 0.98F)));
++    }
++
++    @Test
++    void slowFallingFromRestKeepsFullGravityForTheFirstTick() {
++        // Native 1.26.60.5 auth-input motion after a teleport into the air with slow falling.
++        final int[] nativeMotion = {0xBDA0902E, 0xBDB16C1E, 0xBDC1F1BD, 0xBDD222C4, 0xBDE200E5, 0xBDF18DC7};
++        double motion = 0D;
++        for (final int expected : nativeMotion) {
++            final double javaGravity = motion <= 0D ? 0.01D : 0.08D;
++            final float gravity = BedrockAirMovement.afterGravity(motion, BedrockAirMovement.effectiveGravity(motion, 0.08D, javaGravity));
++            motion = BedrockAirMovement.afterVerticalDrag(gravity, 0.98F);
++            assertEquals(expected, Float.floatToRawIntBits((float) motion));
++        }
 +    }
 +
 +}
