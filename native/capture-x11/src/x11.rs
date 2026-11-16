@@ -432,6 +432,27 @@ impl Display {
         Ok(())
     }
 
+    fn settle_pointer(&self, window: Window, point: Point, signals: &Signals) -> Result<()> {
+        signals.check()?;
+        self.validate_point(window, point)?;
+        self.focus(window)?;
+        // The first synthetic motion can be lost when opening a menu.
+        // Retry motion only; callers decide when to press a button.
+        for _ in 0..3 {
+            signals.check()?;
+            self.move_pointer(window, point)?;
+            signals.wait(50)?;
+            let pointer = self.connection.query_pointer(window)?.reply()?;
+            if pointer.same_screen
+                && i32::from(pointer.win_x) == i32::from(point.x)
+                && i32::from(pointer.win_y) == i32::from(point.y)
+            {
+                return Ok(());
+            }
+        }
+        Err("Pointer did not reach the requested window position".into())
+    }
+
     fn check_button(&self, button: Button) -> Result<()> {
         let pointer = self.connection.query_pointer(self.root())?.reply()?;
         let mask = match button {
@@ -542,6 +563,13 @@ impl Display {
         signals.check()?;
         self.focus(window)?;
         self.connection.xtest_get_version(2, 2)?.reply()?;
+        // Xwayland 24.1.14 can consume its first XTEST event while falling back
+        // from unavailable libei input emulation. Initialize that path with
+        // zero relative motion so it cannot consume the requested key/button.
+        // This changes no pointer coordinates and sends no extra key or button.
+        self.connection
+            .xtest_fake_input(xproto::MOTION_NOTIFY_EVENT, 1, CURRENT_TIME, 0, 0, 0, 0)?
+            .check()?;
         let mut held = HeldInput::new(&self.connection);
         action(&mut held)?;
         held.release()?;
@@ -551,6 +579,7 @@ impl Display {
     fn execute(&self, command: Command, signals: &Signals) -> Result<()> {
         match command {
             Command::List => println!("{}", serde_json::to_string(&self.windows()?)?),
+            Command::Move { window, point } => self.settle_pointer(window, point, signals)?,
             Command::Pointer => {
                 let pointer = self.connection.query_pointer(self.root())?.reply()?;
                 if !pointer.same_screen {

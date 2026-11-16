@@ -556,6 +556,127 @@ fn typing_in_the_focused_window_does_not_repeat_window_activation() {
 
 #[test]
 #[ignore = "requires Xvfb; run cargo test -- --include-ignored"]
+fn pointer_motion_retries_displacement_without_pressing_buttons() {
+    for keep_displacing in [false, true] {
+        let fixture = Fixture::new(24);
+        let id = fixture.window.to_string();
+        let mut child = OwnedChild(
+            fixture
+                .command(&["move", &id, "50", "60"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let mut displaced = false;
+        let mut status = None;
+        fixture.wait_for(|| {
+            for event in fixture.events() {
+                match event {
+                    Event::MotionNotify(event)
+                        if event.event_x == 50
+                            && event.event_y == 60
+                            && (!displaced || keep_displacing) =>
+                    {
+                        fixture
+                            .connection
+                            .warp_pointer(0u32, fixture.window, 0, 0, 0, 0, 10, 10)
+                            .unwrap()
+                            .check()
+                            .unwrap();
+                        displaced = true;
+                    }
+                    Event::ButtonPress(_)
+                    | Event::ButtonRelease(_)
+                    | Event::KeyPress(_)
+                    | Event::KeyRelease(_) => panic!("Pointer positioning must not press input"),
+                    _ => {}
+                }
+            }
+            status = child.0.try_wait().unwrap();
+            status.is_some()
+        });
+        assert!(displaced);
+        let mut error = String::new();
+        child
+            .0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut error)
+            .unwrap();
+        if keep_displacing {
+            assert!(!status.unwrap().success());
+            assert!(error.contains("Pointer did not reach the requested window position"));
+        } else {
+            assert!(status.unwrap().success(), "{error}");
+            let pointer = fixture
+                .connection
+                .query_pointer(fixture.window)
+                .unwrap()
+                .reply()
+                .unwrap();
+            assert_eq!((pointer.win_x, pointer.win_y), (50, 60));
+        }
+        assert!(!fixture.button_held());
+        assert!(!fixture.keys_held());
+    }
+}
+
+#[test]
+#[ignore = "requires Xvfb; run cargo test -- --include-ignored"]
+fn first_typing_preserves_the_pointer_and_emits_only_the_requested_keys() {
+    let fixture = Fixture::new(24);
+    let id = fixture.window.to_string();
+    let before = fixture
+        .connection
+        .query_pointer(fixture.root)
+        .unwrap()
+        .reply()
+        .unwrap();
+    fixture.success(&["type", &id, "first"]);
+    let events = fixture.input_events();
+    let setup = fixture.connection.setup();
+    let mapping = fixture
+        .connection
+        .get_keyboard_mapping(setup.min_keycode, setup.max_keycode - setup.min_keycode + 1)
+        .unwrap()
+        .reply()
+        .unwrap();
+    let keys: Vec<_> = events
+        .iter()
+        .filter(|event| event.0 == xproto::KEY_PRESS_EVENT)
+        .map(|event| {
+            mapping.keysyms[usize::from(event.1 - setup.min_keycode)
+                * usize::from(mapping.keysyms_per_keycode)]
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        b"first"
+            .iter()
+            .map(|byte| u32::from(*byte))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(events.len(), 10);
+    for pair in events.chunks_exact(2) {
+        assert_eq!((pair[0].0, pair[1].0, pair[0].1 == pair[1].1), (2, 3, true));
+    }
+    let after = fixture
+        .connection
+        .query_pointer(fixture.root)
+        .unwrap()
+        .reply()
+        .unwrap();
+    assert_eq!(
+        (after.root_x, after.root_y, after.mask),
+        (before.root_x, before.root_y, before.mask)
+    );
+    assert!(!fixture.keys_held());
+}
+
+#[test]
+#[ignore = "requires Xvfb; run cargo test -- --include-ignored"]
 fn emits_ordered_input_and_releases_it_on_interrupts_and_window_failure() {
     let fixture = Fixture::new(24);
     let id = fixture.window.to_string();

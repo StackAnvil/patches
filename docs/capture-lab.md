@@ -55,6 +55,7 @@ bun run capture ui key Return --client bedrock
 bun run capture ui click 0.50 0.60 --client bedrock
 bun run capture ui click 0.50 0.50 right --client java
 bun run capture ui key-hold a 1400 --client java
+bun run capture ui move 0.50 0.50 --client java
 bun run capture ui mouse-hold 0.50 0.50 left 1200 --client java
 bun run capture ui button-hold right 150 --client java
 bun run capture ui drag right 120 0.40 0.70 0.45 0.70 --client java
@@ -62,6 +63,8 @@ bun run capture ui screenshot java-connected --client java
 ```
 
 Click and pixel coordinates are fractions of the chosen client window, from 0 to 1. `ui pixel` prints the red, green, and blue values at one point without changing focus. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. Use `ui double-key space` to send both creative-flight presses in one native call. `ui key-hold`, `ui mouse-hold`, and `ui button-hold` hold input for 1 to 10000 ms on the private display. `button-hold` leaves the cursor in place. Use `bun run capture ui type "127.0.0.1"` to enter lowercase ASCII text, digits, spaces, periods, or hyphens in a focused field. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `doubleKey`, `keyHold`, `type`, `click`, `mouseHold`, `buttonHold`, `drag`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
+
+For menu input, use `ui move` to position the pointer before `ui button-hold`. This command requires the private X11 display. It retries motion up to three times and reads the resulting pointer position before returning. It presses no buttons. If the pointer cannot reach the requested position, it stops with an error. Confirm the intended field has focus before typing.
 
 ### Drag across inventory slots
 
@@ -127,6 +130,11 @@ The comparison MP4 shows the before recording on the left and the after recordin
 For Java 26.3 scheduling controls under headless Weston 15, use `desktop-shell.so` with the client in windowed mode.
 A kiosk shell forces fullscreen and can make the SDL client retry window-mode changes on each frame.
 Keep the shell helper, configuration and display in the owned private lab.
+
+The input helper initializes XTEST with zero relative pointer motion before it sends keys or buttons.
+Xwayland 24.1.14 can consume its first input event when its libei setup fails.
+This initialization preserves the pointer position and sends no extra key or button.
+Keep it when comparing clients. A missing first character can come from the display server before the game receives it.
 
 Measure the actual client surface and frame intervals before comparing input or packet timing.
 A requested FPS cap does not prove that the client reaches it.

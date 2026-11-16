@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::Result;
 
-pub const USAGE: &str = "Usage: capture-x11 list|pointer|active|pixel ID X Y|screenshot ID FILE|focus ID|resize ID WIDTH HEIGHT [X Y]|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|type ID TEXT|key|double-key ID NAME|key-hold ID NAME MS|drag ID BUTTON DWELL_MS X0 Y0 X1 Y1 ...";
+pub const USAGE: &str = "Usage: capture-x11 list|pointer|active|pixel ID X Y|move ID X Y|screenshot ID FILE|focus ID|resize ID WIDTH HEIGHT [X Y]|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|type ID TEXT|key|double-key ID NAME|key-hold ID NAME MS|drag ID BUTTON DWELL_MS X0 Y0 X1 Y1 ...";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point {
@@ -53,6 +53,10 @@ pub enum Command {
     Pointer,
     Active,
     Pixel {
+        window: u32,
+        point: Point,
+    },
+    Move {
         window: u32,
         point: Point,
     },
@@ -139,6 +143,10 @@ impl Command {
             ["pointer"] => Self::Pointer,
             ["active"] => Self::Active,
             ["pixel", id, x, y] => Self::Pixel {
+                window: window(id)?,
+                point: Point::parse(x, y)?,
+            },
+            ["move", id, x, y] => Self::Move {
                 window: window(id)?,
                 point: Point::parse(x, y)?,
             },
@@ -257,6 +265,19 @@ mod tests {
                 .map(|value| value.to_string())
                 .collect::<Vec<_>>(),
         )
+    }
+
+    #[test]
+    fn accepts_window_relative_pointer_motion_without_a_button() {
+        assert_eq!(
+            parse(&["move", "0x123", "639", "258"]).unwrap(),
+            Command::Move {
+                window: 0x123,
+                point: Point { x: 639, y: 258 },
+            }
+        );
+        assert!(parse(&["move", "0x123", "-1", "258"]).is_err());
+        assert!(parse(&["move", "0x123", "639", "258", "left"]).is_err());
     }
 
     #[test]

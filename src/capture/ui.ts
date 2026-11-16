@@ -136,6 +136,26 @@ export function createCaptureUi(
     );
   }
 
+  async function move(x: number, y: number, windowId?: string, client?: Client): Promise<void> {
+    if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1))
+      throw new Error("Pointer coordinates must be ratios between 0 and 1.");
+    const env = await uiEnvironment();
+    if (env.STACKANVIL_UI_ISOLATED !== "1")
+      throw new Error("Verified pointer positioning requires the private X11 display.");
+    const window = await chosenWindow(windowId, client);
+    await run(
+      nativeBinary,
+      [
+        "move",
+        window.id,
+        String(Math.floor(x * (window.width - 1))),
+        String(Math.floor(y * (window.height - 1))),
+      ],
+      root,
+      env,
+    );
+  }
+
   async function click(
     x: number,
     y: number,
@@ -359,6 +379,9 @@ export function createCaptureUi(
         return screenshot(input[0], windowId, client, outputDir);
       case "pixel":
         return pixel(Number(input[0]), Number(input[1]), windowId, client);
+      case "move":
+        await move(Number(input[0]), Number(input[1]), windowId, client);
+        return "";
       case "click":
       case "double-click": {
         if (input[2] && !input[2].startsWith("--") && input[2] !== "left" && input[2] !== "right") {
@@ -431,7 +454,7 @@ export function createCaptureUi(
         return "";
     }
     throw new Error(
-      "Usage: bun run capture ui <list|screenshot|pixel|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
+      "Usage: bun run capture ui <list|screenshot|pixel|move|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
     );
   }
   return {
@@ -445,5 +468,6 @@ export function createCaptureUi(
     buttonHold,
     drag,
     typeText,
+    move,
   };
 }

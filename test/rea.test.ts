@@ -13,6 +13,7 @@ import {
   validateReaEvidence,
 } from "../src/rea.ts";
 import { root } from "../src/model.ts";
+import { expectRejection } from "./helpers/expect-rejection.ts";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -81,15 +82,6 @@ async function fixture(bytes = image()) {
     importReaArtifact({ source, sha256, version: "fixture", protocol: 2225, directory: store }),
   );
   return { directory, source, sha256, bytes, store, target, manifest: join(store, "current.json") };
-}
-
-async function expectRejection(promise: Promise<unknown>, message: string) {
-  const error = await promise.then(
-    () => undefined,
-    (cause: unknown) => cause,
-  );
-  expect(error).toBeInstanceOf(Error);
-  expect((error as Error).message).toContain(message);
 }
 
 async function pe(manifest: string, ...args: string[]) {
