@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 16:54:50 +0100
+Subject: [PATCH] fix(entities): spawn falling blocks with their Bedrock block
+ state
+
+Falling blocks always looked like Java's default block. Bedrock sends the
+block runtime ID in the falling block's VARIANT field, which ViaBedrock
+only logged as an unsupported variant. Java reads the block state from
+the spawn packet's data field, so translate the ID with the chunk
+block-state mapping there. An unknown ID keeps Java's default.
+
+Lifeboat's lobby spawns falling blocks with variants such as 17713.
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+index e89f8c865d6c26867b311d6827994fa52dab8505..5ab2667d25fe8bfb2dad30529e3005325f9567e4 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+@@ -51,7 +51,9 @@ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.api.util.RegistryUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.AnimateAction;
+@@ -72,6 +74,7 @@ import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
++import java.util.function.IntUnaryOperator;
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.logging.Level;
+@@ -191,7 +194,9 @@ public final class EntityPackets {
+             wrapper.write(Types.BYTE, MathUtil.float2Byte(entity.javaRotation().x())); // pitch
+             wrapper.write(Types.BYTE, MathUtil.float2Byte(entity.javaRotation().y())); // yaw
+             wrapper.write(Types.BYTE, MathUtil.float2Byte(entity.javaRotation().z())); // head yaw
+-            wrapper.write(Types.VAR_INT, entityTracker.references().projectileSpawnData(entity, entityData)); // data
++            wrapper.write(Types.VAR_INT, entity.javaType() == EntityTypes26_3.FALLING_BLOCK
++                    ? fallingBlockState(entityData, wrapper.user().get(BlockStateRewriter.class)::javaId)
++                    : entityTracker.references().projectileSpawnData(entity, entityData)); // data
+             wrapper.send(BedrockProtocol.class);
+             wrapper.cancel();
+             entityTracker.entitySpawned(entity);
+@@ -805,4 +810,17 @@ public final class EntityPackets {
+     private EntityPackets() {
+     }
+ 
++    /**
++     * Bedrock carries a falling block's block runtime ID in its VARIANT field; Java reads the block state from the
++     * spawn data. An unknown ID keeps Java's default block.
++     */
++    static int fallingBlockState(final EntityData[] entityData, final IntUnaryOperator javaBlockState) {
++        for (final EntityData field : entityData) {
++            if (field.id() == ActorDataIds.VARIANT.getValue() && field.value() instanceof Number variant) {
++                return Math.max(javaBlockState.applyAsInt(variant.intValue()), 0);
++            }
++        }
++        return 0;
++    }
++
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
+index 58ecd90a111e1abbf21c175c776bdf097b1a28fc..6bbc4eeba6b8c98bfb1e32b556d54cca6ac4fd01 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
+@@ -370,6 +370,9 @@ public final class EntityMetadataRewriter {
+                         final int javaVariant = variant;
+                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().varIntType, javaVariant));
+                     }
++                    case FALLING_BLOCK -> {
++                        // The block state travels in the spawn data; Java has no metadata for it.
++                    }
+                     default -> {
+                         if (variant != 0) { // For some reason bedrock seems to send variant 0 for many entities that don't have variants
+                             ViaBedrock.getPlatform().getLogger().warning("Received non-zero VARIANT " + variant + " for unsupported entity " + entity.type());
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/FallingBlockSpawnTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/FallingBlockSpawnTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5b7dfec03361de2a9ea9069be3aa45272ae26c18
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/FallingBlockSpawnTest.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class FallingBlockSpawnTest {
++
++    @Test
++    void fallingBlocksSpawnWithTheJavaStateOfTheirBedrockVariant() {
++        final EntityData[] data = {
++            new EntityData(ActorDataIds.COLOR_INDEX.getValue(), EntityDataTypesBedrock.BYTE, (byte) 0),
++            new EntityData(ActorDataIds.VARIANT.getValue(), EntityDataTypesBedrock.INT, 17713)
++        };
++        assertEquals(42, EntityPackets.fallingBlockState(data, id -> id == 17713 ? 42 : -1));
++        assertEquals(0, EntityPackets.fallingBlockState(data, id -> -1));
++        assertEquals(0, EntityPackets.fallingBlockState(new EntityData[0], id -> 42));
++    }
++
++}
