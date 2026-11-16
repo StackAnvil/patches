@@ -5,6 +5,14 @@ Subject: [PATCH] feat(resource-packs): decode Bedrock TGA textures
 
 Some Bedrock packs supply entity textures as uncompressed or RLE true-color TGA rather than PNG or JPEG. Decode both supported true-color forms when loading a texture and retain their origin and alpha information so pack conversion can use those assets.
 
+Follow the stb_image TGA loader that the native 1.26.60.5 client embeds
+(its "bad palette" and "unknown image type" messages are in the binary).
+Besides true color, it reads grayscale and color-mapped images, plain or
+run-length encoded, with 15/16-bit 5-5-5 color. Lifeboat ships its
+vehicle textures as type 9 color-mapped TGAs, and the true-color-only
+decoder failed the whole pack conversion and disconnected the player.
+Like stb_image, an index outside the palette uses the first entry.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 index 24331e2547b1d8601cc46ce79ed5bb309fde88dd..94504b1fc524c50d65b26698d573fd054a3b7bc7 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
@@ -46,10 +54,10 @@ index 24331e2547b1d8601cc46ce79ed5bb309fde88dd..94504b1fc524c50d65b26698d573fd05
                      this.image = ImageIO.read(input);
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..66f6d8436d4d3de56573adf469d644fb3bc2e00f
+index 0000000000000000000000000000000000000000..64f8bce586771b5b457aa744a1751d4aaf2b8aed
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,153 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -59,7 +67,10 @@ index 0000000000000000000000000000000000000000..66f6d8436d4d3de56573adf469d644fb
 +
 +import java.awt.image.BufferedImage;
 +
-+/** Decodes the true-color TGA textures used by Bedrock resource packs. */
++/**
++ * Decodes TGA textures with the rules of the stb_image loader in the native client: true-color, grayscale and
++ * color-mapped images, each optionally run-length encoded.
++ */
 +final class TgaImage {
 +
 +    private static final int HEADER_SIZE = 18;
@@ -72,28 +83,45 @@ index 0000000000000000000000000000000000000000..66f6d8436d4d3de56573adf469d644fb
 +        if (data.length < HEADER_SIZE) {
 +            throw new IllegalArgumentException("Truncated TGA header");
 +        }
++        final int colorMapType = unsigned(data[1]);
 +        final int imageType = unsigned(data[2]);
-+        final boolean runLengthEncoded = imageType == 10;
-+        if ((imageType != 2 && !runLengthEncoded) || unsigned(data[1]) != 0) {
++        final boolean runLengthEncoded = imageType >= 8;
++        final int baseType = imageType & 7;
++        if ((imageType & ~11) != 0 || baseType == 0 || colorMapType != (baseType == 1 ? 1 : 0)) {
 +            throw new IllegalArgumentException("Unsupported TGA image type or color map");
 +        }
++        final boolean indexed = baseType == 1;
++        final boolean grey = baseType == 3;
 +        final int width = word(data, 12);
 +        final int height = word(data, 14);
 +        final int bitsPerPixel = unsigned(data[16]);
 +        if (width == 0 || height == 0 || (long) width * height > MAX_PIXELS
-+            || (bitsPerPixel != 24 && bitsPerPixel != 32)) {
++            || !(indexed ? bitsPerPixel == 8 || bitsPerPixel == 16 : supportedDepth(bitsPerPixel, grey))) {
 +            throw new IllegalArgumentException("Unsupported TGA dimensions or pixel depth");
 +        }
 +        final int descriptor = unsigned(data[17]);
 +        if ((descriptor & 0xC0) != 0) {
 +            throw new IllegalArgumentException("Unsupported TGA interleaving");
 +        }
++        final Cursor cursor = new Cursor(data, HEADER_SIZE + unsigned(data[0]));
++        int[] palette = null;
++        if (indexed) {
++            final int paletteBits = unsigned(data[7]);
++            final int paletteLength = word(data, 5);
++            if (paletteLength == 0 || !supportedDepth(paletteBits, false)) {
++                throw new IllegalArgumentException("Unsupported TGA palette");
++            }
++            // stb_image skips the first-entry field as bytes and indexes the stored entries from zero.
++            cursor.skip(word(data, 3));
++            palette = new int[paletteLength];
++            for (int i = 0; i < paletteLength; i++) {
++                palette[i] = color(cursor, paletteBits, false);
++            }
++        }
 +        final boolean rightOrigin = (descriptor & 0x10) != 0;
 +        final boolean topOrigin = (descriptor & 0x20) != 0;
-+        final int pixelSize = bitsPerPixel / 8;
 +        final int pixelCount = width * height;
 +        final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-+        final Cursor cursor = new Cursor(data, HEADER_SIZE + unsigned(data[0]));
 +        int index = 0;
 +        while (index < pixelCount) {
 +            final int packet = runLengthEncoded ? cursor.read() : 0;
@@ -102,9 +130,9 @@ index 0000000000000000000000000000000000000000..66f6d8436d4d3de56573adf469d644fb
 +                throw new IllegalArgumentException("TGA packet exceeds image bounds");
 +            }
 +            final boolean repeated = runLengthEncoded && (packet & 0x80) != 0;
-+            final int repeatedColor = repeated ? pixel(cursor, pixelSize) : 0;
++            final int repeatedColor = repeated ? pixel(cursor, bitsPerPixel, grey, palette) : 0;
 +            for (int i = 0; i < count; i++, index++) {
-+                final int color = repeated ? repeatedColor : pixel(cursor, pixelSize);
++                final int color = repeated ? repeatedColor : pixel(cursor, bitsPerPixel, grey, palette);
 +                final int x = rightOrigin ? width - 1 - index % width : index % width;
 +                final int y = topOrigin ? index / width : height - 1 - index / width;
 +                image.setRGB(x, y, color);
@@ -113,12 +141,41 @@ index 0000000000000000000000000000000000000000..66f6d8436d4d3de56573adf469d644fb
 +        return image;
 +    }
 +
-+    private static int pixel(final Cursor cursor, final int size) {
++    private static boolean supportedDepth(final int bits, final boolean grey) {
++        return grey ? bits == 8 || bits == 16 : bits == 8 || bits == 15 || bits == 16 || bits == 24 || bits == 32;
++    }
++
++    private static int pixel(final Cursor cursor, final int bits, final boolean grey, final int[] palette) {
++        if (palette == null) {
++            return color(cursor, bits, grey);
++        }
++        final int entry = bits == 8 ? cursor.read() : cursor.read() | cursor.read() << 8;
++        // stb_image substitutes the first entry for an index outside the palette.
++        return palette[entry < palette.length ? entry : 0];
++    }
++
++    private static int color(final Cursor cursor, final int bits, final boolean grey) {
++        if (bits == 8) {
++            return 0xFF000000 | cursor.read() * 0x010101;
++        }
++        if (bits == 16 && grey) {
++            final int value = cursor.read();
++            return cursor.read() << 24 | value * 0x010101;
++        }
++        if (bits == 15 || bits == 16) {
++            // 5-5-5 color; stb_image ignores the top bit and keeps the pixel opaque.
++            final int value = cursor.read() | cursor.read() << 8;
++            return 0xFF000000 | scale5(value >> 10) << 16 | scale5(value >> 5) << 8 | scale5(value);
++        }
 +        final int blue = cursor.read();
 +        final int green = cursor.read();
 +        final int red = cursor.read();
-+        final int alpha = size == 4 ? cursor.read() : 255;
++        final int alpha = bits == 32 ? cursor.read() : 255;
 +        return alpha << 24 | red << 16 | green << 8 | blue;
++    }
++
++    private static int scale5(final int value) {
++        return (value & 31) * 255 / 31;
 +    }
 +
 +    private static int word(final byte[] data, final int index) {
@@ -144,15 +201,22 @@ index 0000000000000000000000000000000000000000..66f6d8436d4d3de56573adf469d644fb
 +            }
 +            return unsigned(this.data[this.offset++]);
 +        }
++
++        private void skip(final int count) {
++            if (count > this.data.length - this.offset) {
++                throw new IllegalArgumentException("Truncated TGA color map");
++            }
++            this.offset += count;
++        }
 +    }
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa7b253191e802ca5606f7dec5f2821f759d5b32
+index 0000000000000000000000000000000000000000..7edf5848985b338eeb071a1e8442dcf8d22808d9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,107 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -199,6 +263,38 @@ index 0000000000000000000000000000000000000000..fa7b253191e802ca5606f7dec5f2821f
 +        assertEquals(0xFFFF0000, image.getRGB(1, 0));
 +        assertEquals(0xFF0000FF, image.getRGB(0, 1));
 +        assertEquals(0xFF0000FF, image.getRGB(1, 1));
++    }
++
++    @Test
++    void decodesRunLengthColorMappedPixelsThroughTheirPalette() {
++        // Lifeboat's vehicle textures: image type 9, 8-bit indices into a 24-bit palette.
++        final byte[] header = tga(2, 2, 8, 0x20, 9,
++            0, 0, 255, 0, 255, 0, // palette: red, green (BGR)
++            0x81, 1,             // two green pixels on the top row
++            0x01, 0, 7);         // red, then an out-of-range index that falls back to entry zero
++        header[1] = 1;
++        header[5] = 2;
++        header[7] = 24;
++        final InMemoryContent content = new InMemoryContent();
++        content.put("textures/entity/example.tga", header);
++
++        final BufferedImage image = content.getShortnameImage("textures/entity/example").getImage();
++        assertEquals(0xFF00FF00, image.getRGB(0, 0));
++        assertEquals(0xFF00FF00, image.getRGB(1, 0));
++        assertEquals(0xFFFF0000, image.getRGB(0, 1));
++        assertEquals(0xFFFF0000, image.getRGB(1, 1));
++    }
++
++    @Test
++    void decodesGreyscaleWithAndWithoutAlpha() {
++        final InMemoryContent content = new InMemoryContent();
++        content.put("textures/entity/grey.tga", tga(2, 1, 8, 0x20, 3, 0x40, 0xFF));
++        content.put("textures/entity/grey_alpha.tga", tga(1, 1, 16, 0x20, 3, 0x80, 0x10));
++
++        final BufferedImage grey = content.getShortnameImage("textures/entity/grey").getImage();
++        assertEquals(0xFF404040, grey.getRGB(0, 0));
++        assertEquals(0xFFFFFFFF, grey.getRGB(1, 0));
++        assertEquals(0x10808080, content.getShortnameImage("textures/entity/grey_alpha").getImage().getRGB(0, 0));
 +    }
 +
 +    @Test
