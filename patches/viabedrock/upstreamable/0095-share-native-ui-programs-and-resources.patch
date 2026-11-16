@@ -1071,8 +1071,16 @@ result/type controls from 39 source expressions, including the live inventory
 OR-product matrix. Declared allocation and CRT conversion seams supply the
 absent runtime; no grouping, operator or normalization behavior is stubbed.
 Regressions distinguish the nested boolean result, equal logical precedence
-and unfinished-inner-group selection. Property notification scheduling and
-constant-source binding admission remain separate from this parser change.
+and unfinished-inner-group selection. Property notification scheduling remains separate from this parser change.
+
+Read binding_name and source_property_name as native does. The 1.26.60.5
+binding loader 141c8b460 passes both fields to reader 1400f8110. A source is
+a # property or an expression that reads one. The reader evaluates a
+constant expression once and reads a string result again as the source.
+Any other constant result or plain name selects no source, so the binding
+never updates its target and the authored property-bag default remains.
+Native and installed controls show (2) keeping 0 at counts 2, 5, 0 and 7.
+Shipped UI has no constant-only or plain-name sources.
 
 diff --git a/build.gradle b/build.gradle
 index f403183bf4dea7f95cbbfbcfa073ac107988613f..8936bedcc7dd6eafa25d19f1c37acffe3df39cf9 100644
@@ -3660,10 +3668,10 @@ index 0000000000000000000000000000000000000000..a823211d18b2d20e9fd8dfc9b4c563d9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..d6624fd9fbc736f978b4c96058388f2883fd751a
+index 0000000000000000000000000000000000000000..8343abe79536bb63f1ec0e588918486ce8b28ddc
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,555 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4207,8 +4215,7 @@ index 0000000000000000000000000000000000000000..d6624fd9fbc736f978b4c96058388f28
 +                        || UiExpression.truth(JsonUiProgram.resolveValue(binding.get("ignored"), values, 0))) {
 +                    continue;
 +                }
-+                final String expression = JsonUiProgram.bindingName(binding,
-+                        binding.has("source_property_name") ? "source_property_name" : "binding_name", values);
++                final String expression = JsonUiProgram.bindingSource(binding, values);
 +                final String target = binding.has("target_property_name") ? JsonUiProgram.bindingName(binding, "target_property_name", values)
 +                        : binding.has("binding_name_override") ? JsonUiProgram.bindingName(binding, "binding_name_override", values) : expression;
 +                if ("#text".equals(target)) {
@@ -6066,10 +6073,10 @@ index 0000000000000000000000000000000000000000..5dfbb3f8cb6cc74a7e05d034abf56dec
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a440dbd385056b6ceb102fe9e8aa41b00b1a287
+index 0000000000000000000000000000000000000000..719ec0d4ec822c46a66c90fc5f0f00821a53d7a1
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,2152 @@
+@@ -0,0 +1,2186 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6934,6 +6941,40 @@ index 0000000000000000000000000000000000000000..4a440dbd385056b6ceb102fe9e8aa41b
 +            name = UiExpression.text(value);
 +        }
 +        return name;
++    }
++
++    /**
++     * Reads a binding's source the way native reads {@code binding_name} and {@code source_property_name}. A source is a
++     * {@code #} property or an expression that reads one. Native evaluates a constant expression once and reads a string
++     * result again as the source. Any other constant result or plain name selects no source, so the binding never updates
++     * its target and the authored default remains.
++     */
++    static String bindingSource(final JsonObject binding, final Map<String, JsonElement> values) {
++        String source = string(binding, binding.has("source_property_name") ? "source_property_name" : "binding_name");
++        for (int depth = 0; ; depth++) {
++            if (depth >= 32) {
++                throw new IllegalArgumentException("Recursive UI binding source");
++            }
++            if (source.startsWith("$")) {
++                source = UiExpression.text(values.containsKey(source) ? values.get(source) : values.get(source + "|default"));
++                continue;
++            }
++            if (!source.startsWith("(")) {
++                return source.startsWith("#") ? source : "";
++            }
++            final boolean[] referenced = {false};
++            final JsonElement value = UiExpression.evaluate(source, key -> {
++                referenced[0] = true;
++                return JsonNull.INSTANCE;
++            });
++            if (referenced[0]) {
++                return source;
++            }
++            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
++                return "";
++            }
++            source = value.getAsString();
++        }
 +    }
 +
 +    private static String substitute(final String reference, final Map<String, JsonElement> values) {
@@ -8136,7 +8177,7 @@ index 0000000000000000000000000000000000000000..4a440dbd385056b6ceb102fe9e8aa41b
 +                source = new HashMap<>(source);
 +                source.putAll(componentState);
 +            }
-+            final String expression = binding.has("source_property_name") ? bindingName(binding, "source_property_name", values) : bindingName(binding, "binding_name", values);
++            final String expression = bindingSource(binding, values);
 +            if (expression.isEmpty()) {
 +                return null;
 +            }
@@ -8161,7 +8202,7 @@ index 0000000000000000000000000000000000000000..4a440dbd385056b6ceb102fe9e8aa41b
 +        }
 +
 +        private static String bindingTarget(final JsonObject binding, final Map<String, JsonElement> values) {
-+            final String expression = binding.has("source_property_name") ? bindingName(binding, "source_property_name", values) : bindingName(binding, "binding_name", values);
++            final String expression = bindingSource(binding, values);
 +            return binding.has("target_property_name") ? bindingName(binding, "target_property_name", values)
 +                    : binding.has("binding_name_override") ? bindingName(binding, "binding_name_override", values) : expression;
 +        }
@@ -18795,10 +18836,10 @@ index 0000000000000000000000000000000000000000..bc575caa2d407c21ea95ddd709236079
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..443712ecf23fa7aca4c5cfaff981148ed2883569
+index 0000000000000000000000000000000000000000..e7898e2457da8bb0e62fc2292471adf896c7cb66
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
-@@ -0,0 +1,1071 @@
+@@ -0,0 +1,1093 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -19241,6 +19282,28 @@ index 0000000000000000000000000000000000000000..443712ecf23fa7aca4c5cfaff981148e
 +                """);
 +        final var root = ui.resolve("example.root", new Bindings()).root();
 +        assertTrue(root.getAsJsonArray("children").get(1).getAsJsonObject().get("visible").getAsBoolean());
++    }
++
++    @Test
++    void constantBindingSourcesKeepTheAuthoredDefaultUnlessTheyNamePropertyReferences() {
++        final var ui = program("""
++                {"namespace":"example","root":{"type":"panel","controls":[
++                  {"source":{"type":"panel","property_bag":{"#value":5}}},
++                  {"number":{"type":"label","property_bag":{"#text":0},"bindings":[{"binding_type":"view",
++                    "source_control_name":"source","source_property_name":"(2)","target_property_name":"#text"}]}},
++                  {"named":{"type":"label","property_bag":{"#text":0},"bindings":[{"binding_type":"view",
++                    "source_control_name":"source","source_property_name":"('#value')","target_property_name":"#text"}]}},
++                  {"plain":{"type":"label","property_bag":{"#text":0},"bindings":[{"binding_type":"view",
++                    "source_control_name":"source","source_property_name":"('value')","target_property_name":"#text"}]}},
++                  {"computed":{"type":"label","property_bag":{"#text":0},"bindings":[{"binding_type":"view",
++                    "source_control_name":"source","source_property_name":"(#value + 1)","target_property_name":"#text"}]}}
++                ]}}
++                """);
++        final var children = ui.resolve("example.root", new Bindings()).root().getAsJsonArray("children");
++        assertEquals(0, children.get(1).getAsJsonObject().get("text").getAsInt());
++        assertEquals(5, children.get(2).getAsJsonObject().get("text").getAsInt());
++        assertEquals(0, children.get(3).getAsJsonObject().get("text").getAsInt());
++        assertEquals(6, children.get(4).getAsJsonObject().get("text").getAsInt());
 +    }
 +
 +    @Test
