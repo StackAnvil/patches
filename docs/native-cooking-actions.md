@@ -251,7 +251,7 @@ The owning patch contains the durable rationale.
 
 Complete authored control bindings, remaining input branches, and native parity remain unfinished.
 Default hosts still require complete input bindings and admission checks.
-The current default furnace, smoker, and blast-furnace programs stop at the unsupported `coalesce_stack` keyboard action.
+Default hosts consume the double-pressed `coalesce_stack` slot mapping without moving items, as native 1.26.60.5 does.
 Broader source-selection transitions and other input modes remain unfinished.
 The shared bundle controller retains padded selection through publication-bound extraction and replies.
 Native physical bundle navigation bindings remain unverified.

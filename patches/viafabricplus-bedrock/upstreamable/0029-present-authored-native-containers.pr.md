@@ -373,7 +373,7 @@ Registered arrow and scrollbar mappings now reach their existing source-state co
 Raw arrow aliases accompany ordinary focus input. Scrollbar press bookkeeping runs before capture, so dragging over an item cannot enter quantity selection.
 Screen regressions check authored persistent-text visibility through release and expiry, and source selection after scrollbar release without moving items.
 The original 1.26.60.5 producer, dispatcher, and flag callbacks pass 162 controls. Their callback tables match all three cooking registries.
-Full default-screen preparation advances to the separate `coalesce_stack` guard in both control styles.
+Default furnace, smoker and blast-furnace screens now stay native. They admit the double-pressed `coalesce_stack` slot mapping, which native consumes without moving items, and a search-box deselect no longer swallows slot clicks. A double-press about 160 ms apart still places the stack back, unlike most native trials.
 Broader source selection, other input modes, installed default-host workflows, and exact native frame timing remain unfinished.
 Native multiplayer request grouping and delayed or rejected native drag behavior remain unverified.
 
