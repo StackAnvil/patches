@@ -1057,6 +1057,21 @@ packet origin-offset conversion. Scope this to the controlled local
 Bedrock player, excluding flight, gliding and passengers. Other movement
 and explicit teleport paths retain their existing adapters.
 
+Apply a liquid current once per tick, before travel. Native push function
+14ad2c200 admits the current from the same contact boxes that set the
+wet state, so a player entering flowing water is first pushed on the tick
+wet physics begins. Java's checkFallDamage refreshes fluid contact after
+the move and pushed once more, a tick early and through dry friction. The
+local player keeps that refresh for its fluid state but not its current.
+Paired native and add-on crossings of a depth-5 flowing pool show the
+add-on starting with 0.00764 a tick before native's first 0.0112.
+
+Resolve swimming collisions in native Y, X, Z order. The flowing-pool
+crossing presses the player against a wall corner while Z still overlaps
+it: native keeps X blocked for that tick, while Java's larger-axis-first
+order moves Z first and slides X free. Lava and stationary-overlap
+recovery keep their separately verified scope.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index ad7d3c5120301284b9ab0bd0ba2cead565c5ff4a..a2642cd3c08f20ff011e5f3ba107fc70cd33eedd 100644
 --- a/build.gradle.kts
@@ -2439,10 +2454,10 @@ index 0000000000000000000000000000000000000000..b6ee81c530ac895e371010e4b62107b5
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index cb89991c2e1cfb5c6714517e78994f7390d03fee..5e988decee9a7784c094514c6a8f701988228515 100644
+index cb89991c2e1cfb5c6714517e78994f7390d03fee..ee7ff79c73a4eae0e674a5f491d3cf05e1340048 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,267 @@
+@@ -21,27 +21,281 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2459,6 +2474,7 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..5e988decee9a7784c094514c6a8f7019
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockUsedItem;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockGeyserPhysics;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockGroundState;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockAirMovement;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockMoveRelative;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockClimbingPhysics;
@@ -2496,6 +2512,19 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..5e988decee9a7784c094514c6a8f7019
  @Mixin(LivingEntity.class)
  public abstract class MixinLivingEntity {
  
++    // Native applies a liquid current once per tick, before travel, from the same contact that admits wet physics.
++    // Java refreshes fluid contact again after landing and would push a player entering water one tick early.
++    @WrapOperation(method = "checkFallDamage", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;updateFluidInteraction()Z"), require = 1, allow = 1)
++    private boolean keepNativeCurrentTiming(final LivingEntity entity, final Operation<Boolean> original) {
++        if (!(entity instanceof LocalPlayer player) || !BedrockGroundState.applies(player)) {
++            return original.call(entity);
++        }
++        final Vec3 motion = entity.getDeltaMovement();
++        final boolean inFluid = original.call(entity);
++        entity.setDeltaMovement(motion);
++        return inFluid;
++    }
++
 +    @Shadow
 +    protected abstract void completeUsingItem();
 +
@@ -6824,10 +6853,10 @@ index 0000000000000000000000000000000000000000..091689f9c407aa2aed18d34cc99e8dea
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisions.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..db5d861132965f18140066d6bde282ee9968fa36
+index 0000000000000000000000000000000000000000..d1a56fa5e4e73ff53335952498aa1e19ea5395ac
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalCollisions.java
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,174 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6836,9 +6865,11 @@ index 0000000000000000000000000000000000000000..db5d861132965f18140066d6bde282ee
 +package com.viaversion.viafabricplus.bedrock.movement.replay;
 +
 +import com.google.common.collect.ImmutableList;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockAirMovement;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockCollisionContacts;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockSneakSupport;
++import net.minecraft.client.Minecraft;
 +import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.core.Direction;
@@ -6877,7 +6908,8 @@ index 0000000000000000000000000000000000000000..db5d861132965f18140066d6bde282ee
 +        final Vec3 effective = capped == motion ? requested : new Vec3(capped.x(), capped.y(), capped.z());
 +        final Move previous = CURRENT.get();
 +        CURRENT.set(new Move(actor, cache, MovementCollisionQuery.bounds(box(actor.getBoundingBox()), capped, actor.maxUpStep()),
-+                actor instanceof LocalPlayer player && BedrockAirMovement.applies(player)));
++                actor instanceof LocalPlayer player && BedrockAirMovement.applies(player),
++                actor instanceof LocalPlayer local && (BedrockAirMovement.applies(local) || swimmingNatively(local))));
 +        try {
 +            // Native captures a collision request even when its resulting displacement is zero.
 +            final List<VoxelShape> colliders = collect(actor.level());
@@ -6904,7 +6936,7 @@ index 0000000000000000000000000000000000000000..db5d861132965f18140066d6bde282ee
 +    /** Native fixed order applies to the admitted local player's movement and step queries. */
 +    public static ImmutableList<Direction.Axis> axisOrder(final ImmutableList<Direction.Axis> java) {
 +        final Move move = CURRENT.get();
-+        return move != null && move.nativeOrder ? NATIVE_AXIS_ORDER : java;
++        return move != null && move.nativeAxes ? NATIVE_AXIS_ORDER : java;
 +    }
 +
 +    public static boolean processesZeroRequests() {
@@ -6986,7 +7018,18 @@ index 0000000000000000000000000000000000000000..db5d861132965f18140066d6bde282ee
 +        return new CollisionContact.Box((float) box.minX, (float) box.minY, (float) box.minZ, (float) box.maxX, (float) box.maxY, (float) box.maxZ);
 +    }
 +
-+    private record Move(Entity actor, PhysicalCollisionCache cache, CollisionContact.Box query, boolean nativeOrder) {}
++    /**
++     * Native ActorMove resolves water movement in the same fixed axis order. A flowing-water crossing pressed against
++     * a wall corner keeps X blocked while Z still overlaps the wall, where Java's larger-axis-first order slides free.
++     * Lava and stationary-overlap recovery keep their separately verified scope.
++     */
++    private static boolean swimmingNatively(final LocalPlayer player) {
++        return BedrockInputPermissions.isBedrockConnection() && player.isInWater() && !player.isInLava()
++                && !player.getAbilities().flying && !player.isPassenger() && !player.isFallFlying()
++                && PhysicalReplayContext.camera(Minecraft.getInstance().getCameraEntity()) == player;
++    }
++
++    private record Move(Entity actor, PhysicalCollisionCache cache, CollisionContact.Box query, boolean nativeOrder, boolean nativeAxes) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalGraphState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalGraphState.java
 new file mode 100644
