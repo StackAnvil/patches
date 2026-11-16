@@ -821,6 +821,14 @@ to a player, with a native seat offset of [0, 0.5, 0]. Apply the
 published anchor before positioning the passenger. Keep virtual dispatch
 for passengers without a matching native anchor.
 
+A server material entry identical to the native entry under the same key
+is that native definition, so it gets the same GPU-layout normalization.
+Servers often ship a verbatim copy of the vanilla entity.material:
+Mystrick Games' copy matches 198 of 200 vanilla entries, but every entity
+material fell back because its raw sampler and vertex fields were
+unverified, and player costumes using entity_alphatest were skipped.
+Changed entries keep their own fields and still retain the fallback.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index 7ba0932506d370b6bf500d2b53cb5ef35c8bb2ec..d5d27f4f2c7b48442908e5e2fd2b5ba8d81479df 100644
 --- a/build.gradle.kts
@@ -3141,10 +3149,10 @@ index 0000000000000000000000000000000000000000..f8df41f541b31150eaa1d1c65a3065f3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..bf972c1734b91821ce149a086971925ac7312b4c
+index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176f6b78e00
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,260 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3197,11 +3205,19 @@ index 0000000000000000000000000000000000000000..bf972c1734b91821ce149a086971925a
 +
 +    public static BedrockActorMaterialDefinitions load(final ResourcePackStorage packs) {
 +        final List<JsonObject> documents = new ArrayList<>();
++        final Map<String, JsonElement> nativeSources = new HashMap<>();
 +        for (var pack : packs.getPackStackBottomToTop()) {
 +            for (String path : pack.content().getFilesDeep("materials/", ".material")) {
 +                try {
 +                    final JsonObject document = pack.content().getJson(path);
-+                    documents.add(packs.isServerPack(pack) ? document : nativeDefinitions(document));
++                    if (packs.isServerPack(pack)) {
++                        documents.add(serverDefinitions(document, nativeSources));
++                    } else {
++                        if (document.get("materials") instanceof JsonObject materials) {
++                            materials.asMap().forEach((key, value) -> nativeSources.put(key, value.deepCopy()));
++                        }
++                        documents.add(nativeDefinitions(document));
++                    }
 +                } catch (RuntimeException invalid) {
 +                    ViaFabricPlusBedrock.impl().logger().warn("Could not parse actor material definitions {}", path, invalid);
 +                }
@@ -3220,12 +3236,31 @@ index 0000000000000000000000000000000000000000..bf972c1734b91821ce149a086971925a
 +        final JsonElement materials = compiled.get("materials");
 +        if (materials == null || !materials.isJsonObject()) return compiled;
 +        for (final JsonElement definition : materials.getAsJsonObject().asMap().values()) {
-+            if (!definition.isJsonObject()) continue;
-+            for (final String field : List.of("vertexFields", "+vertexFields", "-vertexFields", "variants",
-+                    "vrGeometryShader", "samplerStates", "+samplerStates", "-samplerStates"))
-+                definition.getAsJsonObject().remove(field);
++            if (definition.isJsonObject()) stripNativeLayout(definition.getAsJsonObject());
 +        }
 +        return compiled;
++    }
++
++    /**
++     * Servers often ship a verbatim copy of the vanilla entity.material. An entry identical to the native entry under
++     * the same key is that native definition. Changed entries keep their own fields, so unverified GPU layouts and
++     * sampler changes still retain the fallback.
++     */
++    static JsonObject serverDefinitions(final JsonObject document, final Map<String, JsonElement> nativeSources) {
++        final JsonObject result = document.deepCopy();
++        if (!(result.get("materials") instanceof JsonObject materials)) return result;
++        for (final var entry : materials.entrySet()) {
++            if (entry.getValue().isJsonObject() && entry.getValue().equals(nativeSources.get(entry.getKey()))) {
++                stripNativeLayout(entry.getValue().getAsJsonObject());
++            }
++        }
++        return result;
++    }
++
++    private static void stripNativeLayout(final JsonObject definition) {
++        for (final String field : List.of("vertexFields", "+vertexFields", "-vertexFields", "variants",
++                "vrGeometryShader", "samplerStates", "+samplerStates", "-samplerStates"))
++            definition.remove(field);
 +    }
 +
 +    /** Ordinary actors do not supply the verified held-item glint scale and frame inputs. */
@@ -7446,10 +7481,10 @@ index 0000000000000000000000000000000000000000..ca3478df47742ba0794265f4ebe998d8
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c5e44ee4a45fa96e1ebcb3b003ecb1ac8cdc2216
+index 0000000000000000000000000000000000000000..f4f3e5c0dd614fcc50f162a2987f656728e5c3ac
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
-@@ -0,0 +1,327 @@
+@@ -0,0 +1,349 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7457,8 +7492,10 @@ index 0000000000000000000000000000000000000000..c5e44ee4a45fa96e1ebcb3b003ecb1ac
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
 +
++import com.viaversion.viaversion.libs.gson.JsonElement;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.util.HashMap;
 +import java.util.List;
 +import java.util.Set;
 +import org.junit.jupiter.api.Test;
@@ -7643,6 +7680,26 @@ index 0000000000000000000000000000000000000000..c5e44ee4a45fa96e1ebcb3b003ecb1ac
 +        assertTrue(compiled.material("unsafe").isEmpty());
 +        assertTrue(BedrockActorMaterialDefinitions.read(List.of(source)).material("custom").isEmpty());
 +        assertTrue(source.getAsJsonObject("materials").getAsJsonObject("entity_static").has("variants"));
++    }
++
++    @Test
++    void serverCopiesOfNativeDefinitionsResolveWhileChangedSamplersKeepTheFallback() {
++        // Mystrick Games ships a verbatim copy of the vanilla entity.material; its player costumes use entity_alphatest.
++        final String vanilla = """
++            {"entity_static":{"vertexShader":"shaders/entity.vertex","fragmentShader":"shaders/entity.fragment",
++                "vertexFields":[{"field":"Position"},{"field":"Normal"},{"field":"UV0"}],
++                "+samplerStates":[{"samplerIndex":0,"textureFilter":"Point"}]},
++             "entity:entity_static":{"+defines":["USE_OVERLAY"]},
++             "entity_alphatest:entity":{"+defines":["ALPHA_TEST"],"+states":["DisableCulling"]}}
++            """;
++        final var nativeSources = new HashMap<String, JsonElement>();
++        document(vanilla).getAsJsonObject("materials").asMap().forEach(nativeSources::put);
++        final var copy = BedrockActorMaterialDefinitions.serverDefinitions(document(vanilla), nativeSources);
++        assertFalse(BedrockActorMaterialDefinitions.read(List.of(copy)).material("entity_alphatest").orElseThrow().cull());
++
++        final var changed = document(vanilla.replace("\"Point\"", "\"Bilinear\""));
++        final var server = BedrockActorMaterialDefinitions.serverDefinitions(changed, nativeSources);
++        assertTrue(BedrockActorMaterialDefinitions.read(List.of(server)).material("entity_alphatest").isEmpty());
 +    }
 +
 +    @Test
