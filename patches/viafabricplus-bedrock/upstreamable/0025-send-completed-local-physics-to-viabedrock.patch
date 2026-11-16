@@ -1019,6 +1019,44 @@ native -0.2744 while the old hook settles at -0.2254. Keep the ordinary
 call for fall-distance bookkeeping and replace its returned motion using
 the original call argument.
 
+Round each ordinary local-player bubble-column impulse in single precision.
+Bedrock 1.26.60.5 protocol 2225 callback 0x145dcf4e0 loads, adds, clamps
+and stores float motion for every contact. The installed native exposed
+entry adds 0.1F once; covered entry matches two successive 0.06F contacts.
+Java's double additions leave reachable upward rounding differences after
+native fluid admission is restored. REA original-instruction control
+ev_f0364ac093d82cea3fcb6a38df4fa5d468a265c8c68c81780eb88d1acac1d35b
+verifies the entering outputs, cancellation and cap boundaries without
+external stubs. Wrap the inherited motion writes so each following contact
+reads the rounded result. Preserve X/Z, simulation authority, particles
+and fall-distance behavior. Keep Java, remote actors, mounts and flight
+on their existing paths; flight and damage admission remain separate work.
+
+Keep ordinary local air gravity and vertical drag as separate float stores.
+Native 1.26.60.5 protocol2225 ApplyGravity and MobMovementDrag::Air round
+component reads, addends, products and stores in single precision. Original
+post-lookup instruction controls reproduce all32 measured post-column air
+outputs; supplied component cases additionally cover drag selection and
+modifier bounds. ECS admission and effect production are outside that control.
+Capture the existing effective-gravity value per invocation and replace only
+the gravity subtraction and vertical-friction product. Preserve levitation,
+unloaded-chunk, discarded-friction and coefficient-selection branches. Keep
+Java, remote actors, flight, liquids, gliding and mounts on existing paths.
+The invocation-local shared value avoids adding mutable prediction state.
+
+Advance native movement bounds with float endpoint stores before deriving
+the float horizontal midpoint. Installed 1.26.60.5 FinalizeMove/packet joins
+and original ActorMove replays bind this ordering. Adding displacement to
+Java's double position and rebuilding dimensions loses native endpoint
+asymmetry and accumulates drift even when outgoing motion already agrees.
+
+Round the incoming body before collision, publish the finalized point to
+Java's movement history, and retain the moved bounds after setPos. Finalize
+even zero resolved displacement. Keep the Java feet convention and existing
+packet origin-offset conversion. Scope this to the controlled local
+Bedrock player, excluding flight, gliding and passengers. Other movement
+and explicit teleport paths retain their existing adapters.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index ad7d3c5120301284b9ab0bd0ba2cead565c5ff4a..a2642cd3c08f20ff011e5f3ba107fc70cd33eedd 100644
 --- a/build.gradle.kts
@@ -1573,10 +1611,10 @@ index 0000000000000000000000000000000000000000..71edbae46d6ef0250f436b00ce744613
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
-index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..7cedb9d4c9b58e1f050c01184e7fcf80ed4b9a6f 100644
+index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..39bf1bb02d48b872a5e11d954e421b3ed95d3eb7 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
-@@ -21,25 +21,29 @@
+@@ -21,25 +21,31 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -1584,6 +1622,8 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..7cedb9d4c9b58e1f050c01184e7fcf80
 +import com.llamalad7.mixinextras.expression.Expression;
  import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 +import com.llamalad7.mixinextras.sugar.Local;
++import com.llamalad7.mixinextras.sugar.Share;
++import com.llamalad7.mixinextras.sugar.ref.LocalRef;
  import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -1591,8 +1631,8 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..7cedb9d4c9b58e1f050c01184e7fcf80
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 -import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
-+import com.viaversion.viafabricplus.bedrock.movement.BedrockAirMovement;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockGroundState;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockMovementPosition;
 +import net.minecraft.client.player.LocalPlayer;
  import net.minecraft.world.entity.Entity;
  import net.minecraft.world.phys.AABB;
@@ -1611,7 +1651,7 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..7cedb9d4c9b58e1f050c01184e7fcf80
  
  @Mixin(Entity.class)
  public abstract class MixinEntity {
-@@ -47,19 +51,34 @@ public abstract class MixinEntity {
+@@ -47,19 +53,73 @@ public abstract class MixinEntity {
      @Shadow
      protected Vec3 stuckSpeedMultiplier;
  
@@ -1620,17 +1660,39 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..7cedb9d4c9b58e1f050c01184e7fcf80
 +    @Definition(id = "movementLength", local = @Local(type = double.class, ordinal = 0))
 +    @Expression("movementLength > ?")
 +    @ModifyExpressionValue(method = "move", at = @At("MIXINEXTRAS:EXPRESSION"), require = 1, allow = 1)
-+    private boolean retainNativeSmallDisplacement(final boolean aboveCutoff, @Local(ordinal = 0) final double movementLength) {
-+        // Collision has already resolved the request. Java's length gate must not erase native drift.
++    private boolean finalizeNativeDisplacement(final boolean aboveCutoff, @Local(ordinal = 0) final double movementLength) {
++        // Native finalizes the stored box even when collision resolves to zero displacement.
 +        return aboveCutoff || (Object) this instanceof LocalPlayer player
-+                && BedrockAirMovement.applies(player) && movementLength > 0D;
++                && BedrockMovementPosition.applies(player) && Double.isFinite(movementLength);
 +    }
  
 -    @Inject(method = "setSwimming", at = @At("HEAD"))
 -    private void trackSwimming(final boolean swimming, final CallbackInfo ci) {
 -        if (!ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
 -            return;
++    @WrapOperation(method = "move", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/phys/Vec3;add(Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;", ordinal = 1), require = 1, allow = 1)
++    private Vec3 advanceNativeBounds(final Vec3 position, final Vec3 resolved, final Operation<Vec3> original,
++                                     @Share("nativeMovedBox") final LocalRef<AABB> bounds) {
++        if ((Object) this instanceof LocalPlayer player && BedrockMovementPosition.applies(player)) {
++            final var result = BedrockMovementPosition.advance(player.getBoundingBox(), resolved);
++            bounds.set(result.bounds());
++            return result.position();
+         }
++        return original.call(position, resolved);
++    }
+ 
+-        final UserConnection connection = ViaFabricPlus.api().userConnection();
+-        if (connection != null && swimming != this.isSwimming()) {
+-            connection.get(EntityTracker.class).getClientPlayer().addAuthInputData(swimming ? PlayerAuthInputData.StartSwimming : PlayerAuthInputData.StopSwimming);
 -        }
++    @WrapOperation(method = "move", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;setPos(Lnet/minecraft/world/phys/Vec3;)V"), require = 1, allow = 1)
++    private void retainNativeBounds(final Entity entity, final Vec3 position, final Operation<Void> original,
++                                     @Share("nativeMovedBox") final LocalRef<AABB> bounds) {
++        original.call(entity, position);
++        // setPos rebuilds Java's box from dimensions. Keep the independently rounded native endpoints.
++        if (bounds.get() != null) entity.setBoundingBox(bounds.get());
++    }
++
 +    @WrapOperation(method = "move", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;setOnGroundWithMovement(ZZLnet/minecraft/world/phys/Vec3;)V"))
 +    private void finalizeNativeGround(final Entity entity, final boolean ground, final boolean horizontalCollision, final Vec3 movement,
 +                                      final Operation<Void> original, @Local(argsOnly = true) final Vec3 requested) {
@@ -1638,11 +1700,27 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..7cedb9d4c9b58e1f050c01184e7fcf80
 +                ? BedrockGroundState.ground(entity.onGround(), (float) requested.y, (float) movement.y) : ground;
 +        original.call(entity, nativeGround, horizontalCollision, movement);
 +    }
- 
--        final UserConnection connection = ViaFabricPlus.api().userConnection();
--        if (connection != null && swimming != this.isSwimming()) {
--            connection.get(EntityTracker.class).getClientPlayer().addAuthInputData(swimming ? PlayerAuthInputData.StartSwimming : PlayerAuthInputData.StopSwimming);
--        }
++
++    @WrapOperation(method = "handleOnAboveBubbleColumn", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;setDeltaMovement(DDD)V"), require = 1, allow = 1)
++    private static void roundNativeSurfaceBubbleImpulse(final Entity entity, final double x, final double y, final double z,
++                                                        final Operation<Void> original, @Local(argsOnly = true) final boolean descending,
++                                                        @Local final Vec3 motion) {
++        original.call(entity, x, nativeBubbleColumnY(entity, motion.y, y, descending, true), z);
++    }
++
++    @WrapOperation(method = "handleOnInsideBubbleColumn", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;setDeltaMovement(DDD)V"), require = 1, allow = 1)
++    private static void roundNativeInsideBubbleImpulse(final Entity entity, final double x, final double y, final double z,
++                                                       final Operation<Void> original, @Local(argsOnly = true) final boolean descending,
++                                                       @Local final Vec3 motion) {
++        original.call(entity, x, nativeBubbleColumnY(entity, motion.y, y, descending, false), z);
++    }
++
++    private static double nativeBubbleColumnY(final Entity entity, final double motionY, final double vanillaY,
++                                              final boolean descending, final boolean surface) {
++        return entity instanceof LocalPlayer player && BedrockGroundState.applies(player) && !player.getAbilities().flying
++                ? BedrockFluidPhysics.bubbleColumnY(motionY, descending, surface) : vanillaY;
++    }
++
 +    @WrapOperation(method = "updateSwimming", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;isUnderWater()Z"), require = 1, allow = 1)
 +    private boolean useCurrentNativeSwimmingHead(final Entity entity, final Operation<Boolean> original) {
 +        // The native trigger sees this frame's breathing point before travel. Java's cached eye flag is one move old.
@@ -1657,7 +1735,7 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..7cedb9d4c9b58e1f050c01184e7fcf80
      }
  
      @Redirect(method = "makeStuckInBlock", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/Entity;stuckSpeedMultiplier:Lnet/minecraft/world/phys/Vec3;", opcode = Opcodes.PUTFIELD))
-@@ -77,11 +96,11 @@ public abstract class MixinEntity {
+@@ -77,11 +137,11 @@ public abstract class MixinEntity {
          return BedrockInputPermissions.isBedrockConnection() ? null : vehicle;
      }
  
@@ -1673,10 +1751,10 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..7cedb9d4c9b58e1f050c01184e7fcf80
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..b1d13fc2beea7610aeb943a138c31bd7a4808420
+index 0000000000000000000000000000000000000000..aaf488739cc705c0fbb069ecdd3518b531386a86
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,80 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1692,6 +1770,8 @@ index 0000000000000000000000000000000000000000..b1d13fc2beea7610aeb943a138c31bd7
 +import com.llamalad7.mixinextras.sugar.Local;
 +import com.llamalad7.mixinextras.sugar.ref.LocalRef;
 +import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalCollisions;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockMovementPosition;
++import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.core.Direction;
 +import net.minecraft.world.entity.Entity;
 +import net.minecraft.world.level.Level;
@@ -1721,6 +1801,9 @@ index 0000000000000000000000000000000000000000..b1d13fc2beea7610aeb943a138c31bd7
 +    @WrapOperation(method = "move", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;collide(Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;"))
 +    private Vec3 recordCollisionInputs(final Entity actor, final Vec3 motion, final Operation<Vec3> original,
 +                                       @Local(argsOnly = true) final LocalRef<Vec3> requested) {
++        if (actor instanceof LocalPlayer player && BedrockMovementPosition.applies(player)) {
++            actor.setBoundingBox(BedrockMovementPosition.round(actor.getBoundingBox()));
++        }
 +        return PhysicalCollisions.collide(actor, motion, effective -> {
 +            requested.set(effective);
 +            return original.call(actor, effective);
@@ -2356,10 +2439,10 @@ index 0000000000000000000000000000000000000000..b6ee81c530ac895e371010e4b62107b5
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index cb89991c2e1cfb5c6714517e78994f7390d03fee..bad87cece6cb2f5e8584969cbb741d5496308502 100644
+index cb89991c2e1cfb5c6714517e78994f7390d03fee..5e988decee9a7784c094514c6a8f701988228515 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,240 @@
+@@ -21,27 +21,267 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2369,6 +2452,9 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..bad87cece6cb2f5e8584969cbb741d54
 +import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.llamalad7.mixinextras.sugar.Local;
++import com.llamalad7.mixinextras.sugar.Share;
++import com.llamalad7.mixinextras.sugar.ref.LocalDoubleRef;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockUsedItem;
@@ -2490,6 +2576,30 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..bad87cece6cb2f5e8584969cbb741d54
 +        }
 +        return entity instanceof LocalPlayer player && BedrockAirMovement.applies(player)
 +                ? BedrockAirMovement.afterCollision(motion) : motion;
++    }
++
++    @ModifyExpressionValue(method = "travelInAir", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;getEffectiveGravity()D"), require = 1, allow = 1)
++    private double retainNativeAirGravity(final double gravity, @Share("bedrockAirGravity") final LocalDoubleRef retained) {
++        retained.set(gravity);
++        return gravity;
++    }
++
++    @Definition(id = "movementY", local = @Local(type = double.class, name = "movementY"))
++    @Expression("movementY - ?")
++    @ModifyExpressionValue(method = "travelInAir", at = @At("MIXINEXTRAS:EXPRESSION"), require = 1, allow = 1)
++    private double roundNativeAirGravity(final double difference, @Local(name = "movementY") final double motionY,
++                                         @Share("bedrockAirGravity") final LocalDoubleRef gravity) {
++        return (Object) this instanceof LocalPlayer player && BedrockAirMovement.applies(player)
++                ? BedrockAirMovement.afterGravity(motionY, gravity.get()) : difference;
++    }
++
++    @Definition(id = "movementY", local = @Local(type = double.class, name = "movementY"))
++    @Expression("movementY * ?")
++    @ModifyExpressionValue(method = "travelInAir", at = @At("MIXINEXTRAS:EXPRESSION"), require = 1, allow = 1)
++    private double roundNativeAirDrag(final double result, @Local(name = "movementY") final double motionY,
++                                      @Local(name = "verticalFriction") final float friction) {
++        return (Object) this instanceof LocalPlayer player && BedrockAirMovement.applies(player)
++                ? BedrockAirMovement.afterVerticalDrag(motionY, friction) : result;
 +    }
 +
      @Shadow
@@ -5425,10 +5535,10 @@ index 0000000000000000000000000000000000000000..949adc60eb9fbfedd3ba32e5e9c66c93
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..64bd1a676c4c5c5073005a53536160052b6a756d
+index 0000000000000000000000000000000000000000..569f586ce2151265cc01bc15daa1b6bfda9c24cd
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovement.java
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,40 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5458,6 +5568,15 @@ index 0000000000000000000000000000000000000000..64bd1a676c4c5c5073005a5353616005
 +        // Gravity handles Y separately. Preserve the surviving doubles until the existing friction stage.
 +        return new Vec3(MotionFriction.belowCutoff((float) motion.x) ? Math.copySign(0D, motion.x) : motion.x,
 +                motion.y, MotionFriction.belowCutoff((float) motion.z) ? Math.copySign(0D, motion.z) : motion.z);
++    }
++
++    public static float afterGravity(final double motionY, final double gravity) {
++        // ApplyGravity stores float motion before the separate drag system reads it.
++        return (float) motionY - (float) gravity;
++    }
++
++    public static float afterVerticalDrag(final double motionY, final float friction) {
++        return (float) motionY * friction;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockClimbingPhysics.java
@@ -5703,10 +5822,10 @@ index 0000000000000000000000000000000000000000..2ecdd67a594c6ecadad1268066d5ffe4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2561bf120428747e81ff1c54a8d9ee0d29e987a6
+index 0000000000000000000000000000000000000000..c9db0444d656860ab1811e02f68050ef1d890b1c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,116 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -5742,6 +5861,13 @@ index 0000000000000000000000000000000000000000..2561bf120428747e81ff1c54a8d9ee0d
 +public final class BedrockFluidPhysics {
 +
 +    private BedrockFluidPhysics() {
++    }
++
++    public static float bubbleColumnY(final double motionY, final boolean descending, final boolean surface) {
++        // Native InsideBubbleColumn rounds each contact before the next cell reads motion.
++        final float accelerated = (float) motionY + (descending ? -0.03F : surface ? 0.1F : 0.06F);
++        return descending ? Math.max(surface ? -0.9F : -0.3F, accelerated)
++                : Math.min(surface ? 1.8F : 0.7F, accelerated);
 +    }
 +
 +    public static BlockPos aboveBodyCenter(final AABB box) {
@@ -5974,6 +6100,52 @@ index 0000000000000000000000000000000000000000..0539cb423123ace728b3e25873b0a347
 +                (scaledX * sin + scaledZ * cos) + (float) motion.z);
 +    }
 +
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockMovementPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockMovementPosition.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f15e016d6360a6088b37106cdfb1bc010ff31b54
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockMovementPosition.java
+@@ -0,0 +1,40 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
++
++/** Native ActorMove stores the box before FinalizeMove derives the actor position. */
++public final class BedrockMovementPosition {
++    private BedrockMovementPosition() {
++    }
++
++    public static boolean applies(final LocalPlayer player) {
++        return BedrockGroundState.applies(player) && !player.getAbilities().flying && !player.isFallFlying();
++    }
++
++    public static AABB round(final AABB box) {
++        return new AABB((float) box.minX, (float) box.minY, (float) box.minZ,
++                (float) box.maxX, (float) box.maxY, (float) box.maxZ);
++    }
++
++    public static Result advance(final AABB box, final Vec3 resolved) {
++        final float x = (float) resolved.x;
++        final float y = (float) resolved.y;
++        final float z = (float) resolved.z;
++        final AABB moved = new AABB((float) box.minX + x, (float) box.minY + y, (float) box.minZ + z,
++                (float) box.maxX + x, (float) box.maxY + y, (float) box.maxZ + z);
++        // Java stores feet Y. The existing packet conversion adds the native origin offset.
++        final Vec3 position = new Vec3(((float) moved.minX + (float) moved.maxX) * 0.5F,
++                moved.minY, ((float) moved.minZ + (float) moved.maxZ) * 0.5F);
++        return new Result(moved, position);
++    }
++
++    public record Result(AABB bounds, Vec3 position) {
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
 new file mode 100644
@@ -9223,10 +9395,10 @@ index 0000000000000000000000000000000000000000..eac5b9e19e7267bbfcecf69b91467238
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..25e8663a0d7a79491be72fe13652a9399f41511f
+index 0000000000000000000000000000000000000000..fd42751d49a37f70fde6702bbd55b3e4c32a3a09
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockAirMovementTest.java
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,29 @@
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
 +import net.minecraft.world.phys.Vec3;
@@ -9241,6 +9413,18 @@ index 0000000000000000000000000000000000000000..25e8663a0d7a79491be72fe13652a939
 +        assertEquals(Double.doubleToRawLongBits(-0D), Double.doubleToRawLongBits(motion.x));
 +        assertEquals(0.002D, motion.y);
 +        assertEquals(0.002D, motion.z);
++    }
++
++    @Test
++    void gravityAndDragKeepSeparateFloatStoresAtTheNativeBoundaries() {
++        // Original 1.26.60.5 ApplyGravity and MobMovementDrag::Air instruction blocks.
++        final float crossingZero = BedrockAirMovement.afterGravity(Float.intBitsToFloat(0x3D9D17FC), 0.08D);
++        assertEquals(0xBB57E1C0, Float.floatToRawIntBits(crossingZero));
++        assertEquals(0xBB539070, Float.floatToRawIntBits(BedrockAirMovement.afterVerticalDrag(crossingZero, 0.98F)));
++        final float fallingFromColumn = BedrockAirMovement.afterGravity(Float.intBitsToFloat(0x3EE1AA38), 0.08D);
++        assertEquals(0x3EB8B476, Float.floatToRawIntBits(fallingFromColumn));
++        assertEquals(0x3EB502C6, Float.floatToRawIntBits(BedrockAirMovement.afterVerticalDrag(fallingFromColumn, 0.98F)));
++        assertEquals(0x3BE0C9DB, Float.floatToRawIntBits(BedrockAirMovement.afterVerticalDrag(0.007D, 0.98F)));
 +    }
 +
 +}
@@ -9554,10 +9738,10 @@ index 0000000000000000000000000000000000000000..7c9534e22bdf65813b0cb2c73cb8e4d6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..4de425a333f3d9b9f82e1d3a3db2696b1c260c83
+index 0000000000000000000000000000000000000000..667e194684b1dadc4dc89e66097920164dae25e7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,209 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -9606,6 +9790,21 @@ index 0000000000000000000000000000000000000000..4de425a333f3d9b9f82e1d3a3db2696b
 +    static void bootstrap() {
 +        SharedConstants.tryDetectVersion();
 +        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void bubbleContactsRoundBeforeTheNextContactAndCancelExactly() {
++        // Original 1.26.60.5 callback 0x145dcf4e0, supplied at the installed entry-frame motion.
++        final float entering = Float.intBitsToFloat(0xBDA0902E);
++        assertEquals(0x3CB0F27C, Float.floatToRawIntBits(BedrockFluidPhysics.bubbleColumnY(entering, false, true)));
++        final float firstInside = BedrockFluidPhysics.bubbleColumnY(entering, false, false);
++        assertEquals(0x3D2A64C2, Float.floatToRawIntBits(BedrockFluidPhysics.bubbleColumnY(firstInside, false, false)));
++        assertEquals(0, Float.floatToRawIntBits(BedrockFluidPhysics.bubbleColumnY(-0.1F, false, true)));
++        assertEquals(0, Float.floatToRawIntBits(BedrockFluidPhysics.bubbleColumnY(-0.06F, false, false)));
++        assertEquals(0x3FE66666, Float.floatToRawIntBits(BedrockFluidPhysics.bubbleColumnY(1.75F, false, true)));
++        assertEquals(0x3F333333, Float.floatToRawIntBits(BedrockFluidPhysics.bubbleColumnY(0.69F, false, false)));
++        assertEquals(0xBF666666, Float.floatToRawIntBits(BedrockFluidPhysics.bubbleColumnY(-0.89F, true, true)));
++        assertEquals(0xBE99999A, Float.floatToRawIntBits(BedrockFluidPhysics.bubbleColumnY(-0.29F, true, false)));
 +    }
 +
 +    @Test
@@ -10010,6 +10209,54 @@ index 0000000000000000000000000000000000000000..f1350b70304681b5fbcbe76a3e474857
 +        assertEquals(Float.intBitsToFloat(x), motion.x);
 +        assertEquals(Float.intBitsToFloat(y), motion.y);
 +        assertEquals(Float.intBitsToFloat(z), motion.z);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockMovementPositionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockMovementPositionTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e8dce9b9995e5d7a8638e5c3333a07981ed93280
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockMovementPositionTest.java
+@@ -0,0 +1,42 @@
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockMovementPositionTest {
++    @Test
++    void advancesFloatBoundsBeforeExtractingThePosition() {
++        // Actual 1.26.60.5 MoveRequest replayed through ActorMove and FinalizeMove.
++        final var result = BedrockMovementPosition.advance(new AABB(0.3500019311904907, 65, 16.29897689819336,
++                0.949999988079071, 66.80000305175781, 16.89897346496582),
++                new Vec3(2.609897897798419E-8, 0, 0.1807233989238739));
++        assertEquals(new AABB(0.3500019609928131, 65, 16.479700088500977,
++                0.949999988079071, 66.80000305175781, 17.079696655273438), result.bounds());
++        assertEquals(new Vec3(0.6500009894371033, 65, 16.77969741821289), result.position());
++    }
++
++    @Test
++    void preservesTheNativeEndpointsWhenMovementReverses() {
++        final var result = BedrockMovementPosition.advance(new AABB(0.3500022888183594, 65, 19.253698348999023,
++                0.949999988079071, 66.80000305175781, 19.853694915771484),
++                new Vec3(-2.609897897798419E-8, 0, -0.1807233989238739));
++        assertEquals(new AABB(0.350002259016037, 65, 19.072975158691406,
++                0.949999988079071, 66.80000305175781, 19.672971725463867), result.bounds());
++        assertEquals(new Vec3(0.6500011086463928, 65, 19.372974395751953), result.position());
++        final var stationary = BedrockMovementPosition.advance(result.bounds(), Vec3.ZERO);
++        assertEquals(result, stationary, "A stationary move must keep the native box instead of rebuilding its dimensions");
++    }
++
++    @Test
++    void storesVerticalColumnDisplacementAsFloatBounds() {
++        final var result = BedrockMovementPosition.advance(new AABB(0.3500002920627594, 65.02159881591797, 2.602489948272705,
++                0.949999988079071, 66.82160186767578, 3.2024898529052734),
++                new Vec3(9.395632716291402E-9, 0.11228000372648239, 0.12944604456424713));
++        assertEquals(new AABB(0.3500002920627594, 65.13388061523438, 2.731935977935791,
++                0.949999988079071, 66.93388366699219, 3.3319358825683594), result.bounds());
++        assertEquals(65.13388061523438, result.position().y);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
