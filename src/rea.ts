@@ -336,24 +336,41 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
   return { directory: run, result: join(run, "result.json") };
 });
 
-export function validateReaCapture(value: unknown): { id: string; exitCode: number | null } {
+export function validateReaCapture(value: unknown): {
+  id: string;
+  exitCode: number | null;
+  signal: number | null;
+} {
   const capture = value as {
     evidence_id?: unknown;
     operation?: unknown;
     predicate_type?: unknown;
-    normalized_result?: { exit?: { code?: unknown }; cleanup?: { owned_process_group?: unknown } };
+    normalized_result?: {
+      exit?: { code?: unknown; signal?: unknown };
+      cleanup?: { owned_process_group?: unknown };
+    };
   } | null;
   const code = capture?.normalized_result?.exit?.code;
+  const signal = capture?.normalized_result?.exit?.signal ?? null;
   if (
     !capture ||
     typeof capture.evidence_id !== "string" ||
     capture.operation !== "capture_process_scenario" ||
     capture.predicate_type !== "rea.process-capture" ||
     capture.normalized_result?.cleanup?.owned_process_group !== "verified" ||
-    !(code === null || (typeof code === "number" && Number.isSafeInteger(code) && code >= 0))
+    !(code === null || (typeof code === "number" && Number.isSafeInteger(code) && code >= 0)) ||
+    !(
+      signal === null ||
+      (typeof signal === "number" && Number.isSafeInteger(signal) && signal >= 0)
+    )
   )
     throw new Error("REA did not return a complete process capture with verified owned cleanup");
-  return { id: capture.evidence_id, exitCode: code };
+  // REA can report code 0 together with a terminating signal. That is not a normal exit.
+  return {
+    id: capture.evidence_id,
+    exitCode: signal !== null && signal !== 0 ? null : code,
+    signal,
+  };
 }
 
 export const captureReaControl = Effect.fn("captureReaControl")(function* (options: {
@@ -411,7 +428,7 @@ export const captureReaControl = Effect.fn("captureReaControl")(function* (optio
         run,
         signal,
       );
-      let identity: { id: string; exitCode: number | null };
+      let identity: ReturnType<typeof validateReaCapture>;
       try {
         identity = validateReaCapture(evidence);
       } catch (cause) {

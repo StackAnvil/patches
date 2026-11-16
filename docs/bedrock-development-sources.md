@@ -54,37 +54,37 @@ Document the evidence and any remaining uncertainty in the patch commit body or 
 
 These links cover packet shape and protocol behavior. A versioned link is a snapshot. The release index can move as Mojang publishes builds.
 
-| Source | Use |
-| --- | --- |
-| [Latest protocol portal](https://mojang.github.io/bedrock-protocol-docs/) | Find the newest preview and its network protocol number. |
-| [1.26.60 metadata archive](https://github.com/Mojang/bedrock-protocol-docs/releases/download/v1.26.60/metadata.zip) | Read packet schemas and explicit enum values for protocol 2225. |
-| [Protocol changelog](https://mojang.github.io/bedrock-protocol-docs/changelog/) | Compare stable and preview builds; inspect **All builds** for preview changes. |
-| [Protocol schema releases](https://github.com/Mojang/bedrock-protocol-docs/releases) | Get versioned JSON schema archives and their protocol numbers. |
-| [Protocol docs repository](https://github.com/Mojang/bedrock-protocol-docs) | Inspect schema generation and guide sources. Its site is assembled from releases, not only `main`. |
-| [Player movement overview](https://mojang.github.io/bedrock-protocol-docs/guides/player-movement-overview/) | Understand input frames and movement authority. |
-| [Server-authoritative block breaking](https://mojang.github.io/bedrock-protocol-docs/guides/block-breaking-overview/) | Trace block actions, predictions, and server corrections. |
-| [Player UI container slots](https://mojang.github.io/bedrock-protocol-docs/guides/server-auth-inventory-player-ui-container/) | Map inventory slots and item stack requests. |
-| [SubChunk request system](https://mojang.github.io/bedrock-protocol-docs/guides/sub-chunk-request-system-v1-18-10/) | Understand chunk requests and cache behavior. |
-| [Client cache miss validation](https://mojang.github.io/bedrock-protocol-docs/guides/client-cache-miss-response-packet-validation/) | Check blob response rules and limits. |
-| [NetherNet signaling guide](https://mojang.github.io/bedrock-protocol-docs/guides/nether-net-onboarding-guide/) | Understand the signaling transport. Check build support before applying it. |
+| Source                                                                                                                              | Use                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| [Latest protocol portal](https://mojang.github.io/bedrock-protocol-docs/)                                                           | Find the newest preview and its network protocol number.                                           |
+| [1.26.60 metadata archive](https://github.com/Mojang/bedrock-protocol-docs/releases/download/v1.26.60/metadata.zip)                 | Read packet schemas and explicit enum values for protocol 2225.                                    |
+| [Protocol changelog](https://mojang.github.io/bedrock-protocol-docs/changelog/)                                                     | Compare stable and preview builds; inspect **All builds** for preview changes.                     |
+| [Protocol schema releases](https://github.com/Mojang/bedrock-protocol-docs/releases)                                                | Get versioned JSON schema archives and their protocol numbers.                                     |
+| [Protocol docs repository](https://github.com/Mojang/bedrock-protocol-docs)                                                         | Inspect schema generation and guide sources. Its site is assembled from releases, not only `main`. |
+| [Player movement overview](https://mojang.github.io/bedrock-protocol-docs/guides/player-movement-overview/)                         | Understand input frames and movement authority.                                                    |
+| [Server-authoritative block breaking](https://mojang.github.io/bedrock-protocol-docs/guides/block-breaking-overview/)               | Trace block actions, predictions, and server corrections.                                          |
+| [Player UI container slots](https://mojang.github.io/bedrock-protocol-docs/guides/server-auth-inventory-player-ui-container/)       | Map inventory slots and item stack requests.                                                       |
+| [SubChunk request system](https://mojang.github.io/bedrock-protocol-docs/guides/sub-chunk-request-system-v1-18-10/)                 | Understand chunk requests and cache behavior.                                                      |
+| [Client cache miss validation](https://mojang.github.io/bedrock-protocol-docs/guides/client-cache-miss-response-packet-validation/) | Check blob response rules and limits.                                                              |
+| [NetherNet signaling guide](https://mojang.github.io/bedrock-protocol-docs/guides/nether-net-onboarding-guide/)                     | Understand the signaling transport. Check build support before applying it.                        |
 
 ## ViaBedrock and StackAnvil implementation
 
 Read the local generated checkout before changing a patch. The links to `main` help locate upstream code, but the pinned base and applied patches determine this repository's behavior.
 
-| Source | Use |
-| --- | --- |
-| [ViaBedrock repository](https://github.com/ViaVersionAddons/ViaBedrock) | Start with its supported features and links to other protocol projects. |
-| [Protocol constants](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/data/ProtocolConstants.java) | Check the Bedrock game version, protocol number, and Java target. |
-| [Clientbound packet IDs](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java) | Find packet IDs that ViaBedrock receives. |
-| [Serverbound packet IDs](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/ServerboundBedrockPackets.java) | Find packet IDs that ViaBedrock sends. |
-| [Bedrock type registry](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java) | Locate codecs and their wire types. |
-| [Data asset sources](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/Data%20Asset%20Sources.md) | Trace each committed mapping, palette, and generated asset to its origin. |
-| [Data generator guide](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/generator/README.md) | Regenerate Bedrock and Java mapping inputs. |
-| [ViaFabricPlus Bedrock add-on](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | Check client integration, network hooks, rendering, and account UI. |
-| [ViaVersion](https://github.com/ViaVersion/ViaVersion) | Check the translation API and Java protocol mappings. |
-| [StackAnvil patch workflow](patch-workflow.md) | Edit the generated checkout and rebuild the patch series. |
-| [Native cooking action reference](native-cooking-actions.md) | Check verified cooking dispatch, source, quantity, and item-return behavior and its remaining limits. |
+| Source                                                                                                                                                          | Use                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [ViaBedrock repository](https://github.com/ViaVersionAddons/ViaBedrock)                                                                                         | Start with its supported features and links to other protocol projects.                               |
+| [Protocol constants](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/data/ProtocolConstants.java)        | Check the Bedrock game version, protocol number, and Java target.                                     |
+| [Clientbound packet IDs](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java) | Find packet IDs that ViaBedrock receives.                                                             |
+| [Serverbound packet IDs](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/ServerboundBedrockPackets.java) | Find packet IDs that ViaBedrock sends.                                                                |
+| [Bedrock type registry](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java)         | Locate codecs and their wire types.                                                                   |
+| [Data asset sources](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/Data%20Asset%20Sources.md)                                                        | Trace each committed mapping, palette, and generated asset to its origin.                             |
+| [Data generator guide](https://github.com/ViaVersionAddons/ViaBedrock/blob/main/generator/README.md)                                                            | Regenerate Bedrock and Java mapping inputs.                                                           |
+| [ViaFabricPlus Bedrock add-on](https://github.com/ViaVersionAddons/viafabricplus-bedrock)                                                                       | Check client integration, network hooks, rendering, and account UI.                                   |
+| [ViaVersion](https://github.com/ViaVersion/ViaVersion)                                                                                                          | Check the translation API and Java protocol mappings.                                                 |
+| [StackAnvil patch workflow](patch-workflow.md)                                                                                                                  | Edit the generated checkout and rebuild the patch series.                                             |
+| [Native cooking action reference](native-cooking-actions.md)                                                                                                    | Check verified cooking dispatch, source, quantity, and item-return behavior and its remaining limits. |
 
 For a specific feature, search the local `protocol/packet`, `protocol/types`, and `protocol/data` directories. For maps, skins, login, and resource packs, start with `MapPackets`, `SkinType`, `LoginPackets`, and `ResourcePackPackets`. Some of these files are StackAnvil patches and do not exist on upstream `main`.
 
@@ -132,6 +132,8 @@ The shared [PE reader](../native/rea-controls/pe.py) and [emulation loader](../n
 The installation records the interpreter and package paths in that environment's `environment.json`.
 Run a repository Python fixture with `bun run rea control --script .stackanvil/research/your-control.py`.
 REA captures the process with a maximum duration of 60 seconds and retains its exit status and cleanup evidence.
+A signal-terminated control reports `exitCode: null` and its numeric `signal`, and the CLI fails even if REA supplies code 0.
+The original Evidence keeps REA's exit fields unchanged.
 Keep target-specific fixtures, binaries and results private. A supplied emulation fixture does not establish game admission or visible parity.
 
 To use the shared helpers from a fixture, add their repository directory to the Python import path:
@@ -155,31 +157,31 @@ Use REA for disassembly and decompilation. The PE helpers provide bytes and cand
 
 Use these to compare behavior and identify gaps. Match each project's supported protocol before borrowing a packet layout or enum value.
 
-| Source | Use |
-| --- | --- |
-| [Cloudburst Protocol](https://github.com/CloudburstMC/Protocol) | Compare Java packet models, serializers, and codecs. |
-| [Cloudburst Network](https://github.com/CloudburstMC/Network) | Compare RakNet and Bedrock network handling. |
-| [Geyser](https://github.com/GeyserMC/Geyser) | Compare Bedrock-to-Java translation and data mappings. Its direction differs from ViaBedrock. |
-| [gophertunnel](https://github.com/Sandertv/gophertunnel) | Compare Go packet models, login, and proxy behavior. |
-| [PrismarineJS bedrock-protocol](https://github.com/PrismarineJS/bedrock-protocol) | Compare JavaScript codecs, authentication, and transport behavior. |
-| [PrismarineJS minecraft-data](https://github.com/PrismarineJS/minecraft-data/blob/master/doc/bedrock.md) | Inspect versioned protocol schemas and Bedrock data provenance. |
-| [PMMP BedrockProtocol](https://github.com/pmmp/BedrockProtocol) | Historical cross-check only; PMMP's organization is archived. |
+| Source                                                                                                   | Use                                                                                           |
+| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [Cloudburst Protocol](https://github.com/CloudburstMC/Protocol)                                          | Compare Java packet models, serializers, and codecs.                                          |
+| [Cloudburst Network](https://github.com/CloudburstMC/Network)                                            | Compare RakNet and Bedrock network handling.                                                  |
+| [Geyser](https://github.com/GeyserMC/Geyser)                                                             | Compare Bedrock-to-Java translation and data mappings. Its direction differs from ViaBedrock. |
+| [gophertunnel](https://github.com/Sandertv/gophertunnel)                                                 | Compare Go packet models, login, and proxy behavior.                                          |
+| [PrismarineJS bedrock-protocol](https://github.com/PrismarineJS/bedrock-protocol)                        | Compare JavaScript codecs, authentication, and transport behavior.                            |
+| [PrismarineJS minecraft-data](https://github.com/PrismarineJS/minecraft-data/blob/master/doc/bedrock.md) | Inspect versioned protocol schemas and Bedrock data provenance.                               |
+| [PMMP BedrockProtocol](https://github.com/pmmp/BedrockProtocol)                                          | Historical cross-check only; PMMP's organization is archived.                                 |
 
 ## Assets, add-ons, and world data
 
 These sources describe game content and conversion data. They do not establish network enum values.
 
-| Source | Use |
-| --- | --- |
-| [Mojang Bedrock samples preview branch](https://github.com/Mojang/bedrock-samples/tree/preview) | Inspect current preview resource packs, behavior packs, entities, and schemas. |
-| [Minecraft Creator reference, experimental view](https://learn.microsoft.com/en-us/minecraft/creator/?view=minecraft-bedrock-experimental) | Read creator-facing behavior and component documentation. |
-| [bedrock.dev](https://bedrock.dev/) | Browse versioned add-on schemas and client content. |
-| [Bedrock Wiki](https://wiki.bedrock.dev/) | Get community explanations for resource packs, entities, and server concepts. |
-| [Cloudburst Data](https://github.com/CloudburstMC/Data) | Trace Bedrock palettes, biomes, and runtime item data used by other projects. |
-| [PMMP BedrockData](https://github.com/pmmp/BedrockData) | Compare generated game data; check its age before use. |
-| [Bedrock block upgrade schema](https://github.com/opencollab-incubator/BedrockBlockUpgradeSchema) | Handle old block states and world data. |
-| [Bedrock item upgrade schema](https://github.com/opencollab-incubator/BedrockItemUpgradeSchema) | Handle old saved item data. |
-| [CubeConverter](https://github.com/oryxel1/CubeConverter) | Check resource-pack geometry conversion used by the StackAnvil build. |
+| Source                                                                                                                                     | Use                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| [Mojang Bedrock samples preview branch](https://github.com/Mojang/bedrock-samples/tree/preview)                                            | Inspect current preview resource packs, behavior packs, entities, and schemas. |
+| [Minecraft Creator reference, experimental view](https://learn.microsoft.com/en-us/minecraft/creator/?view=minecraft-bedrock-experimental) | Read creator-facing behavior and component documentation.                      |
+| [bedrock.dev](https://bedrock.dev/)                                                                                                        | Browse versioned add-on schemas and client content.                            |
+| [Bedrock Wiki](https://wiki.bedrock.dev/)                                                                                                  | Get community explanations for resource packs, entities, and server concepts.  |
+| [Cloudburst Data](https://github.com/CloudburstMC/Data)                                                                                    | Trace Bedrock palettes, biomes, and runtime item data used by other projects.  |
+| [PMMP BedrockData](https://github.com/pmmp/BedrockData)                                                                                    | Compare generated game data; check its age before use.                         |
+| [Bedrock block upgrade schema](https://github.com/opencollab-incubator/BedrockBlockUpgradeSchema)                                          | Handle old block states and world data.                                        |
+| [Bedrock item upgrade schema](https://github.com/opencollab-incubator/BedrockItemUpgradeSchema)                                            | Handle old saved item data.                                                    |
+| [CubeConverter](https://github.com/oryxel1/CubeConverter)                                                                                  | Check resource-pack geometry conversion used by the StackAnvil build.          |
 
 ## Reproduce behavior
 
