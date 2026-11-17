@@ -30,25 +30,25 @@ Resetting a dead player's health through the Script API can prevent BDS from com
 
 ## What each case checks
 
-| Case | Java action | Bedrock result |
-| --- | --- | --- |
-| `movement-left`, `movement-right` | Hold A or D | The player moves at least 0.6 blocks in the requested local direction. |
-| `block-break`, `block-place` | Break or place a block | The target block has the expected type and the placed item count changes. |
-| `drop-item`, `inventory-script-slot` | Drop one emerald | The server inventory count decreases by one, including when the pack sets the slot through Script API. |
-| `chest-transfer` | Move emeralds from a chest into the hotbar | The chest is empty and the player has four emeralds. |
+| Case                                                   | Java action                                                                                             | Bedrock result                                                                                                                   |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `movement-left`, `movement-right`                      | Hold A or D                                                                                             | The player moves at least 0.6 blocks in the requested local direction.                                                           |
+| `block-break`, `block-place`                           | Break or place a block                                                                                  | The target block has the expected type and the placed item count changes.                                                        |
+| `drop-item`, `inventory-script-slot`                   | Drop one emerald                                                                                        | The server inventory count decreases by one, including when the pack sets the slot through Script API.                           |
+| `chest-transfer`                                       | Move emeralds from a chest into the hotbar                                                              | The chest is empty and the player has four emeralds.                                                                             |
 | `chest-authored-one-empty`, `chest-authored-one-merge` | Place and open the named probe chest, click an omitted slot, then activate its authored count-one slot. | Three source emeralds and both hidden diamonds remain. Exactly one emerald reaches the empty hotbar cell or merges into slot 15. |
-| `lab-table-then-chest` | Use a lab table, then transfer emeralds from a nearby chest | The chest opens while the lab table remains in place, and the emeralds reach the player. |
-| `chest-boat-transfer`, `chest-minecart-transfer` | Open vehicle storage and shift-click emeralds | The vehicle storage is empty and the player has four emeralds. |
-| `creative-select` | Search for a nether star and place it in the hotbar | The server sees a nether star in the player inventory. |
-| `creative-replace` | Replace an emerald in the first hotbar slot with a nether star | The server sees the nether star in that slot. |
-| `equip-helmet`, `equip-offhand`, `eat-golden-apple` | Use or swap the held item | The equipment slot or effect state changes. |
-| `offhand-block-place` | Right-click with dirt in the offhand and an empty main hand | Both dirt blocks remain in the offhand and no dirt block appears, matching native Bedrock. |
-| `offhand-elytra-rocket` | Glide and right-click with offhand rockets | Glide and movement samples exist, and all three offhand rockets remain unused. |
-| `mainhand-elytra-rocket` | Glide and use a mainhand rocket | A rocket is consumed during glide and horizontal speed increases. |
-| `entity-attack`, `entity-name` | Hit or name a cow | The cow loses health or has the expected name. |
-| `map-hold` | Use an empty map | The held item becomes a filled map. The runner saves a Java screenshot for visual review. |
-| `command-time`, `command-completion`, `command-denied` | Submit `/time set day`, including Tab completion | Time changes for an allowed player and stays at night for a denied player. |
-| `respawn`, `dimension-change` | The pack kills or moves the player | The server reports a respawn or a change to the Nether while Java remains connected. |
+| `lab-table-then-chest`                                 | Use a lab table, then transfer emeralds from a nearby chest                                             | The chest opens while the lab table remains in place, and the emeralds reach the player.                                         |
+| `chest-boat-transfer`, `chest-minecart-transfer`       | Open vehicle storage and shift-click emeralds                                                           | The vehicle storage is empty and the player has four emeralds.                                                                   |
+| `creative-select`                                      | Search for a nether star and place it in the hotbar                                                     | The server sees a nether star in the player inventory.                                                                           |
+| `creative-replace`                                     | Replace an emerald in the first hotbar slot with a nether star                                          | The server sees the nether star in that slot.                                                                                    |
+| `equip-helmet`, `equip-offhand`, `eat-golden-apple`    | Use or swap the held item                                                                               | The equipment slot or effect state changes.                                                                                      |
+| `offhand-block-place`                                  | Right-click with dirt in the offhand and an empty main hand                                             | Both dirt blocks remain in the offhand and no dirt block appears, matching native Bedrock.                                       |
+| `offhand-elytra-rocket`                                | Glide and right-click with offhand rockets                                                              | Glide and movement samples exist, and all three offhand rockets remain unused.                                                   |
+| `mainhand-elytra-rocket`                               | Glide and use a mainhand rocket                                                                         | A rocket is consumed during glide and horizontal speed increases.                                                                |
+| `entity-attack`, `entity-name`                         | Hit or name a cow                                                                                       | The cow loses health or has the expected name.                                                                                   |
+| `map-hold`                                             | Use an empty map                                                                                        | The held item becomes a filled map. The runner saves a Java screenshot for visual review.                                        |
+| `command-time`, `command-completion`, `command-denied` | Submit `/time set day`, including Tab completion                                                        | Time changes for an allowed player and stays at night for a denied player.                                                       |
+| `respawn`, `dimension-change`                          | The pack kills or moves the player                                                                      | The server reports a respawn or a change to the Nether while Java remains connected.                                             |
 
 The runner saves before and after screenshots, logs, and `gameplay-results.json` under `.stackanvil/integration/runs/`. It records each failure and continues through the remaining cases while both game processes are alive. The screenshots for maps, equipment, naming, and creative selection support visual review. The block and inventory cases check server state after Java input. The entity sweeps still need packet or client state inspection to prove that a specific translated Java entity update arrived.
 
@@ -65,40 +65,40 @@ bun run test:integration -- --route java-bedrock --gameplay-complex
 You can combine `--gameplay-complex` with `--gameplay-probe` or select individual IDs with `--gameplay-cases`.
 The Java/Geyser probe does not implement these new fixtures; the runner rejects that route before starting servers.
 
-| Case | Java action | Server assertion |
-| --- | --- | --- |
-| `bow-release` | Hold use, then release | Ordered start/release events, one moving owned arrow, and one consumed arrow. |
-| `bow-cancel` | Change hotbar slot while drawing | Charging started, no arrow spawned, and ammunition remained unchanged. |
-| `bow-no-ammo` | Attempt to draw without arrows | No projectile or ammunition change. Compare with `bow-release` to detect missing input handling. |
-| `crossbow-load` | Charge without firing | Start/completion events, one consumed arrow, and no projectile. |
-| `crossbow-fire` | Load, release, then use again | A completed load precedes one owned arrow, with one arrow consumed in total. |
-| `crossbow-retain` | Load, switch away and back, then fire | Server slot samples witness the round trip between completion and the shot. |
-| `splash-potion-throw`, `lingering-potion-throw` | Throw the default potion | A use event, one matching owned projectile, and one consumed potion. |
-| `powder-snow-sink` | Remain on powder snow without boots | At least ten samples and descent into the snow. |
-| `powder-snow-boots` | Remain on powder snow with leather boots | At least ten samples and no descent through the surface. |
-| `water-forward` | Hold forward while submerged | At least ten water samples and 0.6 blocks of forward travel. |
-| `creative-flight-ascend` | Toggle flight and hold jump | At least ten flight samples and ascent above one block. |
-| `bow-short-release` | Release after a short draw | One consumed arrow and an owned projectile after a draw of at most twelve server ticks. |
-| `bow-water-release` | Draw and release while submerged | A valid shot and at least ten water samples during use. |
-| `bow-hit`, `crossbow-hit` | Fire at a stationary cow | The owned arrow hits the fixture target, causes damage, and lowers its health. |
-| `crossbow-cancel` | Change slot during loading | A witnessed slot change, no completed load, no projectile, and unchanged ammunition. |
-| `crossbow-no-ammo` | Attempt to load without arrows | No projectile or ammunition change. Compare with the positive loading case. |
-| `bow-infinity` | Draw and release an Infinity bow with arrows | One owned arrow, ordered charging events, and no ammunition consumption. |
-| `bow-infinity-no-ammo` | Attempt to draw an Infinity bow without arrows | No projectile or ammunition change. |
-| `crossbow-multishot` | Load and fire a Multishot crossbow | Three distinct owned arrows in one volley, after completion, with one arrow consumed. |
-| `crossbow-quick-charge-1`, `crossbow-quick-charge-2`, `crossbow-quick-charge-3` | Load and fire each Quick Charge level | One consumed arrow and one owned shot, with completion inside the target BDS timing window. |
-| `crossbow-piercing-0`, `crossbow-piercing-1`, `crossbow-piercing-4` | Fire one crossbow arrow through a stationary target chain | The same arrow damages one, two, or five targets in order. The next target remains untouched. |
-| `bow-knockback-release`, `crossbow-knockback-fire` | Charge through a scripted knockback, then release or fire | Airborne displacement occurs during charging, followed by one owned shot and one consumed arrow. |
-| `bow-knockback-cancel`, `crossbow-knockback-cancel` | Change slot after knockback during charging | Airborne displacement precedes cancellation, with no projectile and unchanged ammunition. |
-| `bow-server-slot-use`, `crossbow-server-slot-use` | Let the server select snowballs during charging, then use the selected stack | Charging cancels without spending an arrow; the new stack loses one snowball and launches one owned projectile. |
-| `splash-potion-speed` | Throw a swiftness potion downward | One consumed potion, its owned impact, and a later speed effect with positive duration. |
-| `lingering-potion-slowness` | Throw a lingering slowness potion downward | The matching impact, a nearby cloud, and a later slowness effect. |
-| `fireball-hit`, `small-fireball-hit` | Remain in the firing lane | A natural ghast or blaze shot hits the player and causes health loss. |
-| `fireball-dodge`, `small-fireball-dodge` | Move aside after launch | Player samples show sideways movement before the shot passes the original position, without contact or damage. |
-| `fireball-reflect` | Attack after launch | The player's attack changes projectile ownership and reverses its motion without player damage. |
-| `water-current` | Remain idle in flowing water | At least ten flowing-water samples and downstream displacement. |
-| `lava-forward` | Hold forward with fire resistance | At least ten lava samples and forward displacement. |
-| `bubble-column-up`, `bubble-column-down` | Remain idle above soul sand or magma | At least ten bubble-column samples and displacement in the column's direction. |
+| Case                                                                            | Java action                                                                  | Server assertion                                                                                                |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `bow-release`                                                                   | Hold use, then release                                                       | Ordered start/release events, one moving owned arrow, and one consumed arrow.                                   |
+| `bow-cancel`                                                                    | Change hotbar slot while drawing                                             | Charging started, no arrow spawned, and ammunition remained unchanged.                                          |
+| `bow-no-ammo`                                                                   | Attempt to draw without arrows                                               | No projectile or ammunition change. Compare with `bow-release` to detect missing input handling.                |
+| `crossbow-load`                                                                 | Charge without firing                                                        | Start/completion events, one consumed arrow, and no projectile.                                                 |
+| `crossbow-fire`                                                                 | Load, release, then use again                                                | A completed load precedes one owned arrow, with one arrow consumed in total.                                    |
+| `crossbow-retain`                                                               | Load, switch away and back, then fire                                        | Server slot samples witness the round trip between completion and the shot.                                     |
+| `splash-potion-throw`, `lingering-potion-throw`                                 | Throw the default potion                                                     | A use event, one matching owned projectile, and one consumed potion.                                            |
+| `powder-snow-sink`                                                              | Remain on powder snow without boots                                          | At least ten samples and descent into the snow.                                                                 |
+| `powder-snow-boots`                                                             | Remain on powder snow with leather boots                                     | At least ten samples and no descent through the surface.                                                        |
+| `water-forward`                                                                 | Hold forward while submerged                                                 | At least ten water samples and 0.6 blocks of forward travel.                                                    |
+| `creative-flight-ascend`                                                        | Toggle flight and hold jump                                                  | At least ten flight samples and ascent above one block.                                                         |
+| `bow-short-release`                                                             | Release after a short draw                                                   | One consumed arrow and an owned projectile after a draw of at most twelve server ticks.                         |
+| `bow-water-release`                                                             | Draw and release while submerged                                             | A valid shot and at least ten water samples during use.                                                         |
+| `bow-hit`, `crossbow-hit`                                                       | Fire at a stationary cow                                                     | The owned arrow hits the fixture target, causes damage, and lowers its health.                                  |
+| `crossbow-cancel`                                                               | Change slot during loading                                                   | A witnessed slot change, no completed load, no projectile, and unchanged ammunition.                            |
+| `crossbow-no-ammo`                                                              | Attempt to load without arrows                                               | No projectile or ammunition change. Compare with the positive loading case.                                     |
+| `bow-infinity`                                                                  | Draw and release an Infinity bow with arrows                                 | One owned arrow, ordered charging events, and no ammunition consumption.                                        |
+| `bow-infinity-no-ammo`                                                          | Attempt to draw an Infinity bow without arrows                               | No projectile or ammunition change.                                                                             |
+| `crossbow-multishot`                                                            | Load and fire a Multishot crossbow                                           | Three distinct owned arrows in one volley, after completion, with one arrow consumed.                           |
+| `crossbow-quick-charge-1`, `crossbow-quick-charge-2`, `crossbow-quick-charge-3` | Load and fire each Quick Charge level                                        | One consumed arrow and one owned shot, with completion inside the target BDS timing window.                     |
+| `crossbow-piercing-0`, `crossbow-piercing-1`, `crossbow-piercing-4`             | Fire one crossbow arrow through a stationary target chain                    | The same arrow damages one, two, or five targets in order. The next target remains untouched.                   |
+| `bow-knockback-release`, `crossbow-knockback-fire`                              | Charge through a scripted knockback, then release or fire                    | Airborne displacement occurs during charging, followed by one owned shot and one consumed arrow.                |
+| `bow-knockback-cancel`, `crossbow-knockback-cancel`                             | Change slot after knockback during charging                                  | Airborne displacement precedes cancellation, with no projectile and unchanged ammunition.                       |
+| `bow-server-slot-use`, `crossbow-server-slot-use`                               | Let the server select snowballs during charging, then use the selected stack | Charging cancels without spending an arrow; the new stack loses one snowball and launches one owned projectile. |
+| `splash-potion-speed`                                                           | Throw a swiftness potion downward                                            | One consumed potion, its owned impact, and a later speed effect with positive duration.                         |
+| `lingering-potion-slowness`                                                     | Throw a lingering slowness potion downward                                   | The matching impact, a nearby cloud, and a later slowness effect.                                               |
+| `fireball-hit`, `small-fireball-hit`                                            | Remain in the firing lane                                                    | A natural ghast or blaze shot hits the player and causes health loss.                                           |
+| `fireball-dodge`, `small-fireball-dodge`                                        | Move aside after launch                                                      | Player samples show sideways movement before the shot passes the original position, without contact or damage.  |
+| `fireball-reflect`                                                              | Attack after launch                                                          | The player's attack changes projectile ownership and reverses its motion without player damage.                 |
+| `water-current`                                                                 | Remain idle in flowing water                                                 | At least ten flowing-water samples and downstream displacement.                                                 |
+| `lava-forward`                                                                  | Hold forward with fire resistance                                            | At least ten lava samples and forward displacement.                                                             |
+| `bubble-column-up`, `bubble-column-down`                                        | Remain idle above soul sand or magma                                         | At least ten bubble-column samples and displacement in the column's direction.                                  |
 
 Ranged observations include event ticks, remaining use duration, ammunition counts, projectile IDs, and sampled projectile speed.
 Incoming-shot observations also retain player positions and velocities after launch.
@@ -169,32 +169,9 @@ The pack can change world state and read server state. It cannot manufacture an 
 
 The game integration suite needs signed-in clients and a private Xvfb display. Hosted CI runs the TypeScript tests and build, but it does not run account-based game joins. Keep screenshots, packet traces, credentials, and raw traffic under the ignored `.stackanvil/` directory.
 
-## Geyser on a Java server
+## Geyser fixtures
 
-The [Java probe](../test-packs/java-probe/README.md) runs the same gameplay contract on Paper through Geyser:
+The pinned Geyser fixture does not provide NetherNet. The integration runner rejects the `java-geyser` route before starting servers.
+Use the `java-bedrock` route for live gameplay tests. StackAnvil does not restore legacy transport support for fixtures.
 
-```text
-Java client → ViaBedrock → Geyser → Paper
-```
-
-Run the portable gameplay cases, custom content cases, and negative controls:
-
-```bash
-bun run test:geyser
-```
-
-This route creates a fresh Paper world and starts Geyser and ViaProxy on local ports. It does not start a Bedrock server. The client uses the existing private display and zero-volume defaults.
-
-Use `--plain-only` to omit the modpack join. If StackAnvil artifacts are already built, add `--reuse-build`. Select specific cases with the integration runner:
-
-```bash
-bun run test:integration -- --route java-geyser --gameplay-cases chest-transfer,custom-entity-interact,complex-world --negative-controls --plain-only
-```
-
-The Java plugin implements `vbprobe:prepare`, `vbprobe:start`, and `vbprobe:verify` under the `scriptevent` command. Both backends report the same JSON format and reuse the Java input driver. The Java backend excludes `lab-table-then-chest`, which requires a Bedrock-only block. Bedrock named-event sweeps and the BDS cache probe also remain specific to the Bedrock backend.
-
-Negative controls corrupt a fixture after successful client input. Verification must report `fail`; a command error, timeout, or unexpected pass fails the control. The runner saves the control result with the gameplay results.
-
-The runner checks server state, Geyser entity updates, converted textures and models, and Java resource pack loading. Screenshots support visual review of models, animation, textures, and passengers. These checks do not prove pixel accuracy or every translated packet.
-
-The runner records a disconnect as a failure and marks the remaining cases as skipped. Geyser custom cases run before the portable gameplay sweep. This preserves their results if a later gameplay action closes the connection. CI compiles the Java plugin and extension, but account-based game joins remain local tests.
+The [Java probe](../test-packs/java-probe/README.md) remains available for compilation and offline fixture checks.

@@ -16,7 +16,7 @@ Raw traffic, account identifiers, and screenshots remain private.
 
 ## Verification
 
-- Apply the recorded [transport build prerequisite](0079-finish-transport-initiated-raknet-disconnects.pr.md) first. It supplies the Cloudburst repository. This patch declares its NetherNet compile dependency explicitly.
+- This patch declares its Cloudburst repository and NetherNet compile dependency. Local test prerequisites stay outside the production PR.
 - Loopback tests cover plaintext TLS rejection, empty capability responses, SDP delivery, unsupported endpoints, and invalid answers.
 - Core Checkstyle passes.
 - A native client joins strict BDS and retains the connection through walking and jumping.

@@ -853,13 +853,12 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
           "net.pistonmaster.stackanvil.replay.ReplayServer",
           recording,
           String(replayPort),
-          ...(client === "addon" ? [] : ["--nethernet"]),
         ],
         directory,
         log,
       );
       await ready(child, log, /StackAnvil replay ready/);
-      target = `${client === "native" ? "nethernet://" : ""}127.0.0.1:${replayPort}`;
+      target = `nethernet://127.0.0.1:${replayPort}`;
     }
     const bind = client === "addon" ? undefined : await port();
     const proxyLog = join(directory, "proxy.log");
@@ -894,8 +893,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       );
       await ready(child, proxyLog, /ViaProxy started successfully/);
     } else if (client === "native") {
-      const netherNet = target!.startsWith("nethernet://");
-      const destination = netherNet ? target!.slice("nethernet://".length) : target!;
+      const destination = viaProxyTarget(target!);
       const separator = destination.lastIndexOf(":");
       const account =
         mode === "replay" || (input === "local" && !option("--account"))
@@ -915,7 +913,6 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
           destination.slice(0, separator),
           destination.slice(separator + 1),
           account,
-          ...(netherNet ? ["--nethernet"] : []),
           ...(nativeIceAddress ? ["--ice-address", nativeIceAddress] : []),
         ],
         directory,

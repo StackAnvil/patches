@@ -187,10 +187,10 @@ Keep this file private because its positions can reveal world activity.
 
 ## Validate recorded joins
 
-Use `server-replay record local --target 127.0.0.1:port --client proxy` for a local RakNet server.
-For an owned BDS with NetherNet, use `--target nethernet://127.0.0.1:port`.
+Use `server-replay record local --target 127.0.0.1:port --client proxy` for a local HTTP NetherNet server.
+The explicit `nethernet://127.0.0.1:port` form selects the same transport.
 Named server recordings use their configured address and reject `--target`.
-The native recorder accepts RakNet and NetherNet backend targets.
+The native recorder accepts NetherNet backend targets.
 It exposes a loopback NetherNet endpoint to the native client and records the decoded backend packets.
 Check the server's startup log before choosing a backend transport.
 It uses the recording account for the NetherNet session and keeps authentication data private.

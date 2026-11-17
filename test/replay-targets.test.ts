@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { hiveTarget, publicTarget, viaProxyTarget } from "../src/replay/targets.ts";
 
-test("accepts catalog endpoints and keeps their transport", () => {
-  expect(publicTarget("20.101.55.176:30787")).toBe("20.101.55.176:30787");
-  expect(publicTarget("play.enchanted.gg:19132")).toBe("play.enchanted.gg:19132");
+test("routes ordinary and explicit socket endpoints through HTTP NetherNet", () => {
+  expect(publicTarget("20.101.55.176:30787")).toBe("nethernet://20.101.55.176:30787");
+  expect(publicTarget("play.enchanted.gg:19132")).toBe("nethernet://play.enchanted.gg:19132");
   expect(publicTarget("nethernet://example.org:443")).toBe("nethernet://example.org:443");
-  expect(publicTarget("[::1]:19132")).toBe("[::1]:19132");
+  expect(publicTarget("[::1]:19132")).toBe("nethernet://[::1]:19132");
   for (const address of [
     undefined,
     "",
@@ -14,6 +14,7 @@ test("accepts catalog endpoints and keeps their transport", () => {
     "example.org:65536",
     "user:secret@example.org:19132",
     "https://example.org:443",
+    "raknet://example.org:19132",
     "example.org:19132/path",
     "example.org:19132?token=secret",
     "example.org:19132#fragment",

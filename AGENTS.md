@@ -54,6 +54,9 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 
 ## Repository work
 
+- Keep StackAnvil integrations NetherNet-only. Never reintroduce RakNet connections, discovery, status queries, capture, replay, or fallbacks.
+- Preserve upstream RakNet classes and unchanged compatibility copies. Submit changes to upstream RakNet code through an upstream PR.
+- Route ordinary Bedrock `host[:port]` addresses through HTTP NetherNet. Use NetherNet for LAN discovery, capture, replay, and test fixtures.
 - Use `net.pistonmaster.stackanvil` for StackAnvil-owned Java packages. Preserve each upstream project's package names in upstream patches. Never introduce `com.enderdash` packages.
 - Use Bun, TypeScript, and Effect for the stack tooling. Keep the command behavior clear from the CLI and avoid shell-specific behavior.
 - Use Conventional Commit messages in the form `<type>(<scope>): <description>`. Add a body for non-trivial changes. Do not bypass Git hooks or Lefthook.

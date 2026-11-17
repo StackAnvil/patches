@@ -1094,10 +1094,10 @@ index 0000000000000000000000000000000000000000..50ab35b361fd0f6743a0260b0720cd0b
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatus.java b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatus.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..8a21c6247bc4529e7ea9987ed6e8f8729a919eca
+index 0000000000000000000000000000000000000000..b1c821fb766e3202e48f3a663a76c52399a2967e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatus.java
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,70 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2023-2026 ViaVersion and contributors
@@ -1106,27 +1106,22 @@ index 0000000000000000000000000000000000000000..8a21c6247bc4529e7ea9987ed6e8f872
 +
 +package com.viaversion.viafabricplus.bedrock.servers;
 +
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
 +import java.io.IOException;
-+import java.net.DatagramPacket;
-+import java.net.DatagramSocket;
-+import java.net.InetAddress;
-+import java.net.SocketTimeoutException;
-+import java.nio.ByteBuffer;
-+import java.nio.ByteOrder;
-+import java.nio.charset.StandardCharsets;
-+import java.util.Arrays;
-+import java.util.Comparator;
++import java.net.URI;
++import java.net.http.HttpClient;
++import java.net.http.HttpRequest;
++import java.net.http.HttpResponse;
++import java.time.Duration;
 +import java.util.concurrent.CompletableFuture;
-+import java.util.concurrent.ThreadLocalRandom;
 +import org.jetbrains.annotations.Nullable;
 +
-+/** Reads live player counts and latency using RakNet's unconnected ping. */
++/** Reads optional server metadata through HTTP NetherNet signaling. */
 +public final class BedrockServerStatus {
 +
-+    private static final byte[] MAGIC = {0x00, (byte) 0xFF, (byte) 0xFF, 0x00,
-+        (byte) 0xFE, (byte) 0xFE, (byte) 0xFE, (byte) 0xFE,
-+        (byte) 0xFD, (byte) 0xFD, (byte) 0xFD, (byte) 0xFD, 0x12, 0x34, 0x56, 0x78};
-+    private static final int TIMEOUT_MILLIS = 1200;
++    private static final Duration TIMEOUT = Duration.ofMillis(1200);
++    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
 +
 +    private BedrockServerStatus() {
 +    }
@@ -1135,78 +1130,37 @@ index 0000000000000000000000000000000000000000..8a21c6247bc4529e7ea9987ed6e8f872
 +        if (!server.hasAddress()) {
 +            return CompletableFuture.completedFuture(null);
 +        }
-+        return CompletableFuture.supplyAsync(() -> {
-+            try {
-+                final InetAddress[] addresses = InetAddress.getAllByName(server.host());
-+                // Prefer IPv4 for the common Bedrock server addresses, but use IPv6 when that is all DNS returns.
-+                Arrays.sort(addresses, Comparator.comparingInt(address -> address.getAddress().length));
-+                for (final InetAddress address : addresses) {
-+                    try {
-+                        return query(address, server.port());
-+                    } catch (IOException ignored) {
-+                        // The next address can still answer.
-+                    }
-+                }
-+            } catch (IOException ignored) {
-+                // A catalog entry can be unavailable without failing the list.
++        final URI uri;
++        try {
++            uri = new URI("http", null, server.host(), server.port(), "/v1/join", null, null);
++        } catch (Exception exception) {
++            return CompletableFuture.completedFuture(null);
++        }
++        final long start = System.nanoTime();
++        final HttpRequest request = HttpRequest.newBuilder(uri).timeout(TIMEOUT).GET().build();
++        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString()).handle((response, error) -> {
++            if (error != null || response.statusCode() / 100 != 2 || response.body().isBlank()) {
++                return null;
 +            }
-+            return null;
++            try {
++                return parse(response.body(), (System.nanoTime() - start) / 1_000_000L);
++            } catch (IOException exception) {
++                return null;
++            }
 +        });
 +    }
 +
-+    private static Status query(final InetAddress address, final int port) throws IOException {
-+        final byte[] ping = ByteBuffer.allocate(1 + Long.BYTES + MAGIC.length + Long.BYTES)
-+            .order(ByteOrder.BIG_ENDIAN)
-+            .put((byte) 0x01)
-+            .putLong(System.currentTimeMillis())
-+            .put(MAGIC)
-+            .putLong(ThreadLocalRandom.current().nextLong())
-+            .array();
-+        try (DatagramSocket socket = new DatagramSocket()) {
-+            socket.setSoTimeout(TIMEOUT_MILLIS);
-+            socket.connect(address, port);
-+            final long start = System.nanoTime();
-+            socket.send(new DatagramPacket(ping, ping.length));
-+            final byte[] bytes = new byte[2048];
-+            final DatagramPacket reply = new DatagramPacket(bytes, bytes.length);
-+            socket.receive(reply);
-+            final long latency = (System.nanoTime() - start) / 1_000_000L;
-+            return parse(bytes, reply.getLength(), latency);
-+        } catch (SocketTimeoutException exception) {
-+            throw new IOException("Bedrock server did not answer its status ping", exception);
-+        }
-+    }
-+
-+    static Status parse(final byte[] bytes, final int length, final long latency) throws IOException {
-+        if (length < 35) {
-+            throw new IOException("Bedrock server sent a short status response");
-+        }
-+        final ByteBuffer reply = ByteBuffer.wrap(bytes, 0, length).order(ByteOrder.BIG_ENDIAN);
-+        if (reply.get() != 0x1C) {
-+            throw new IOException("Bedrock server sent an unexpected status response");
-+        }
-+        reply.getLong(); // Timestamp echoed by the server.
-+        reply.getLong(); // Server GUID.
-+        final byte[] magic = new byte[MAGIC.length];
-+        reply.get(magic);
-+        if (!Arrays.equals(magic, MAGIC)) {
-+            throw new IOException("Bedrock server status has invalid RakNet magic");
-+        }
-+        final int size = Short.toUnsignedInt(reply.getShort());
-+        if (size > reply.remaining()) {
-+            throw new IOException("Bedrock server status has an invalid message length");
-+        }
-+        final byte[] message = new byte[size];
-+        reply.get(message);
-+        final String[] fields = new String(message, StandardCharsets.UTF_8).split(";", -1);
-+        if (fields.length < 6 || !"MCPE".equals(fields[0])) {
-+            throw new IOException("Bedrock server status has an invalid MOTD");
-+        }
++    static Status parse(final String body, final long latency) throws IOException {
 +        try {
-+            return new Status(Math.max(0, Integer.parseInt(fields[4])), Math.max(0, Integer.parseInt(fields[5])),
-+                latency, fields[1], fields[3]);
-+        } catch (NumberFormatException exception) {
-+            throw new IOException("Bedrock server status has invalid player counts", exception);
++            final JsonObject info = JsonParser.parseString(body).getAsJsonObject();
++            final int players = info.get("players").getAsInt();
++            final int maxPlayers = info.get("maxPlayers").getAsInt();
++            if (players < 0 || maxPlayers < 0 || players > maxPlayers) {
++                throw new IllegalArgumentException("Invalid player counts");
++            }
++            return new Status(players, maxPlayers, latency, info.get("name").getAsString(), info.get("version").getAsString());
++        } catch (RuntimeException exception) {
++            throw new IOException("Bedrock server sent invalid HTTP status metadata", exception);
 +        }
 +    }
 +
@@ -1229,7 +1183,7 @@ index 94f1e8da631ab1fd686ac302dda56e2f787943f3..ef4f6808d6698d180a626901d933e3ae
  
      public static boolean drawBundled(final GuiGraphicsExtractor graphics, final String resource,
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index fa7eff9ac5ce068539c020a1840455615ea15a7f..6e1452c09aacda7a031379aaf4e7cf638f62beaa 100644
+index 9b31d31464e433d78a5fc95bd32b6d41a645c162..b3e1e8af7eac1a5ecbbf718c637512a4afcd6da3 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -17,6 +17,26 @@
@@ -1314,6 +1268,57 @@ index 0000000000000000000000000000000000000000..051a151e377b8895e5e9193d060fd04b
 +            {"result":{"networkProtocol":"NetherNet_JsonRpc","ipV4Address":"127.0.0.1","port":19132}}
 +            """).getAsJsonObject();
 +        assertThrows(IOException.class, () -> BedrockServerCatalog.parseJoin(response));
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatusTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatusTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..279a7888e28b0259cbaceee87b46f4b434def586
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatusTest.java
+@@ -0,0 +1,45 @@
++package com.viaversion.viafabricplus.bedrock.servers;
++
++import com.sun.net.httpserver.HttpServer;
++import java.net.InetSocketAddress;
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.concurrent.TimeUnit;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockServerStatusTest {
++
++    @Test
++    void readsHttpMetadataAndAllowsSuccessfulCapabilitiesWithoutMetadata() throws Exception {
++        final HttpServer http = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        final String[] body = {"{\"players\":2,\"maxPlayers\":8,\"name\":\"Local world\",\"version\":\"1.26.60\"}"};
++        http.createContext("/v1/join", exchange -> {
++            assertEquals("GET", exchange.getRequestMethod());
++            final byte[] bytes = body[0].getBytes(StandardCharsets.UTF_8);
++            exchange.sendResponseHeaders(200, bytes.length == 0 ? -1 : bytes.length);
++            try (var output = exchange.getResponseBody()) {
++                output.write(bytes);
++            }
++        });
++        http.start();
++        try {
++            final var server = new BedrockServerCatalog.Server("local", "local", "Local", "", "", "127.0.0.1",
++                http.getAddress().getPort(), false, 0, "", "", "", "", List.of());
++            final var status = BedrockServerStatus.ping(server).get(5, TimeUnit.SECONDS);
++            assertNotNull(status);
++            assertEquals(2, status.players());
++            assertEquals(8, status.maxPlayers());
++            assertEquals("Local world", status.motd());
++            assertEquals("1.26.60", status.version());
++            body[0] = "";
++            assertNull(BedrockServerStatus.ping(server).get(5, TimeUnit.SECONDS));
++            body[0] = "{\"players\":9,\"maxPlayers\":8}";
++            assertNull(BedrockServerStatus.ping(server).get(5, TimeUnit.SECONDS));
++        } finally {
++            http.stop(0);
++        }
 +    }
 +
 +}

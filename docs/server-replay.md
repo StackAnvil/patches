@@ -17,7 +17,7 @@ bun run test:integration -- --route java-java --reuse-build
 bun run server-replay record cubecraft --seconds 120
 ```
 
-Other targets are `minehut` and `geyser`. The Hive uses `geo.hivebedrock.cloud`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
+The other named target is `minehut`. Each live target must provide NetherNet. The Hive uses `geo.hivebedrock.cloud`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
 
 For another public server, use its current address from the in-game catalog or the server operator:
 
@@ -25,7 +25,7 @@ For another public server, use its current address from the in-game catalog or t
 bun run server-replay record public --target play.example.org:19132 --client addon --seconds 240
 ```
 
-Public targets also accept `nethernet://host:port`.
+All socket targets use HTTP NetherNet. Both `host:port` and `nethernet://host:port` select that transport.
 Hosted Xbox JSON-RPC experiences use `nethernet-xbox-json-rpc://network-id` with `--client addon` or `--client proxy`.
 Resolve a fresh network ID through the catalog before connecting. These IDs have no port.
 The private manifest records the selected endpoint.
@@ -80,7 +80,7 @@ Handler removal also finishes export when a WebRTC disconnect omits the inactive
 The launcher allows 45 seconds after termination for native cleanup, including the 35-second pack download limit.
 An unfinished pack export still fails the capture and preserves its raw journal.
 
-For NetherNet recordings, the relay connects to the HTTP signaling endpoint with the same authenticated session key.
+The relay connects to the HTTP signaling endpoint with the same authenticated session key.
 The native client connects to the relay over loopback NetherNet with a temporary server identity.
 The first connection can show a local trust prompt. Gameplay packet bytes remain untranslated.
 Cancelled trust prompts and failed transport handshakes do not consume the recording.
@@ -89,8 +89,8 @@ For live recordings, `--native-ice-address <local-ip>` binds WebRTC to a specifi
 This option exposes an ephemeral UDP port on that interface. HTTP signaling stays on loopback.
 Wildcard, multicast, and nonlocal addresses are rejected. Offline replay does not accept this option.
 Native replay remains unverified on this build.
-NetherNet uses DTLS. The relay applies the Bedrock AES stream only to RakNet, matching the core transport behavior.
-Transport tests verify compressed batches on both backends and RakNet encryption counters.
+NetherNet protects data channels with DTLS. The relay does not add the legacy Bedrock AES stream.
+Transport tests verify compressed batches and reconnect admission through NetherNet.
 
 The launcher must pass its normal graphics safety checks. A failed native launch does not authorize changing those checks or joining Hive through ViaBedrock.
 
@@ -106,7 +106,7 @@ bun run server-replay selftest
 
 Allow enough time for client startup, pack conversion, and the full recorded scene. The scene clock starts at the recorded resource-pack stack. Earlier scene packets keep their order and arrive immediately after local pack negotiation. This skips the captured download delay and preserves world timing. A recorded subchunk reply batch waits until at least one entry matches a local request. Clients can group or omit requests differently, so the replay does not require every recorded batch entry to be requested. It sends the whole batch unchanged. This also lets slower clients finish loading packs before replies arrive. The scene clock pauses during that wait; a batch with no matching request fails after 15 seconds. Packet bytes and order stay unchanged.
 
-The replay server binds only to loopback. Native replay uses NetherNet, and Java replay uses RakNet.
+The replay server binds only to loopback. Native and Java replay both use NetherNet.
 It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
 
 The default replay connects the Fabric add-on directly to the local Bedrock replay server. This exercises its native skin and entity renderer. A separate recorder mod exists only in the private test instance.

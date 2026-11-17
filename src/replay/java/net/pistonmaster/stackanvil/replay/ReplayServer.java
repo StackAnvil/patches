@@ -6,7 +6,6 @@ import io.netty.buffer.*;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import net.raphimc.viabedrock.netty.*;
-import net.raphimc.viabedrock.netty.raknet.MessageCodec;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompressionAlgorithm;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
@@ -19,9 +18,8 @@ import java.util.concurrent.*;
 /** A recorded scene server. It never opens a connection to the captured host. */
 public final class ReplayServer {
     public static void main(String[] args) throws Exception {
-        if (args.length != 2 && (args.length != 3 || !args[2].equals("--nethernet")))
-            throw new IllegalArgumentException("ReplayServer <recording-directory> <port> [--nethernet]");
-        boolean netherNet = args.length == 3;
+        if (args.length != 2)
+            throw new IllegalArgumentException("ReplayServer <recording-directory> <port>");
         Path directory = Path.of(args[0]).toAbsolutePath();
         List<PacketJournal.Entry> entries = PacketJournal.read(directory.resolve("packets.sbr"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
         byte[] info = entries.stream().filter(e -> e.clientbound() && e.id() == 6).findFirst().orElseThrow().payload();
@@ -48,11 +46,9 @@ public final class ReplayServer {
         http.start();
         EventLoopGroup loops = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
         try {
-            int port = Integer.parseInt(args[1]);
-            Channel server = LocalBedrockServer.bootstrap(loops, port, "StackAnvil recorded scene", netherNet, true, null)
+            Channel server = LocalBedrockServer.bootstrap(loops, "StackAnvil recorded scene", true, null)
                     .childHandler(new ChannelInitializer<Channel>() {
                         @Override protected void initChannel(Channel channel) {
-                            if (!netherNet) channel.pipeline().addLast("rak-message", new MessageCodec());
                             channel.pipeline().addLast("batch", new BatchLengthCodec());
                             channel.pipeline().addLast("packet", new PacketCodec());
                             channel.pipeline().addLast("replay", new SimpleChannelInboundHandler<ByteBuf>() {

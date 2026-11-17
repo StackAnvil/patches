@@ -4,13 +4,13 @@ export function publicTarget(address: string | undefined): string {
   const error = "Use host:port, nethernet://host:port, or nethernet-xbox-json-rpc://network-id.";
   let parsed: URL;
   try {
-    parsed = new URL(address.includes("://") ? address : `raknet://${address}`);
+    parsed = new URL(address.includes("://") ? address : `nethernet://${address}`);
   } catch {
     throw new Error(error);
   }
   const networkId = parsed.protocol === "nethernet-xbox-json-rpc:";
   if (
-    !["raknet:", "nethernet:", "nethernet-xbox-json-rpc:"].includes(parsed.protocol) ||
+    !["nethernet:", "nethernet-xbox-json-rpc:"].includes(parsed.protocol) ||
     !parsed.hostname ||
     !/^[a-zA-Z0-9.[\]:-]+$/.test(parsed.hostname) ||
     (networkId ? !!parsed.port : !parsed.port || Number(parsed.port) < 1) ||
@@ -23,12 +23,12 @@ export function publicTarget(address: string | undefined): string {
     throw new Error(error);
   }
   if (networkId) return `nethernet-xbox-json-rpc://${parsed.hostname}`;
-  return `${parsed.protocol === "nethernet:" ? "nethernet://" : ""}${parsed.hostname.toLowerCase()}:${parsed.port}`;
+  return `nethernet://${parsed.hostname.toLowerCase()}:${parsed.port}`;
 }
 
 export function hiveTarget(address: string): boolean {
   const host = new URL(
-    address.includes("://") ? address : `raknet://${address}`,
+    address.includes("://") ? address : `nethernet://${address}`,
   ).hostname.toLowerCase();
   return (
     host === "hivebedrock.cloud" ||

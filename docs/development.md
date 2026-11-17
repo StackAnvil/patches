@@ -104,7 +104,9 @@ For Windows and macOS launcher tests on a Linux host, use the [manual platform t
 
 ## Run join integration tests
 
-The Geyser fixture installs the checksum-pinned [Boar extension](https://github.com/opencollab-incubator/Boar) from `integration/geyser.json`.
+StackAnvil uses NetherNet for all Bedrock connections. The [Geyser fixture](bedrock-test-packs.md#geyser-fixtures) has no supported live route.
+
+The offline Geyser fixture installs the checksum-pinned [Boar extension](https://github.com/opencollab-incubator/Boar) from `integration/geyser.json`.
 Startup requires its enabled-extension message before client tests begin.
 Keep its checks enabled and do not grant test players `boar.exempt`.
 Boar provides an additional movement check; a clean result does not prove native movement parity.
@@ -166,7 +168,6 @@ The standard Fabulously Optimized run explicitly disables shaders.
 The shader run fails if Iris does not activate the pinned pack or reports missing Bedrock pipeline overrides.
 A successful join alone does not prove correct geometry.
 Use [a recorded scene replay](server-replay.md) to exercise custom actors and geometry skins.
-
 
 ## Try native UI scale offsets
 

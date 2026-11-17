@@ -262,6 +262,7 @@ const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
   let changed = properties;
   for (const [key, value] of Object.entries({
     "server-name": "StackAnvil Integration",
+    transport: "nethernet",
     "server-port": String(port),
     "server-portv6": String(port + 1),
     "level-name": "integration-world",
@@ -332,14 +333,12 @@ const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
     log,
     port,
     version,
-    transport: /^transport=(.+)$/m.exec(changed)?.[1] ?? "raknet",
   };
 });
 const viaProxyEffect = Effect.fn("Integration.viaProxy")(function* (
   dir: string,
   bedrockPort: number,
   version: string,
-  transport: string,
   name = "viaproxy",
   homeName = name,
 ) {
@@ -365,11 +364,7 @@ const viaProxyEffect = Effect.fn("Integration.viaProxy")(function* (
       "--bind-address",
       `127.0.0.1:${port}`,
       "--target-address",
-      viaProxyTarget(
-        transport === "nethernet"
-          ? `nethernet://127.0.0.1:${bedrockPort}`
-          : `127.0.0.1:${bedrockPort}`,
-      ),
+      viaProxyTarget(`nethernet://127.0.0.1:${bedrockPort}`),
       "--target-version",
       `Bedrock ${version}`,
       "--auth-method",
@@ -953,6 +948,13 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
   if (shaders && !routes.some((route) => route.startsWith("java-")))
     return yield* labError("main", new Error("--shaders requires a Java client route."));
   const geyserRoute = routes.includes("java-geyser");
+  if (geyserRoute)
+    return yield* labError(
+      "main",
+      new Error(
+        "The pinned Geyser fixture does not provide NetherNet. Use the java-bedrock route.",
+      ),
+    );
   const gameplayCases: GameplayCaseId[] = [
     ...new Set([
       ...(complexGameplay ? complexGameplayCaseIds : []),
@@ -1059,13 +1061,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     const java = routes.includes("java-java") ? yield* javaServerEffect(dir) : undefined;
     const geyser = geyserRoute ? yield* javaServerEffect(dir, true) : undefined;
     const geyserProxy = geyser?.bedrockPort
-      ? yield* viaProxyEffect(
-          dir,
-          geyser.bedrockPort,
-          geyserBedrockVersion,
-          "raknet",
-          "viaproxy-geyser",
-        )
+      ? yield* viaProxyEffect(dir, geyser.bedrockPort, geyserBedrockVersion, "viaproxy-geyser")
       : undefined;
     const nativeBedrock = routes.includes("bedrock-bedrock")
       ? yield* bedrockServerEffect(dir, bdsSource, "bedrock-native-server")
@@ -1081,7 +1077,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
         )
       : undefined;
     const proxy = proxyBedrock
-      ? yield* viaProxyEffect(dir, proxyBedrock.port, proxyBedrock.version, proxyBedrock.transport)
+      ? yield* viaProxyEffect(dir, proxyBedrock.port, proxyBedrock.version)
       : undefined;
     for (const route of routes) {
       if (route === "java-java" && java) {
@@ -1192,7 +1188,6 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
             dir,
             changedServer.port,
             changedServer.version,
-            changedServer.transport,
             "viaproxy-resource-changed",
             "viaproxy",
           );

@@ -9,13 +9,11 @@ import io.netty.channel.*;
 import io.netty.channel.group.ChannelGroup;
 import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioIoHandler;
-import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import net.raphimc.minecraftauth.MinecraftAuth;
 import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 import net.raphimc.viabedrock.api.util.CryptUtil;
 import net.raphimc.viabedrock.netty.*;
-import net.raphimc.viabedrock.netty.raknet.*;
 import net.raphimc.viabedrock.netty.nethernet.BedrockHttpSignaling;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.storage.AuthData;
@@ -24,11 +22,7 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
 import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
 import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
-import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
-import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 
-import javax.crypto.*;
-import javax.crypto.spec.SecretKeySpec;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -58,25 +52,22 @@ public final class NativeCaptureProxy {
     private final Path directory;
     private final InetSocketAddress target;
     private final String account;
-    private final boolean netherNet;
     private final EventLoopGroup loops;
     private final AtomicBoolean used = new AtomicBoolean();
     private final ChannelGroup connections = new DefaultChannelGroup(ImmediateEventExecutor.INSTANCE, true);
 
-    NativeCaptureProxy(Path directory, InetSocketAddress target, String account, boolean netherNet, EventLoopGroup loops) {
-        this.directory = directory; this.target = target; this.account = account; this.netherNet = netherNet; this.loops = loops;
+    NativeCaptureProxy(Path directory, InetSocketAddress target, String account, EventLoopGroup loops) {
+        this.directory = directory; this.target = target; this.account = account; this.loops = loops;
     }
 
     public static void main(String[] args) {
         try {
             if (args.length < 5) {
-                throw new IllegalArgumentException("NativeCaptureProxy <private-directory> <loopback-port> <host> <port> <account-json|offline> [--nethernet] [--ice-address <local-ip>]");
+                throw new IllegalArgumentException("NativeCaptureProxy <private-directory> <loopback-port> <host> <port> <account-json|offline> [--ice-address <local-ip>]");
             }
-            boolean netherNet = false;
             InetAddress iceAddress = null;
             for (int index = 5; index < args.length; index++) {
-                if (args[index].equals("--nethernet") && !netherNet) netherNet = true;
-                else if (args[index].equals("--ice-address") && iceAddress == null && index + 1 < args.length)
+                if (args[index].equals("--ice-address") && iceAddress == null && index + 1 < args.length)
                     iceAddress = InetAddress.ofLiteral(args[++index]);
                 else throw new IllegalArgumentException("Unknown or repeated native capture option");
             }
@@ -88,7 +79,7 @@ public final class NativeCaptureProxy {
             if (args[4].equals("offline") && !target.getAddress().isLoopbackAddress()) throw new IllegalArgumentException("Offline identity is restricted to a local backend");
             EventLoopGroup loops = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
             try {
-                NativeCaptureProxy proxy = new NativeCaptureProxy(directory, target, args[4], netherNet, loops);
+                NativeCaptureProxy proxy = new NativeCaptureProxy(directory, target, args[4], loops);
                 Channel server = proxy.bind(Integer.parseInt(args[1]), iceAddress);
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> closeCapture(server, proxy.connections, loops), "native-capture-shutdown"));
                 System.out.println("StackAnvil native capture ready on " + server.localAddress());
@@ -102,11 +93,11 @@ public final class NativeCaptureProxy {
     }
 
     Channel bind(int port, InetAddress iceAddress) throws Exception {
-        return LocalBedrockServer.bootstrap(loops, port, "StackAnvil native recorder", true, account.equals("offline"), iceAddress)
+        return LocalBedrockServer.bootstrap(loops, "StackAnvil native recorder", account.equals("offline"), iceAddress)
                 .childHandler(new ChannelInitializer<Channel>() {
                     @Override protected void initChannel(Channel channel) {
                         connections.add(channel);
-                        pipeline(channel, false);
+                        pipeline(channel);
                         channel.pipeline().addLast("native-capture", new Session());
                     }
                 }).bind("127.0.0.1", port).sync().channel();
@@ -120,17 +111,8 @@ public final class NativeCaptureProxy {
         loops.shutdownGracefully().syncUninterruptibly();
     }
 
-    static void pipeline(Channel channel, boolean rakNet) {
-        if (rakNet) channel.pipeline().addLast("message", new MessageCodec());
+    static void pipeline(Channel channel) {
         channel.pipeline().addLast("batch", new BatchLengthCodec());
-    }
-
-    static void enableEncryption(Channel channel, SecretKey key) throws GeneralSecurityException {
-        // NetherNet already protects its data channels with DTLS. BDS still sends the Bedrock handshake,
-        // but only RakNet switches subsequent game batches to the Bedrock AES stream.
-        if (channel.pipeline().get(MessageCodec.class) != null) {
-            channel.pipeline().addBefore("compression", "encryption", new AesEncryptionCodec(key));
-        }
     }
 
     static String resignClient(String original, KeyPair keys, String destination, PublicKey clientKey) {
@@ -159,14 +141,6 @@ public final class NativeCaptureProxy {
             return packet;
         } catch (Throwable error) { packet.release(); throw error; }
         finally { payload.release(); }
-    }
-
-    static SecretKey exchange(PrivateKey privateKey, Key publicKey, byte[] salt) throws GeneralSecurityException {
-        KeyAgreement ecdh = KeyAgreement.getInstance("ECDH");
-        ecdh.init(privateKey); ecdh.doPhase(publicKey, true);
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        digest.update(salt); digest.update(ecdh.generateSecret());
-        return new SecretKeySpec(digest.digest(), "AES");
     }
 
     private Identity identity(String nativeToken) throws Exception {
@@ -254,20 +228,14 @@ public final class NativeCaptureProxy {
 
         private void connect(Identity identity, String clientJwt) {
             Bootstrap bootstrap = new Bootstrap().group(loops);
-            if (netherNet) {
-                bootstrap.channelFactory(NetherNetChannelFactory.client(new BedrockHttpSignaling()))
-                        .option(NetherChannelOption.NETHER_CLIENT_HANDSHAKE_TIMEOUT_MS, 10000)
-                        .option(NetherChannelOption.NETHER_CLIENT_MAX_HANDSHAKE_ATTEMPTS, 1)
-                        .option(NetherChannelOption.NETHER_CLIENT_IDENTITY, identity.signaling());
-            } else {
-                bootstrap.channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
-                        .option(RakChannelOption.RAK_PROTOCOL_VERSION, ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION)
-                        .option(RakChannelOption.RAK_CONNECT_TIMEOUT, 10000L);
-            }
+            bootstrap.channelFactory(NetherNetChannelFactory.client(new BedrockHttpSignaling()))
+                    .option(NetherChannelOption.NETHER_CLIENT_HANDSHAKE_TIMEOUT_MS, 10000)
+                    .option(NetherChannelOption.NETHER_CLIENT_MAX_HANDSHAKE_ATTEMPTS, 1)
+                    .option(NetherChannelOption.NETHER_CLIENT_IDENTITY, identity.signaling());
             bootstrap.handler(new ChannelInitializer<Channel>() {
                 @Override protected void initChannel(Channel channel) {
                     connections.add(channel);
-                    pipeline(channel, !netherNet);
+                    pipeline(channel);
                     channel.pipeline().addLast("native-relay", new SimpleChannelInboundHandler<ByteBuf>() {
                         @Override public void channelActive(ChannelHandlerContext ctx) {
                             downstream = ctx.channel();
@@ -291,10 +259,8 @@ public final class NativeCaptureProxy {
                                 phase = 3;
                             } else if (id == 3) {
                                 System.out.println("Native backend encryption handshake received");
-                                var jwt = Jwts.parser().keyLocator(CryptUtil.X5U_KEY_LOCATOR).build().parseSignedClaims(BedrockTypes.STRING.read(view));
-                                SecretKey key = exchange(identity.keys().getPrivate(), CryptUtil.X5U_KEY_LOCATOR.locate(jwt.getHeader()),
-                                        Base64.getDecoder().decode(jwt.getPayload().get("salt", String.class)));
-                                enableEncryption(ctx.channel(), key);
+                                Jwts.parser().keyLocator(CryptUtil.X5U_KEY_LOCATOR).build().parseSignedClaims(BedrockTypes.STRING.read(view));
+                                // NetherNet protects the data channel with DTLS. Verify the handshake without adding Bedrock AES.
                                 ByteBuf answer = ctx.alloc().buffer(); Types.VAR_INT.writePrimitive(answer, 4); ctx.writeAndFlush(answer);
                             } else {
                                 record(true, input);

@@ -1,74 +1,14 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 18 Oct 2026 16:55:36 +0200
-Subject: [PATCH] fix(network): complete RakNet disconnect lifecycle
+Subject: [PATCH] fix(network): discard packets after session disconnect
 
-RakNet emits a disconnect reason before closing its application pipeline.
-Treat that event as an already initiated disconnect so the core close handler
-does not start another handshake against a session in DISCONNECTING state.
+Discard inbound application packets once the application closes its session. Emit one packet per batch decode call so a Disconnect handled synchronously can stop the remaining packets in that batch.
 
-A direct Java 26.3 connection to Bedrock 1.26.51.1 (protocol 2193) stays
-active after the peer goes silent: the session detects its 30-second timeout,
-but the repeated disconnect never completes. This affects the shared handler
-used by direct connections and ViaProxy. Local closes still send one orderly
-disconnect, and transport events continue to downstream handlers.
+ViaVersion stops translating after a session closes. Queued packets must not reach the Java decoder untranslated. Preserve this session boundary for NetherNet without depending on legacy transport events or codecs.
 
-Discard inbound application packets once the application closes the
-session or the transport reports a disconnect. The batch codec now emits
-one packet per decode call and stops once the session is closed: a
-Disconnect handled synchronously can close the channel while the rest of
-its batch is still being split. RakNet keeps delivering
-ordered datagrams that were already in flight, and ViaVersion stops
-translating when the channel closes. On a live Bedrock 1.26.60 server
-(protocol 2225), a Disconnect was followed 4 ms later by 15 queued packets.
-They reached the Java decoder untranslated: a Bedrock PlayerList (ID 63)
-decoded as a Java pong response, followed by 14 more decoder errors. The
-native client also stops handling a session after it disconnects. Packets
-read before the close still pass through unchanged, and each new
-connection uses a new handler.
+Embedded transport tests cover local close completion, queued packets during an asynchronous close, and a Disconnect followed by more packets in one batch.
 
-Embedded transport tests cover every RakNet reason, local close completion,
-packets that arrive while RakNet finishes or after a transport
-disconnect, and packets after a Disconnect in the same batch.
-The resolved Cloudburst and VFP runtime session codecs both emit the event
-before closing; no runtime-library reflection or client workaround is needed.
-
-Declare the Cloudburst repository and RakNet compile/test dependency
-explicitly after upstream removes its unused transport dependencies.
-This handler still consumes the transport disconnect reason enum.
-The same repository supplies later independently maintained signaling
-code; its build prerequisite is recorded in the patch series.
-
-diff --git a/build.gradle b/build.gradle
-index 80caed8c846d91bb0789942eb3a1b782a217a232..1ec0f7da0e0186496447ff81381b8cb75b5f1f8a 100644
---- a/build.gradle
-+++ b/build.gradle
-@@ -53,6 +53,16 @@ if (stackAnvilMavenRepo.present) {
- }
- 
- repositories {
-+    if (findByName("OpenCollab Snapshots") == null) {
-+        maven {
-+            name = "OpenCollab Snapshots"
-+            url = "https://repo.opencollab.dev/maven-snapshots"
-+            content {
-+                includeGroupByRegex "org\\.cloudburstmc\\..+"
-+                includeGroup "dev.opencollab"
-+            }
-+        }
-+    }
-     if (stackAnvilMavenRepo.present) {
-         maven {
-             name = "StackAnvilLocal"
-@@ -93,6 +103,8 @@ dependencies {
-     compileOnly "com.google.guava:guava:33.8.0-jre"
-     compileOnly "io.netty:netty-handler:4.2.20.Final"
-     compileOnly "com.google.code.gson:gson:2.15.0"
-+    compileOnly "org.cloudburstmc.netty:netty-transport-raknet:2.0.0.CR4-20260921.144528-1"
-+    testImplementation "org.cloudburstmc.netty:netty-transport-raknet:2.0.0.CR4-20260921.144528-1"
- 
-     api("io.netty:netty-codec-http:4.2.19.Final") {
-         transitive = false
 diff --git a/src/main/java/net/raphimc/viabedrock/netty/BatchLengthCodec.java b/src/main/java/net/raphimc/viabedrock/netty/BatchLengthCodec.java
 index ae2aa73ae77264a096a7873b7d4f23de791627d8..bb26952e74ae35a6b92f2af237bc0a25aba77093 100644
 --- a/src/main/java/net/raphimc/viabedrock/netty/BatchLengthCodec.java
@@ -101,10 +41,10 @@ index ae2aa73ae77264a096a7873b7d4f23de791627d8..bb26952e74ae35a6b92f2af237bc0a25
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java b/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
-index 3302236bf58c66fa326467fab3e7caad773cef7b..d18e57d6592b03256b21cd2feea07c43007b7e35 100644
+index 3302236bf58c66fa326467fab3e7caad773cef7b..935f9d302484d8690bdfaef9ae524d415ad34405 100644
 --- a/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
 +++ b/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
-@@ -18,17 +18,47 @@
+@@ -18,17 +18,36 @@
  package net.raphimc.viabedrock.netty;
  
  import io.netty.channel.ChannelHandlerContext;
@@ -112,7 +52,6 @@ index 3302236bf58c66fa326467fab3e7caad773cef7b..d18e57d6592b03256b21cd2feea07c43
 +import io.netty.channel.ChannelDuplexHandler;
  import io.netty.channel.ChannelPromise;
 +import io.netty.util.ReferenceCountUtil;
-+import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason;
  
 -public class DisconnectHandler extends ChannelOutboundHandlerAdapter {
 +public class DisconnectHandler extends ChannelDuplexHandler {
@@ -130,22 +69,12 @@ index 3302236bf58c66fa326467fab3e7caad773cef7b..d18e57d6592b03256b21cd2feea07c43
 +
 +    @Override
 +    public void channelRead(final ChannelHandlerContext ctx, final Object msg) throws Exception {
-+        // RakNet keeps delivering ordered datagrams while it finishes a disconnect. The application has
-+        // already left the Bedrock session, and Via stops translating once the channel closes.
++        // Queued packets must not reach the application after it leaves the Bedrock session.
 +        if (this.closed || !ctx.channel().isOpen()) {
 +            ReferenceCountUtil.release(msg);
 +            return;
 +        }
 +        super.channelRead(ctx, msg);
-+    }
-+
-+    @Override
-+    public void userEventTriggered(final ChannelHandlerContext ctx, final Object event) throws Exception {
-+        if (event instanceof RakDisconnectReason) {
-+            this.calledDisconnect = true;
-+            this.closed = true;
-+        }
-+        super.userEventTriggered(ctx, event);
 +    }
  
      @Override
@@ -156,10 +85,10 @@ index 3302236bf58c66fa326467fab3e7caad773cef7b..d18e57d6592b03256b21cd2feea07c43
              ctx.disconnect(promise); // Send disconnect notification to the server and close the channel
 diff --git a/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java b/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2416f1fceb3667f01b69823e1b4b68f0b82925a4
+index 0000000000000000000000000000000000000000..8cb18b0043c6e89d88acb67636821cc73a4e2efe
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,126 @@
 +package net.raphimc.viabedrock.netty;
 +
 +import io.netty.buffer.ByteBuf;
@@ -169,7 +98,6 @@ index 0000000000000000000000000000000000000000..2416f1fceb3667f01b69823e1b4b68f0
 +import io.netty.channel.ChannelOutboundHandlerAdapter;
 +import io.netty.channel.ChannelPromise;
 +import io.netty.channel.embedded.EmbeddedChannel;
-+import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.ArrayList;
@@ -178,24 +106,6 @@ index 0000000000000000000000000000000000000000..2416f1fceb3667f01b69823e1b4b68f0
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class DisconnectHandlerTest {
-+
-+    @Test
-+    void transportDisconnectEventsCloseWithoutStartingAnotherDisconnect() {
-+        for (final RakDisconnectReason reason : RakDisconnectReason.values()) {
-+            final var transport = new Transport();
-+            final var channel = new EmbeddedChannel(true, true, transport, new DisconnectHandler());
-+            try {
-+                channel.pipeline().fireUserEventTriggered(reason);
-+                final var close = channel.close();
-+                assertTrue(close.isSuccess());
-+                assertFalse(channel.isActive());
-+                assertEquals(0, transport.disconnects);
-+                assertEquals(1, transport.closes);
-+            } finally {
-+                channel.finishAndReleaseAll();
-+            }
-+        }
-+    }
 +
 +    @Test
 +    void localCloseStillSendsOneDisconnectAndPropagatesItsCompletion() {
@@ -224,29 +134,13 @@ index 0000000000000000000000000000000000000000..2416f1fceb3667f01b69823e1b4b68f0
 +            assertEquals(1, application.received.size());
 +
 +            channel.close();
-+            assertTrue(channel.isOpen(), "RakNet is still finishing the disconnect handshake");
++            assertTrue(channel.isOpen(), "The transport is still completing the disconnect");
 +            channel.pipeline().fireChannelRead(queued);
 +
 +            assertEquals(1, application.received.size());
 +            assertEquals(0, queued.refCnt());
 +        } finally {
 +            application.received.forEach(ByteBuf::release);
-+            channel.finishAndReleaseAll();
-+        }
-+    }
-+
-+    @Test
-+    void packetsAfterTransportDisconnectAreReleased() {
-+        final var application = new Application();
-+        final var channel = new EmbeddedChannel(true, true, new Transport(), new DisconnectHandler(), application);
-+        final ByteBuf queued = Unpooled.wrappedBuffer(new byte[]{63, 0, 0});
-+        try {
-+            channel.pipeline().fireUserEventTriggered(RakDisconnectReason.TIMED_OUT);
-+            channel.pipeline().fireChannelRead(queued);
-+
-+            assertTrue(application.received.isEmpty());
-+            assertEquals(0, queued.refCnt());
-+        } finally {
 +            channel.finishAndReleaseAll();
 +        }
 +    }
@@ -290,7 +184,7 @@ index 0000000000000000000000000000000000000000..2416f1fceb3667f01b69823e1b4b68f0
 +
 +        @Override
 +        public void disconnect(final ChannelHandlerContext ctx, final ChannelPromise promise) {
-+            // RakNet completes the promise after the peer acknowledges or the session times out.
++            // Simulate a transport that completes its disconnect asynchronously.
 +        }
 +
 +    }

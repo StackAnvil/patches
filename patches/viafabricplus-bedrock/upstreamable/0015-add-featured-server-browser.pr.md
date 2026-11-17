@@ -10,8 +10,12 @@ Every catalog selection resolves its current destination through Gatherings, inc
 The captured current Dimension Clash response passes this parser. Regression cases cover both destination types and missing network IDs.
 A fresh browser join reaches SoulSteel pack negotiation over Xbox JSON-RPC. The transport then disconnects before StartGame.
 This verifies catalog resolution and initial admission. SoulSteel gameplay remains unverified.
-The current Mineville response selects HTTP NetherNet. Its RakNet endpoint times out before any game packet.
+The current Mineville response selects HTTP NetherNet.
 A live add-on recording through that HTTP destination reaches a visible lobby and completes its scene.
 The browser transport choice has targeted parser coverage. Full native appearance remains unverified.
 
 Keep raw service responses, server endpoints, account data, and captures private.
+
+Server status reads optional metadata from the HTTP NetherNet capability endpoint.
+An empty successful response leaves status unavailable and does not prevent joining.
+Loopback regression tests cover metadata, empty responses, and invalid player counts.

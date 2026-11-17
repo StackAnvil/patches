@@ -10,22 +10,21 @@ import io.netty.buffer.*;
 import io.netty.channel.*;
 import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioIoHandler;
-import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.channel.socket.nio.NioDatagramChannel;
+import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import net.raphimc.viabedrock.api.util.CryptUtil;
 import net.raphimc.viabedrock.netty.CompressionCodec;
 import net.raphimc.viabedrock.netty.nethernet.BedrockHttpSignaling;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.protocol.storage.AuthData;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompressionAlgorithm;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
-import org.cloudburstmc.netty.channel.raknet.packet.RakMessage;
-import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
 import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
 import org.cloudburstmc.netty.util.nethernet.TokenTrust;
+import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
 
 import java.nio.file.*;
 import java.net.InetAddress;
@@ -55,14 +54,10 @@ public final class NativeCaptureSelfTest {
         authenticatedIdentity(original, relay, source);
         offlineSignalingIdentity(source, original);
         if (!NativeCaptureIdentity.offlineClientKey(source).equals(original.getPublic())) throw new AssertionError("Offline client key changed");
-        KeyPair remote = CryptUtil.generateEcdsa384KeyPair();
-        byte[] salt = new byte[16]; new SecureRandom().nextBytes(salt);
-        if (!Arrays.equals(NativeCaptureProxy.exchange(relay.getPrivate(), remote.getPublic(), salt).getEncoded(),
-                NativeCaptureProxy.exchange(remote.getPrivate(), relay.getPublic(), salt).getEncoded())) throw new AssertionError("ECDH keys differ");
         for (boolean bareInfo : List.of(false, true)) {
             for (boolean bareChunk : List.of(false, true)) packExport(bareInfo, bareChunk);
         }
-        for (boolean rakNet : List.of(false, true)) transportFraming(rakNet);
+        transportFraming();
         packIdentityRejections();
         packStackSelection();
         packHttpClose(200);
@@ -70,7 +65,7 @@ public final class NativeCaptureSelfTest {
         captureShutdown();
         nativeFrontendRetry();
         if (args.length == 2) smoke(Integer.parseInt(args[0]), Path.of(args[1]));
-        System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, transport framing, NetherNet reconnect admission, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
+        System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, transport framing, NetherNet reconnect admission, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
     }
 
     private static void nativeFrontendRetry() throws Exception {
@@ -87,7 +82,7 @@ public final class NativeCaptureSelfTest {
             try (ServerSocket available = new ServerSocket(0, 1, new InetSocketAddress("127.0.0.1", 0).getAddress())) {
                 port = available.getLocalPort();
             }
-            NativeCaptureProxy capture = new NativeCaptureProxy(directory, new InetSocketAddress("127.0.0.1", 9), "offline", true, loops);
+            NativeCaptureProxy capture = new NativeCaptureProxy(directory, new InetSocketAddress("127.0.0.1", 9), "offline", loops);
             try {
                 capture.bind(port, InetAddress.ofLiteral("0.0.0.0"));
                 throw new AssertionError("Native capture accepted a wildcard ICE address");
@@ -101,7 +96,7 @@ public final class NativeCaptureSelfTest {
                         .option(NetherChannelOption.NETHER_CLIENT_SERVER_TRUST, TokenTrust.ANY)
                         .handler(new ChannelInitializer<Channel>() {
                             @Override protected void initChannel(Channel channel) {
-                                NativeCaptureProxy.pipeline(channel, false);
+                                NativeCaptureProxy.pipeline(channel);
                                 channel.pipeline().addLast(new SimpleChannelInboundHandler<ByteBuf>() {
                                     @Override public void channelActive(ChannelHandlerContext ctx) {
                                         if (requestSettings) {
@@ -230,33 +225,29 @@ public final class NativeCaptureSelfTest {
         }
     }
 
-    private static void transportFraming(boolean rakNet) throws Exception {
+    private static void transportFraming() throws Exception {
         EmbeddedChannel sender = new EmbeddedChannel(), receiver = new EmbeddedChannel();
         try {
-            SecretKeySpec key = new SecretKeySpec(new byte[32], "AES");
             for (EmbeddedChannel channel : List.of(sender, receiver)) {
-                NativeCaptureProxy.pipeline(channel, rakNet);
+                NativeCaptureProxy.pipeline(channel);
                 channel.pipeline().addBefore("batch", "compression", new CompressionCodec(PacketCompressionAlgorithm.ZLib, 0));
-                NativeCaptureProxy.enableEncryption(channel, key);
             }
             Random random = new Random(2193);
-            // Multiple packets exercise encryption counters and compressible and incompressible batches.
+            // Exercise compressible and incompressible batches at different sizes.
             for (int size : new int[]{1, 128, 65536}) {
                 byte[] packet = new byte[size];
                 if (size != 128) random.nextBytes(packet);
                 sender.writeOutbound(Unpooled.wrappedBuffer(packet));
                 Object wire = sender.readOutbound();
-                if (rakNet ? !(wire instanceof RakMessage) : !(wire instanceof ByteBuf)) {
+                if (!(wire instanceof ByteBuf)) {
                     io.netty.util.ReferenceCountUtil.release(wire);
                     throw new AssertionError("Wrong transport framing");
                 }
-                if (!rakNet) {
-                    int compression = ((ByteBuf) wire).getUnsignedByte(((ByteBuf) wire).readerIndex());
-                    if (compression != PacketCompressionAlgorithm.ZLib.getValue()
-                            && compression != (PacketCompressionAlgorithm.None.getValue() & 255)) {
-                        io.netty.util.ReferenceCountUtil.release(wire);
-                        throw new AssertionError("NetherNet batch unexpectedly uses Bedrock AES");
-                    }
+                int compression = ((ByteBuf) wire).getUnsignedByte(((ByteBuf) wire).readerIndex());
+                if (compression != PacketCompressionAlgorithm.ZLib.getValue()
+                        && compression != (PacketCompressionAlgorithm.None.getValue() & 255)) {
+                    io.netty.util.ReferenceCountUtil.release(wire);
+                    throw new AssertionError("NetherNet batch unexpectedly uses Bedrock AES");
                 }
                 receiver.writeInbound(wire);
                 ByteBuf decoded = receiver.readInbound();
@@ -645,17 +636,19 @@ public final class NativeCaptureSelfTest {
     private static void smoke(int port, Path nativeProperties) throws Exception {
         JsonObject json = JsonParser.parseString(Files.readString(nativeProperties)).getAsJsonObject();
         Map<String, Object> properties = new GsonBuilder().setObjectToNumberStrategy(ToNumberPolicy.LONG_OR_DOUBLE).create().fromJson(json, new com.google.gson.reflect.TypeToken<Map<String, Object>>() { }.getType());
-        KeyPair keys = CryptUtil.generateEcdsa384KeyPair();
+        AuthData auth = AuthData.createSelfSigned("NativeCaptureTest");
+        KeyPair keys = auth.getSessionKeyPair();
         String jwt = sign(properties, keys);
         EventLoopGroup loops = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         CompletableFuture<Void> ready = new CompletableFuture<>();
         Channel client = null;
         try {
-            client = new Bootstrap().group(loops).channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
-                    .option(RakChannelOption.RAK_PROTOCOL_VERSION, ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION)
+            client = new Bootstrap().group(loops).channelFactory(NetherNetChannelFactory.client(new BedrockHttpSignaling()))
+                    .option(NetherChannelOption.NETHER_CLIENT_IDENTITY,
+                            OperatorIdentity.fromToken(auth.getSessionKeyPair(), auth.getMultiplayerToken(), "self"))
                     .handler(new ChannelInitializer<Channel>() {
                         @Override protected void initChannel(Channel channel) {
-                            NativeCaptureProxy.pipeline(channel, true);
+                            NativeCaptureProxy.pipeline(channel);
                             channel.pipeline().addLast("test", new SimpleChannelInboundHandler<ByteBuf>() {
                                 private final Map<String, Set<Long>> chunks = new HashMap<>();
                                 private final Map<String, Long> expected = new HashMap<>();
@@ -669,7 +662,7 @@ public final class NativeCaptureSelfTest {
                                         int threshold = input.readUnsignedShortLE();
                                         var algorithm = PacketCompressionAlgorithm.getByValue(input.readUnsignedShortLE());
                                         ctx.pipeline().addBefore("batch", "compression", new CompressionCodec(algorithm, threshold));
-                                        ctx.writeAndFlush(NativeCaptureProxy.login(new NativeCaptureProxy.Identity(keys, "local-fixture", false), jwt));
+                                        ctx.writeAndFlush(NativeCaptureProxy.login(new NativeCaptureProxy.Identity(auth.getSessionKeyPair(), auth.getMultiplayerToken(), false), jwt));
                                     } else if (id == 6) {
                                         input.skipBytes(20); BedrockTypes.STRING.read(input);
                                         int count = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(input);
