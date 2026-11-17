@@ -149,6 +149,14 @@ resources. Item-model textures larger than 1024 pixels on either side
 are now reduced by a whole factor; model UVs are relative, so the
 mapping stays the same.
 
+Attachables export only textures that back a Java model, meaning those
+paired with a geometry entry. Java stitches every texture under
+textures/item into one atlas, and OPBlocks' attachables list 5,531
+animation frames (236 million pixels) that only Bedrock render
+controllers select. With them the atlas needed about 18,200 pixels per
+side, beyond the GPU limit, so Java dropped every server pack. The
+add-on still draws those frames natively from the payload pack.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 index 4e87e6acb64959a57107788013245c8a7caf630d..ed84a7aebe626036f4b66ada6bf08f69b4947558 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
@@ -418,10 +426,10 @@ index de4633e5a08f391df07a052c8a8e6e7ef459b574..b78f8e516e3b04ec9da8678819c6e68c
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-index 40083952199718da35b75d191b00130764a43712..748b1cbd281211086dee06117d296dbeab7404ef 100644
+index 40083952199718da35b75d191b00130764a43712..736e2ada4f709e08536acb22f5a3f8502fb78b3c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-@@ -17,92 +17,162 @@
+@@ -17,92 +17,172 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
  
@@ -442,6 +450,7 @@ index 40083952199718da35b75d191b00130764a43712..748b1cbd281211086dee06117d296dbe
 -import org.cube.converter.model.impl.java.JavaItemModel;
  
 +import java.util.List;
++import java.util.LinkedHashSet;
  import java.util.Map;
 +import java.util.Set;
 +import java.util.concurrent.ConcurrentHashMap;
@@ -477,19 +486,9 @@ index 40083952199718da35b75d191b00130764a43712..748b1cbd281211086dee06117d296dbe
          for (AttachableDefinitions.AttachableDefinition attachableDefinition : resourcePackStorage.getAttachables().attachables().values()) {
 -            submitter.accept(() -> this.handleAttachableDefinition(resourcePackStorage, attachableDefinition));
 +            submitter.accept(() -> this.handleAttachableDefinition(resourcePackStorage, attachableDefinition, geometries));
-         }
-     }
- 
--    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition) {
--        final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
--        for (String bedrockPath : attachableDefinition.attachableData().getTextures().values()) {
--            for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
--                final Content.LazyImage texture = pack.content().getShortnameImage(bedrockPath);
--                if (texture != null) {
--                    javaContent.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(bedrockPath) + ".png", texture);
--                    break;
--                }
--            }
++        }
++    }
++
 +    private static JsonObject inventoryIcon(final ResourcePackStorage packs, final String identifier) {
 +        final var definition = packs.getItems().get(identifier);
 +        if (definition != null && definition.iconComponent() != null) {
@@ -498,8 +497,9 @@ index 40083952199718da35b75d191b00130764a43712..748b1cbd281211086dee06117d296dbe
 +        final String vanillaIcon = VanillaItemIcons.icon(identifier);
 +        final JsonObject icon = atlasIcon(packs, vanillaIcon != null ? vanillaIcon : Key.stripMinecraftNamespace(identifier));
 +        return icon == null && BOW.equals(identifier) ? atlasIcon(packs, "bow_standby") : icon;
-+    }
-+
+     }
+ 
+-    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition) {
 +    private static JsonObject atlasIcon(final ResourcePackStorage packs, final String icon) {
 +        final var textures = packs.getTextures().itemTextures().get(icon);
 +        if (textures == null || textures.isEmpty()) {
@@ -517,10 +517,26 @@ index 40083952199718da35b75d191b00130764a43712..748b1cbd281211086dee06117d296dbe
 +
 +    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition,
 +                                              final Map<BedrockGeometryModel, CompiledGeometry> geometries) {
-+        final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
+         final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
+-        for (String bedrockPath : attachableDefinition.attachableData().getTextures().values()) {
+-            for (ResourcePack pack : resourcePackStorage.getPackStackTopToBottom()) {
+-                final Content.LazyImage texture = pack.content().getShortnameImage(bedrockPath);
+-                if (texture != null) {
+-                    javaContent.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(bedrockPath) + ".png", texture);
+-                    break;
+-                }
 +        final boolean bow = BOW.equals(attachableDefinition.identifier());
 +        boolean spriteFallback = false;
-+        final Set<String> textures = this.copyTextures(resourcePackStorage, attachableDefinition.attachableData().getTextures().values(), javaContent);
++        // Only textures paired with a geometry become Java models. Render-controller-only textures, such as OPBlocks'
++        // thousands of animation frames, would fill the shared items atlas and make Java drop every server pack.
++        final Set<String> modelTextures = new LinkedHashSet<>();
++        for (final String modelKey : attachableDefinition.attachableData().getGeometries().keySet()) {
++            final String texture = attachableDefinition.attachableData().getTextures().get(modelKey);
++            if (texture != null) {
++                modelTextures.add(texture);
+             }
+         }
++        final Set<String> textures = this.copyTextures(resourcePackStorage, modelTextures, javaContent);
          for (Map.Entry<String, String> modelEntry : attachableDefinition.attachableData().getGeometries().entrySet()) {
              final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
 -            if (bedrockGeometry == null) {
@@ -1488,10 +1504,10 @@ index 0000000000000000000000000000000000000000..5eb876a05e9cd09fb2675864136e92bb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..b3200d695bbadd144b6ecde86d3b0e65cc378e6b
+index 0000000000000000000000000000000000000000..492456606b352e2ace343734439d4fb54aaf1969
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,397 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1711,6 +1727,21 @@ index 0000000000000000000000000000000000000000..b3200d695bbadd144b6ecde86d3b0e65
 +        final var restored = ResourcePackStorage.nativeActors(NativeActorLibrary.resources(
 +                storage.getPackStackBottomToTop(), storage::isServerPack));
 +        assertEquals(definitions.get(alias).itemBindings(), restored.getAttachables().attachables().get(alias).itemBindings());
++    }
++
++    @Test
++    void exportsOnlyAttachableTexturesThatBackJavaModels() {
++        final ResourcePack pack = pack("example:sword", true);
++        final var attachable = pack.content().getJson("attachables/test.json");
++        final var textures = attachable.getAsJsonObject("minecraft:attachable").getAsJsonObject("description").getAsJsonObject("textures");
++        textures.addProperty("default", "textures/present");
++        // OPBlocks selects animation frames through render controllers; no Java model uses them.
++        textures.addProperty("frame_1", "textures/frame");
++        pack.content().putJson("attachables/test.json", attachable);
++        pack.content().putPngImage("textures/frame.png", new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB));
++        final Content result = convert(new ResourcePackStorage(List.of(pack)), new CustomAttachableResourceRewriter());
++        assertTrue(result.contains("assets/viabedrock/textures/item/attachables/present.png"));
++        assertFalse(result.contains("assets/viabedrock/textures/item/attachables/frame.png"));
 +    }
 +
 +    @Test
