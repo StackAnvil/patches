@@ -1,0 +1,190 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 17:57:23 +0100
+Subject: [PATCH] feat(connection): detect Bedrock servers in version
+ auto-detect
+
+ViaFabricPlus detects a server's version with a Java status request over
+TCP. A Bedrock server never answers that request, so an entry on auto
+detect joined as Java and timed out on the HTTP NetherNet signaling port.
+
+Before the Java request, query the HTTP NetherNet capability endpoint
+(GET /v1/join), which native clients query before every join. A 2xx answer
+selects Bedrock. Java servers close the connection on the HTTP request,
+so detection falls through to the Java request without a long wait.
+Explicit nethernet:// addresses select Bedrock without a request.
+
+The probe uses plain HTTP, like the server list status ping, and a
+three-second limit so an unresponsive port cannot stall the join screen.
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinProtocolVersionDetector.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinProtocolVersionDetector.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..bb2204c5562c8ab3f573316f8f034c40a0b597e1
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinProtocolVersionDetector.java
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.core.integration;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IServerAddress;
++import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetHttpProbe;
++import com.viaversion.viafabricplus.protocoltranslator.util.ProtocolVersionDetector;
++import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
++import java.net.InetSocketAddress;
++import net.minecraft.client.multiplayer.resolver.ServerAddress;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(value = ProtocolVersionDetector.class, remap = false)
++public abstract class MixinProtocolVersionDetector {
++
++    @Inject(method = "get", at = @At("HEAD"), cancellable = true)
++    private static void detectBedrock(final ServerAddress serverAddress, final InetSocketAddress socketAddress,
++                                      final ProtocolVersion clientVersion, final CallbackInfoReturnable<ProtocolVersion> cir) {
++        // ViaFabricPlus detects versions with a Java status request, which Bedrock servers never answer.
++        // Probe the HTTP NetherNet endpoint first: it answers quickly on both Bedrock and Java servers.
++        if (((IServerAddress) (Object) serverAddress).viaFabricPlusBedrock$getNetherNetAddress() != null
++            || NetherNetHttpProbe.accepts(serverAddress.getHost(), serverAddress.getPort())) {
++            cir.setReturnValue(BedrockProtocolVersion.BEDROCK_LATEST);
++        }
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetHttpProbe.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetHttpProbe.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1ef513c0aad6e7776c048c689df8e698b9731f6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetHttpProbe.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.protocoltranslator.network;
++
++import java.io.IOException;
++import java.net.URI;
++import java.net.URISyntaxException;
++import java.net.http.HttpClient;
++import java.net.http.HttpRequest;
++import java.net.http.HttpResponse;
++import java.time.Duration;
++
++/** Checks for the HTTP NetherNet capability endpoint that native clients query before they join a server. */
++public final class NetherNetHttpProbe {
++
++    private static final Duration TIMEOUT = Duration.ofSeconds(3);
++    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(TIMEOUT).version(HttpClient.Version.HTTP_1_1).build();
++
++    private NetherNetHttpProbe() {
++    }
++
++    /** Blocks until the server accepts or rejects the capability request, for at most a few seconds. */
++    public static boolean accepts(final String host, final int port) {
++        final URI uri;
++        try {
++            uri = new URI("http", null, host, port, "/v1/join", null, null);
++        } catch (URISyntaxException ignored) {
++            return false;
++        }
++        final HttpRequest request = HttpRequest.newBuilder(uri).timeout(TIMEOUT).header("Accept", "application/json").GET().build();
++        try {
++            return HTTP.send(request, HttpResponse.BodyHandlers.discarding()).statusCode() / 100 == 2;
++        } catch (IOException ignored) {
++            return false;
++        } catch (InterruptedException ignored) {
++            Thread.currentThread().interrupt();
++            return false;
++        }
++    }
++
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 897677a8f1650ffd1992fb0450797bf9e6c9a71e..f72bb58803e3017b591533646e86f714be86eb7c 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -58,6 +58,7 @@
+     "core.integration.MixinLimitationsImpl",
+     "core.integration.MixinProtocolCategory",
+     "core.integration.MixinProtocolVersion",
++    "core.integration.MixinProtocolVersionDetector",
+     "core.integration.MixinProtocolVersionMetadata",
+     "core.integration.MixinServerListsScreen",
+     "core.integration.MixinServerStatusPinger",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetHttpProbeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetHttpProbeTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..365fb623619315700464cce8133f5cd723c5c98b
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetHttpProbeTest.java
+@@ -0,0 +1,63 @@
++/*
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.protocoltranslator.network;
++
++import com.sun.net.httpserver.HttpServer;
++import org.junit.jupiter.api.Test;
++
++import java.io.IOException;
++import java.net.InetAddress;
++import java.net.InetSocketAddress;
++import java.net.ServerSocket;
++import java.net.Socket;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class NetherNetHttpProbeTest {
++    @Test
++    void acceptsAServerThatAnswersTheNativeCapabilityRequest() throws IOException {
++        final HttpServer server = capabilityServer(200);
++        try {
++            assertTrue(NetherNetHttpProbe.accepts("127.0.0.1", server.getAddress().getPort()));
++        } finally {
++            server.stop(0);
++        }
++    }
++
++    @Test
++    void rejectsAnHttpServerWithoutTheCapabilityEndpoint() throws IOException {
++        final HttpServer server = capabilityServer(404);
++        try {
++            assertFalse(NetherNetHttpProbe.accepts("127.0.0.1", server.getAddress().getPort()));
++        } finally {
++            server.stop(0);
++        }
++    }
++
++    @Test
++    void rejectsAJavaServerThatClosesTheConnectionOnAnHttpRequest() throws Exception {
++        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
++            final Thread java = Thread.ofVirtual().start(() -> {
++                try (Socket client = server.accept()) {
++                    client.getInputStream().read();
++                } catch (IOException ignored) {
++                }
++            });
++            assertFalse(NetherNetHttpProbe.accepts("127.0.0.1", server.getLocalPort()));
++            java.join();
++        }
++    }
++
++    private static HttpServer capabilityServer(final int status) throws IOException {
++        final HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
++        server.createContext("/", exchange -> {
++            exchange.sendResponseHeaders(exchange.getRequestURI().getPath().equals("/v1/join") ? status : 404, -1);
++            exchange.close();
++        });
++        server.start();
++        return server;
++    }
++}
