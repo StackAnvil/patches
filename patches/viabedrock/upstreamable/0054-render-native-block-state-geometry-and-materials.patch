@@ -606,6 +606,17 @@ all four occluded vertices here. Outer-plane faces keep the corner path:
 their full-face controls predate this capture, and no native control
 compares the per-vertex path with them.
 
+Vanilla carriers run out on servers with many custom states: Galaxite
+defines about 3,590, and only about 2,220 vanilla states can carry
+them. A platform that registers its own Java blocks at startup can
+now reserve their states with reserveJavaBlockStates. Custom blocks
+use reserved states before vanilla ones. A reserved block that shows
+a custom block gets a definition listing every state, with the
+platform's empty model for unused states. Reserved states join the
+Java state table so state lookups, light tables and the chunk palette
+width include them; light-only states move after them. A reservation
+that overlaps known ids is ignored, and vanilla carriers still work.
+
 diff --git a/Data Asset Sources.md b/Data Asset Sources.md
 index 10ba092ad4db400b3b150ec6c2036297e373ecd0..9d80118af27145d4aa7f2098434e7c1fdf0afad7 100644
 --- a/Data Asset Sources.md	
@@ -2573,6 +2584,47 @@ index 0000000000000000000000000000000000000000..07c8599425f67219fb03045c372318c7
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/ReservedJavaBlocks.java b/src/main/java/net/raphimc/viabedrock/api/model/ReservedJavaBlocks.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8005f50ed52b6b8843dd6901ff815cbaf7b1148d
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/ReservedJavaBlocks.java
+@@ -0,0 +1,35 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.Map;
++
++/**
++ * Java blocks that a platform registered after the vanilla blocks to carry custom Bedrock blocks.
++ *
++ * @param blocks     the Java block registry ids of the reserved blocks
++ * @param states     the Java block state ids of every state of those blocks
++ * @param emptyModel the model for reserved states that no custom block uses
++ */
++public record ReservedJavaBlocks(Map<String, Integer> blocks, Map<BlockState, Integer> states, String emptyModel) {
++
++    public boolean contains(final BlockState state) {
++        return this.blocks.containsKey(state.namespacedIdentifier());
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..039f1d46c291aee47c7d3e33c90bd4f93294473b
@@ -3078,6 +3130,103 @@ index 44e1ff721bb2268034a1cc82efe5cf2923e1ac8c..f0acf800deceacc922a4b9be30c4c7c0
                  ViaBedrock.getPlatform().getLogger().warning("Skipping LOGIN state");
                  final PacketWrapper playStatus = PacketWrapper.create(ClientboundBedrockPackets.PLAY_STATUS, wrapper.user());
                  playStatus.write(Types.INT, PlayStatus.LoginSuccess.getValue()); // status
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
+index 79ca5ad6554139b993cdad8ff1e228944b34d966..b857bc9f62c61327f4f4637ae60c6ca64864537f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
+@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.api.chunk.blockstate.BlockStateUpgrader;
+ import net.raphimc.viabedrock.api.item.ItemUpgrader;
+ import net.raphimc.viabedrock.api.model.BedrockBlockState;
+ import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.model.ReservedJavaBlocks;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
+ import net.raphimc.viabedrock.api.resourcepack.definition.SoundDefinitions;
+@@ -121,6 +122,7 @@ public class BedrockMappingData extends MappingDataBase {
+     private byte[] javaBlockLightEmission;
+     private byte[] javaBlockOpacity;
+     private int nativeLightStateStart;
++    private ReservedJavaBlocks reservedJavaBlocks;
+ 
+     // Biomes
+     private CompoundTag bedrockBiomeDefinitions;
+@@ -177,7 +179,7 @@ public class BedrockMappingData extends MappingDataBase {
+     }
+ 
+     @Override
+-    public void load() {
++    public synchronized void load() {
+         if (Via.getManager().isDebug()) {
+             this.getLogger().info("Loading " + this.unmappedVersion + " -> " + this.mappedVersion + " mappings...");
+         }
+@@ -379,6 +381,7 @@ public class BedrockMappingData extends MappingDataBase {
+                 this.dataDrivenBedrockBlocks.add(entry.getKey());
+             }
+ 
++            this.applyReservedJavaBlocks();
+             this.loadBlockLightProperties();
+         }
+ 
+@@ -1075,6 +1078,49 @@ public class BedrockMappingData extends MappingDataBase {
+         DataValues.validate();
+     }
+ 
++    /**
++     * Adds Java blocks that the client registered after the vanilla blocks so custom Bedrock blocks can use them
++     * as carriers. A platform calls this once at startup, before or after the mappings load.
++     *
++     * @param blocks     the Java block registry ids of the reserved blocks
++     * @param states     the Java block state ids of every state of those blocks
++     * @param emptyModel the model for reserved states that no custom block uses
++     */
++    public synchronized void reserveJavaBlockStates(final Map<String, Integer> blocks, final Map<BlockState, Integer> states,
++                                                    final String emptyModel) {
++        if (this.reservedJavaBlocks != null) {
++            throw new IllegalStateException("Java block states are already reserved");
++        }
++        this.reservedJavaBlocks = new ReservedJavaBlocks(Map.copyOf(blocks), Map.copyOf(states), emptyModel);
++        if (this.javaBlockStates != null) {
++            this.applyReservedJavaBlocks();
++            this.loadBlockLightProperties();
++        }
++    }
++
++    private void applyReservedJavaBlocks() {
++        if (this.reservedJavaBlocks == null) {
++            return;
++        }
++        final boolean conflicts = this.reservedJavaBlocks.blocks().entrySet().stream()
++                .anyMatch(entry -> this.javaBlocks.containsKey(Key.namespaced(entry.getKey())) || this.javaBlocks.containsValue(entry.getValue()))
++                || this.reservedJavaBlocks.states().entrySet().stream()
++                .anyMatch(entry -> this.javaBlockStates.containsKey(entry.getKey()) || this.javaBlockStates.containsValue(entry.getValue()));
++        if (conflicts) {
++            // Another mod's blocks or a different game version moved the ids; vanilla carriers still work.
++            this.getLogger().warning("Ignoring reserved Java block states that overlap known blocks");
++            this.reservedJavaBlocks = null;
++            return;
++        }
++        this.reservedJavaBlocks.blocks().forEach((identifier, id) -> this.javaBlocks.put(Key.namespaced(identifier), id));
++        this.reservedJavaBlocks.states().forEach(this.javaBlockStates::put);
++    }
++
++    /** Returns the platform's reserved Java blocks, or null when the client only has vanilla blocks. */
++    public ReservedJavaBlocks getReservedJavaBlocks() {
++        return this.reservedJavaBlocks;
++    }
++
+     private void loadBlockLightProperties() {
+         final JsonObject lightPropertiesJson = this.readJson("java/block_light_properties.json");
+ 
+@@ -1095,7 +1141,8 @@ public class BedrockMappingData extends MappingDataBase {
+             opacityByIdentifier.put(identifier, entry.getValue().getAsInt());
+         }
+ 
+-        final int stateCount = this.javaBlockStates.size();
++        // Reserved states follow the vanilla states, and light-only states follow both.
++        final int stateCount = this.javaBlockStates.values().stream().mapToInt(Integer::intValue).max().orElse(-1) + 1;
+         final byte[] javaEmission = new byte[stateCount];
+         final byte[] javaOpacity = new byte[stateCount];
+         Arrays.fill(javaOpacity, (byte) 15); // Blocks that are not listed are treated as full opaque cubes
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BlockProperties.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BlockProperties.java
 index 77ec076ec69eea4c09a90e4ab73053b8f89817ea..adae858498868d1f8e14b5a1b517d88676afeca4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/BlockProperties.java
@@ -4955,10 +5104,10 @@ index 0000000000000000000000000000000000000000..f20927ce3781520fc78b60f325a06217
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..92aa986cc1c6854d6cfffa592f1a0cecf4fcc48a
+index 0000000000000000000000000000000000000000..e56c094bfbe1676e935d3431858b174d851c210b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,187 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -5020,13 +5169,21 @@ index 0000000000000000000000000000000000000000..92aa986cc1c6854d6cfffa592f1a0cec
 +        return BedrockProtocol.MAPPINGS.getJavaBlockStates().entrySet().stream()
 +                .filter(entry -> CustomBlockStateDefinitions.carrier(entry.getKey()))
 +                .filter(entry -> !occupied.contains(entry.getKey()))
-+                .sorted(Comparator.<Map.Entry<BlockState, Integer>>comparingInt(entry -> switch (entry.getKey().namespacedIdentifier()) {
-+                    case "minecraft:note_block" -> 0;
-+                    case "minecraft:redstone_wire" -> 1;
-+                    default -> 2;
-+                })
++                .sorted(Comparator.<Map.Entry<BlockState, Integer>>comparingInt(entry -> carrierOrder(entry.getKey()))
 +                        .thenComparingInt(Map.Entry::getValue))
 +                .map(Map.Entry::getValue).toList();
++    }
++
++    /** Reserved platform states come first because they have no vanilla behavior to hide. */
++    private static int carrierOrder(final BlockState state) {
++        if (CustomBlockStateDefinitions.reserved(state)) {
++            return -1;
++        }
++        return switch (state.namespacedIdentifier()) {
++            case "minecraft:note_block" -> 0;
++            case "minecraft:redstone_wire" -> 1;
++            default -> 2;
++        };
 +    }
 +
 +    /** Vanilla terrain assets are available in the Java client even when omitted from the server pack. */
@@ -5129,17 +5286,21 @@ index 0000000000000000000000000000000000000000..92aa986cc1c6854d6cfffa592f1a0cec
 +    }
 +
 +    private static void writeStateDefinitions(final Content result, final Map<Integer, String> models) {
-+        CustomBlockStateDefinitions.create(BedrockProtocol.MAPPINGS.getJavaBlockStates(), models).forEach((block, definition) ->
-+                result.putJson("assets/minecraft/blockstates/" + block + ".json", definition));
++        CustomBlockStateDefinitions.create(BedrockProtocol.MAPPINGS.getJavaBlockStates(), models).forEach((block, definition) -> {
++            final int separator = block.indexOf(':');
++            final String path = separator < 0 ? "minecraft/blockstates/" + block
++                    : block.substring(0, separator) + "/blockstates/" + block.substring(separator + 1);
++            result.putJson("assets/" + path + ".json", definition);
++        });
 +    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..a063da135d5a69b20e4ed9a5ad9ab25d154ec7fb
+index 0000000000000000000000000000000000000000..1c231665da84858e3faefed86f8315befcd8df82
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,257 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5150,12 +5311,14 @@ index 0000000000000000000000000000000000000000..a063da135d5a69b20e4ed9a5ad9ab25d
 +import com.viaversion.viaversion.libs.gson.JsonArray;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +
 +import java.util.ArrayList;
 +import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.TreeMap;
++import java.util.stream.Collectors;
 +
 +/** Keeps vanilla selectors intact while assigning unused, water-free carrier states. */
 +final class CustomBlockStateDefinitions {
@@ -5164,9 +5327,15 @@ index 0000000000000000000000000000000000000000..a063da135d5a69b20e4ed9a5ad9ab25d
 +    }
 +
 +    static boolean carrier(final BlockState state) {
-+        return state.namespacedIdentifier().equals("minecraft:note_block") || state.namespacedIdentifier().equals("minecraft:redstone_wire")
++        return reserved(state) || state.namespacedIdentifier().equals("minecraft:note_block") || state.namespacedIdentifier().equals("minecraft:redstone_wire")
 +                || state.identifier().endsWith("_door") && state.hasProperty("powered", "true")
 +                || mushroom(state);
++    }
++
++    /** Platform-registered carrier blocks have no vanilla use, so every state can show a custom block. */
++    static boolean reserved(final BlockState state) {
++        final var reserved = BedrockProtocol.MAPPINGS.getReservedJavaBlocks();
++        return reserved != null && reserved.contains(state);
 +    }
 +
 +    private static boolean mushroom(final BlockState state) {
@@ -5174,16 +5343,35 @@ index 0000000000000000000000000000000000000000..a063da135d5a69b20e4ed9a5ad9ab25d
 +    }
 +
 +    static Map<String, JsonObject> create(final Map<BlockState, Integer> states, final Map<Integer, String> assignments) {
++        final var reserved = BedrockProtocol.MAPPINGS.getReservedJavaBlocks();
++        return create(states, assignments, reserved == null ? null : reserved.emptyModel());
++    }
++
++    /**
++     * Returns block state definitions keyed by block path, or by namespaced identifier outside minecraft.
++     * A reserved block with an assigned state lists every state, so its unused states keep the empty model.
++     */
++    static Map<String, JsonObject> create(final Map<BlockState, Integer> states, final Map<Integer, String> assignments,
++                                          final String reservedEmptyModel) {
 +        final Map<String, JsonObject> result = new LinkedHashMap<>();
++        final Map<String, JsonObject> reservedVariants = new TreeMap<>();
++        final var assignedReserved = states.entrySet().stream()
++                .filter(entry -> reservedEmptyModel != null && reserved(entry.getKey()) && assignments.containsKey(entry.getValue()))
++                .map(entry -> entry.getKey().namespacedIdentifier()).collect(Collectors.toSet());
 +        final JsonObject variants = new JsonObject();
 +        final List<BlockState> vanillaWire = new ArrayList<>();
 +        final Map<BlockState, String> customWire = new LinkedHashMap<>();
 +        final Map<String, JsonObject> doors = new LinkedHashMap<>();
 +        final var assignedDoors = states.entrySet().stream()
 +                .filter(entry -> entry.getKey().identifier().endsWith("_door") && assignments.containsKey(entry.getValue()))
-+                .map(entry -> entry.getKey().identifier()).collect(java.util.stream.Collectors.toSet());
++                .map(entry -> entry.getKey().identifier()).collect(Collectors.toSet());
 +        for (Map.Entry<BlockState, Integer> state : states.entrySet()) {
-+            if (state.getKey().namespacedIdentifier().equals("minecraft:note_block")) {
++            if (assignedReserved.contains(state.getKey().namespacedIdentifier())) {
++                final String serialized = state.getKey().toBlockStateString();
++                final String selector = serialized.contains("[") ? serialized.substring(serialized.indexOf('[') + 1, serialized.length() - 1) : "";
++                reservedVariants.computeIfAbsent(state.getKey().namespacedIdentifier(), ignored -> new JsonObject())
++                        .add(selector, model(assignments.getOrDefault(state.getValue(), reservedEmptyModel), 0));
++            } else if (state.getKey().namespacedIdentifier().equals("minecraft:note_block")) {
 +                final String serialized = state.getKey().toBlockStateString();
 +                final String variant = serialized.substring(serialized.indexOf('[') + 1, serialized.length() - 1);
 +                variants.add(variant, model(assignments.getOrDefault(state.getValue(), "minecraft:block/note_block"), 0));
@@ -5219,6 +5407,11 @@ index 0000000000000000000000000000000000000000..a063da135d5a69b20e4ed9a5ad9ab25d
 +                }
 +            }
 +        }
++        reservedVariants.forEach((name, blockVariants) -> {
++            final JsonObject definition = new JsonObject();
++            definition.add("variants", blockVariants);
++            result.put(name, definition);
++        });
 +        doors.forEach((name, doorVariants) -> {
 +            final JsonObject definition = new JsonObject();
 +            definition.add("variants", doorVariants);
@@ -13270,10 +13463,10 @@ index 0000000000000000000000000000000000000000..d7f6a4e42ed8de5569f74435f647d244
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..7fe228fa9bef7cee60699cfef9507398efd56f2d
+index 0000000000000000000000000000000000000000..82a2caf4d6e78dd4e0de4828f7f42e8045d49899
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,319 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -13284,6 +13477,9 @@ index 0000000000000000000000000000000000000000..7fe228fa9bef7cee60699cfef9507398
 +import com.viaversion.viaversion.libs.gson.JsonElement;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.model.ReservedJavaBlocks;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.ArrayList;
@@ -13342,6 +13538,36 @@ index 0000000000000000000000000000000000000000..7fe228fa9bef7cee60699cfef9507398
 +        assertSameStructureAndOrder(condition, CustomBlockStateDefinitions.condition(reversed));
 +        assertEquals(5, propertyPredicates(condition));
 +        assertNull(CustomBlockStateDefinitions.condition(List.of()));
++    }
++
++    @Test
++    void reservedCarrierBlocksListEveryStateWithTheEmptyModelForUnusedOnes() throws Exception {
++        final Map<BlockState, Integer> states = new LinkedHashMap<>();
++        for (int slot = 0; slot < 4; slot++) {
++            states.put(new BlockState("test", "carrier", Map.of("slot", Integer.toString(slot))), 40000 + slot);
++        }
++        final BlockState stone = new BlockState("stone", Map.of());
++        states.put(stone, 1);
++        final var field = BedrockMappingData.class.getDeclaredField("reservedJavaBlocks");
++        field.setAccessible(true);
++        final Object previous = field.get(BedrockProtocol.MAPPINGS);
++        try {
++            field.set(BedrockProtocol.MAPPINGS, new ReservedJavaBlocks(Map.of("test:carrier", 2000), states, "test:block/empty"));
++            assertTrue(CustomBlockStateDefinitions.carrier(states.keySet().iterator().next()));
++            assertFalse(CustomBlockStateDefinitions.carrier(stone));
++            // A pack only replaces a reserved block's definition once one of its states shows a custom block.
++            assertTrue(CustomBlockStateDefinitions.create(states, Map.of()).isEmpty());
++            final Map<String, JsonObject> definitions = CustomBlockStateDefinitions.create(states, Map.of(40002, "viabedrock:block/custom/slot_40002"));
++            assertEquals(List.of("test:carrier"), List.copyOf(definitions.keySet()));
++            final JsonObject variants = definitions.get("test:carrier").getAsJsonObject("variants");
++            assertEquals(4, variants.size());
++            for (int slot = 0; slot < 4; slot++) {
++                final String expected = slot == 2 ? "viabedrock:block/custom/slot_40002" : "test:block/empty";
++                assertEquals(new AppliedModel(expected, 0), applied(variants.getAsJsonObject("slot=" + slot)));
++            }
++        } finally {
++            field.set(BedrockProtocol.MAPPINGS, previous);
++        }
 +    }
 +
 +    @Test

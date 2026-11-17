@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 20:00:18 +0100
+Subject: [PATCH] fix(signs): keep formatting colors on undyed sign text
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bedrock sign text can carry formatting codes such as §c. ViaBedrock
+painted every text component with the sign's text color, so §c text on
+an ordinary sign turned black.
+
+The native 1.26.60.5 client shows formatting colors on undyed signs,
+glowing or not, and carries a color to the next line until §r when
+PersistFormatting is set. On a dyed sign the dye color replaces the
+formatting colors. Sign text now keeps component colors while the
+sign color is black and fills only uncolored text with it; dyed signs
+still use the dye color for all text.
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
+index 9067ade251cc4548eae76769171b4c3e05ab9574..da6150db6eee07c36f2d4ebedadd2d7942dd094d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
+@@ -162,8 +162,14 @@ public class SignBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+                 components.clear();
+             }
+             javaText.putString("color", DyeColor.getClosestDyeColor(signTextColor).name().toLowerCase());
++            // Bedrock keeps formatting colors on undyed black text, but a dye color replaces them.
++            final boolean dyed = (signTextColor & 0xFFFFFF) != 0;
+             for (TextComponent component : components) {
+-                component.forEach(c -> c.getStyle().setColor(signTextColor));
++                component.forEach(c -> {
++                    if (dyed || c.getStyle().getColor() == null) {
++                        c.getStyle().setColor(signTextColor);
++                    }
++                });
+             }
+         }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0642bb868ff690ad83435c08c31b93dc9cf27906
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
+@@ -0,0 +1,67 @@
++package net.raphimc.viabedrock.protocol.rewriter.blockentity;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashSet;
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class SignBlockEntityRewriterTest {
++
++    private static final int BLACK = 0xFF000000;
++    private static final int BLUE = 0xFF003CFF;
++
++    @Test
++    void undyedSignsKeepFormattingColorsAcrossLines() {
++        final ListTag<?> messages = frontMessages("§cRed line\nplain second\n§rnormal", BLACK);
++        assertEquals(Set.of("#FF5555"), colors(messages.get(0)));
++        // PersistFormatting carries the color to the next line until a reset, as on Bedrock.
++        assertEquals(Set.of("#FF5555"), colors(messages.get(1)));
++        assertEquals(Set.of("#000000"), colors(messages.get(2)));
++    }
++
++    @Test
++    void dyedSignsReplaceFormattingColorsWithTheDyeColor() {
++        final ListTag<?> messages = frontMessages("blue\n§eyellow code", BLUE);
++        assertEquals(Set.of("#003CFF"), colors(messages.get(0)));
++        assertEquals(Set.of("#003CFF"), colors(messages.get(1)));
++    }
++
++    private static ListTag<?> frontMessages(final String text, final int color) {
++        final CompoundTag front = new CompoundTag();
++        front.putString("Text", text);
++        front.putInt("SignTextColor", color);
++        front.putByte("IgnoreLighting", (byte) 0);
++        front.putByte("PersistFormatting", (byte) 1);
++        final CompoundTag sign = new CompoundTag();
++        sign.putString("id", "Sign");
++        sign.put("FrontText", front);
++        final var java = new SignBlockEntityRewriter().toJava(null, new BedrockBlockEntity(new BlockPosition(0, 0, 0), sign));
++        return java.tag().getCompoundTag("front_text").getListTag("messages");
++    }
++
++    private static Set<String> colors(final Tag tag) {
++        final Set<String> colors = new HashSet<>();
++        collect(tag, colors);
++        return colors;
++    }
++
++    private static void collect(final Tag tag, final Set<String> colors) {
++        if (tag instanceof CompoundTag compound) {
++            if (compound.get("color") instanceof StringTag color && !compound.getString("text", "").isEmpty()) {
++                colors.add(color.getValue().toUpperCase().startsWith("#") ? color.getValue().toUpperCase() : color.getValue());
++            }
++            compound.values().forEach(child -> collect(child, colors));
++        } else if (tag instanceof ListTag<?> list) {
++            list.forEach(child -> collect(child, colors));
++        }
++    }
++
++}
