@@ -280,7 +280,6 @@ async function doctor(): Promise<void> {
       "spicy",
       "genisoimage",
       "jq",
-      "xauth",
     ].map((tool) => [tool, Bun.which(tool) ?? "missing"]),
   );
   const version = Bun.which("quickemu")

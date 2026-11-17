@@ -15,10 +15,19 @@ Integration scopes stop owned process groups before releasing copied server depe
 
 ## Prepare the clients
 
-Install Rust 1.85 or newer with Cargo for the X11 capture helper.
-The first `capture ui` command builds `native/capture-x11` with its locked dependencies.
-The helper uses Rust X11 bindings and requires no Xlib or XTest development headers.
-Build outputs stay under `.stackanvil/tools/`; source changes trigger a rebuild.
+Install Sway, `grim`, `wf-recorder`, `pactl`, Rust 1.85 or newer, and the libxkbcommon development package.
+On Fedora, use `sway`, `grim`, `wf-recorder`, `pulseaudio-utils`, and `libxkbcommon-devel`.
+On Debian or Ubuntu, use `sway`, `grim`, `wf-recorder`, `pulseaudio-utils`, and `libxkbcommon-dev`.
+The lab builds `native/capture-wayland` with its locked dependencies.
+Build outputs stay under `.stackanvil/tools/`. Source changes trigger a rebuild.
+
+The private display uses headless Sway with XWayland disabled.
+Both clients must support native Wayland. X11 clients have no fallback.
+The launcher forces Qt, GTK, SDL2, and SDL3 to use Wayland.
+For Wine clients, use a Wine build with its Wayland driver enabled.
+The lab sets `BOL_INPUT=wayland` for BedrockOnLinux.
+Disable Gamescope and custom display overrides in its configuration before capture.
+The bundled launcher adapter refuses an incompatible Wayland engine before the launcher can select XWayland.
 
 Build the stack and install its PrismLauncher instance:
 
@@ -44,9 +53,26 @@ bun run capture ui list
 bun run capture mark "Open Realms hub"
 ```
 
-The lab starts a private Xvfb display, a local Bedrock Dedicated Server, ViaProxy, and the patched Java client. The capture command starts mitmdump on `127.0.0.1:18080`, creates an isolated CA bundle, and launches BedrockOnLinux through that proxy on the private display. Set `STACKANVIL_PROXY_PORT` if the port is busy. `bun run capture start <name> --local` uses mitmproxy local capture mode when a regular proxy cannot see the target process. The game clients start with master volume at zero. An audio guard mutes and routes their streams to a silent sink without touching audio from other apps.
+The lab starts a private headless Wayland display, a local Bedrock Dedicated Server, ViaProxy, and the patched Java client. The capture command starts mitmdump on `127.0.0.1:18080`, creates an isolated CA bundle, and launches BedrockOnLinux through that proxy on the private display. Set `STACKANVIL_PROXY_PORT` if the port is busy. `bun run capture start <name> --local` uses mitmproxy local capture mode when a regular proxy cannot see the target process. The game clients start with master volume at zero. An audio guard mutes and routes their streams to a silent sink without touching audio from other apps.
 
-The UI command sends keyboard and pointer input only to the private display by default. Screenshots read that display too. It does not change the active window on your desktop. If you explicitly set `STACKANVIL_USE_DESKTOP=1`, the games launch on your normal display. Desktop input requires `--allow-focus` on each `ui key`, `ui click`, or `ui run` command. On GNOME Wayland, that opt-in input uses a temporary GNOME RemoteDesktop session.
+The UI command sends keyboard and pointer input only to the private display by default.
+Screenshots read that display too. Input does not change the active window on your desktop.
+The lab keeps a virtual keyboard and pointer connected before clients start.
+Commands share those devices, so the compositor does not remove the seat between actions.
+Wayland sockets live in a private directory under `XDG_RUNTIME_DIR`.
+Set `STACKANVIL_SWAY_BINARY` and `STACKANVIL_SWAYMSG_BINARY` to select Sway executables.
+Tools also resolve from a private installation under `.stackanvil/tools/wayland-root/usr/`.
+That installation uses `bin/`, `lib/`, or `lib64/` for its executables and libraries.
+Private tool libraries apply to helpers, not game clients.
+Set `STACKANVIL_WAYLAND_RENDERER=pixman` for compositor tests without GPU rendering.
+
+If you set `STACKANVIL_USE_DESKTOP=1`, the games launch on your native Wayland desktop.
+Desktop automation requires Sway IPC through `SWAYSOCK` and the virtual keyboard, virtual pointer, and screencopy protocols.
+GNOME desktop automation is no longer supported.
+Desktop input requires `--allow-focus` on each supported input command.
+Absolute pointer input and capture require an unrotated output at scale 1.
+Absolute input also requires exactly one active output.
+Use the private display for relative motion and pointer positioning.
 
 ```bash
 bun run capture ui screenshot realms-before --client bedrock
@@ -68,7 +94,11 @@ To turn the camera in a game that has captured the pointer, use `ui look <dx> <d
 It sends one relative pointer motion of up to 2000 pixels on each axis to the private display.
 Absolute `ui move` positions cannot change pitch in a captured game, and a large move can close an open screen.
 
-For menu input, use `ui move` to position the pointer before `ui button-hold`. This command requires the private X11 display. It retries motion up to three times and reads the resulting pointer position before returning. It presses no buttons. If the pointer cannot reach the requested position, it stops with an error. Confirm the intended field has focus before typing.
+For menu input, use `ui move` to position the pointer before `ui button-hold`.
+This command requires the private Wayland display and presses no buttons.
+The command returns after the compositor processes the motion.
+A pointer lock can prevent absolute movement. Use `ui look` for captured camera input.
+Make sure that the intended field has focus before typing.
 
 ### Drag across inventory slots
 
@@ -82,7 +112,6 @@ One native call presses the button, visits the points in order, and releases the
 SIGINT, SIGTERM, and detected window failures also release the button.
 SIGKILL and an X server failure cannot guarantee cleanup.
 Desktop input requires `--allow-focus`.
-GNOME Wayland drag input requires the private display.
 
 A scenario uses the same bounds and input handling:
 
@@ -105,12 +134,9 @@ For an integration run without a capture session, pass `--output-dir` to `ui scr
 The integration runner uses `createCaptureUi` from `src/capture/ui.ts` directly.
 It shares the CLI's command handling without starting another Bun process for each input or pixel read.
 One UI session binds its display once and checks the selected window on every command.
-The native helper focuses the private window before emitting input, so the runner omits a separate focus process there.
+The input service focuses the private window before emitting input, so the runner omits a separate focus process there.
 Desktop input still requires explicit permission.
 
-Private benchmark measurements include a key hold of one millisecond and use twelve samples for each path.
-The CLI averages about 220 ms per command; the shared API averages about 9 ms.
-These measurements describe driver overhead on the test host, not network latency or native gameplay parity.
 Projectile controls still require movement before the shot passes, attributed damage for contact, and changed ownership and outgoing motion for reflection.
 
 ## Record before and after video
@@ -131,14 +157,13 @@ bun run capture video compare before after --client bedrock
 
 The comparison MP4 shows the before recording on the left and the after recording on the right. `videoStart` and `videoStop` are also scenario steps, so a JSON recipe can record exactly the same input sequence in both runs. Recordings default to 15 frames per second. For blink or strip timing, use `bun run capture video start timing --client bedrock --fps 120`. The rate must be an integer from 1 to 120. A scenario `videoStart` step accepts the same value as `fps`. Higher rates increase CPU use and file size. Session metadata records the requested rate and recorder launch time. Use the video frame timestamps to measure durations. Capture frames can repeat when the client renders more slowly.
 
-For Java 26.3 scheduling controls under headless Weston 15, use `desktop-shell.so` with the client in windowed mode.
-A kiosk shell forces fullscreen and can make the SDL client retry window-mode changes on each frame.
-Keep the shell helper, configuration and display in the owned private lab.
-
-The input helper initializes XTEST with zero relative pointer motion before it sends keys or buttons.
-Xwayland 24.1.14 can consume its first input event when its libei setup fails.
-This initialization preserves the pointer position and sends no extra key or button.
-Keep it when comparing clients. A missing first character can come from the display server before the game receives it.
+Recording uses `wf-recorder` through Wayland screencopy.
+It captures the selected window's content rectangle without audio.
+Keep that window focused and stationary during recording.
+The recorder stops if the window moves, resizes, loses focus, or closes.
+Screenshots require the full window to fit on one output.
+On the private display, capture brings the selected window to the front.
+Desktop screenshots require you to focus the window first.
 
 Measure the actual client surface and frame intervals before comparing input or packet timing.
 A requested FPS cap does not prove that the client reaches it.

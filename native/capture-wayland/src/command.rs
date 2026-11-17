@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::Result;
 
-pub const USAGE: &str = "Usage: capture-x11 list|pointer|active|pixel ID X Y|move ID X Y|look ID DX DY|screenshot ID FILE|focus ID|resize ID WIDTH HEIGHT [X Y]|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|type ID TEXT|key|double-key ID NAME|key-hold ID NAME MS|drag ID BUTTON DWELL_MS X0 Y0 X1 Y1 ...";
+pub const USAGE: &str = "Usage: capture-wayland serve SOCKET|list|active|pixel ID X Y|move ID X Y|look ID DX DY|screenshot ID FILE|record ID FPS FILE|focus ID|resize ID WIDTH HEIGHT [X Y]|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|type ID TEXT|key|double-key ID NAME|key-hold ID NAME MS|drag ID BUTTON DWELL_MS X0 Y0 X1 Y1 ...";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point {
@@ -31,13 +31,6 @@ pub enum Button {
 }
 
 impl Button {
-    pub fn number(self) -> u8 {
-        match self {
-            Self::Left => 1,
-            Self::Right => 3,
-        }
-    }
-
     fn parse(value: &str) -> Result<Self> {
         match value {
             "left" => Ok(Self::Left),
@@ -49,60 +42,67 @@ impl Button {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
+    Serve {
+        path: PathBuf,
+    },
     List,
-    Pointer,
     Active,
     Pixel {
-        window: u32,
+        window: u64,
         point: Point,
     },
     Move {
-        window: u32,
+        window: u64,
         point: Point,
     },
     /// Relative pointer motion, which a pointer-locked game reads as camera look.
     Look {
-        window: u32,
+        window: u64,
         dx: i16,
         dy: i16,
     },
     Screenshot {
-        window: u32,
+        window: u64,
+        path: PathBuf,
+    },
+    Record {
+        window: u64,
+        fps: u16,
         path: PathBuf,
     },
     Focus {
-        window: u32,
+        window: u64,
     },
     Resize {
-        window: u32,
+        window: u64,
         width: u16,
         height: u16,
         position: Option<Point>,
     },
     Click {
-        window: u32,
+        window: u64,
         point: Point,
         button: Button,
         duration: u64,
         repeats: u8,
     },
     ButtonHold {
-        window: u32,
+        window: u64,
         button: Button,
         duration: u64,
     },
     Type {
-        window: u32,
+        window: u64,
         text: String,
     },
     Key {
-        window: u32,
+        window: u64,
         names: Vec<String>,
         duration: u64,
         repeats: u8,
     },
     Drag {
-        window: u32,
+        window: u64,
         button: Button,
         dwell: u64,
         points: Vec<Point>,
@@ -131,12 +131,12 @@ fn decimal<T: std::str::FromStr>(value: &str) -> Result<T> {
         .map_err(|_| format!("Integer is out of range: {value}").into())
 }
 
-fn window(value: &str) -> Result<u32> {
+fn window(value: &str) -> Result<u64> {
     let number = if let Some(hex) = value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
     {
-        u32::from_str_radix(hex, 16).map_err(|_| "Invalid window ID")?
+        u64::from_str_radix(hex, 16).map_err(|_| "Invalid window ID")?
     } else {
         decimal(value)?
     };
@@ -158,8 +158,8 @@ impl Command {
     pub fn parse(args: &[String]) -> Result<Self> {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         Ok(match args.as_slice() {
+            ["serve", path] => Self::Serve { path: path.into() },
             ["list"] => Self::List,
-            ["pointer"] => Self::Pointer,
             ["active"] => Self::Active,
             ["pixel", id, x, y] => Self::Pixel {
                 window: window(id)?,
@@ -176,6 +176,11 @@ impl Command {
             },
             ["screenshot", id, path] => Self::Screenshot {
                 window: window(id)?,
+                path: path.into(),
+            },
+            ["record", id, fps, path] => Self::Record {
+                window: window(id)?,
+                fps: duration(fps, 120)? as u16,
                 path: path.into(),
             },
             ["focus", id] => Self::Focus {
@@ -347,7 +352,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_input_before_emitting_anything() {
-        for id in ["0", "-1", "0x", "0x123junk", "4294967296"] {
+        for id in ["0", "-1", "0x", "0x123junk", "18446744073709551616"] {
             assert!(parse(&["focus", id]).is_err());
         }
         for sequence in ["", "+a", "a+", "Control++a", "a+b+c+d+e+f+g+h+i"] {

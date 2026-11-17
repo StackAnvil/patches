@@ -8,4 +8,5 @@ export async function expectRejection(promise: Promise<unknown>, message?: strin
   );
   expect(error).toBeInstanceOf(Error);
   if (message !== undefined) expect((error as Error).message).toContain(message);
+  return error;
 }

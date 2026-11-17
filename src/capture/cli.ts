@@ -1,3 +1,5 @@
+import { nativeWaylandEnvironment, waylandTool, waylandToolEnvironment } from "../lab/wayland.ts";
+import { createCaptureWaylandBuilder } from "./native.ts";
 import { execFile, spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { existsSync, openSync, closeSync, statSync } from "node:fs";
@@ -255,16 +257,19 @@ async function launchGame(): Promise<void> {
     mode: 0o600,
   });
   const appDir = launcher.toLowerCase().endsWith(".appimage") ? await prepareLauncher() : undefined;
-  const program = appDir ? join(appDir, "usr", "python", "bin", "python3.12") : launcher;
-  const args = appDir ? [join(appDir, "usr", "bin", "bedrock-on-linux"), "play"] : ["play"];
+  const program = appDir ? join(appDir, "usr", "python", "bin", "python3.12") : "python3";
+  const args = [
+    join(root, "scripts", "bedrock-wayland.py"),
+    appDir ? join(appDir, "usr", "bin", "bedrock-on-linux") : launcher,
+    "play",
+  ];
   const log = openSync(join(capturePath(session.id), "game.log"), "a", 0o600);
   const child = spawn(program, args, {
     cwd: root,
     detached: true,
     stdio: ["ignore", log, log],
     env: {
-      ...process.env,
-      ...isolated,
+      ...nativeWaylandEnvironment(isolated ?? process.env),
       ...(session.mode === "regular"
         ? {
             HTTP_PROXY: proxy,
@@ -381,53 +386,23 @@ async function startVideo(
   const file = join(capturePath(session.id), `${name}-${client}.mp4`);
   if (existsSync(file))
     throw new Error(`Video ${name}-${client}.mp4 already exists. Choose another name.`);
-  const log = openSync(join(capturePath(session.id), `${name}-${client}.video.log`), "a", 0o600);
   const startedAt = new Date().toISOString();
-  const child = spawn(
-    "ffmpeg",
-    [
-      "-nostdin",
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "x11grab",
-      "-window_id",
-      String(Number(window.id)),
-      "-video_size",
-      `${window.width}x${window.height}`,
-      "-framerate",
-      String(fps),
-      "-draw_mouse",
-      "1",
-      "-i",
-      isolated.DISPLAY!,
-      "-an",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "ultrafast",
-      "-crf",
-      "24",
-      "-pix_fmt",
-      "yuv420p",
-      "-movflags",
-      "+faststart",
-      file,
-    ],
-    {
-      cwd: root,
-      detached: true,
-      env: isolated,
-      stdio: ["ignore", log, log],
-    },
-  );
+  const native = await createCaptureWaylandBuilder(async (args, cwd, env) => {
+    await execute("cargo", args, { cwd, env });
+  })(isolated);
+  const log = openSync(join(capturePath(session.id), `${name}-${client}.video.log`), "a", 0o600);
+  const child = spawn(native, ["record", window.id, String(fps), file], {
+    cwd: root,
+    detached: true,
+    env: waylandToolEnvironment(isolated),
+    stdio: ["ignore", log, log],
+  });
   closeSync(log);
   child.unref();
-  if (!child.pid) throw new Error("Could not start ffmpeg.");
+  if (!child.pid) throw new Error("Could not start the Wayland recorder.");
   await Bun.sleep(500);
   if (!alive(child.pid))
-    throw new Error(`ffmpeg stopped. Read the private ${name}-${client}.video.log.`);
+    throw new Error(`Wayland recorder stopped. Read the private ${name}-${client}.video.log.`);
   session.videos ??= {};
   session.videos[client] = { pid: child.pid, name, file, startedAt, fps };
   await save(session);
@@ -680,7 +655,9 @@ async function doctor(): Promise<void> {
   const checks = {
     launcher: existsSync(launcher) ? launcher : "missing",
     mitmdump: existsSync(mitmdump) ? mitmdump : "missing",
-    display: process.env.DISPLAY ?? "missing",
+    display: (await displayEnv())?.WAYLAND_DISPLAY ?? process.env.WAYLAND_DISPLAY ?? "missing",
+    grim: waylandTool("grim") ?? "missing",
+    recorder: waylandTool("wf-recorder") ?? "missing",
     compiler: Bun.which("cargo") ?? "missing",
     ffmpeg: Bun.which("ffmpeg") ?? "missing",
     proxyCa: existsSync(join(caDirectory, "mitmproxy-ca-cert.pem"))
@@ -688,8 +665,8 @@ async function doctor(): Promise<void> {
       : "not generated yet",
   };
   console.log(JSON.stringify(checks, null, 2));
-  if (process.env.DISPLAY && checks.compiler !== "missing")
-    console.log(`Visible X11 windows: ${(await windows()).length}`);
+  if (checks.display !== "missing" && checks.compiler !== "missing")
+    console.log(`Visible native Wayland windows: ${(await windows()).length}`);
 }
 
 async function status(): Promise<void> {

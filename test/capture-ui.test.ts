@@ -4,8 +4,8 @@ import { expectRejection } from "./helpers/expect-rejection.ts";
 
 const window = { id: "0x123", title: "Minecraft 26.3", x: 0, y: 0, width: 854, height: 480 };
 const isolated = {
-  DISPLAY: ":102",
-  XAUTHORITY: "/private/display.auth",
+  WAYLAND_DISPLAY: "/private/wayland-1",
+  SWAYSOCK: "/private/sway.sock",
   STACKANVIL_UI_ISOLATED: "1",
 };
 
@@ -19,7 +19,7 @@ function fixture(environment: NodeJS.ProcessEnv | undefined, desktop: NodeJS.Pro
   };
   const ui = createCaptureUi({
     execute,
-    prepareNative: async () => "/test/capture-x11",
+    prepareNative: async () => "/test/capture-wayland",
     desktopEnvironment: desktop,
     environment: async () => {
       lookups++;
@@ -41,7 +41,11 @@ test("repeated private input stays on one owned display and revalidates its wind
   await f.ui.command(["ui", "key-hold", "d", "650", "--client", "java"]);
   await f.ui.command(["ui", "button-hold", "left", "200", "--client", "java"]);
   expect(f.lookups()).toBe(1);
-  expect(f.calls.every((call) => call.env === isolated)).toBe(true);
+  expect(
+    f.calls.every(
+      (call) => call.env.WAYLAND_DISPLAY === isolated.WAYLAND_DISPLAY && !call.env.DISPLAY,
+    ),
+  ).toBe(true);
   expect(f.calls.filter((call) => call.args[0] === "focus")).toHaveLength(0);
   const input = f.calls.filter((call) => ["key-hold", "button-hold"].includes(call.args[0]!));
   expect(input.map((call) => call.args)).toEqual([
@@ -53,7 +57,7 @@ test("repeated private input stays on one owned display and revalidates its wind
   expect(f.calls.filter((call) => call.args[0] === "key")).toHaveLength(0);
 });
 
-test("verified pointer movement positions the selected window without pressing a button", async () => {
+test("private pointer movement positions the selected window without pressing a button", async () => {
   const f = fixture(isolated);
   await f.ui.command(["ui", "move", "0.5", "0.25", "--client", "java"]);
   expect(f.calls.filter((call) => call.args[0] !== "list").map((call) => call.args)).toEqual([
@@ -64,12 +68,16 @@ test("verified pointer movement positions the selected window without pressing a
   expect(f.calls.filter((call) => call.args[0] === "move")).toHaveLength(1);
 });
 
-test("verified pointer movement rejects invalid positions and desktop input", async () => {
+test("private pointer movement rejects invalid positions and desktop input", async () => {
   const f = fixture(isolated);
   await expectRejection(f.ui.move(-0.1, 0.5, window.id, "java"), "between 0 and 1");
   expect(f.calls).toHaveLength(0);
-  const desktop = fixture(undefined, { DISPLAY: ":99", STACKANVIL_USE_DESKTOP: "1" });
-  await expectRejection(desktop.ui.move(0.5, 0.5, window.id, "java"), "private X11 display");
+  const desktop = fixture(undefined, {
+    WAYLAND_DISPLAY: "wayland-0",
+    SWAYSOCK: "/desktop/sway.sock",
+    STACKANVIL_USE_DESKTOP: "1",
+  });
+  await expectRejection(desktop.ui.move(0.5, 0.5, window.id, "java"), "private Wayland display");
   expect(desktop.calls).toHaveLength(0);
 });
 
@@ -77,7 +85,11 @@ test("capture input cannot fall back to desktop or focus it without explicit per
   const unavailable = fixture(undefined, { DISPLAY: ":99" });
   await expectRejection(unavailable.ui.command(["ui", "key", "d", "--client", "java"]));
   expect(unavailable.calls).toHaveLength(0);
-  const desktop = fixture(undefined, { DISPLAY: ":99", STACKANVIL_USE_DESKTOP: "1" });
+  const desktop = fixture(undefined, {
+    WAYLAND_DISPLAY: "wayland-0",
+    SWAYSOCK: "/desktop/sway.sock",
+    STACKANVIL_USE_DESKTOP: "1",
+  });
   await expectRejection(desktop.ui.command(["ui", "key", "d", "--client", "java"]));
   expect(
     desktop.calls.filter((call) => call.args[0] === "focus" || call.args[0] === "key"),
@@ -90,20 +102,17 @@ test("capture input cannot fall back to desktop or focus it without explicit per
   ).toEqual(["focus", "key"]);
 });
 
-test("GNOME clicks retain the selected button and require desktop authorization", async () => {
+test("native desktop clicks retain the selected button and require authorization", async () => {
   const f = fixture(undefined, {
-    DISPLAY: ":0",
+    WAYLAND_DISPLAY: "wayland-0",
+    SWAYSOCK: "/desktop/sway.sock",
     STACKANVIL_USE_DESKTOP: "1",
-    XDG_CURRENT_DESKTOP: "GNOME",
   });
   await expectRejection(f.ui.click(0.5, 0.5, window.id, "java", false, "right"));
-  expect(
-    f.calls.filter((call) => call.args[0] === "focus" || call.args.includes("click")),
-  ).toHaveLength(0);
+  expect(f.calls.filter((call) => ["focus", "click"].includes(call.args[0]!))).toHaveLength(0);
   for (const button of ["left", "right"] as const) {
     await f.ui.click(0.5, 0.5, window.id, "java", true, button);
-    const args = f.calls.at(-1)!.args;
-    expect(args.slice(2)).toEqual(["click", "426", "239", button]);
+    expect(f.calls.at(-1)!.args).toEqual(["click", window.id, "426", "239", button]);
   }
 });
 
@@ -177,7 +186,11 @@ test("drag sends the complete ordered path in one native call on the bound priva
     ["drag", window.id, "right", "200", "213", "239", "639", "239"],
   ]);
   expect(f.lookups()).toBe(1);
-  expect(f.calls.every((call) => call.env === isolated)).toBe(true);
+  expect(
+    f.calls.every(
+      (call) => call.env.WAYLAND_DISPLAY === isolated.WAYLAND_DISPLAY && !call.env.DISPLAY,
+    ),
+  ).toBe(true);
   expect(f.calls.filter((call) => call.args[0] === "focus")).toHaveLength(0);
   f.replaceWindows([]);
   await expectRejection(
@@ -245,7 +258,7 @@ test("drag enforces the total hold boundary and resolves an explicit window amon
   expect(emitted.args).toHaveLength(24);
 });
 
-test("drag refuses desktop and unsupported GNOME input before focusing", async () => {
+test("drag refuses desktop input without explicit authorization", async () => {
   const points = [
     { x: 0.25, y: 0.5 },
     { x: 0.75, y: 0.5 },
@@ -253,7 +266,11 @@ test("drag refuses desktop and unsupported GNOME input before focusing", async (
   const unavailable = fixture(undefined, { DISPLAY: ":0" });
   await expectRejection(unavailable.ui.drag(points, "left", 100));
   expect(unavailable.calls).toHaveLength(0);
-  const desktop = fixture(undefined, { DISPLAY: ":0", STACKANVIL_USE_DESKTOP: "1" });
+  const desktop = fixture(undefined, {
+    WAYLAND_DISPLAY: "wayland-0",
+    SWAYSOCK: "/desktop/sway.sock",
+    STACKANVIL_USE_DESKTOP: "1",
+  });
   await expectRejection(desktop.ui.drag(points, "right", 100, window.id, "java"));
   expect(desktop.calls.filter((call) => ["focus", "drag"].includes(call.args[0]!))).toHaveLength(0);
   await desktop.ui.drag(points, "right", 100, window.id, "java", true);
@@ -262,11 +279,29 @@ test("drag refuses desktop and unsupported GNOME input before focusing", async (
       .filter((call) => ["focus", "drag"].includes(call.args[0]!))
       .map((call) => call.args[0]),
   ).toEqual(["focus", "drag"]);
-  const gnome = fixture(undefined, {
-    DISPLAY: ":0",
-    STACKANVIL_USE_DESKTOP: "1",
-    XDG_CURRENT_DESKTOP: "GNOME",
+});
+
+test("screenshots publish private images without replacing an earlier capture", async () => {
+  const { mkdtemp, writeFile, readFile, stat, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-capture-"));
+  const ui = createCaptureUi({
+    environment: async () => isolated,
+    prepareNative: async () => "/test/capture-wayland",
+    execute: async (program, args) => {
+      if (args[0] === "list") return JSON.stringify([window]);
+      if (args[0] === "screenshot") await writeFile(args[2]!, "PPM fixture");
+      if (program === "ffmpeg") await writeFile(args.at(-1)!, "PNG fixture");
+      return "";
+    },
   });
-  await expectRejection(gnome.ui.drag(points, "left", 100, window.id, "java", true));
-  expect(gnome.calls.filter((call) => ["focus", "drag"].includes(call.args[0]!))).toHaveLength(0);
+  try {
+    const file = await ui.screenshot("private", window.id, "java", directory);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    await expectRejection(ui.screenshot("private", window.id, "java", directory));
+    expect(await readFile(file, "utf8")).toBe("PNG fixture");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

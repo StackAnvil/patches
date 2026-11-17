@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
-const display = Bun.argv[2];
+const identity = Bun.argv[2];
 const sink = "stackanvil_silent";
 
 interface Input {
@@ -29,12 +29,7 @@ async function mute(): Promise<void> {
   const inputs = JSON.parse(await pactl(["-f", "json", "list", "sink-inputs"])) as Input[];
   for (const input of inputs) {
     const properties = input.properties;
-    if (properties["window.x11.display"] !== display) continue;
-    if (
-      properties["application.name"] !== "Minecraft" &&
-      properties["pipewire.access.portal.app_id"] !== "org.prismlauncher.PrismLauncher"
-    )
-      continue;
+    if (properties["stackanvil.lab"] !== identity) continue;
     const id = String(input.index);
     if (input.sink !== sinkId) await pactl(["move-sink-input", id, sink]);
     if (Object.values(input.volume ?? {}).some(({ value_percent }) => value_percent !== "0%")) {
@@ -44,7 +39,7 @@ async function mute(): Promise<void> {
   }
 }
 
-if (!display) throw new Error("Supply the lab display.");
+if (!identity) throw new Error("Supply the lab audio identity.");
 for (;;) {
   try {
     await mute();

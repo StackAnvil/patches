@@ -306,6 +306,8 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
       await readFile(join(runtime, "settings.json"), "utf8"),
     ) as NativeProfile["settings"];
     settings.mc_version = original.mc_version;
+    settings.input_backend = "wayland";
+    settings.gamescope = "0";
     for (const key of ["game_dir", "proton"] as const) {
       const mapped =
         key === "game_dir" && inside(sourceGames, sourcePaths[key]!)

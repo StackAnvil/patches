@@ -1,3 +1,4 @@
+import { flatpakWaylandArguments } from "../lab/wayland.ts";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import {
@@ -311,7 +312,11 @@ async function launchJava(
     const owned = await activeDisplay();
     if (!owned) throw new Error("The owned Java display disappeared.");
     javaDisplayCleanup = new OwnedProcesses();
-    for (const pid of [owned.pid, ...(owned.audioPid ? [owned.audioPid] : [])]) {
+    for (const pid of [
+      owned.pid,
+      ...(owned.inputPid ? [owned.inputPid] : []),
+      ...(owned.audioPid ? [owned.audioPid] : []),
+    ]) {
       javaDisplayCleanup.capture(pid);
       javaCleanup.exclude(pid);
     }
@@ -444,20 +449,11 @@ async function launchJava(
     "flatpak",
     [
       "run",
-      "--nosocket=wayland",
-      "--socket=x11",
+      ...flatpakWaylandArguments(isolated),
       `--filesystem=${join(root, ".stackanvil/lab")}:ro`,
       `--filesystem=${directory}`,
       `--filesystem=${prismData}:ro`,
       ...(client === "addon" ? [`--filesystem=${join(privateRoot, "client-assets")}`] : []),
-      `--env=DISPLAY=${isolated.DISPLAY}`,
-      `--env=XAUTHORITY=${isolated.XAUTHORITY}`,
-      "--env=WAYLAND_DISPLAY=",
-      "--env=QT_QPA_PLATFORM=xcb",
-      "--env=SDL_VIDEODRIVER=x11",
-      "--env=SDL_VIDEO_DRIVER=x11",
-      "--env=SDL_VIDEO_FORCE_EGL=1",
-      "--env=PULSE_SINK=stackanvil_silent",
       ...(softwareRendering
         ? [
             "--nodevice=all",
@@ -537,13 +533,19 @@ async function launchNative(
   if (!existsSync(python))
     throw new Error("Prepare BedrockOnLinux with bun run capture prepare-launcher first.");
   const log = join(directory, "native-client.log");
-  const child = service(python, [join(app, "usr/bin/bedrock-on-linux"), "play"], root, log, {
-    ...isolated,
-    BOL_HOME: runtime,
-    APPDIR: app,
-    PULSE_SINK: "stackanvil_silent",
-    ...(replayPrefix ? { BOL_WINEPREFIX: replayPrefix } : {}),
-  });
+  const child = service(
+    python,
+    [join(root, "scripts/bedrock-wayland.py"), join(app, "usr/bin/bedrock-on-linux"), "play"],
+    root,
+    log,
+    {
+      ...isolated,
+      BOL_HOME: runtime,
+      APPDIR: app,
+      PULSE_SINK: "stackanvil_silent",
+      ...(replayPrefix ? { BOL_WINEPREFIX: replayPrefix } : {}),
+    },
+  );
   if (!child.pid) throw new Error("The native client did not start.");
   nativeClient = { pid: child.pid, directory };
   const until = Date.now() + 90_000;

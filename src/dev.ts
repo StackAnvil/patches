@@ -1,3 +1,4 @@
+import { waylandTool } from "./lab/wayland.ts";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -26,7 +27,7 @@ export const devSetup = Effect.fn("devSetup")(function* () {
   const launcher =
     process.env.BEDROCK_LAUNCHER ?? join(homedir(), "AppImages", "bedrockonlinux.appimage");
   const missing: string[] = [];
-  if (!Bun.which("cargo")) missing.push("Cargo: install Rust to build the X11 capture helper");
+  if (!Bun.which("cargo")) missing.push("Cargo: install Rust to build the Wayland capture helper");
   if (!existsSync(join(server, "bedrock_server")))
     missing.push(
       "BEDROCK_SERVER_HOME: download the official Bedrock Dedicated Server and point this variable at its extracted directory (https://www.minecraft.net/en-us/download/server/bedrock)",
@@ -40,13 +41,10 @@ export const devSetup = Effect.fn("devSetup")(function* () {
       "BEDROCK_LAUNCHER or BEDROCK_CLIENT_COMMAND: point to an installed Bedrock client, or set BEDROCK_DEVICE_HOST for a remote device",
     );
   }
-  if (!Bun.which("Xvfb") && !existsSync(join(toolsDir, "xvfb-root", "usr", "bin", "Xvfb"))) {
-    missing.push(
-      "Xvfb: install xorg-x11-server-Xvfb so game automation cannot take focus from your desktop",
-    );
+  for (const tool of ["sway", "swaymsg", "grim", "wf-recorder", "pactl"]) {
+    if (!waylandTool(tool))
+      missing.push(`${tool}: required for the private Wayland lab and silent capture`);
   }
-  if (!Bun.which("xauth") || !Bun.which("pactl"))
-    missing.push("xauth and pactl: required for the private display and silent audio sink");
   console.log(`ViaProxy: ${viaProxy}`);
   console.log(`mitmproxy: ${mitmdump}`);
   console.log(

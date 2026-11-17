@@ -1,3 +1,4 @@
+import { flatpakWaylandArguments } from "../lab/wayland.ts";
 import { tcpPortEffect as tcpPort, udpPortEffect as udpPort } from "./ports.ts";
 import {
   labIO,
@@ -477,7 +478,7 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
   if (!isolated)
     return yield* labError(
       "javaJoin",
-      new Error("Integration tests require the private Xvfb display."),
+      new Error("Integration tests require the private Wayland display."),
     );
   const log = join(
     dir,
@@ -487,18 +488,9 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
     "flatpak",
     [
       "run",
-      "--nosocket=wayland",
-      "--socket=x11",
+      ...flatpakWaylandArguments(isolated),
       `--filesystem=${join(root, ".stackanvil", "lab")}:ro`,
       `--filesystem=${prismRoot}`,
-      `--env=DISPLAY=${isolated.DISPLAY}`,
-      `--env=XAUTHORITY=${isolated.XAUTHORITY}`,
-      "--env=WAYLAND_DISPLAY=",
-      "--env=QT_QPA_PLATFORM=xcb",
-      "--env=SDL_VIDEODRIVER=x11",
-      "--env=SDL_VIDEO_DRIVER=x11",
-      "--env=SDL_VIDEO_FORCE_EGL=1",
-      "--env=PULSE_SINK=stackanvil_silent",
       "org.prismlauncher.PrismLauncher",
       "--dir",
       prismRoot,

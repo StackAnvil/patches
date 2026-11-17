@@ -7,12 +7,12 @@ import { root } from "../model.ts";
 type NativeBuild = (args: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<void>;
 
 /** Cargo outputs and build receipts stay outside the source tree. */
-export function createCaptureX11Builder(build: NativeBuild, directory = root) {
-  const source = join(directory, "native", "capture-x11");
+export function createCaptureWaylandBuilder(build: NativeBuild, directory = root) {
+  const source = join(directory, "native", "capture-wayland");
   const tools = join(directory, ".stackanvil", "tools");
-  const binary = join(tools, "capture-x11");
+  const binary = join(tools, "capture-wayland");
   const receipt = `${binary}.sha256`;
-  const target = join(tools, "capture-x11-build");
+  const target = join(tools, "capture-wayland-build");
   let preparing: Promise<string> | undefined;
 
   async function sourceDigest(): Promise<string> {
@@ -63,7 +63,7 @@ export function createCaptureX11Builder(build: NativeBuild, directory = root) {
     const staging = `${binary}.${randomUUID()}.tmp`;
     const stagingReceipt = `${staging}.sha256`;
     try {
-      await copyFile(join(target, "release", "capture-x11"), staging);
+      await copyFile(join(target, "release", "capture-wayland"), staging);
       await writeFile(stagingReceipt, digest);
       await rename(staging, binary);
       await rename(stagingReceipt, receipt);

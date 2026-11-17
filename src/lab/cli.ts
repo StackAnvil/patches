@@ -1,3 +1,4 @@
+import { flatpakWaylandArguments, nativeWaylandEnvironment, waylandTool } from "./wayland.ts";
 import { labExecute, labIO, labValue, labError, runLabCommand } from "../lab/effect-runtime.ts";
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, lstatSync, openSync } from "node:fs";
@@ -145,7 +146,6 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
     program: "flatpak",
     args: [
       "run",
-      "--env=SDL_VIDEODRIVER=x11",
       "org.prismlauncher.PrismLauncher",
       "--launch",
       javaInstance,
@@ -173,23 +173,19 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
   const command = yield* serviceCommandEffect(service);
   const isolated =
     service === "java" ? yield* labIO("start", async () => displayEnv(true)) : undefined;
-  if (service === "java" && isolated) {
-    command.args.splice(
-      1,
-      0,
-      `--filesystem=${join(privateRoot)}:ro`,
-      `--env=DISPLAY=${isolated.DISPLAY}`,
-      `--env=XAUTHORITY=${isolated.XAUTHORITY}`,
-      "--env=WAYLAND_DISPLAY=",
-      "--env=PULSE_SINK=stackanvil_silent",
-    );
-    command.env = isolated;
-  }
-  if (service === "java" && !isolated && process.env.STACKANVIL_USE_DESKTOP !== "1") {
-    return yield* labError(
-      "start",
-      new Error("A virtual display is required before launching Java."),
-    );
+  if (service === "java") {
+    const environment =
+      isolated ??
+      (process.env.STACKANVIL_USE_DESKTOP === "1"
+        ? nativeWaylandEnvironment(process.env)
+        : undefined);
+    if (!environment)
+      return yield* labError(
+        "start",
+        new Error("A native Wayland display is required before launching Java."),
+      );
+    command.args.splice(1, 0, ...flatpakWaylandArguments(environment));
+    command.env = environment;
   }
   yield* labIO("start", async () => mkdir(privateRoot, { recursive: true, mode: 0o700 }));
   let retained = false;
@@ -414,13 +410,11 @@ const doctorEffect = Effect.fn("Lab.doctor")(function* () {
           ? javaInstance
           : "missing",
         jcmd: Bun.which("jcmd") ?? "missing",
-        xauth: Bun.which("xauth") ?? "missing",
+        sway: waylandTool("sway") ?? "missing",
+        swaymsg: waylandTool("swaymsg") ?? "missing",
+        grim: waylandTool("grim") ?? "missing",
+        recorder: waylandTool("wf-recorder") ?? "missing",
         pactl: Bun.which("pactl") ?? "missing",
-        xvfb:
-          Bun.which("Xvfb") ??
-          (existsSync(join(root, ".stackanvil", "tools", "xvfb-root", "usr", "bin", "Xvfb"))
-            ? "private install"
-            : "missing"),
         capture: existsSync(join(root, "src", "capture", "cli.ts")) ? "available" : "missing",
       },
       null,

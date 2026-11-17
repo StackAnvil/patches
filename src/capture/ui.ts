@@ -1,11 +1,12 @@
+import { waylandToolEnvironment } from "../lab/wayland.ts";
 import { execFile } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
-import { createCaptureX11Builder } from "./native.ts";
+import { createCaptureWaylandBuilder } from "./native.ts";
 
 export interface WindowInfo {
   id: string;
@@ -48,7 +49,12 @@ export function createCaptureUi(
     desktopEnvironment,
   );
   const run = async (program: string, args: string[], cwd = root, env?: NodeJS.ProcessEnv) =>
-    (options.execute ?? executeUi)(program, args, cwd, env ?? (await uiEnvironment()));
+    (options.execute ?? executeUi)(
+      program,
+      args,
+      cwd,
+      waylandToolEnvironment(env ?? (await uiEnvironment())),
+    );
   const captureDirectory =
     options.captureDirectory ??
     (async () => {
@@ -56,18 +62,18 @@ export function createCaptureUi(
     });
   const prepareNative =
     options.prepareNative ??
-    createCaptureX11Builder(async (args, cwd, env) => {
+    createCaptureWaylandBuilder(async (args, cwd, env) => {
       await run("cargo", args, cwd, env);
     });
   let nativeBinary: string;
-  const gnomeRemote = join(root, "scripts", "gnome_remote.py");
   const checkId = (id: string) => {
     if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id))
       throw new Error("Use lowercase letters, digits, and hyphens for a screenshot name.");
   };
 
   async function compileUi(): Promise<void> {
-    if (!(await uiEnvironment()).DISPLAY) throw new Error("Set DISPLAY to the game's X display.");
+    if (!(await uiEnvironment()).WAYLAND_DISPLAY)
+      throw new Error("Set WAYLAND_DISPLAY to the game's native display.");
     nativeBinary = await prepareNative(await uiEnvironment());
   }
 
@@ -111,12 +117,17 @@ export function createCaptureUi(
     const directory = outputDir ? resolve(outputDir) : await captureDirectory();
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const imagePath = join(directory, `${name}.png`);
-    const ppmPath = join(directory, `${name}.ppm`);
+    const temporary = await mkdtemp(join(directory, ".capture-"));
+    const ppmPath = join(temporary, "capture.ppm");
+    const converted = join(temporary, "capture.png");
     try {
       await run(nativeBinary, ["screenshot", window.id, ppmPath], root, await uiEnvironment());
-      await run("ffmpeg", ["-loglevel", "error", "-y", "-i", ppmPath, imagePath]);
+      await run("ffmpeg", ["-loglevel", "error", "-n", "-i", ppmPath, converted]);
+      await chmod(converted, 0o600);
+      // Publish only a complete private image, without replacing an earlier capture.
+      await link(converted, imagePath);
     } finally {
-      await rm(ppmPath, { force: true });
+      await rm(temporary, { recursive: true, force: true });
     }
     return imagePath;
   }
@@ -141,7 +152,7 @@ export function createCaptureUi(
       throw new Error("Pointer coordinates must be ratios between 0 and 1.");
     const env = await uiEnvironment();
     if (env.STACKANVIL_UI_ISOLATED !== "1")
-      throw new Error("Verified pointer positioning requires the private X11 display.");
+      throw new Error("Pointer positioning requires the private Wayland display.");
     const window = await chosenWindow(windowId, client);
     await run(
       nativeBinary,
@@ -161,7 +172,7 @@ export function createCaptureUi(
       throw new Error("Look deltas must be integers within 2000 pixels.");
     const env = await uiEnvironment();
     if (env.STACKANVIL_UI_ISOLATED !== "1")
-      throw new Error("Relative pointer motion requires the private X11 display.");
+      throw new Error("Relative pointer motion requires the private Wayland display.");
     const window = await chosenWindow(windowId, client);
     await run(nativeBinary, ["look", window.id, String(dx), String(dy)], root, env);
   }
@@ -195,36 +206,20 @@ export function createCaptureUi(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
       );
     if (!isolated) await run(nativeBinary, ["focus", window.id], root, env);
-    if (!isolated && env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-      if (durationMs !== undefined || doubleClick) {
-        throw new Error(
-          "Double clicks and mouse holds require the private display on GNOME Wayland.",
-        );
-      }
-      await run("python3", [
-        gnomeRemote,
-        nativeBinary,
-        "click",
-        String(window.x + localX),
-        String(window.y + localY),
-        button,
-      ]);
-    } else {
-      await run(
-        nativeBinary,
-        durationMs === undefined
-          ? [
-              doubleClick ? "double-click" : "click",
-              window.id,
-              String(localX),
-              String(localY),
-              button,
-            ]
-          : ["mouse-hold", window.id, String(localX), String(localY), button, String(durationMs)],
-        root,
-        env,
-      );
-    }
+    await run(
+      nativeBinary,
+      durationMs === undefined
+        ? [
+            doubleClick ? "double-click" : "click",
+            window.id,
+            String(localX),
+            String(localY),
+            button,
+          ]
+        : ["mouse-hold", window.id, String(localX), String(localY), button, String(durationMs)],
+      root,
+      env,
+    );
   }
 
   async function key(
@@ -251,22 +246,14 @@ export function createCaptureUi(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
       );
     if (!isolated) await run(nativeBinary, ["focus", window.id], root, env);
-    if (!isolated && env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-      if (doubleTap)
-        throw new Error("Double key presses require the private display on GNOME Wayland.");
-      if (durationMs !== undefined)
-        throw new Error("Key holds require the private display on GNOME Wayland.");
-      await run("python3", [gnomeRemote, nativeBinary, "key", name]);
-    } else {
-      await run(
-        nativeBinary,
-        durationMs === undefined
-          ? [doubleTap ? "double-key" : "key", window.id, name]
-          : ["key-hold", window.id, name, String(durationMs)],
-        root,
-        env,
-      );
-    }
+    await run(
+      nativeBinary,
+      durationMs === undefined
+        ? [doubleTap ? "double-key" : "key", window.id, name]
+        : ["key-hold", window.id, name, String(durationMs)],
+      root,
+      env,
+    );
   }
 
   async function buttonHold(
@@ -285,9 +272,6 @@ export function createCaptureUi(
       throw new Error(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
       );
-    if (!isolated && env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-      throw new Error("Button holds require the private display on GNOME Wayland.");
-    }
     if (!isolated) await run(nativeBinary, ["focus", window.id], root, env);
     await run(nativeBinary, ["button-hold", window.id, button, String(durationMs)], root, env);
   }
@@ -328,9 +312,6 @@ export function createCaptureUi(
       throw new Error(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
       );
-    if (!isolated && env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-      throw new Error("Drag input requires the private display on GNOME Wayland.");
-    }
     const coordinates = points.flatMap((point) => [
       String(Math.floor(point.x * (window.width - 1))),
       String(Math.floor(point.y * (window.height - 1))),
