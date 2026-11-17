@@ -18,6 +18,12 @@ without guessing consecutive IDs or synthesizing scale and lock state.
 A targeted test covers sparse signed IDs, partial member updates, and an
 explicitly replaced family.
 
+Bedrock stores an item frame's ItemRotation in degrees; Java stores
+eighth turns and turns maps by quarter turns. The raw degree value
+made a sword with ItemRotation 45 show at 225 degrees. Frames now send
+degrees / 45 for items and degrees / 90 for maps. The native
+1.26.60.5 client shows the 45-degree sword one eighth turn clockwise.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index 40d7f439895b4c0001ca7ccd73dcdf3238b2ff18..bc529cb375bf1e7267cd42a99a4b82b2c77d1e30 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -777,7 +783,7 @@ index 59c6a6f7bff943991fc6cbff85e16ca05365f476..19922179c935f27b5f01de765126b57c
                              }
                          }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index 85d216c7ed6ed8a70f79456b4e8028fdb7fa50eb..aebd19b618eba99bda8020d6630767054fcbf00e 100644
+index 85d216c7ed6ed8a70f79456b4e8028fdb7fa50eb..b0348414706f866e67cacd87fe0de90e0e726c06 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 @@ -17,14 +17,20 @@
@@ -822,7 +828,7 @@ index 85d216c7ed6ed8a70f79456b4e8028fdb7fa50eb..aebd19b618eba99bda8020d663076705
  
      public EntityTracker(final UserConnection user) {
          super(user);
-@@ -121,26 +131,52 @@ public class EntityTracker extends StoredObject {
+@@ -121,26 +131,63 @@ public class EntityTracker extends StoredObject {
  
          final int javaId = this.getNextJavaEntityId();
          this.itemFrames.put(position, javaId);
@@ -856,7 +862,9 @@ index 85d216c7ed6ed8a70f79456b4e8028fdb7fa50eb..aebd19b618eba99bda8020d663076705
 +
 +        final CompoundTag tag = blockEntity.tag();
 +        final Item item = this.user().get(ItemRewriter.class).javaItemStack(tag.getCompoundTag("Item"));
-+        final int rotation = tag.get("ItemRotation") instanceof NumberTag rotationTag ? rotationTag.asInt() : 0;
++        final float degrees = tag.get("ItemRotation") instanceof NumberTag rotationTag ? rotationTag.asFloat() : 0F;
++        final CompoundTag bedrockItem = tag.getCompoundTag("Item");
++        final int rotation = javaItemFrameRotation(degrees, bedrockItem != null && "minecraft:filled_map".equals(bedrockItem.getString("Name", "")));
 +        final EntityTypes26_3 frameType = EntityTypes26_3.ITEM_FRAME;
 +        final List<String> fields = BedrockProtocol.MAPPINGS.getJavaEntityDataFields().get(frameType);
 +        final List<EntityData> data = List.of(
@@ -868,6 +876,15 @@ index 85d216c7ed6ed8a70f79456b4e8028fdb7fa50eb..aebd19b618eba99bda8020d663076705
 +        metadata.write(Types.VAR_INT, this.itemFrames.getInt(position));
 +        metadata.write(VersionedTypes.V26_3.entityDataList, data);
 +        metadata.send(BedrockProtocol.class);
++    }
++
++    /**
++     * Bedrock stores the item rotation in degrees. Java stores eighth turns, and turns maps by
++     * {@code rotation % 4} quarter turns, so a map needs quarter turns instead.
++     */
++    static int javaItemFrameRotation(final float degrees, final boolean map) {
++        final int steps = map ? 4 : 8;
++        return Math.floorMod(Math.round(degrees / (360F / steps)), steps);
      }
  
      public void removeItemFrame(final BlockPosition position) {
@@ -880,7 +897,7 @@ index 85d216c7ed6ed8a70f79456b4e8028fdb7fa50eb..aebd19b618eba99bda8020d663076705
              removeEntities.send(BedrockProtocol.class);
          }
      }
-@@ -184,7 +220,12 @@ public class EntityTracker extends StoredObject {
+@@ -184,7 +231,12 @@ public class EntityTracker extends StoredObject {
      }
  
      public Entity getEntityByJid(final int javaId) {
@@ -894,7 +911,7 @@ index 85d216c7ed6ed8a70f79456b4e8028fdb7fa50eb..aebd19b618eba99bda8020d663076705
      }
  
      public ClientPlayerEntity getClientPlayer() {
-@@ -199,4 +240,7 @@ public class EntityTracker extends StoredObject {
+@@ -199,4 +251,7 @@ public class EntityTracker extends StoredObject {
          return this.idCounter.getAndIncrement();
      }
  
@@ -1437,6 +1454,36 @@ index 0000000000000000000000000000000000000000..d0e3a174f43e0c9588781fa57272ba1f
 +
 +    public Color getColor() {
 +        return new Color((this.value >> 16) & 0xFF, (this.value >> 8) & 0xFF, this.value & 0xFF, (this.value >> 24) & 0xFF);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ItemFrameRotationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ItemFrameRotationTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a64012075536de5f6b4962de06819dda69776c90
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ItemFrameRotationTest.java
+@@ -0,0 +1,24 @@
++package net.raphimc.viabedrock.protocol.storage;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class ItemFrameRotationTest {
++
++    @Test
++    void convertsBedrockRotationDegreesToJavaFrameSteps() {
++        // The native client turns a sword in a frame with ItemRotation 45 one eighth turn clockwise.
++        assertEquals(0, EntityTracker.javaItemFrameRotation(0F, false));
++        assertEquals(1, EntityTracker.javaItemFrameRotation(45F, false));
++        assertEquals(7, EntityTracker.javaItemFrameRotation(315F, false));
++        assertEquals(0, EntityTracker.javaItemFrameRotation(360F, false));
++    }
++
++    @Test
++    void convertsMapRotationToJavaQuarterTurns() {
++        assertEquals(1, EntityTracker.javaItemFrameRotation(90F, true));
++        assertEquals(3, EntityTracker.javaItemFrameRotation(270F, true));
 +    }
 +
 +}
