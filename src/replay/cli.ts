@@ -64,8 +64,10 @@ import {
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "replay");
 const servers = {
-  cubecraft: "play.cubecraft.net:19132",
-  hive: "geo.hivebedrock.cloud:19132",
+  // NetherNet HTTP signaling hosts. CubeCraft's certificate names only mco.cubecraft.net, and
+  // geo.hivebedrock.cloud has no signaling listener.
+  cubecraft: "mco.cubecraft.net:19132",
+  hive: "nethernet.playhive.com:19132",
   lifeboat: "play.lbsg.net:19132",
   galaxite: "play.galaxite.net:19132",
   minehut: "bedrock.minehut.com:19132",

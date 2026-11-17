@@ -17,7 +17,7 @@ bun run test:integration -- --route java-java --reuse-build
 bun run server-replay record cubecraft --seconds 120
 ```
 
-The other named target is `minehut`. Each live target must provide NetherNet. The Hive uses `geo.hivebedrock.cloud`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
+The other named target is `minehut`. Each live target must provide NetherNet. CubeCraft uses `mco.cubecraft.net`, because its signaling certificate does not name `play.cubecraft.net`. The Hive uses `nethernet.playhive.com`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
 
 For another public server, use its current address from the in-game catalog or the server operator:
 
