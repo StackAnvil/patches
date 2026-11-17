@@ -1126,7 +1126,6 @@ names a property, such as CubeCraft's $button_text = "#form_button_text" in
 ($button_text - $button_to_show), still reads that property when the
 binding updates, which strips the big_button layout tag from labels. Vanilla's dropdown binds
 its toggle state through ('#' + $dropdown_name), which now reads
-#custom_dropdown instead of yielding that name as a string. The view
 binding that shows the option list names its source control as
 ($dropdown_name), which binding names now evaluate the same way.
 
@@ -1144,6 +1143,12 @@ label with its own "$flag": true and "ignored": "$flag", hid one with
 ignored. Mystrick's scrolling panel sets "$use_touch_mode": true on its
 scroll_touch child and ignores it with "(not $use_touch_mode)"; native
 draws only the mouse scroll panel, while the add-on drew both.
+
+The native sources travel in a separate payload pack, so the UI
+context token comes from that pack when it is prepared for a client
+that registered the native resource channel. The resource format
+version advances so cached converted packs that still embed the
+payload are rebuilt.
 
 diff --git a/build.gradle b/build.gradle
 index bef6f0274a0133eeb688266cc27ffa9a43b94b99..0d3b40fda636cda1f32acf33eb2793b9a699a4ba 100644
@@ -3604,7 +3609,7 @@ index 0000000000000000000000000000000000000000..6f9f746450d71c1270d2444f9f7e555b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 9b5807dd5da9cd1862b1db9af2f8f773a583d6fe..fad9ba6207833370858fd5c5d365e91906370657 100644
+index 9b5807dd5da9cd1862b1db9af2f8f773a583d6fe..6a355e5ad6875f0b75f31fff2a89d0ddc484a52c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -18,6 +18,11 @@
@@ -3635,7 +3640,7 @@ index 9b5807dd5da9cd1862b1db9af2f8f773a583d6fe..fad9ba6207833370858fd5c5d365e919
 +    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-offsets-and-forms-17";
      // Advance when the set or format of emitted resources changes independently of converter profiles.
 -    private static final int RESOURCE_FORMAT_VERSION = 12;
-+    private static final int RESOURCE_FORMAT_VERSION = 14;
++    private static final int RESOURCE_FORMAT_VERSION = 15;
  
      private final Path directory;
      private final String conversionVersion;
@@ -13421,11 +13426,11 @@ index efe4871a29df4cc09fdab3a93f8ed0b25543724c..8a8c6f745c4b73a4da27d020fa86eec0
                  case HURT -> {
                      final CompoundTag damageTypeRegistry = gameSession.getJavaRegistries().getCompoundTag(RegistryKeys.DAMAGE_TYPE);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 7d5bfadbb17f5cb4cdff70ee9a7bb6c703587ab3..436819b5248077a4bd96431749dad552600232c9 100644
+index 2260ebeeb809511c3b611bc5f587e09e3363f5a0..718a20bb28875505a30928fd6a494e285c91a206 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-@@ -27,6 +27,9 @@ import net.raphimc.viabedrock.api.resourcepack.BaseGameVersion;
- import net.raphimc.viabedrock.ViaBedrock;
+@@ -30,6 +30,9 @@ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.NativeResourcePayloadPack;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
  import net.raphimc.viabedrock.api.resourcepack.http.ConvertedResourcePackCache;
 +import java.io.IOException;
@@ -13434,7 +13439,7 @@ index 7d5bfadbb17f5cb4cdff70ee9a7bb6c703587ab3..436819b5248077a4bd96431749dad552
  import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
-@@ -301,22 +304,31 @@ public final class ResourcePackPackets {
+@@ -307,24 +310,28 @@ public final class ResourcePackPackets {
                      user.remove(ResourcePackLoadStateTracker.class);
                      user.put(storage);
                      if (shouldTranslate(user)) {
@@ -13450,6 +13455,8 @@ index 7d5bfadbb17f5cb4cdff70ee9a7bb6c703587ab3..436819b5248077a4bd96431749dad552
 -                                final UUID httpToken = UUID.randomUUID();
 -                                ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
 -                                sendJavaResourcePack(user, pack, httpToken, true);
+-                                user.put(new NativeResourcePublication(storage));
+-                                publishNativePayload(user);
 -                            } catch (final Throwable publicationError) {
 -                                BedrockProtocol.kickForIllegalState(user, "Failed to advertise the server resource packs.", publicationError);
 -                            }
@@ -13457,11 +13464,6 @@ index 7d5bfadbb17f5cb4cdff70ee9a7bb6c703587ab3..436819b5248077a4bd96431749dad552
 +                        // A converted-pack cache hit skips UI conversion. Prime its shared program on bounded workers
 +                        // before advertising the pack, so the first HUD packet cannot initialize it on the event loop.
 +                        ViaBedrock.getResourcePackServer().prepare(storage)
-+                                // Identify the frontend UI program off the event loop, before the pack is advertised.
-+                                .thenCompose(pack -> ViaBedrock.getResourcePackServer().prepareResources(() -> {
-+                                    storage.setUiContextToken(uiContext(pack));
-+                                    return pack;
-+                                }))
 +                                .thenCombine(ViaBedrock.getResourcePackServer().prepareResources(storage::getJsonUiProgram), (pack, ui) -> pack)
 +                                .whenCompleteAsync((pack, conversionError) -> {
 +                                    if (!user.getChannel().isActive() || user.get(ResourcePackStorage.class) != storage) {
@@ -13475,6 +13477,8 @@ index 7d5bfadbb17f5cb4cdff70ee9a7bb6c703587ab3..436819b5248077a4bd96431749dad552
 +                                        final UUID httpToken = UUID.randomUUID();
 +                                        ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
 +                                        sendJavaResourcePack(user, pack, httpToken, true);
++                                        user.put(new NativeResourcePublication(storage));
++                                        publishNativePayload(user);
 +                                    } catch (final Throwable publicationError) {
 +                                        BedrockProtocol.kickForIllegalState(user, "Failed to advertise the server resource packs.", publicationError);
 +                                    }
@@ -13482,7 +13486,7 @@ index 7d5bfadbb17f5cb4cdff70ee9a7bb6c703587ab3..436819b5248077a4bd96431749dad552
                      } else {
                          sendStackFinished(user);
                      }
-@@ -391,6 +403,17 @@ public final class ResourcePackPackets {
+@@ -399,6 +406,17 @@ public final class ResourcePackPackets {
          }
      }
  
@@ -13500,8 +13504,63 @@ index 7d5bfadbb17f5cb4cdff70ee9a7bb6c703587ab3..436819b5248077a4bd96431749dad552
      private static boolean shouldTranslate(final UserConnection user) {
          return ViaBedrock.getConfig().shouldTranslateResourcePacks() && user.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION);
      }
+@@ -423,25 +441,35 @@ public final class ResourcePackPackets {
+         if (publication == null || !user.get(ChannelStorage.class).hasChannel(NativeResourcePayloadPack.CHANNEL) || !publication.request()) {
+             return;
+         }
+-        ViaBedrock.getResourcePackServer().prepareNativePayload(publication.storage()).whenCompleteAsync((pack, error) -> {
+-            if (!user.getChannel().isActive() || user.get(NativeResourcePublication.class) != publication) {
+-                return;
+-            }
+-            if (error != null) {
+-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to prepare the native resource payload", error);
+-                return;
+-            }
+-            final UUID httpToken = UUID.randomUUID();
+-            ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
+-            final PacketWrapper resourcePack = PacketWrapper.create(user.getProtocolInfo().getClientState() == State.PLAY
+-                    ? ClientboundPackets26_3.RESOURCE_PACK_PUSH : ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH, user);
+-            resourcePack.write(Types.UUID, pack.id()); // id
+-            resourcePack.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
+-            resourcePack.write(Types.STRING, pack.sha1()); // hash
+-            resourcePack.write(Types.BOOLEAN, false); // required
+-            resourcePack.write(Types.OPTIONAL_TAG, null); // prompt
+-            resourcePack.scheduleSend(BedrockProtocol.class);
+-        }, user.getChannel().eventLoop());
++        final ResourcePackStorage storage = publication.storage();
++        ViaBedrock.getResourcePackServer().prepareNativePayload(storage)
++                // The payload pack indexes the native sources, so it identifies the frontend UI program off the event loop.
++                .thenCompose(pack -> ViaBedrock.getResourcePackServer().prepareResources(() -> {
++                    storage.setUiContextToken(uiContext(pack));
++                    return pack;
++                }))
++                .whenCompleteAsync((pack, error) -> pushNativePayload(user, publication, pack, error), user.getChannel().eventLoop());
++    }
++
++    private static void pushNativePayload(final UserConnection user, final NativeResourcePublication publication,
++                                          final ConvertedResourcePackCache.Pack pack, final Throwable error) {
++        if (!user.getChannel().isActive() || user.get(NativeResourcePublication.class) != publication) {
++            return;
++        }
++        if (error != null) {
++            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to prepare the native resource payload", error);
++            return;
++        }
++        final UUID httpToken = UUID.randomUUID();
++        ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
++        final PacketWrapper resourcePack = PacketWrapper.create(user.getProtocolInfo().getClientState() == State.PLAY
++                ? ClientboundPackets26_3.RESOURCE_PACK_PUSH : ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH, user);
++        resourcePack.write(Types.UUID, pack.id()); // id
++        resourcePack.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
++        resourcePack.write(Types.STRING, pack.sha1()); // hash
++        resourcePack.write(Types.BOOLEAN, false); // required
++        resourcePack.write(Types.OPTIONAL_TAG, null); // prompt
++        resourcePack.scheduleSend(BedrockProtocol.class);
+     }
+ 
+     private static void sendJavaResourcePack(final UserConnection user, final ConvertedResourcePackCache.Pack pack, final UUID httpToken,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-index 37e8594cfca5493fb9cef9b597c8b91c65272630..4cc23df751758cfd7c3c9281ead21175542c0524 100644
+index cd1b7ba052974dbdbce56b84e1ab42d94ae9bb6d..953f97a9814fdf920c3e713d466615c5a8b94527 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 @@ -17,6 +17,7 @@
@@ -13510,9 +13569,9 @@ index 37e8594cfca5493fb9cef9b597c8b91c65272630..4cc23df751758cfd7c3c9281ead21175
  
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.JsonUiResourceRewriter;
  import com.viaversion.viaversion.libs.gson.JsonObject;
- import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
-@@ -44,6 +45,7 @@ public final class ResourcePackRewriter {
+ import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+@@ -42,6 +43,7 @@ public final class ResourcePackRewriter {
      static {
          REWRITERS.add(new GlyphSheetResourceRewriter());
          REWRITERS.add(new ScoreboardUiResourceRewriter());
@@ -13520,7 +13579,7 @@ index 37e8594cfca5493fb9cef9b597c8b91c65272630..4cc23df751758cfd7c3c9281ead21175
          REWRITERS.add(new CustomItemTextureResourceRewriter());
          REWRITERS.add(new CustomAttachableResourceRewriter());
          REWRITERS.add(new CustomEntityResourceRewriter());
-@@ -68,10 +70,11 @@ public final class ResourcePackRewriter {
+@@ -65,10 +67,11 @@ public final class ResourcePackRewriter {
              throw new RuntimeException("Resource pack rewriting tasks did not complete within the timeout");
          }
  
@@ -13531,9 +13590,9 @@ index 37e8594cfca5493fb9cef9b597c8b91c65272630..4cc23df751758cfd7c3c9281ead21175
 +            merged.putAll(task.getNow(null));
          }
 +        final Content javaContent = merged;
-         final JsonObject metadata = createPackManifest();
-         if (javaContent.contains("pack.mcmeta")) {
-             final JsonObject sources = javaContent.getJson("pack.mcmeta").getAsJsonObject(BedrockResourcePackPayloads.METADATA_SECTION);
+         javaContent.putJson("pack.mcmeta", createPackManifest());
+         return javaContent;
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/GlyphSheetResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/GlyphSheetResourceRewriter.java
 index a1c8999f7fe2c46f4258f25fbce81ec314e78600..12598aafef008d8d7d75745ee18701ffaf7c762e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/GlyphSheetResourceRewriter.java

@@ -141,6 +141,14 @@ fallback found no atlas entry, so those spears had no inventory icon on
 CubeCraft SkyWars. Resource packs are converted before the item registry
 arrives, so item_icons.json ships the differing entries.
 
+Java packs every item-model texture into one items atlas and drops the
+whole server pack when the atlas overflows. InPvP's pack ships a
+4000x1280 entity texture, which made Java log "Unable to fit" and
+remove all server packs, so its menus and items lost their converted
+resources. Item-model textures larger than 1024 pixels on either side
+are now reduced by a whole factor; model UVs are relative, so the
+mapping stays the same.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 index 4e87e6acb64959a57107788013245c8a7caf630d..ed84a7aebe626036f4b66ada6bf08f69b4947558 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
@@ -885,10 +893,10 @@ index 0000000000000000000000000000000000000000..ddda2ab644b409dbed84e467e46b6d87
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
-index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc072b95b45 100644
+index 799413e5734b549178eccb4dbe099a339c6f1e65..dd8f4246ea7cdd24db677842a6ee26b0808d7adf 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriter.java
-@@ -20,11 +20,26 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
+@@ -20,15 +20,38 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
  import com.viaversion.viaversion.api.minecraft.item.data.CustomModelData1_21_4;
  import com.viaversion.viaversion.libs.gson.JsonArray;
  import com.viaversion.viaversion.libs.gson.JsonObject;
@@ -903,6 +911,7 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc0
 +import org.cube.converter.converter.enums.RotationType;
 +import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 +
++import java.awt.image.BufferedImage;
 +import java.nio.charset.StandardCharsets;
 +import java.security.MessageDigest;
 +import java.security.NoSuchAlgorithmException;
@@ -915,7 +924,18 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc0
  import java.util.Map;
  
  public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.Rewriter {
-@@ -43,6 +58,76 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
+ 
++    /**
++     * Java packs every item-model texture into one items atlas and drops the whole pack when it overflows. Entity
++     * textures can be several thousand pixels wide (InPvP ships a 4000x1280 sign texture), so larger textures are
++     * reduced by a whole factor. Model UVs are relative, so the mapping stays the same.
++     */
++    static final int MAX_ATLAS_TEXTURE_SIZE = 1024;
++
+     private final String subFolder;
+ 
+     public static CustomModelData1_21_4 getCustomModelData(final String key) {
+@@ -43,6 +66,95 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
          return "item/" + this.subFolder + '/' + StringUtil.makeIdentifierValueSafe(bedrockPath.replace("textures/", ""));
      }
  
@@ -943,6 +963,19 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc0
 +        storage.getConverterData().put(key, reason);
 +    }
 +
++    static BufferedImage fitAtlas(final BufferedImage source) {
++        final int factor = Math.ceilDiv(Math.max(source.getWidth(), source.getHeight()), MAX_ATLAS_TEXTURE_SIZE);
++        final int width = Math.max(1, source.getWidth() / factor);
++        final int height = Math.max(1, source.getHeight() / factor);
++        final BufferedImage result = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
++        for (int y = 0; y < height; y++) {
++            for (int x = 0; x < width; x++) {
++                result.setRGB(x, y, source.getRGB(x * factor, y * factor));
++            }
++        }
++        return result;
++    }
++
 +    protected Set<String> copyTextures(final ResourcePackStorage storage, final Collection<String> paths, final ItemModelContent content) {
 +        final Set<String> resolved = new HashSet<>();
 +        for (String path : paths) {
@@ -952,7 +985,13 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc0
 +            for (ResourcePack pack : storage.getPackStackTopToBottom()) {
 +                final Content.LazyImage image = pack.content().getShortnameImage(path);
 +                if (image != null) {
-+                    content.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(path) + ".png", image);
++                    final String target = "assets/viabedrock/textures/" + this.getJavaTexturePath(path) + ".png";
++                    final BufferedImage source = image.getImage();
++                    if (source != null && Math.max(source.getWidth(), source.getHeight()) > MAX_ATLAS_TEXTURE_SIZE) {
++                        content.putPngImage(target, fitAtlas(source));
++                    } else {
++                        content.putPngImage(target, image);
++                    }
 +                    resolved.add(path);
 +                    break;
 +                }
@@ -992,7 +1031,7 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc0
      protected class ItemModelContent extends InMemoryContent {
  
          private final Map<String, String> modelDefinitions = new HashMap<>();
-@@ -52,32 +137,82 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
+@@ -52,32 +164,82 @@ public abstract class ItemModelResourceRewriter implements ResourcePackRewriter.
              this.itemPath = ItemModelResourceRewriter.this.subFolder + '/' + StringUtil.makeIdentifierValueSafe(itemName);
          }
  
@@ -1029,7 +1068,7 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc0
 -                model.addProperty("model", "viabedrock:" + modelDefinition.getValue());
 +            this.generateItemDefinition(null);
 +        }
-+
+ 
 +        protected void generateItemDefinition(final JsonObject inventoryModel) {
 +            this.generateItemDefinition(inventoryModel, null);
 +        }
@@ -1058,7 +1097,7 @@ index 799413e5734b549178eccb4dbe099a339c6f1e65..c7497530749f101cec4875ba27478fc0
 +            }
 +            this.putJson("assets/viabedrock/items/" + this.itemPath + ".json", itemDefinitionObj);
 +        }
- 
++
 +        private JsonObject variantSelector() {
 +            final JsonArray modelCases = new JsonArray();
 +            for (final String name : this.modelDefinitions.keySet()) {
@@ -1308,10 +1347,10 @@ index 0000000000000000000000000000000000000000..16d9d113a7b4ab14be24f3a51855ab47
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..84c8e7df562c9e1de1f2acb4726c8f64f6c06ccf
+index 0000000000000000000000000000000000000000..5eb876a05e9cd09fb2675864136e92bb3d5c9832
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,135 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1327,6 +1366,7 @@ index 0000000000000000000000000000000000000000..84c8e7df562c9e1de1f2acb4726c8f64
 +import org.cube.converter.util.element.Position2V;
 +import org.junit.jupiter.api.Test;
 +
++import java.awt.image.BufferedImage;
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Map;
@@ -1414,6 +1454,17 @@ index 0000000000000000000000000000000000000000..84c8e7df562c9e1de1f2acb4726c8f64
 +        assertEquals("minecraft:custom_model_data", model.getAsJsonObject("fallback").get("property").getAsString());
 +        assertEquals("default", model.getAsJsonObject("fallback").getAsJsonArray("cases").get(0)
 +                .getAsJsonObject().get("when").getAsString());
++    }
++
++    @Test
++    void reducesOversizedItemModelTexturesByWholeFactor() {
++        // InPvP's sign shop entity texture is 4000x1280 and overflowed the Java items atlas.
++        final BufferedImage source = new BufferedImage(4000, 1280, BufferedImage.TYPE_INT_ARGB);
++        source.setRGB(3996, 1276, 0xFF123456);
++        final BufferedImage fitted = ItemModelResourceRewriter.fitAtlas(source);
++        assertEquals(1000, fitted.getWidth());
++        assertEquals(320, fitted.getHeight());
++        assertEquals(0xFF123456, fitted.getRGB(999, 319));
 +    }
 +
 +    private static final class TestRewriter extends ItemModelResourceRewriter {

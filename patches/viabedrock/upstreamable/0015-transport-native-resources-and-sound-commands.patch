@@ -169,6 +169,20 @@ Keep each direction's mapped carrier so decoding retains its source water,
 and let ordinary air updates remove it. Cover dictionary transport and
 replacement in the local regression rather than changing bubble impulses.
 
+The original Bedrock packs travel as their own Java resource pack, not
+inside the converted pack, and only to clients that register the
+configuration channel viabedrock:native_resources. ViaBedrock registers
+that channel when the client sends its configuration settings, because
+Fabric clients send their configuration channels only after the server
+registered its own; this also tells the client that the server sends the
+payload. ViaBedrock pushes the payload pack once both the converted
+stack and the client's registration are present. Vanilla Java clients
+never download it, so their converted pack stays small. The payload has
+no size cap: OPBlocks' packs plus the vanilla packs passed the former
+32,768-file and 256 MB limits and failed the whole conversion. Payload
+responses do not affect the Bedrock pack negotiation, which follows the
+converted pack.
+
 diff --git a/build.gradle b/build.gradle
 index 6c6a6fefd0c0741a4a52dac09fe1926706fb70b0..72cced30b213b589a0beafcf59f44f398848e96c 100644
 --- a/build.gradle
@@ -918,10 +932,10 @@ index 0000000000000000000000000000000000000000..e20d2267df74b34db46a1bb701f6caae
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloads.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloads.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..9aa106642ade895c1f7b81b75ff28553abc2ae8d
+index 0000000000000000000000000000000000000000..8061f5322c042025dc63ca438298f31220c4b9a3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloads.java
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,200 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -970,7 +984,6 @@ index 0000000000000000000000000000000000000000..9aa106642ade895c1f7b81b75ff28553
 +        index.addProperty("base_game_version", baseGameVersion);
 +        final JsonArray layers = new JsonArray();
 +        final MessageDigest digest = digest();
-+        long encoded = 0;
 +        for (final ResourcePack pack : packs) {
 +            final Content source = NativeActorLibrary.source(pack.content());
 +            byte[] zip = source instanceof ZipContent received ? received.sourceZip() : source.toZip();
@@ -979,10 +992,6 @@ index 0000000000000000000000000000000000000000..9aa106642ade895c1f7b81b75ff28553
 +            } catch (final IOException nonstandard) {
 +                zip = source.toZip();
 +                NativeResourceArchive.validateSourceDirectory(zip);
-+            }
-+            encoded += zip.length;
-+            if (encoded > NativeResourceArchive.MAX_TOTAL_BYTES) {
-+                throw new IOException("Bedrock payloads exceed limits");
 +            }
 +            final String sha = HexFormat.of().formatHex(digest.digest(zip));
 +            result.putStored(PAYLOAD_DIRECTORY + sha + ".mcpack", zip);
@@ -1031,10 +1040,10 @@ index 0000000000000000000000000000000000000000..9aa106642ade895c1f7b81b75ff28553
 +                    NativeResourceArchive.validatePath(selection, ignored -> true);
 +                }
 +                final int length = integer(pack, "bytes");
-+                total += length;
-+                if (length < 22 || total > NativeResourceArchive.MAX_TOTAL_BYTES) {
-+                    throw new IOException("Bedrock payloads exceed limits");
++                if (length < 22) {
++                    throw new IOException("Invalid Bedrock payload size");
 +                }
++                total += length;
 +                final JsonElement role = pack.get("server");
 +                if (role == null || !role.isJsonPrimitive() || !role.getAsJsonPrimitive().isBoolean()) {
 +                    throw new IOException("Invalid Bedrock payload provenance");
@@ -1129,10 +1138,10 @@ index 0000000000000000000000000000000000000000..9aa106642ade895c1f7b81b75ff28553
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef29b34d91f90f097b666ef651ef215d95d2028d
+index 0000000000000000000000000000000000000000..a14919dea2e0e8df8e2c39123dc9c836f3c80355
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,196 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1160,9 +1169,6 @@ index 0000000000000000000000000000000000000000..ef29b34d91f90f097b666ef651ef215d
 +public final class NativeActorLibrary {
 +
 +    private static final int MAX_PACKS = 4096;
-+    private static final int MAX_BYTES = 256 << 20;
-+    private static final int MAX_FILE_BYTES = 32 << 20;
-+    private static final int MAX_FILES = 32768;
 +
 +    /** Complete source context and the existing actor view, without compression for local consumers. */
 +    public static List<Layer> resources(final Collection<ResourcePack> bottomToTop, final Predicate<ResourcePack> server) throws IOException {
@@ -1240,15 +1246,8 @@ index 0000000000000000000000000000000000000000..ef29b34d91f90f097b666ef651ef215d
 +            throw new IOException("Too many native source packs");
 +        }
 +        final List<Layer> layers = new ArrayList<>(packs.size());
-+        long encoded = 0;
-+        long total = 0;
-+        int files = 0;
 +        for (final PackedLayer pack : packs) {
 +            final byte[] archive = pack.archive();
-+            encoded += archive.length;
-+            if (encoded > MAX_BYTES) {
-+                throw new IOException("Native source archives exceed limits");
-+            }
 +            NativeResourceArchive.validateSourceDirectory(archive);
 +            final Map<String, byte[]> source = new LinkedHashMap<>();
 +            try (var channel = new SeekableInMemoryByteChannel(archive);
@@ -1261,15 +1260,13 @@ index 0000000000000000000000000000000000000000..ef29b34d91f90f097b666ef651ef215d
 +                    }
 +                    final String path = entry.getName().replace('\\', '/').replaceAll("/{2,}", "/");
 +                    NativeResourceArchive.validatePath(path, ignored -> true);
-+                    if (++files > MAX_FILES) {
-+                        throw new IOException("Too many native source files");
++                    if (entry.getSize() < 0 || entry.getSize() > Integer.MAX_VALUE - 8) {
++                        throw new IOException("Invalid native source file size");
 +                    }
-+                    final int limit = (int) Math.min(MAX_FILE_BYTES, MAX_BYTES - total);
 +                    try (var input = new CheckedInputStream(zip.getInputStream(entry), new CRC32())) {
-+                        final byte[] bytes = input.readNBytes(limit + 1);
-+                        total += bytes.length;
-+                        if (bytes.length > limit || bytes.length != entry.getSize() || input.getChecksum().getValue() != entry.getCrc()) {
-+                            throw new IOException("Oversized or corrupt native source file");
++                        final byte[] bytes = input.readNBytes((int) entry.getSize() + 1);
++                        if (bytes.length != entry.getSize() || input.getChecksum().getValue() != entry.getCrc()) {
++                            throw new IOException("Corrupt native source file");
 +                        }
 +                        // ZipContent accepts the final occurrence of a normalized path too.
 +                        source.put(path, bytes);
@@ -1343,10 +1340,10 @@ index 0000000000000000000000000000000000000000..ef29b34d91f90f097b666ef651ef215d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..1220c50324f6036baaf7c662f31c6c5baf33e97a
+index 0000000000000000000000000000000000000000..e2abd677a2611b51b19fa602912740e54d091093
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,109 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1371,9 +1368,7 @@ index 0000000000000000000000000000000000000000..1220c50324f6036baaf7c662f31c6c5b
 +final class NativeResourceArchive {
 +
 +    static final int MAX_PACKS = 4096;
-+    static final int MAX_FILES = 32768;
 +    static final int MAX_FILE_BYTES = 32 * 1024 * 1024;
-+    static final int MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 +
 +    /** Bound directory metadata before ZipFile allocates its entry index. */
 +    static void validateSourceDirectory(final byte[] bytes) throws IOException {
@@ -1395,7 +1390,7 @@ index 0000000000000000000000000000000000000000..1220c50324f6036baaf7c662f31c6c5b
 +        final long length = Integer.toUnsignedLong(fields.getInt(end + 12));
 +        final long offset = Integer.toUnsignedLong(fields.getInt(end + 16));
 +        if (fields.getShort(end + 4) != 0 || fields.getShort(end + 6) != 0 || Short.toUnsignedInt(fields.getShort(end + 8)) != count
-+                || count > MAX_FILES || offset + length != end) {
++                || offset + length != end) {
 +            throw new IOException("Unsupported or oversized native source ZIP directory");
 +        }
 +        int position = (int) offset;
@@ -1417,9 +1412,8 @@ index 0000000000000000000000000000000000000000..1220c50324f6036baaf7c662f31c6c5b
 +        if (packs.size() > MAX_PACKS) {
 +            throw new IOException("Too many native resource packs");
 +        }
++        // Payloads only go to clients that registered the native resource channel; they accept the whole stack.
 +        final List<Map<String, byte[]>> selected = new ArrayList<>();
-+        long total = 0;
-+        int count = 0;
 +        for (final Content pack : packs) {
 +            final TreeSet<String> ordered = new TreeSet<>();
 +            for (final String path : paths) {
@@ -1437,12 +1431,7 @@ index 0000000000000000000000000000000000000000..1220c50324f6036baaf7c662f31c6c5b
 +            final Map<String, byte[]> files = new LinkedHashMap<>();
 +            for (final String path : ordered) {
 +                validatePath(path, permitted);
-+                final byte[] bytes = pack.get(path);
-+                total += bytes.length;
-+                if (++count > MAX_FILES || bytes.length > MAX_FILE_BYTES || total > MAX_TOTAL_BYTES) {
-+                    throw new IOException("Native resources exceed limits");
-+                }
-+                files.put(path, bytes);
++                files.put(path, pack.get(path));
 +            }
 +            selected.add(Collections.unmodifiableMap(files));
 +        }
@@ -1461,6 +1450,57 @@ index 0000000000000000000000000000000000000000..1220c50324f6036baaf7c662f31c6c5b
 +    }
 +
 +    private NativeResourceArchive() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourcePayloadPack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourcePayloadPack.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..14755e2f91d1e841432ad13ccae45e7337aaae89
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourcePayloadPack.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.io.IOException;
++import java.io.UncheckedIOException;
++
++/**
++ * A separate Java resource pack that carries the original Bedrock packs for clients that render them natively.
++ * Only clients that register {@link #CHANNEL} receive it, so it has no size cap; others keep the converted pack only.
++ */
++public final class NativeResourcePayloadPack {
++
++    /** A configuration channel: the client registers it to request the payload, and the server registers it back. */
++    public static final String CHANNEL = "viabedrock:native_resources";
++
++    public static Content create(final ResourcePackStorage storage) {
++        try {
++            final Content content = BedrockResourcePackPayloads.export(ProtocolConstants.BEDROCK_VERSION_NAME,
++                    storage.getPackStackBottomToTop(), storage::isServerPack);
++            final JsonObject metadata = content.getJson("pack.mcmeta");
++            final JsonObject pack = new JsonObject();
++            pack.addProperty("description", "ViaBedrock native resources");
++            pack.addProperty("min_format", ProtocolConstants.JAVA_PACK_VERSION);
++            pack.addProperty("max_format", ProtocolConstants.JAVA_PACK_VERSION);
++            metadata.add("pack", pack);
++            content.putJson("pack.mcmeta", metadata);
++            return content;
++        } catch (final IOException invalid) {
++            throw new UncheckedIOException(invalid);
++        }
++    }
++
++    private NativeResourcePayloadPack() {
 +    }
 +
 +}
@@ -1919,19 +1959,75 @@ index 3b0f9270fd6df4bce6663368c0c31ca7536b4dca..2becb508c8cb75e9078a7f3d92c85936
                      output.writeInt(bytes.length);
                      output.write(bytes);
                  }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ResourcePackHttpServer.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ResourcePackHttpServer.java
+index 7d7e895fccf35af0496df629733f1b01ab4249af..1abfe6ad406a155c1093c0cf32694476e23e5b2b 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ResourcePackHttpServer.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ResourcePackHttpServer.java
+@@ -27,6 +27,7 @@ import io.netty.handler.stream.ChunkedFile;
+ import io.netty.handler.stream.ChunkedStream;
+ import io.netty.handler.stream.ChunkedWriteHandler;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.resourcepack.NativeResourcePayloadPack;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ 
+@@ -46,6 +47,7 @@ public class ResourcePackHttpServer {
+     private final ConcurrentHashMap<UUID, ConvertedResourcePackCache.Pack> connections = new ConcurrentHashMap<>();
+     private final ResourcePackExecutor preparations = new ResourcePackExecutor(2, 32, "ViaBedrock Resource Pack Preparation");
+     private final ConvertedResourcePackCache convertedPacks = new ConvertedResourcePackCache(ViaBedrock.getPlatform().getServerPacksFolder().toPath().resolve("converted"), ViaBedrock.getConfig().getPackCacheMode());
++    private final ConvertedResourcePackCache nativePayloads = new ConvertedResourcePackCache(ViaBedrock.getPlatform().getServerPacksFolder().toPath().resolve("native"), ViaBedrock.getConfig().getPackCacheMode(), NativeResourcePayloadPack::create);
+ 
+     public ResourcePackHttpServer(final InetSocketAddress bindAddress) {
+         this.bindAddress = bindAddress;
+@@ -120,6 +122,11 @@ public class ResourcePackHttpServer {
+         return this.convertedPacks.prepare(storage);
+     }
+ 
++    /** The original Bedrock packs as their own Java pack, for clients that registered the native resource channel. */
++    public CompletableFuture<ConvertedResourcePackCache.Pack> prepareNativePayload(final ResourcePackStorage storage) {
++        return this.nativePayloads.prepare(storage);
++    }
++
+     public <T> CompletableFuture<T> prepareResources(final Supplier<T> work) {
+         return this.preparations.submit(work);
+     }
+@@ -131,6 +138,7 @@ public class ResourcePackHttpServer {
+     public void stop() {
+         this.preparations.stop();
+         this.convertedPacks.stop();
++        this.nativePayloads.stop();
+         if (this.channelFuture != null) {
+             this.channelFuture.channel().close();
+         }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ConfigurationPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ConfigurationPackets.java
+index ec8cc2bee70aebe84e1f08e7d253b83508b39e95..353941cad1024cfcd702cc9360a5c98297c34f1a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ConfigurationPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ConfigurationPackets.java
+@@ -31,6 +31,8 @@ public final class ConfigurationPackets {
+             @Override
+             protected void register() {
+                 handler(MultiStatePackets.CLIENT_SETTINGS_HANDLER);
++                // The client's first configuration packet shows its pipeline is ready for a channel registration reply.
++                handler(wrapper -> ResourcePackPackets.announceNativePayload(wrapper.user()));
+                 handler(PacketWrapper::cancel);
+             }
+         });
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 41c7532f846d2bddb9555341a501d2d04217d347..edb0b43c2d47bc3c4dfa0f94d3c1d3fdc68cf8e9 100644
+index 41c7532f846d2bddb9555341a501d2d04217d347..8adeb287dea3402001bf6f00be89436b8a6d8c47 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -29,6 +29,7 @@ import com.viaversion.viaversion.util.Key;
+@@ -29,8 +29,10 @@ import com.viaversion.viaversion.util.Key;
  import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.model.LocatorBarSnapshot;
 +import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
  import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
  import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.api.resourcepack.NativeResourcePayloadPack;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
-@@ -42,6 +43,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+@@ -42,6 +44,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
  import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
  import net.raphimc.viabedrock.protocol.storage.PlayerWaypointTracker;
@@ -1939,7 +2035,13 @@ index 41c7532f846d2bddb9555341a501d2d04217d347..edb0b43c2d47bc3c4dfa0f94d3c1d3fd
  import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
  import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-@@ -137,6 +139,10 @@ public final class MultiStatePackets {
+@@ -134,9 +137,16 @@ public final class MultiStatePackets {
+         if (channel.equals("minecraft:register")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
++            if (channels.contains(NativeResourcePayloadPack.CHANNEL)) {
++                ResourcePackPackets.publishNativePayload(wrapper.user());
++            }
              if (channels.contains(LocatorBarSnapshot.CHANNEL) && wrapper.user().has(PlayerWaypointTracker.class)) {
                  wrapper.user().get(PlayerWaypointTracker.class).sendSnapshot();
              }
@@ -1950,6 +2052,96 @@ index 41c7532f846d2bddb9555341a501d2d04217d347..edb0b43c2d47bc3c4dfa0f94d3c1d3fd
  
              if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
                  ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
+index 4e938607224f44b530cb832023325d32d49ddddd..13f6eb256340ea8d797da1d86c10186d3a74ca51 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
+@@ -22,8 +22,11 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.protocols.v1_21_7to1_21_9.packet.ServerboundConfigurationPackets1_21_9;
++import com.viaversion.viaversion.api.protocol.packet.State;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundConfigurationPackets26_3;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.resourcepack.NativeResourcePayloadPack;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.api.resourcepack.http.ConvertedResourcePackCache;
+ import net.raphimc.viabedrock.api.util.TextUtil;
+@@ -36,13 +39,16 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePack
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.ResourcePackAction;
+ import net.raphimc.viabedrock.protocol.model.Experiment;
+ import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.JavaResourcePackRequest;
++import net.raphimc.viabedrock.protocol.storage.NativeResourcePublication;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackDownloadTracker;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackLoadStateTracker;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.net.MalformedURLException;
++import java.nio.charset.StandardCharsets;
+ import java.net.URL;
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -293,6 +299,8 @@ public final class ResourcePackPackets {
+                                 final UUID httpToken = UUID.randomUUID();
+                                 ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
+                                 sendJavaResourcePack(user, pack, httpToken);
++                                user.put(new NativeResourcePublication(storage));
++                                publishNativePayload(user);
+                             } catch (final Throwable publicationError) {
+                                 BedrockProtocol.kickForIllegalState(user, "Failed to advertise the server resource packs.", publicationError);
+                             }
+@@ -339,6 +347,47 @@ public final class ResourcePackPackets {
+         return ViaBedrock.getConfig().shouldTranslateResourcePacks() && user.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION);
+     }
+ 
++    /**
++     * Registers the native resource channel. Fabric clients register their configuration channels only after the server
++     * registered its own, and the registration also tells the client that this server sends the payload pack.
++     */
++    static void announceNativePayload(final UserConnection user) {
++        final PacketWrapper register = PacketWrapper.create(ClientboundConfigurationPackets26_3.CUSTOM_PAYLOAD, user);
++        register.write(Types.STRING, "minecraft:register");
++        register.write(Types.REMAINING_BYTES, NativeResourcePayloadPack.CHANNEL.getBytes(StandardCharsets.UTF_8));
++        register.send(BedrockProtocol.class);
++    }
++
++    /**
++     * Pushes the original Bedrock packs as a second Java pack once the client registered the native resource channel.
++     * Vanilla Java clients never receive it, so their converted pack stays small and under Java's download cap.
++     */
++    public static void publishNativePayload(final UserConnection user) {
++        final NativeResourcePublication publication = user.get(NativeResourcePublication.class);
++        if (publication == null || !user.get(ChannelStorage.class).hasChannel(NativeResourcePayloadPack.CHANNEL) || !publication.request()) {
++            return;
++        }
++        ViaBedrock.getResourcePackServer().prepareNativePayload(publication.storage()).whenCompleteAsync((pack, error) -> {
++            if (!user.getChannel().isActive() || user.get(NativeResourcePublication.class) != publication) {
++                return;
++            }
++            if (error != null) {
++                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to prepare the native resource payload", error);
++                return;
++            }
++            final UUID httpToken = UUID.randomUUID();
++            ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
++            final PacketWrapper resourcePack = PacketWrapper.create(user.getProtocolInfo().getClientState() == State.PLAY
++                    ? ClientboundPackets26_3.RESOURCE_PACK_PUSH : ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH, user);
++            resourcePack.write(Types.UUID, pack.id()); // id
++            resourcePack.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
++            resourcePack.write(Types.STRING, pack.sha1()); // hash
++            resourcePack.write(Types.BOOLEAN, false); // required
++            resourcePack.write(Types.OPTIONAL_TAG, null); // prompt
++            resourcePack.scheduleSend(BedrockProtocol.class);
++        }, user.getChannel().eventLoop());
++    }
++
+     private static void sendJavaResourcePack(final UserConnection user, final ConvertedResourcePackCache.Pack pack, final UUID httpToken) {
+         user.put(new JavaResourcePackRequest(pack.id()));
+         // Each conversion contains the whole accepted stack, including custom-block supplements.
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 index 3fb2051c8205ab8bfa35dc54446452019e57f5b3..9924e3a01a3bd5854d62f2be28527b8ef40587e3 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
@@ -2045,89 +2237,6 @@ index c9adc71cb2f457da9022b1ea624eaa127bee5f33..78baef5d3c1a4c846667843a1c4865a3
      public int waterlog(final int javaBlockStateId) {
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-index 07a19fa95e01ae084e007d2d93ae8639136071c1..af81b8a20ae35c69431288c8eac8a67daadb4470 100644
---- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-@@ -18,6 +18,7 @@
- package net.raphimc.viabedrock.protocol.rewriter;
- 
- import com.viaversion.viaversion.libs.gson.JsonObject;
-+import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
- import net.raphimc.viabedrock.api.resourcepack.content.Content;
- import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
- import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
-@@ -26,6 +27,7 @@ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourc
- import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
- import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
- import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-+import net.raphimc.viabedrock.protocol.rewriter.resourcepack.NativeEffectsResourceRewriter;
- 
- import java.util.ArrayList;
- import java.util.List;
-@@ -42,6 +44,7 @@ public final class ResourcePackRewriter {
-         REWRITERS.add(new CustomItemTextureResourceRewriter());
-         REWRITERS.add(new CustomAttachableResourceRewriter());
-         REWRITERS.add(new CustomEntityResourceRewriter());
-+        REWRITERS.add(new NativeEffectsResourceRewriter());
-     }
- 
-     public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage) throws InterruptedException {
-@@ -66,7 +69,14 @@ public final class ResourcePackRewriter {
-         for (CompletableFuture<Content> task : tasks) {
-             javaContent.putAll(task.getNow(null));
-         }
--        javaContent.putJson("pack.mcmeta", createPackManifest());
-+        final JsonObject metadata = createPackManifest();
-+        if (javaContent.contains("pack.mcmeta")) {
-+            final JsonObject sources = javaContent.getJson("pack.mcmeta").getAsJsonObject(BedrockResourcePackPayloads.METADATA_SECTION);
-+            if (sources != null) {
-+                metadata.add(BedrockResourcePackPayloads.METADATA_SECTION, sources);
-+            }
-+        }
-+        javaContent.putJson("pack.mcmeta", metadata);
-         return javaContent;
-     }
- 
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
-new file mode 100644
-index 0000000000000000000000000000000000000000..36d76e859debcd4365ac3bd8fe23114e33c3fb0c
---- /dev/null
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
-@@ -0,0 +1,33 @@
-+/*
-+ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
-+ * Copyright (C) 2026 RK_01/RaphiMC and contributors
-+ * SPDX-License-Identifier: GPL-3.0-or-later
-+ */
-+package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
-+
-+import net.raphimc.viabedrock.api.resourcepack.BedrockResourcePackPayloads;
-+import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
-+import net.raphimc.viabedrock.api.resourcepack.content.Content;
-+import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
-+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-+
-+import java.io.IOException;
-+import java.io.UncheckedIOException;
-+import java.util.function.Consumer;
-+import java.util.function.Supplier;
-+
-+public final class NativeEffectsResourceRewriter implements ResourcePackRewriter.Rewriter {
-+
-+    @Override
-+    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
-+        submitter.accept(() -> {
-+            try {
-+                return BedrockResourcePackPayloads.export(ProtocolConstants.BEDROCK_VERSION_NAME,
-+                        storage.getPackStackBottomToTop(), storage::isServerPack);
-+            } catch (final IOException invalid) {
-+                throw new UncheckedIOException(invalid);
-+            }
-+        });
-+    }
-+
-+}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 index a5da475d8249630c50bc1ae3d77738eb08faa20f..e6e0f41b78778c93ff0ce958ac05c09cb1341093 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
@@ -2302,6 +2411,45 @@ index a5da475d8249630c50bc1ae3d77738eb08faa20f..e6e0f41b78778c93ff0ce958ac05c09c
                                          continue;
                                      }
  
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeResourcePublication.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeResourcePublication.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f34e25a4dbee25b8706c4102d713c32724104b14
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeResourcePublication.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++
++/** The advertised converted stack, and whether its native resource payload was already requested for this client. */
++public final class NativeResourcePublication implements StorableObject {
++
++    private final ResourcePackStorage storage;
++    private boolean requested;
++
++    public NativeResourcePublication(final ResourcePackStorage storage) {
++        this.storage = storage;
++    }
++
++    public ResourcePackStorage storage() {
++        return this.storage;
++    }
++
++    /** Returns true only for the first request, so the payload pack is pushed at most once per stack. */
++    public boolean request() {
++        if (this.requested) {
++            return false;
++        }
++        this.requested = true;
++        return true;
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 index d3dc43159e886b7003d7f34288a59c408d4e7154..e71e98953eb6b3f69658d86b8bbbac4e8db05f13 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
@@ -2727,10 +2875,10 @@ index 0000000000000000000000000000000000000000..5fa8eadc14db2e67900fec271df24783
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloadsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloadsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..295e7db893f89ad7d2a80a93698ff5a1d23be2ef
+index 0000000000000000000000000000000000000000..1969f2ca0f54626837777cdf50efb033ca4229e8
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/BedrockResourcePackPayloadsTest.java
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,201 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2738,6 +2886,7 @@ index 0000000000000000000000000000000000000000..295e7db893f89ad7d2a80a93698ff5a1
 + */
 +package net.raphimc.viabedrock.api.resourcepack;
 +
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
@@ -2903,6 +3052,25 @@ index 0000000000000000000000000000000000000000..295e7db893f89ad7d2a80a93698ff5a1
 +
 +    private static Content export(final List<ResourcePack> packs, final ResourcePack server) throws Exception {
 +        return BedrockResourcePackPayloads.export(ProtocolConstants.BEDROCK_VERSION_NAME, packs, pack -> pack == server);
++    }
++
++    @Test
++    void payloadPackIsStandaloneJavaPackCarryingSourceIndex() {
++        final var storage = new ResourcePackStorage(List.of(new ResourcePack(content(1))));
++        final Content payload = NativeResourcePayloadPack.create(storage);
++        final JsonObject metadata = payload.getJson("pack.mcmeta");
++        assertEquals(ProtocolConstants.JAVA_PACK_VERSION, metadata.getAsJsonObject("pack").get("min_format").getAsInt());
++        assertEquals(1, metadata.getAsJsonObject(BedrockResourcePackPayloads.METADATA_SECTION).getAsJsonArray("packs").size());
++    }
++
++    @Test
++    void selectsStacksBeyondTheFormerFileCap() throws Exception {
++        // OPBlocks' main pack alone has 20,498 files; with the vanilla packs the stack passed the old 32,768-file cap.
++        final InMemoryContent large = content(2);
++        for (int index = 0; index < 40000; index++) {
++            large.put("textures/file_" + index + ".png", new byte[]{1});
++        }
++        assertEquals(40001, NativeResourceArchive.select(List.of(large), ignored -> true, List.of(), List.of("")).getFirst().size());
 +    }
 +
 +    private static InMemoryContent content(final long id) {

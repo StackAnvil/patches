@@ -829,6 +829,14 @@ material fell back because its raw sampler and vertex fields were
 unverified, and player costumes using entity_alphatest were skipped.
 Changed entries keep their own fields and still retain the fallback.
 
+ViaBedrock sends the original Bedrock packs as a separate payload pack,
+only to clients that register the configuration channel
+viabedrock:native_resources. The add-on registers that channel.
+ViaBedrock registers it too, so the add-on lifts Java's 250 MiB server
+pack download cap for that connection, because the payload has no size
+cap; OPBlocks' packs exceed 250 MiB with the vanilla packs. The cap is
+restored on the next connection.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index 7ba0932506d370b6bf500d2b53cb5ef35c8bb2ec..d5d27f4f2c7b48442908e5e2fd2b5ba8d81479df 100644
 --- a/build.gradle.kts
@@ -861,14 +869,15 @@ index c4d1e0efefed97b23a82f74fc7bdf5d772c0ac4a..e1bd73baa2b6496adbaa85164bbe5a6a
          if (stackAnvilMavenRepo.isPresent) {
              exclusiveContent {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 312ef8d031c2a8c389fa52828c144eace55516e0..073a05f46f60f2a02355caee0c6a39f0258d36f1 100644
+index 312ef8d031c2a8c389fa52828c144eace55516e0..bb6ab986866bb7ee304f486b98af119c0cfe6d51 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -21,6 +21,14 @@
+@@ -21,6 +21,15 @@
  
  package com.viaversion.viafabricplus.bedrock;
  
 +import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
++import com.viaversion.viafabricplus.bedrock.render.BedrockNativeResourceTransport;
 +import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
 +import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntitySamplerPayload;
@@ -879,10 +888,11 @@ index 312ef8d031c2a8c389fa52828c144eace55516e0..073a05f46f60f2a02355caee0c6a39f0
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
  import com.viaversion.viafabricplus.bedrock.features.global.BedrockAccount;
-@@ -49,6 +57,21 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -49,6 +58,22 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
  
      @Override
      public void onPreSettingsLoading() {
++        BedrockNativeResourceTransport.register();
 +        PayloadTypeRegistry.clientboundPlay().register(NativeSkinPayload.TYPE, NativeSkinPayload.CODEC);
 +        // Capture the listener identity at INIT. Fabric Context.player() returns the current client player.
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
@@ -2611,6 +2621,34 @@ index 0000000000000000000000000000000000000000..92ed632e5e4b82904c1ea63114863d37
 +        }
 +        return original.call(vehicle, passenger);
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinDownloadedPackSourceDownloader.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinDownloadedPackSourceDownloader.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..07b1b00ee4d946d1f5161fbc26a92e3f955e88d6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinDownloadedPackSourceDownloader.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockNativeResourceTransport;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.Constant;
++import org.spongepowered.asm.mixin.injection.ModifyConstant;
++
++/** The anonymous pack downloader inside DownloadedPackSource passes Java's 250 MiB server pack cap to its download batch. */
++@Mixin(targets = "net.minecraft.client.resources.server.DownloadedPackSource$4")
++public abstract class MixinDownloadedPackSourceDownloader {
++
++    @ModifyConstant(method = "download", constant = @Constant(intValue = 262144000))
++    private int viaFabricPlusBedrock$nativePayloadCap(final int vanilla) {
++        return BedrockNativeResourceTransport.maxPackSize(vanilla);
++    }
++
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
 new file mode 100644
@@ -4559,6 +4597,70 @@ index 0000000000000000000000000000000000000000..44d5b98c5ebf6cfc2e5fbc757b2c7ab4
 +
 +    public record Line(Component text, int baseline) {
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNativeResourceTransport.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNativeResourceTransport.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a968b1a7ecf940b8675737035a7d153902ba0fb4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNativeResourceTransport.java
+@@ -0,0 +1,58 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationConnectionEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationNetworking;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ServerboundConfigurationChannelEvents;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.resourcepack.NativeResourcePayloadPack;
++
++/**
++ * Requests ViaBedrock's native resource payload pack. Registering the configuration channel asks for the pack; the
++ * server registering it back confirms that it sends the pack, which may exceed Java's server pack download cap.
++ */
++public final class BedrockNativeResourceTransport {
++
++    private static volatile boolean uncapped;
++
++    private BedrockNativeResourceTransport() {
++    }
++
++    public static void register() {
++        PayloadTypeRegistry.clientboundConfiguration().register(Request.TYPE, Request.CODEC);
++        ClientConfigurationNetworking.registerGlobalReceiver(Request.TYPE, (payload, context) -> { });
++        ServerboundConfigurationChannelEvents.REGISTER.register((listener, sender, client, channels) -> {
++            if (channels.contains(Request.TYPE.id())) {
++                uncapped = true;
++            }
++        });
++        ClientConfigurationConnectionEvents.INIT.register((listener, client) -> uncapped = false);
++        ClientConfigurationConnectionEvents.DISCONNECT.register((listener, client) -> uncapped = false);
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> uncapped = false);
++    }
++
++    /** Java's server pack download cap, lifted while connected to a server that sends the native payload pack. */
++    public static int maxPackSize(final int vanilla) {
++        return uncapped ? Integer.MAX_VALUE : vanilla;
++    }
++
++    public record Request() implements CustomPacketPayload {
++        public static final Type<Request> TYPE = new Type<>(Identifier.parse(NativeResourcePayloadPack.CHANNEL));
++        public static final StreamCodec<FriendlyByteBuf, Request> CODEC = StreamCodec.unit(new Request());
++
++        @Override
++        public Type<Request> type() {
++            return TYPE;
++        }
++    }
++
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerLayerModels.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerLayerModels.java
 new file mode 100644
@@ -6668,10 +6770,10 @@ index 35145bcfe732c1feaae06d7813c8883af6677125..f42de8f4808c9526eb31aae31e30a336
 +accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_NO_LIGHTMAP_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible field net/minecraft/client/renderer/RenderPipelines EYES_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 8e4e3dd842f76ae0c715d540085c90b205b8118f..3c5f315bb2bc9aaf9bb9c159ab03c29aa397f1d4 100644
+index 8e4e3dd842f76ae0c715d540085c90b205b8118f..2e26771f9b7b19d9e3293f3504dceb6662a592a2 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -1,10 +1,30 @@
+@@ -1,10 +1,31 @@
  {
    "required": true,
 +  "plugin": "com.viaversion.viafabricplus.bedrock.injection.BedrockMixinPlugin",
@@ -6680,6 +6782,7 @@ index 8e4e3dd842f76ae0c715d540085c90b205b8118f..3c5f315bb2bc9aaf9bb9c159ab03c29a
    "compatibilityLevel": "JAVA_25",
    "priority": 1001,
    "client": [
++    "features.render.MixinDownloadedPackSourceDownloader",
 +    "compat.emf.MixinEmfModelRoots",
 +    "compat.iris.MixinIrisPipelines",
 +    "compat.iris.IrisProgramSourceConstructor",
@@ -6702,7 +6805,7 @@ index 8e4e3dd842f76ae0c715d540085c90b205b8118f..3c5f315bb2bc9aaf9bb9c159ab03c29a
      "jjwt.MixinClasses",
      "jjwt.MixinDefaultJwtParserBuilder",
      "core.access.MixinConfirmScreen",
-@@ -43,6 +63,25 @@
+@@ -43,6 +64,25 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
