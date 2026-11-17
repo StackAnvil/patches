@@ -229,6 +229,13 @@ definition so it cannot release a replacement item. Keep the existing
 Java active-use release path and clear ownership on connection reset.
 Ordinary carriers, retained-air repeats and block timing are unchanged.
 
+Only a fresh press interacts with an actor. Native 1.26.60.5 against BDS
+1.26.60.6 sent one ItemUseOnEntity Interact for each press on an actor with
+an interact button, whether the button was held for 100 ms, 1 s or 2 s.
+The empty-hand block repeat otherwise reran startUseItem every frame and
+sent a Java interact each time, so one short CubeCraft NPC click reached the
+server three times. Held repeats now route an entity target as a miss.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 1065b67de93fa966b7747dfd727078de975786a4..d1a68f95dd1b686349c46e82f963fd607bdf86f8 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -559,10 +566,10 @@ index 0000000000000000000000000000000000000000..82b3509790da0035698376c2a8a9988e
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..54aeca3538fc9fbc8bcddf9556169d50fbcb5751
+index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2505dfc8f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,299 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -626,6 +633,7 @@ index 0000000000000000000000000000000000000000..54aeca3538fc9fbc8bcddf9556169d50
 +            update(false);
 +        }
 +        update(true);
++        INPUT.beginAttempt(freshPress);
 +        successfulAttempt = false;
 +    }
 +
@@ -1051,10 +1059,10 @@ index 0000000000000000000000000000000000000000..4b4e787754d77baa809cc7c2e7045e4f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..feb17aabe4405d0afa45a9d847bd21fc7e80fe1c
+index 0000000000000000000000000000000000000000..c9979cde62aa99abaad6e96628f2600891c1256d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,166 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1078,6 +1086,7 @@ index 0000000000000000000000000000000000000000..feb17aabe4405d0afa45a9d847bd21fc
 +    private boolean blockActive;
 +    private long blockStartedAt;
 +    private boolean blockDelayed;
++    private boolean heldRepeat;
 +
 +    public boolean canAttempt(final long now) {
 +        return !this.airAttempted || now - this.airStartedAt > AIR_DELAY_NANOS;
@@ -1146,7 +1155,15 @@ index 0000000000000000000000000000000000000000..feb17aabe4405d0afa45a9d847bd21fc
 +        this.airStartedAt = now;
 +    }
 +
++    /** Native sends one actor interaction per press; a held button never repeats it. */
++    public void beginAttempt(final boolean freshPress) {
++        this.heldRepeat = !freshPress;
++    }
++
 +    public HitResult.Type hitType(final long now, final HitResult.Type target, final InteractionHand hand) {
++        if (target == HitResult.Type.ENTITY && this.heldRepeat) {
++            return HitResult.Type.MISS;
++        }
 +        if (!this.blockActive && target == HitResult.Type.ENTITY && !this.canAttempt(now)) {
 +            return HitResult.Type.MISS;
 +        }
@@ -1505,10 +1522,10 @@ index 0000000000000000000000000000000000000000..e4fe3f2d55ceb315f23d3f8103c926cf
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..199b5df4b2942cd848afc763ea7e37855c1fa2c7
+index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cfa1f83798
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,322 @@
 +package com.viaversion.viafabricplus.bedrock.input;
 +
 +import org.junit.jupiter.api.Test;
@@ -1637,6 +1654,20 @@ index 0000000000000000000000000000000000000000..199b5df4b2942cd848afc763ea7e3785
 +            }
 +        }
 +        assertEquals(List.of(0, 236, 475, 676), usedAt);
++    }
++
++    @Test
++    void heldUseRepeatsNeverInteractWithTheTargetedActorAgain() {
++        final var input = new ItemUseState();
++        input.beginAttempt(true);
++        assertEquals(HitResult.Type.ENTITY, input.hitType(1_000_000_000L, HitResult.Type.ENTITY, InteractionHand.MAIN_HAND));
++        input.retainBlockUse();
++        input.beginAttempt(false);
++        assertEquals(HitResult.Type.MISS, input.hitType(1_050_000_000L, HitResult.Type.ENTITY, InteractionHand.MAIN_HAND));
++        assertEquals(HitResult.Type.BLOCK, input.hitType(1_050_000_000L, HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
++        input.release();
++        input.beginAttempt(true);
++        assertEquals(HitResult.Type.ENTITY, input.hitType(1_100_000_000L, HitResult.Type.ENTITY, InteractionHand.MAIN_HAND));
 +    }
 +
 +    @Test
