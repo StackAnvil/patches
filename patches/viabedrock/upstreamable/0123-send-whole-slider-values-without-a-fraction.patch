@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 13:59:17 +0100
+Subject: [PATCH] fix(forms): send whole slider values without a fraction
+
+The forms library serializes a custom form slider as a Java float, so a
+value of 6 reached the server as 6.0. Native 1.26.60.5 submits the same
+form to BDS 1.26.60.6 as [null,null,null,true,false,6,0,"Alex"]. Servers
+that compare or parse the raw value as an integer can reject 6.0.
+
+Write whole slider values as integers and keep fractional values as they
+are.
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index 37b2fc465bd681a9465af14ec5e96dad4fac2870..32f2f71f9588d444814fb00a06c7375ce6dc7b03 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -23,6 +23,7 @@ import com.viaversion.viaversion.libs.gson.JsonArray;
+ import com.viaversion.viaversion.libs.gson.JsonNull;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
+ import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
+ import net.raphimc.viabedrock.api.resourcepack.ui.FormText;
+ import net.raphimc.viabedrock.api.model.NativeFormMessage;
+@@ -581,7 +582,7 @@ public final class InventoryPackets {
+ 
+             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, formId); // id
+             wrapper.write(Types.BOOLEAN, true); // has response
+-            wrapper.write(BedrockTypes.STRING, form.serializeResponse() + '\n'); // response
++            wrapper.write(BedrockTypes.STRING, formResponse(form) + '\n'); // response
+             wrapper.write(Types.BOOLEAN, false); // has cancel reason
+         });
+         protocol.registerServerbound(ServerboundPackets26_3.CONTAINER_CLOSE, ServerboundBedrockPackets.CONTAINER_CLOSE, new PacketHandlers() {
+@@ -1078,6 +1079,27 @@ public final class InventoryPackets {
+         }
+     }
+ 
++    /**
++     * Native clients write a whole-number slider value without a fraction, such as {@code 6}. The forms library
++     * serializes the Java float as {@code 6.0}, which servers that compare or parse the raw value can reject.
++     */
++    static String formResponse(final Form form) {
++        if (!(form instanceof CustomForm customForm)) {
++            return form.serializeResponse();
++        }
++        final JsonArray response = JsonParser.parseString(form.serializeResponse()).getAsJsonArray();
++        final FormElement[] elements = customForm.getElements();
++        for (int index = 0; index < elements.length && index < response.size(); index++) {
++            if (elements[index] instanceof SliderFormElement slider) {
++                final float value = slider.getCurrent();
++                if (value == Math.rint(value) && Math.abs(value) < (1L << 53)) {
++                    response.set(index, new JsonPrimitive((long) value));
++                }
++            }
++        }
++        return response.toString();
++    }
++
+     private InventoryPackets() {
+     }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/SliderFormResponseTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/SliderFormResponseTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4a760ac9f4b6e6dba39ea6afbc8001e0134e87e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/SliderFormResponseTest.java
+@@ -0,0 +1,25 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import net.lenni0451.mcstructs_bedrock.forms.elements.LabelFormElement;
++import net.lenni0451.mcstructs_bedrock.forms.elements.SliderFormElement;
++import net.lenni0451.mcstructs_bedrock.forms.types.CustomForm;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class SliderFormResponseTest {
++
++    @Test
++    void wholeSliderValuesAreSentWithoutFraction() {
++        final SliderFormElement whole = new SliderFormElement("Render distance", 2, 12, 2, 6);
++        final SliderFormElement fraction = new SliderFormElement("Volume", 0, 1, 0.25F, 0.5F);
++        final CustomForm form = new CustomForm("Preferences", new LabelFormElement("Prose"), whole, fraction);
++        assertEquals("[null,6,0.5]", InventoryPackets.formResponse(form));
++    }
++
++}

@@ -1,0 +1,3 @@
+Custom form responses wrote whole slider values with a fraction, such as `6.0`, because mcstructs-bedrock serializes the slider value as a Java float. Native clients write `6`. A server that compares the raw response or parses the slider as an integer can reject the translated value. This change writes whole slider values as integers. Fractional values such as `0.5` are unchanged.
+
+Validation: native 1.26.60.5 submitted a `ModalFormData` with toggles, a slider, a dropdown and a text field to BDS 1.26.60.6 as `[null,null,null,true,false,6,0,"Alex"]`. A unit test checks the response for a whole slider value, a fractional slider value and a label.
