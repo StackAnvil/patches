@@ -1437,6 +1437,13 @@ custom form puts a zero-size scroll_to_top_fix button above its rows. Native
 outlined, while action forms without such a button still outline their
 first button. When the inert button wins, no visible control is focused.
 
+Draw tiled images by repeating their source across the bounds at one UI
+unit per texel and cropping the last tile, instead of keeping the source
+ratio. Vanilla settings dropdown rows draw their selection band from the
+1x1 textures/ui/dropDownSelectBG with "tiled": true. The add-on drew an
+18 by 18 square in the middle of the row, while native 1.26.60.5 with
+CubeCraft's packs darkens the whole selected row.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 6b149799668b7f249f1a0cb6a26afbf7ee3594ca..498fefcaf9c9fc848601cbb7a4b6e593e7c27989 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -9031,10 +9038,10 @@ index 0000000000000000000000000000000000000000..1ffe21b68199c94e7c5adead2e01248d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageRegions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageRegions.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..3f3e908184398043b444ba8cc4f1a63a6beb794a
+index 0000000000000000000000000000000000000000..67b3c34532ebef3988d4d69b390a933c1d6345e7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageRegions.java
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,172 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9045,6 +9052,8 @@ index 0000000000000000000000000000000000000000..3f3e908184398043b444ba8cc4f1a63a
 +import com.google.gson.JsonElement;
 +import java.util.ArrayList;
 +import java.util.List;
++import java.util.Locale;
++import java.util.Set;
 +
 +/** Produces the native image component's ordered, signed destination and source regions. */
 +public final class NativeUiImageRegions {
@@ -9074,6 +9083,10 @@ index 0000000000000000000000000000000000000000..3f3e908184398043b444ba8cc4f1a63a
 +        final boolean pixelPerfect = node.flag("clip_pixelperfect", true);
 +        final JsonElement slice = node.properties().get(node.properties().has("nine_slice") ? "nine_slice" : "nineslice_size");
 +        float width = bounds.width(), height = bounds.height();
++        if (slice == null && direction == 0) {
++            final List<Region> tiles = tiles(node, bounds, u, v, sourceWidth, sourceHeight);
++            if (tiles != null) return tiles;
++        }
 +        if (slice == null && !(direction != 0 && ratio > 0) && node.flag("keep_ratio", true)) {
 +            final float scale = Math.min(width / sourceWidth, height / sourceHeight);
 +            width = sourceWidth * scale;
@@ -9116,6 +9129,40 @@ index 0000000000000000000000000000000000000000..3f3e908184398043b444ba8cc4f1a63a
 +        // Native pixel clipping divides by each source extent, including zero-width slice interiors.
 +        // Keep its finite geometry but never submit the resulting NaN coordinates to the Java renderer.
 +        result.removeIf(region -> !region.finite());
++        return List.copyOf(result);
++    }
++
++    private static final int MAX_TILES = 1024;
++
++    /**
++     * A tiled image repeats its source at one UI unit per texel across its bounds instead of keeping its ratio, and
++     * crops the last tile on each axis. "x" or "y" tiles one axis and stretches the other. Settings dropdown rows draw
++     * their selection band this way from a 1x1 texture.
++     */
++    private static List<Region> tiles(final NativeUiScene.Node node, final NativeUiLayout.Rect bounds, final float u,
++                                      final float v, final float sourceWidth, final float sourceHeight) {
++        final JsonElement tiled = node.properties().get("tiled");
++        if (tiled == null || !tiled.isJsonPrimitive()) return null;
++        final String mode = tiled.getAsJsonPrimitive().isBoolean() ? (tiled.getAsBoolean() ? "xy" : "")
++            : tiled.getAsString().toLowerCase(Locale.ROOT);
++        if (!Set.of("xy", "x", "y").contains(mode) || bounds.width() <= 0 || bounds.height() <= 0) return null;
++        final float tileWidth = mode.contains("x") ? sourceWidth : bounds.width();
++        final float tileHeight = mode.contains("y") ? sourceHeight : bounds.height();
++        final double count = Math.ceil(bounds.width() / tileWidth) * Math.ceil(bounds.height() / tileHeight);
++        if (count > MAX_TILES) {
++            // A one-texel or uniform source tiles to the same pixels as a stretch; keep very fine tiling bounded.
++            return List.of(new Region(bounds.x(), bounds.y(), bounds.x() + bounds.width(), bounds.y() + bounds.height(),
++                u, v, u + sourceWidth, v + sourceHeight));
++        }
++        final List<Region> result = new ArrayList<>();
++        for (float y = 0; y < bounds.height(); y += tileHeight) {
++            final float h = Math.min(tileHeight, bounds.height() - y);
++            for (float x = 0; x < bounds.width(); x += tileWidth) {
++                final float w = Math.min(tileWidth, bounds.width() - x);
++                result.add(new Region(bounds.x() + x, bounds.y() + y, bounds.x() + x + w, bounds.y() + y + h,
++                    u, v, u + sourceWidth * w / tileWidth, v + sourceHeight * h / tileHeight));
++            }
++        }
 +        return List.copyOf(result);
 +    }
 +
@@ -18311,10 +18358,10 @@ index 0000000000000000000000000000000000000000..c782dae6704475559f34b2dd8aff6782
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageRegionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageRegionsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..d0b804539e2b3f6099fe280c101e11517ab83353
+index 0000000000000000000000000000000000000000..ddf47baf956562ade6132f4b4fdbb8ab3d946049
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageRegionsTest.java
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,229 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -18343,6 +18390,18 @@ index 0000000000000000000000000000000000000000..d0b804539e2b3f6099fe280c101e1151
 +        image.addProperty("keep_ratio", false);
 +        assertEquals(new NativeUiImageRegions.Region(100, 200, 166, 221, 0, 0, 360, 94),
 +            NativeUiImageRegions.regions(new NativeUiScene.Node("image", "image", image, List.of(), -1), bounds, 360, 94).getFirst());
++    }
++
++    @Test
++    void tiledImagesFillTheirBoundsAndCropTheLastTile() {
++        final JsonObject image = new JsonObject();
++        image.addProperty("tiled", true);
++        final var node = new NativeUiScene.Node("highlight", "image", image, List.of(), -1);
++        assertEquals(List.of(new NativeUiImageRegions.Region(10, 20, 220, 38, 0, 0, 1, 1)),
++            NativeUiImageRegions.regions(node, new NativeUiLayout.Rect(10, 20, 210, 18), 1, 1));
++        final var tiles = NativeUiImageRegions.regions(node, new NativeUiLayout.Rect(0, 0, 20, 8), 8, 8);
++        assertEquals(3, tiles.size());
++        assertEquals(new NativeUiImageRegions.Region(16, 0, 20, 8, 0, 0, 4, 8), tiles.get(2));
 +    }
 +
 +    @Test
