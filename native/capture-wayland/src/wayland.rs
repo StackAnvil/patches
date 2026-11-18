@@ -156,12 +156,18 @@ struct WindowInfo {
 
 impl WindowInfo {
     fn same_surface(&self, other: &Self) -> bool {
+        self.same_placement(other) && self.focused == other.focused
+    }
+
+    /// A drag can start on a floating source above this window, such as a file
+    /// drop source. Pressing that source moves keyboard focus, so a drag only
+    /// requires the selected window to keep its identity and placement.
+    fn same_placement(&self, other: &Self) -> bool {
         self.id == other.id
             && self.x == other.x
             && self.y == other.y
             && self.width == other.width
             && self.height == other.height
-            && self.focused == other.focused
             && self.output == other.output
     }
 }
@@ -940,5 +946,30 @@ fn execute(command: Command, signals: &Signals, device: &mut Option<Input>) -> R
 }
 
 fn window_info_changed(id: u64, before: &WindowInfo) -> Result<bool> {
-    Ok(!window(id)?.same_surface(before))
+    Ok(!window(id)?.same_placement(before))
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::WindowInfo;
+
+    fn info(x: i32, focused: bool) -> WindowInfo {
+        WindowInfo {
+            id: "13".into(),
+            title: "Minecraft".into(),
+            x,
+            y: 0,
+            width: 1280,
+            height: 720,
+            focused,
+            output: "HEADLESS-1".into(),
+        }
+    }
+
+    #[test]
+    fn drag_target_keeps_its_placement_when_a_drop_source_takes_focus() {
+        assert!(info(0, false).same_placement(&info(0, true)));
+        assert!(!info(0, false).same_surface(&info(0, true)));
+        assert!(!info(10, true).same_placement(&info(0, true)));
+    }
 }
