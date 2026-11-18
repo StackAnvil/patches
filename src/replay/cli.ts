@@ -382,6 +382,8 @@ async function launchJava(
       ["fullscreen", "false"],
       // Java's movement tutorial toast covers the top-right HUD that native comparisons inspect.
       ["tutorialStep", "none"],
+      // The lab window starts unfocused; pausing on that would open the game menu on the first input.
+      ["pauseOnLostFocus", "false"],
     ]) {
       const line = new RegExp(`^${key}:.*$`, "m");
       options = line.test(options)
