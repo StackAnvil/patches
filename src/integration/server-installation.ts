@@ -57,7 +57,7 @@ async function treeDigest(path: string): Promise<string> {
     if (state.isSymbolicLink()) throw new Error("Server dependency cleanup refuses linked inputs.");
     if (state.isDirectory()) {
       digest.update("directory\0");
-      for (const name of (await readdir(path)).sort()) {
+      for (const name of (await readdir(path)).toSorted()) {
         digest.update(JSON.stringify(name));
         await visit(join(path, name));
       }
@@ -73,7 +73,7 @@ async function treeDigest(path: string): Promise<string> {
 
 /** Release only unchanged copied dependencies, after every owned server process stops. */
 async function prepareDependencyCleanup(destination: string): Promise<() => Promise<void>> {
-  const paths = [...dependencyEntries.map((name) => join(destination, name))];
+  const paths = dependencyEntries.map((name) => join(destination, name));
   const parents = [dirname(destination), destination];
   for (const name of ["behavior_packs", "resource_packs"]) {
     const directory = join(destination, name);
@@ -181,13 +181,16 @@ export async function copyBedrockServerInstallation(
         current.ino !== identity.ino ||
         (await realpath(destination)) !== destination
       ) {
-        throw new Error("Bedrock server copy directory changed; failed-copy cleanup refused.");
+        throw new Error("Bedrock server copy directory changed; failed-copy cleanup refused.", {
+          cause: error,
+        });
       }
       await rm(destination, { recursive: true });
     } catch (cleanupError) {
       throw new AggregateError(
         [error, cleanupError],
         "Bedrock server copy failed and its files were retained.",
+        { cause: cleanupError },
       );
     }
     throw error;

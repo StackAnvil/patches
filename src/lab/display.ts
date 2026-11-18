@@ -207,6 +207,7 @@ export async function ensureDisplay(): Promise<DisplayState> {
       throw new AggregateError(
         [error, cleanupError],
         "Wayland startup failed. Its surviving resources were retained for bun run lab display stop.",
+        { cause: cleanupError },
       );
     }
     if (runtime) await rm(runtime, { recursive: true, force: true });

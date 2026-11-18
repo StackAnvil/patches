@@ -37,7 +37,7 @@ export function fishingRetrievalPasses(
   )
     return false;
   const [cast, reel] = observation.uses;
-  const hook = observation.hooks[0]!;
+  const hook = observation.hooks[0];
   const removed = hook.removed;
   if (
     removed === undefined ||
@@ -71,7 +71,7 @@ export function fishingRetrievalPasses(
   )
     return false;
   if (
-    target.frames.some((frame, index) => index > 0 && frame.tick <= target.frames[index - 1]!.tick)
+    target.frames.some((frame, index) => index > 0 && frame.tick <= target.frames[index - 1].tick)
   )
     return false;
   const before = target.frames.findLast((frame) => frame.tick < reel);

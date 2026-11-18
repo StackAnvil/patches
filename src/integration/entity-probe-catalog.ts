@@ -60,13 +60,13 @@ export function catalogEntry(source: EntityDefinition): CatalogEntry | undefined
   const description = entity?.description;
   if (!entity || !description?.identifier) return undefined;
   const properties = Object.entries(description.properties ?? {})
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .filter(([, definition]) => definition.client_sync)
     .map(([id, definition]) => ({ id, type: definition.type ?? null, values: values(definition) }));
   return {
     type: description.identifier,
     summonable: description.is_summonable ?? true,
-    events: Object.keys(entity.events ?? {}).sort(),
+    events: Object.keys(entity.events ?? {}).toSorted(),
     properties,
   };
 }
@@ -78,11 +78,11 @@ export async function generateCatalog(
 ): Promise<CatalogEntry[]> {
   if (!/^v\d+\.\d+\.\d+\.\d+$/.test(version))
     throw new Error("Supply a Bedrock samples tag such as v1.26.40.05.");
-  const files = (await readdir(entities)).filter((file) => file.endsWith(".json")).sort();
+  const files = (await readdir(entities)).filter((file) => file.endsWith(".json")).toSorted();
   if (!files.length) throw new Error(`No entity JSON files found in ${entities}.`);
   const catalog: CatalogEntry[] = [];
   for (const file of files) {
-    const source = JSON5.parse(await readFile(join(entities, file), "utf8")) as EntityDefinition;
+    const source = JSON5.parse<EntityDefinition>(await readFile(join(entities, file), "utf8"));
     const entry = catalogEntry(source);
     if (entry) catalog.push(entry);
   }

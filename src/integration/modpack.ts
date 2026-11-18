@@ -210,8 +210,8 @@ export function replacePackFiles(
   return validatePackIndex(
     { ...index, files: index.files.map((file) => replacements[file.path] ?? file) },
     {
-      minecraft: index.dependencies.minecraft!,
-      fabricLoader: index.dependencies["fabric-loader"]!,
+      minecraft: index.dependencies.minecraft,
+      fabricLoader: index.dependencies["fabric-loader"],
     },
   );
 }

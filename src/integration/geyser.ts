@@ -95,11 +95,11 @@ export async function convertedGeyserTexturesMatch(proxyHome: string): Promise<b
           maxBuffer: 16 * 1024 * 1024,
         })
       ).stdout;
-    if (!(await read(item)).equals(expected[0]!) || !(await read(entity)).equals(expected[1]!))
+    if (!(await read(item)).equals(expected[0]) || !(await read(entity)).equals(expected[1]))
       continue;
     for (const block of blocks) {
       if (
-        (await read(block)).equals(expected[2]!) &&
+        (await read(block)).equals(expected[2]) &&
         entries.includes(block.replace("/textures/", "/models/").replace(/\.png$/, ".json"))
       )
         return true;

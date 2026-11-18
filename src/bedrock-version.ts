@@ -35,8 +35,8 @@ function record(value: unknown): Record<string, unknown> {
 
 function windowsPackageVersion(versionId: string): string {
   const match = /^(\d+\.\d+\.\d+\.\d+)\.(.+)$/.exec(versionId);
-  if (!match || !uuid.test(match[2]!)) throw new Error("Invalid Xbox version ID");
-  return match[1]!;
+  if (!match || !uuid.test(match[2])) throw new Error("Invalid Xbox version ID");
+  return match[1];
 }
 
 /** Accept an Authorization header or the JSON response from Xbox XSTS authorization. */
@@ -78,7 +78,7 @@ export function bedrockContentId(metadata: unknown, productId: string): string {
   }
   if (ids.size !== 1)
     throw new Error("Expected one Windows content ID for the selected Bedrock product");
-  return [...ids][0]!;
+  return [...ids][0];
 }
 
 export function bedrockVersionPin(
@@ -107,7 +107,7 @@ export function bedrockVersionPin(
   const files = response.PackageFiles.map(record).filter((file) => file.FileName === fileName);
   if (files.length !== 1)
     throw new Error("Expected one full x64 MSIXVC package for the selected Bedrock version");
-  const file = files[0]!;
+  const file = files[0];
   if (
     typeof file.ContentId !== "string" ||
     file.ContentId.toLowerCase() !== contentId ||

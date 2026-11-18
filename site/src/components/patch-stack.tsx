@@ -16,7 +16,7 @@ function kind(title: string) {
 
 const stacks = projects
   .filter(({ patches }) => patches.length > 0)
-  .sort((a, b) => b.patches.length - a.patches.length);
+  .toSorted((a, b) => b.patches.length - a.patches.length);
 
 export const patchCount = stacks.reduce((sum, { patches }) => sum + patches.length, 0);
 

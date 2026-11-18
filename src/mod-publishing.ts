@@ -38,7 +38,7 @@ export function validatePublishArtifact(
 ): PublishArtifact {
   if (manifest.target !== addon || manifest.artifacts.length !== 1)
     throw new Error("Expected one VFP Bedrock add-on artifact");
-  const artifact = manifest.artifacts[0]!;
+  const artifact = manifest.artifacts[0];
   if (
     basename(artifact.file) !== artifact.file ||
     !/^viafabricplus-bedrock-.+-StackAnvil\.jar$/.test(artifact.file)

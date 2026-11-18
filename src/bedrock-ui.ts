@@ -95,7 +95,7 @@ export async function verifyEmbeddedBuiltinUi(
     );
     if (cores.length !== 1)
       throw new Error("The Bedrock add-on must embed exactly one ViaBedrock JAR");
-    entries = zipEntries(entries.get(cores[0]!)!());
+    entries = zipEntries(entries.get(cores[0])!());
   }
   const embedded = entries.get(builtinUiResource)?.();
   if (!embedded || !embedded.equals(await readFile(bundle))) {

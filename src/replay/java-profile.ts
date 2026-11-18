@@ -113,7 +113,7 @@ export async function prepareReplayInstanceCleanup(
   ) {
     throw new Error("Replay game must belong to the private Prism directory.");
   }
-  const paths = [prism, join(prism, "instances"), join(prism, "instances", parts[1]!), game];
+  const paths = [prism, join(prism, "instances"), join(prism, "instances", parts[1]), game];
   const owners = await Promise.all(
     paths.map(async (path) => {
       const identity = await lstat(path);
@@ -188,7 +188,7 @@ export async function prepareReplayPrismData(
     throw new Error("Replay Prism data must use separate real directories.");
   }
   const entries = (await readdir(source, { withFileTypes: true }))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .toSorted((a, b) => a.name.localeCompare(b.name))
     .filter(
       (entry) =>
         entry.name !== "logs" &&

@@ -128,7 +128,7 @@ export function rangedPiercingPasses(observation: RangedObservation, hitCount: n
     new Set(targets.map((target) => target.id)).size !== targets.length
   )
     return false;
-  const shot = observation.projectiles[0]!;
+  const shot = observation.projectiles[0];
   let previousTick = shot.tick;
   for (const [index, target] of targets.entries()) {
     if (
@@ -151,8 +151,8 @@ export function rangedPiercingPasses(observation: RangedObservation, hitCount: n
       target.healthAfter >= target.healthBefore
     )
       return false;
-    const contact = contacts[0]!;
-    const damage = target.damage[0]!;
+    const contact = contacts[0];
+    const damage = target.damage[0];
     if (
       contact.id !== shot.id ||
       !Number.isInteger(contact.tick) ||
@@ -171,7 +171,7 @@ export function rangedPiercingPasses(observation: RangedObservation, hitCount: n
 
 export function rangedHitPasses(mode: "release" | "fire", observation: RangedObservation): boolean {
   if (!rangedObservationPasses(mode, observation)) return false;
-  const shot = observation.projectiles[0]!;
+  const shot = observation.projectiles[0];
   const target = observation.target;
   return (
     !!target &&
@@ -195,7 +195,7 @@ export function potionImpactPasses(
   lingering: boolean,
 ): boolean {
   if (!rangedObservationPasses("throw", observation)) return false;
-  const projectile = observation.projectiles[0]!;
+  const projectile = observation.projectiles[0];
   const impact = observation.impacts?.find(
     (hit) => hit.id === projectile.id && Number.isInteger(hit.tick) && hit.tick >= projectile.tick,
   );

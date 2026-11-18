@@ -37,7 +37,7 @@ function validFrames(observation: PlayerUseObservation): boolean {
     observation.frames.every(
       (frame, index, frames) =>
         Number.isInteger(frame.tick) &&
-        (index === 0 || frame.tick === frames[index - 1]!.tick + 1) &&
+        (index === 0 || frame.tick === frames[index - 1].tick + 1) &&
         [frame.position, frame.velocity].every((v) => [v.x, v.y, v.z].every(Number.isFinite)),
     )
   );

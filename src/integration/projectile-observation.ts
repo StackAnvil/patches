@@ -121,14 +121,14 @@ export function incomingProjectilePasses(
         !validVector(frame.velocity) ||
         !Number.isInteger(frame.tick) ||
         frame.tick < launchedTick ||
-        (index > 0 && frame.tick <= frames[index - 1]!.tick),
+        (index > 0 && frame.tick <= frames[index - 1].tick),
     )
   )
     return false;
   const along = (position: Vector) =>
     (position.x - start.x) * forward.x + (position.z - start.z) * forward.z;
   const toward = (velocity: Vector) => velocity.x * forward.x + velocity.z * forward.z;
-  const first = frames[0]!;
+  const first = frames[0];
   if (
     first.owner !== observation.shooterId ||
     along(first.position) <= 1 ||
@@ -178,7 +178,7 @@ export function incomingProjectilePasses(
           !validVector(frame.velocity) ||
           !Number.isInteger(frame.tick) ||
           frame.tick < launchedTick ||
-          (index > 0 && frame.tick <= observation.playerFrames[index - 1]!.tick),
+          (index > 0 && frame.tick <= observation.playerFrames[index - 1].tick),
       )
     )
       return false;

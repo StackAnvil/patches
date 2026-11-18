@@ -132,7 +132,7 @@ export function requireReleaseEvidence(
     report.schema !== 1 ||
     report.profile !== "release" ||
     report.revision !== revision ||
-    report.dirty !== false ||
+    report.dirty ||
     report.status !== "passed" ||
     !report.finishedAt ||
     !Array.isArray(report.steps) ||

@@ -55,7 +55,7 @@ function seriesPaths(id: string, series: Series, mode: "full" | "pr", patchFile?
 
 const applyPatch = Effect.fn("applyPatch")(function* (args: string[], dir: string, patch: string) {
   const committer = yield* git(["var", "GIT_COMMITTER_IDENT"], dir).pipe(
-    Effect.catch(() => Effect.succeed("")),
+    Effect.orElseSucceed(() => ""),
   );
   if (committer) return yield* git(args, dir);
 
@@ -80,7 +80,7 @@ const applyRemaining = Effect.fn("applyRemaining")(function* (
 ) {
   const recoveryCommand = `bun run stack continue ${id}${mode === "pr" ? " --pr" : ""}${patchFile ? ` --patch ${patchFile}` : ""}`;
   for (let index = session.nextIndex; index < session.patches.length; index++) {
-    const patch = session.prPatch ?? session.patches[index]!;
+    const patch = session.prPatch ?? session.patches[index];
     yield* applyPatch(["am", "--3way", "--committer-date-is-author-date", patch], dir, patch).pipe(
       Effect.mapError(
         (cause) =>
@@ -127,7 +127,7 @@ const ensureClean = Effect.fn("ensureClean")(function* (dir: string) {
 const resetToBase = Effect.fn("resetToBase")(function* (dir: string, target: Target, mode: string) {
   yield* ensureClean(dir);
   const saved = yield* git(["rev-parse", "--verify", "--quiet", syncedRef(mode)], dir).pipe(
-    Effect.catch(() => Effect.succeed("")),
+    Effect.orElseSucceed(() => ""),
   );
   const head = yield* git(["rev-parse", "HEAD"], dir);
   if (saved && saved !== head) {
@@ -168,7 +168,7 @@ export const sync = Effect.fn("sync")(function* (
   if (mode === "pr") {
     const selected = patchFile
       ? series.upstreamable.find(({ file }) => file === patchFile)!
-      : series.upstreamable[0]!;
+      : series.upstreamable[0];
     yield* Effect.try({
       try: () => assertPrReady(selected),
       catch: (cause) => cause as Error,
@@ -177,7 +177,7 @@ export const sync = Effect.fn("sync")(function* (
   const projected =
     mode === "pr"
       ? yield* Effect.tryPromise(() =>
-          readFile(patches[0]!, "utf8").then((patch) => projectPrPatch(patch, id)),
+          readFile(patches[0], "utf8").then((patch) => projectPrPatch(patch, id)),
         )
       : undefined;
   const dir = yield* cloneIfMissing(id, target, modeKey);
@@ -240,7 +240,7 @@ export const continueApply = Effect.fn("continueApply")(function* (
   yield* applyPatch(
     ["am", "--continue"],
     dir,
-    session.prPatch ?? session.patches[session.nextIndex]!,
+    session.prPatch ?? session.patches[session.nextIndex],
   );
   session.nextIndex++;
   yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
@@ -345,7 +345,7 @@ export const edit = Effect.fn("edit")(function* (id: string, file: string) {
       ),
     ),
   );
-  yield* git(["reset", "--hard", commits[patchIndex]!], dir);
+  yield* git(["reset", "--hard", commits[patchIndex]], dir);
   return dir;
 });
 
@@ -374,7 +374,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
       if (staged) yield* git(["commit", "--amend", "--no-edit"], dir);
     }
     for (; session.applied < session.remaining.length; session.applied++) {
-      yield* git(["cherry-pick", session.remaining[session.applied]!], dir);
+      yield* git(["cherry-pick", session.remaining[session.applied]], dir);
       yield* writeSession(id, { ...session, applied: session.applied + 1 });
     }
   }
@@ -390,7 +390,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
   }
   let titleChanged = false;
   for (const [index, path] of paths.entries()) {
-    const patch = yield* exportCommit(dir, commits[index]!);
+    const patch = yield* exportCommit(dir, commits[index]);
     const upstreamable = series.upstreamable[index - series.setup.length];
     if (upstreamable && index < series.setup.length + series.upstreamable.length) {
       const message = parsePatchMessage(patch);

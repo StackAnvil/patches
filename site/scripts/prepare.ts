@@ -43,7 +43,7 @@ const prepare = Effect.gen(function* () {
     ...files.filter((file) => file.endsWith(".mdx")).map((file) => pageUrl(file.slice(0, -4))),
   ];
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${paths
-    .sort()
+    .toSorted()
     .map((path) => `  <url><loc>${new URL(path, site.url).href}</loc></url>`)
     .join("\n")}\n</urlset>\n`;
   yield* Effect.tryPromise(() => writeFile("public/sitemap.xml", sitemap));

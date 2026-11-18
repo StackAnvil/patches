@@ -27,7 +27,7 @@ export function oreUiFonts(css: string): OreUiFont[] {
   const fonts: OreUiFont[] = [];
   for (const match of css.matchAll(/@font-face\{([^}]+)\}/g)) {
     const properties = new Map(
-      match[1]!.split(";").map((property) => {
+      match[1].split(";").map((property) => {
         const colon = property.indexOf(":");
         return [property.slice(0, colon).trim(), property.slice(colon + 1).trim()];
       }),
@@ -40,7 +40,7 @@ export function oreUiFonts(css: string): OreUiFont[] {
       throw new Error("Unsupported OreUI font SDF declaration");
     fonts.push({
       family,
-      file: `hbui/${url[1]!}`,
+      file: `hbui/${url[1]}`,
       weight: Number(properties.get("font-weight") ?? 400),
       style: properties.get("font-style") ?? "normal",
       sdf: sdf ?? "default",
@@ -73,7 +73,7 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
     )
       throw new Error(`Invalid bundled OreUI font: ${path}`);
   }
-  const images = [...entries.keys()].filter((path) => path.startsWith("hbui/assets/")).sort();
+  const images = [...entries.keys()].filter((path) => path.startsWith("hbui/assets/")).toSorted();
   for (const path of images) {
     const image = entries.get(path)!();
     if (
@@ -134,7 +134,7 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
   const languages = [...entries.keys()]
     .filter((path) => path.startsWith("texts/"))
     .map((path) => path.slice(6, -5))
-    .sort();
+    .toSorted();
   if (JSON.stringify(descriptor.languages) !== JSON.stringify(languages))
     throw new Error("Bundled OreUI languages do not match the descriptor");
 }

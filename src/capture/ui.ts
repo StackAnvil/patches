@@ -96,7 +96,7 @@ export function createCaptureUi(
         ? /^minecraft(?: for windows| bedrock)?$/i.test(window.title)
         : /^minecraft\*?\s/i.test(window.title),
     );
-    if (matches.length === 1) return matches[0]!;
+    if (matches.length === 1) return matches[0];
     if (matches.length === 0)
       throw new Error(
         `No visible ${client} window is open on this display. Check that the client is still running and read its log.`,

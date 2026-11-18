@@ -74,7 +74,7 @@ const matchingProcessesEffect = Effect.fn("Lab.matchingProcesses")(function* (se
         : /^\S*java(?:\s|$).*\borg\.prismlauncher\.EntryPoint\b/;
   return output.stdout.split("\n").flatMap((line) => {
     const found = /^\s*(\d+)\s+(.+)$/.exec(line);
-    return found && pattern.test(found[2]!) ? [Number(found[1])] : [];
+    return found && pattern.test(found[2]) ? [Number(found[1])] : [];
   });
 });
 const viaProxyJarEffect = Effect.fn("Lab.viaProxyJar")(function* () {
@@ -399,7 +399,7 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
   } else console.log((stdout + stderr).trimEnd());
 });
 const doctorEffect = Effect.fn("Lab.doctor")(function* () {
-  const viaProxy = yield* Effect.catch(viaProxyJarEffect(), () => Effect.succeed("missing"));
+  const viaProxy = yield* Effect.orElseSucceed(viaProxyJarEffect(), () => "missing");
   console.log(
     JSON.stringify(
       {

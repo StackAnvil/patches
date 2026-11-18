@@ -644,10 +644,10 @@ async function compare(firstId: string, secondId: string): Promise<void> {
   const before = endpoints(first);
   const after = endpoints(second);
   console.log(`Only in ${firstId}:`);
-  for (const endpoint of [...before].filter((value) => !after.has(value)).sort())
+  for (const endpoint of [...before].filter((value) => !after.has(value)).toSorted())
     console.log(`  ${endpoint}`);
   console.log(`Only in ${secondId}:`);
-  for (const endpoint of [...after].filter((value) => !before.has(value)).sort())
+  for (const endpoint of [...after].filter((value) => !before.has(value)).toSorted())
     console.log(`  ${endpoint}`);
 }
 

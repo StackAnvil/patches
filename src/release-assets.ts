@@ -40,7 +40,7 @@ export async function prepareReleaseAssets(
       throw new Error(`Expected one ${project} release JAR in its build manifest`);
     }
     if (project === "viafabricplus") await verifyPinnedManifest(manifest, viaFabricPlusPin);
-    const artifact = manifest.artifacts[0]!;
+    const artifact = manifest.artifacts[0];
     if (
       basename(artifact.file) !== artifact.file ||
       (project === "viafabricplus"

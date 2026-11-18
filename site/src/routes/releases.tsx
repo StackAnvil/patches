@@ -12,11 +12,10 @@ import { site } from "../lib/site";
 const page = getDocument("releases")!;
 
 export const Route = createFileRoute("/releases")({
-  validateSearch: (search: Record<string, unknown>): { setup?: Setup } => ({
-    ...(search.setup === "proxy" || search.setup === "fabric" || search.setup === "modpack"
+  validateSearch: (search: Record<string, unknown>): { setup?: Setup } =>
+    search.setup === "proxy" || search.setup === "fabric" || search.setup === "modpack"
       ? { setup: search.setup }
-      : {}),
-  }),
+      : {},
   loader: async () => {
     await (await import("../lib/document-content")).documentLoader.preload(page.path);
   },

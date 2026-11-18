@@ -20,13 +20,13 @@ function refuse(reason: string): never {
 
 export function verifyNativeOfflineState(state: NativeOfflineState): NativeOfflineProof {
   const devices = state.devices.trim().split(/\r?\n/);
-  if (devices.length < 3 || !devices[0]!.includes("|") || !devices[1]!.includes("|"))
+  if (devices.length < 3 || !devices[0].includes("|") || !devices[1].includes("|"))
     refuse("network interface metadata is incomplete");
   const interfaces = devices.slice(2).map((row) => {
     const match = /^\s*([^:]+):\s*(.*)$/.exec(row);
-    if (!match || !/^\d+(?:\s+\d+){15}$/.test(match[2]!))
+    if (!match || !/^\d+(?:\s+\d+){15}$/.test(match[2]))
       refuse("network interface metadata is malformed");
-    return match[1]!.trim();
+    return match[1].trim();
   });
   if (interfaces.length !== 1 || interfaces[0] !== "lo")
     refuse("an external network interface is present");
@@ -38,11 +38,11 @@ export function verifyNativeOfflineState(state: NativeOfflineState): NativeOffli
     const fields = row.trim().split(/\s+/);
     if (
       fields.length !== 11 ||
-      ![fields[1], fields[2], fields[7]].every((value) => /^[\da-f]{8}$/i.test(value!))
+      ![fields[1], fields[2], fields[7]].every((value) => /^[\da-f]{8}$/i.test(value))
     )
       refuse("IPv4 route metadata is malformed");
-    const destination = Number.parseInt(fields[1]!, 16);
-    const mask = Number.parseInt(fields[7]!, 16);
+    const destination = Number.parseInt(fields[1], 16);
+    const mask = Number.parseInt(fields[7], 16);
     if (
       fields[0] !== "lo" ||
       fields[2] !== "00000000" ||
@@ -55,25 +55,25 @@ export function verifyNativeOfflineState(state: NativeOfflineState): NativeOffli
     const fields = row.trim().split(/\s+/);
     if (
       fields.length !== 10 ||
-      ![0, 2, 4].every((index) => /^[\da-f]{32}$/i.test(fields[index]!)) ||
-      ![1, 3].every((index) => /^[\da-f]{2}$/i.test(fields[index]!)) ||
-      ![5, 6, 7, 8].every((index) => /^[\da-f]{8}$/i.test(fields[index]!))
+      ![0, 2, 4].every((index) => /^[\da-f]{32}$/i.test(fields[index])) ||
+      ![1, 3].every((index) => /^[\da-f]{2}$/i.test(fields[index])) ||
+      ![5, 6, 7, 8].every((index) => /^[\da-f]{8}$/i.test(fields[index]))
     )
       refuse("IPv6 route metadata is malformed");
     const destination = BigInt(`0x${fields[0]}`);
-    const prefix = Number.parseInt(fields[1]!, 16);
+    const prefix = Number.parseInt(fields[1], 16);
     const loopback = destination === 1n && prefix === 128;
     // Linux includes an unreachable default-route sentinel even in a fresh namespace.
     const unreachable =
-      destination === 0n && prefix === 0 && (Number.parseInt(fields[8]!, 16) & 0x200) !== 0;
+      destination === 0n && prefix === 0 && (Number.parseInt(fields[8], 16) & 0x200) !== 0;
     if (fields[9] !== "lo" || BigInt(`0x${fields[4]}`) !== 0n || (!loopback && !unreachable))
       refuse("an external IPv6 route is present");
   }
   for (const name of ["CapEff", "CapAmb", "CapBnd", "CapPrm", "CapInh"]) {
     const values = state.status.split(/\r?\n/).filter((line) => line.startsWith(`${name}:`));
-    if (values.length !== 1 || !new RegExp(`^${name}:\\s+[\\da-f]+$`, "i").test(values[0]!))
+    if (values.length !== 1 || !new RegExp(`^${name}:\\s+[\\da-f]+$`, "i").test(values[0]))
       refuse(`${name} metadata is incomplete`);
-    if (BigInt(`0x${values[0]!.split(/\s+/)[1]}`) !== 0n) refuse(`${name} is not cleared`);
+    if (BigInt(`0x${values[0].split(/\s+/)[1]}`) !== 0n) refuse(`${name} is not cleared`);
   }
   if (!/^net:\[\d+\]$/.test(state.namespace))
     refuse("the process network namespace cannot be identified");

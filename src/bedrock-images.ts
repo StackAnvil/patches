@@ -17,8 +17,8 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
     const match = /^library\/(vanilla(?:_base|_\d+\.\d+(?:\.\d+)?)?)\/(textures\/.+)$/.exec(path);
     if (!match) continue;
     if (
-      !/\.(png|jpg|tga)$/.test(match[2]!) &&
-      !["textures/item_texture.json", "textures/terrain_texture.json"].includes(match[2]!)
+      !/\.(png|jpg|tga)$/.test(match[2]) &&
+      !["textures/item_texture.json", "textures/terrain_texture.json"].includes(match[2])
     )
       continue;
     if (
@@ -28,7 +28,7 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
       throw new Error("Invalid native image path");
     if (bytes.length === 0 || bytes.length > 32 * 1024 * 1024)
       throw new Error("Invalid native image size");
-    packs.add(match[1]!);
+    packs.add(match[1]);
     images.set(path, bytes);
   }
   const tuple = (name: string) =>
@@ -37,7 +37,7 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
       : name === "vanilla_base"
         ? [-1, 0, 0]
         : Array.from({ length: 3 }, (_, index) => Number(name.slice(8).split(".")[index] ?? 0));
-  const ordered = [...packs].sort((a, b) => {
+  const ordered = [...packs].toSorted((a, b) => {
     const left = tuple(a),
       right = tuple(b);
     for (let index = 0; index < 3; index++) {
@@ -48,9 +48,7 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
   });
   for (let index = 1; index < ordered.length; index++) {
     if (
-      tuple(ordered[index - 1]!).every(
-        (value, part) => value === (tuple(ordered[index]!)[part] ?? 0),
-      )
+      tuple(ordered[index - 1]).every((value, part) => value === (tuple(ordered[index])[part] ?? 0))
     )
       throw new Error("Ambiguous native image overlay");
   }
@@ -65,7 +63,7 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
     version,
     packs: ordered,
     files: [...images]
-      .sort(([a], [b]) => a.localeCompare(b, "en"))
+      .toSorted(([a], [b]) => a.localeCompare(b, "en"))
       .map(([path, bytes]) => ({ path, sha256: createHash("sha256").update(bytes).digest("hex") })),
   };
   images.set("manifest.json", Buffer.from(JSON.stringify(manifest)));
@@ -98,7 +96,7 @@ export async function verifyEmbeddedBuiltinImages(
       /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/.test(path),
     );
     if (cores.length !== 1) throw new Error("The Bedrock add-on must embed exactly one core JAR");
-    entries = zipEntries(entries.get(cores[0]!)!());
+    entries = zipEntries(entries.get(cores[0])!());
   }
   const nativeImages = await readFile(bundle);
   if (!entries.get(builtinImagesResource)?.().equals(nativeImages))

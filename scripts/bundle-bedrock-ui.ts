@@ -76,7 +76,7 @@ export async function planBedrockUi(game: string, version: string, output: strin
             return [];
           },
         );
-        for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name, "en"))) {
+        for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name, "en"))) {
           if (entry.isSymbolicLink()) throw new Error("UI assets contain a symbolic link");
           const selected = join(directory, entry.name),
             path = `${prefix}/${entry.name}`;
@@ -168,7 +168,7 @@ export async function applyBedrockUi(plan: Awaited<ReturnType<typeof planBedrock
       }
     }
   } catch (error) {
-    for (const path of published.reverse()) await unlink(path);
+    for (const path of published.toReversed()) await unlink(path);
     throw error;
   }
   return plan.preview;

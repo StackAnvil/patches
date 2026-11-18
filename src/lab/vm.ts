@@ -99,7 +99,7 @@ export function vmConfig(spec: VmSpec): string {
 export async function validateInstallMedia(config: string): Promise<void> {
   const contents = await readFile(config, "utf8");
   for (const match of contents.matchAll(/^(?:iso|fixed_iso)=["']([^"'\n]+)["']\s*$/gm)) {
-    const media = resolve(dirname(config), match[1]!);
+    const media = resolve(dirname(config), match[1]);
     let handle;
     try {
       handle = await open(media, "r");
@@ -217,8 +217,8 @@ async function requireHost(): Promise<void> {
   if (
     version.length !== 3 ||
     !version.every(Number.isInteger) ||
-    version[0]! < 4 ||
-    (version[0] === 4 && (version[1]! < 9 || (version[1] === 9 && version[2]! < 9)))
+    version[0] < 4 ||
+    (version[0] === 4 && (version[1] < 9 || (version[1] === 9 && version[2] < 9)))
   ) {
     throw new Error("The VM lab needs Quickemu 4.9.9 or newer. Update the host package.");
   }
@@ -295,7 +295,7 @@ async function doctor(): Promise<void> {
         cores: cpus().length,
         totalRamGiB: Math.floor(totalmem() / 2 ** 30),
         freeRamGiB: Math.floor(freemem() / 2 ** 30),
-        freeDiskGiB: Math.floor((Number(disk.bavail) * Number(disk.bsize)) / 2 ** 30),
+        freeDiskGiB: Math.floor((disk.bavail * disk.bsize) / 2 ** 30),
         binaries,
         graphics:
           "Default guests have no validated Minecraft GPU acceleration. Record OpenGL and launcher evidence before claiming game coverage.",
@@ -542,7 +542,7 @@ export async function vmMain(args: string[]): Promise<void> {
       throw new Error("Usage: bun run lab vm key <guest> <qcode+chord> [hold-ms]");
     const holdMs = Number(rest[1] ?? 100);
     validateHoldMs(holdMs);
-    const keys = keyEvents(rest[0]!);
+    const keys = keyEvents(rest[0]);
     await control(spec, (command) => command("send-key", { keys, "hold-time": holdMs }));
     return;
   }

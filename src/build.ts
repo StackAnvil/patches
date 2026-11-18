@@ -119,12 +119,12 @@ export async function readBuildArtifact(
   if (artifacts.length !== 1) {
     throw new Error(`Expected one distributable JAR in ${directory}, found ${artifacts.length}`);
   }
-  const publication = target.publication[0]!.toLowerCase() + target.publication.slice(1);
+  const publication = target.publication[0].toLowerCase() + target.publication.slice(1);
   const pom = await readFile(
     join(directory, "build", "publications", publication, "pom-default.xml"),
     "utf8",
   );
-  return { artifact: artifacts[0]!, pom, coordinate: coordinates(pom) };
+  return { artifact: artifacts[0], pom, coordinate: coordinates(pom) };
 }
 
 async function publishLocal(artifact: string, pom: string, coordinate: Coordinates): Promise<void> {

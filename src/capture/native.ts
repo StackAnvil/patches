@@ -30,11 +30,11 @@ export function createCaptureWaylandBuilder(build: NativeBuild, directory = root
       join(source, "Cargo.toml"),
       join(source, "Cargo.lock"),
       ...(await rustSources(join(source, "src"))),
-    ].sort();
+    ].toSorted();
     const contents = await Promise.all(files.map((file) => readFile(file)));
     const digest = createHash("sha256");
     for (const [index, file] of files.entries()) {
-      digest.update(relative(source, file)).update("\0").update(contents[index]!).update("\0");
+      digest.update(relative(source, file)).update("\0").update(contents[index]).update("\0");
     }
     return digest.digest("hex");
   }

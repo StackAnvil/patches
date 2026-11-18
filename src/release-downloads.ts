@@ -50,7 +50,7 @@ export function releaseDownloads(
     return {
       title,
       description,
-      url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(matches[0]!)}`,
+      url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(matches[0])}`,
     };
   });
 }

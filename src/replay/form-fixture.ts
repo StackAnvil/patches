@@ -79,7 +79,7 @@ class Reader {
   uint(): number {
     let value = 0;
     for (let i = 0; i < 5; i++) {
-      const part = this.take(1)[0]!;
+      const part = this.take(1)[0];
       if (i === 4 && part > 15) throw new Error("Unbounded fixture integer.");
       value += (part & 127) * 2 ** (7 * i);
       if (!(part & 128)) return value;
@@ -109,7 +109,7 @@ function uuidBytes(value: string): Buffer {
 function identity(name: string): { id: string; version: string } {
   const match = packName.exec(name);
   if (!match) throw new Error("Invalid fixture pack identity.");
-  return { id: match[1]!.toLowerCase(), version: match[2]! };
+  return { id: match[1].toLowerCase(), version: match[2] };
 }
 
 /** Protocol 2193 ResourcePackPackets/UuidType fields; no digest field exists in packet 6. */
@@ -195,7 +195,7 @@ export function buildFormFixtureJournal(
     if (
       from.version !== to.version ||
       replacements.has(pack.from) ||
-      pack.decrypted !== true ||
+      !pack.decrypted ||
       !Number.isInteger(pack.bytes) ||
       pack.bytes < 1 ||
       pack.bytes > maxPackBytes
@@ -209,7 +209,7 @@ export function buildFormFixtureJournal(
   const cutoff = BigInt(bootstrapSeconds) * 1_000_000_000n;
   let offset = 8;
   while (offset < bytes.length) {
-    const direction = bytes[offset]!;
+    const direction = bytes[offset];
     const nanos = bytes.readBigInt64BE(offset + 1);
     const length = bytes.readInt32BE(offset + 9);
     offset += 13;
@@ -460,7 +460,7 @@ export const prepareFormFixture = (
       if (overrides.size !== plan.packs.length)
         throw new Error("Duplicate fixture pack replacement.");
       const copied: (FixtureFile & { source: string; uiFiles: number })[] = [];
-      const files = [...new Bun.Glob("*.mcpack").scanSync(join(plan.source, "packs"))].sort();
+      const files = [...new Bun.Glob("*.mcpack").scanSync(join(plan.source, "packs"))].toSorted();
       if (files.length > 64) throw new Error("Unbounded fixture packs.");
       for (const name of files) {
         identity(name);

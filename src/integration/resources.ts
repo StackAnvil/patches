@@ -53,10 +53,9 @@ export const releaseIntegrationResources = Effect.fn("Integration.releaseResourc
       operation: "release integration",
       message: "Integration processes remain alive; retain their dependencies and display.",
     });
-  const results = yield* Effect.all(
-    dependencies.map((release) =>
-      labIO("release server dependencies", release).pipe(Effect.result),
-    ),
+  const results = yield* Effect.forEach(
+    dependencies,
+    (release) => labIO("release server dependencies", release).pipe(Effect.result),
     { concurrency: 4 },
   );
   const display = yield* labIO("stop integration display", stopDisplay).pipe(Effect.result);

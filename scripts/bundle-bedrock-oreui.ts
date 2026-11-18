@@ -45,18 +45,18 @@ export async function planBedrockOreUi(game: string, version: string, output: st
   const styles = (await readdir(hbui)).filter((name) => /^gameplay-[0-9a-f]+\.css$/.test(name));
   if (styles.length !== 1) throw new Error("Expected one active OreUI gameplay stylesheet");
   const stylesheet = `hbui/${styles[0]!}`;
-  const css = await read(join(hbui, styles[0]!));
+  const css = await read(join(hbui, styles[0]));
   add(stylesheet, css);
   const fonts = oreUiFonts(css.toString("utf8"));
   const fontDirectory = join(hbui, "fonts");
   if (!(await lstat(fontDirectory)).isDirectory()) throw new Error("Invalid OreUI font directory");
-  for (const name of (await readdir(fontDirectory)).sort()) {
+  for (const name of (await readdir(fontDirectory)).toSorted()) {
     if (/\.(otf|ttf)$/.test(name)) add(`hbui/fonts/${name}`, await read(join(fontDirectory, name)));
   }
   const imageDirectory = join(hbui, "assets");
   const images = (await readdir(imageDirectory))
     .filter((name) => /^animation-[0-9a-f]+\.gif$/.test(name))
-    .sort();
+    .toSorted();
   for (const name of images) add(`hbui/assets/${name}`, await read(join(imageDirectory, name)));
   const textRoot = join(game, "data", "resource_packs", "oreui");
   const archive = join(textRoot, "__brarchive", "texts.brarchive");
@@ -74,7 +74,7 @@ export async function planBedrockOreUi(game: string, version: string, output: st
   }
   const textDirectory = join(textRoot, "texts");
   if (!(await lstat(textDirectory)).isDirectory()) throw new Error("Invalid OreUI text directory");
-  for (const name of (await readdir(textDirectory)).sort()) {
+  for (const name of (await readdir(textDirectory)).toSorted()) {
     if (/^[a-z]{2}_[A-Z]{2}\.lang$/.test(name))
       add(`texts/${name}`, await read(join(textDirectory, name)));
   }
@@ -87,7 +87,7 @@ export async function planBedrockOreUi(game: string, version: string, output: st
     languages: [...files.keys()]
       .filter((name) => name.startsWith("texts/"))
       .map((name) => name.slice(6, -5))
-      .sort(),
+      .toSorted(),
   };
   add("oreui.json", Buffer.from(`${JSON.stringify(descriptor, null, 2)}\n`));
   add(

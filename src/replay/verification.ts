@@ -146,7 +146,7 @@ export function verifyRendering(
     failures.push("The scene has unresolved block, entity, or texture mappings.");
   if (
     [...clientLog.matchAll(/Unknown bedrock entity type: ([^\s]+)/g)].some(
-      (match) => !unregistered.has(match[1]!),
+      (match) => !unregistered.has(match[1]),
     )
   )
     failures.push("The client rejected an advertised actor type.");

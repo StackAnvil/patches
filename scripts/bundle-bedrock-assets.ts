@@ -75,7 +75,7 @@ const crcTable = Array.from({ length: 256 }, (_, value) => {
 
 function crc32(bytes: Uint8Array) {
   let crc = 0xffffffff;
-  for (const byte of bytes) crc = crcTable[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+  for (const byte of bytes) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
 }
 
@@ -84,7 +84,7 @@ export function assetZip(files: ReadonlyMap<string, Uint8Array>): Buffer {
   const local: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
-  for (const [path, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b, "en"))) {
+  for (const [path, bytes] of [...files].toSorted(([a], [b]) => a.localeCompare(b, "en"))) {
     if (!validPath(path)) throw new Error("Invalid bundled asset path");
     const name = Buffer.from(path);
     const compressed = deflateRawSync(bytes, { level: 9 });
@@ -119,7 +119,7 @@ export function assetZip(files: ReadonlyMap<string, Uint8Array>): Buffer {
 }
 
 async function* walk(root: string): AsyncGenerator<string> {
-  for (const entry of (await readdir(root, { withFileTypes: true })).sort((a, b) =>
+  for (const entry of (await readdir(root, { withFileTypes: true })).toSorted((a, b) =>
     a.name.localeCompare(b.name, "en"),
   )) {
     const path = join(root, entry.name);
@@ -141,7 +141,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
     throw new Error("Bedrock resource version mismatch");
   const files = new Map<string, Buffer>();
   let expandedBytes = 0;
-  for (const pack of (await readdir(source)).sort()) {
+  for (const pack of (await readdir(source)).toSorted()) {
     if (pack !== "persona" && !/^vanilla(?:_base|_\d+\.\d+(?:\.\d+)?)?$/.test(pack)) continue;
     const packRoot = join(source, pack);
     for await (const original of walk(packRoot)) {
@@ -154,7 +154,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
         !(
           path === "manifest.json" ||
           path === "sounds.json" ||
-          (libraryDirectories.has(logical.split("/")[0]!) &&
+          (libraryDirectories.has(logical.split("/")[0]) &&
             (archived || /\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/.test(path)))
         )
       )
@@ -242,7 +242,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
     batch = new Map();
     batchBytes = 0;
   }
-  for (const [path, bytes] of [...files].sort(([a], [b]) => a.localeCompare(b, "en"))) {
+  for (const [path, bytes] of [...files].toSorted(([a], [b]) => a.localeCompare(b, "en"))) {
     if (batchBytes + bytes.length > archiveLimit) await flush();
     batch.set(path, bytes);
     batchBytes += bytes.length;

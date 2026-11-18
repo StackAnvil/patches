@@ -263,8 +263,8 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
       const entries = (await readdir(source)).filter((entry) => !sharedState.has(entry));
       let requiredBytes = 0;
       for (const entry of entries) requiredBytes += await copyBytes(join(source, entry));
-      if (inside(sourceGames, sourcePaths.game_dir!))
-        requiredBytes += await copyBytes(sourcePaths.game_dir!);
+      if (inside(sourceGames, sourcePaths.game_dir))
+        requiredBytes += await copyBytes(sourcePaths.game_dir);
       const filesystem = await statfs(privateRoot);
       requirePrivateCopySpace(requiredBytes, filesystem.bavail * filesystem.bsize);
       await mkdir(runtime, { mode: 0o700 });
@@ -272,11 +272,11 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
       for (const entry of entries) {
         await execute("cp", ["-a", "--reflink=auto", join(source, entry), runtime]);
       }
-      if (inside(sourceGames, sourcePaths.game_dir!)) {
+      if (inside(sourceGames, sourcePaths.game_dir)) {
         const game = join(runtime, ".stackanvil-game");
         await mkdir(game, { mode: 0o700 });
         await execute("cp", ["-a", "--reflink=auto", `${sourcePaths.game_dir}${sep}.`, game]);
-        await writeFile(join(runtime, gameSourceFile), sourcePaths.game_dir!, {
+        await writeFile(join(runtime, gameSourceFile), sourcePaths.game_dir, {
           mode: 0o600,
           flag: "wx",
         });
@@ -310,7 +310,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
     settings.gamescope = "0";
     for (const key of ["game_dir", "proton"] as const) {
       const mapped =
-        key === "game_dir" && inside(sourceGames, sourcePaths[key]!)
+        key === "game_dir" && inside(sourceGames, sourcePaths[key])
           ? await lstat(join(runtime, ".stackanvil-game")).then(
               async () => {
                 await plainFile(join(runtime, gameSourceFile));
@@ -325,10 +325,10 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
               },
               (error) => {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-                return join(runtime, ".stackanvil-games", relative(sourceGames, sourcePaths[key]!));
+                return join(runtime, ".stackanvil-games", relative(sourceGames, sourcePaths[key]));
               },
             )
-          : join(runtime, relative(source, sourcePaths[key]!));
+          : join(runtime, relative(source, sourcePaths[key]));
       const actual = await realpath(mapped);
       if (!inside(runtime, actual) || !(await lstat(actual)).isDirectory())
         throw new Error("The copied installation path escapes its private profile.");
@@ -353,6 +353,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
         throw new AggregateError(
           [error, cleanupError],
           "Native profile preparation failed and its copy was retained.",
+          { cause: cleanupError },
         );
       }
     }

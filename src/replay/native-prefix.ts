@@ -165,7 +165,7 @@ export async function prepareNativeReplayPrefix(options: NativePrefixOptions): P
   const backup = join(run, "native-server-list-backup");
   await mkdir(backup, { mode: 0o700 });
   let index = 0;
-  for (const folder of [...folders].sort()) {
+  for (const folder of [...folders].toSorted()) {
     const target = join(folder, "external_servers.txt");
     let previous: Buffer | undefined;
     try {

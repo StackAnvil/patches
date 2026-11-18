@@ -686,7 +686,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       throw new Error("Choose --dry-run or --apply.");
     const known = new Set(["--apply", "--dry-run", "--verbose", "--reviewed-preview"]);
     for (let index = 0; index < args.length; index++) {
-      if (!known.has(args[index]!)) throw new Error("Unknown form fixture option.");
+      if (!known.has(args[index])) throw new Error("Unknown form fixture option.");
       if (args[index] === "--reviewed-preview") index++;
     }
     const reviewedAt = args.indexOf("--reviewed-preview");
@@ -769,7 +769,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   } else if (mode === "record" && !target) throw new Error("Unknown server.");
   if (client === "native" && target?.startsWith("nethernet-xbox-json-rpc://"))
     throw new Error("Xbox JSON-RPC recordings require --client addon or --client proxy.");
-  const hive = mode === "record" && hiveTarget(target!);
+  const hive = mode === "record" && hiveTarget(target);
   if (hive && client !== "native" && !args.includes("--allow-hive"))
     throw new Error(
       "ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
@@ -882,7 +882,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
           "--bind-address",
           `127.0.0.1:${bind}`,
           "--target-address",
-          viaProxyTarget(target!),
+          viaProxyTarget(target),
           "--target-version",
           "Bedrock 1.26.60",
           "--auth-method",
@@ -897,7 +897,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       );
       await ready(child, proxyLog, /ViaProxy started successfully/);
     } else if (client === "native") {
-      const destination = viaProxyTarget(target!);
+      const destination = viaProxyTarget(target);
       const separator = destination.lastIndexOf(":");
       const account =
         mode === "replay" || (input === "local" && !option("--account"))
@@ -942,7 +942,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
           )
         : await launchJava(
             directory,
-            client === "addon" ? target! : `127.0.0.1:${bind}`,
+            client === "addon" ? target : `127.0.0.1:${bind}`,
             client,
             recorder,
             graphics,
@@ -956,6 +956,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     let waitingForNativeConnection = client === "native";
     let waitingForJavaSpawn = client !== "native";
     let until = Date.now() + (waitingForNativeConnection ? 300_000 : 1_200_000);
+    // oxlint-disable-next-line eslint/no-unmodified-loop-condition -- callbacks outside the loop update `stopped` and `child` between awaits.
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
       javaCleanup?.captureDescendants();
       if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {

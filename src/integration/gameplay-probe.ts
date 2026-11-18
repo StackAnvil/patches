@@ -249,8 +249,7 @@ export async function waitForJavaWorldHud(
           (pixel, index) =>
             pixel.length === 3 &&
             pixel.every(
-              (channel, channelIndex) =>
-                Math.abs(channel - samples[index]!.rgb[channelIndex]!) <= 2,
+              (channel, channelIndex) => Math.abs(channel - samples[index].rgb[channelIndex]) <= 2,
             ),
         )
       )
@@ -484,7 +483,7 @@ async function rejectIneligibleOffhandBlock(ui: Ui): Promise<void> {
           (pixel, index) =>
             pixel.length === 3 &&
             pixel.every(
-              (channel, component) => Math.abs(channel - baseline![index]![component]!) <= 2,
+              (channel, component) => Math.abs(channel - baseline[index][component]) <= 2,
             ),
         )
     ) {
