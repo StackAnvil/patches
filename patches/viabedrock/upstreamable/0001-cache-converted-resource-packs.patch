@@ -157,6 +157,12 @@ JPEG and Ogg payloads. Keep raw TGA and definitions deflated. Advance the ZIP
 identity so cached conversions adopt the layout. The small and parallel
 archive regression checks both entry points for equal bytes and methods.
 
+Consume the Java pack request on its first terminal reply. Native answers
+the pack stack once, and a Java reload can report the same pack again when
+a later pack joins the stack. Minehut disconnected one join with "Illegal
+duplicate resource pack response packet received!" after two
+ResourcePackStackFinished replies 5.4 seconds apart.
+
 diff --git a/build.gradle b/build.gradle
 index 4e1d8d4a11330f47db9e360dc51d887bebdd53ca..6c6a6fefd0c0741a4a52dac09fe1926706fb70b0 100644
 --- a/build.gradle
@@ -1279,7 +1285,7 @@ index 0000000000000000000000000000000000000000..a6f6e14a23bb00692b96ae248ed4d78f
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 35b7902bc0b9340575049110dd8900c7d1b707ae..9fce06a86aeb7613670ab25acb16869897e0ed56 100644
+index 35b7902bc0b9340575049110dd8900c7d1b707ae..c0ef855a881771a579179b680123b9f031785854 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -19,13 +19,13 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -1380,8 +1386,7 @@ index 35b7902bc0b9340575049110dd8900c7d1b707ae..9fce06a86aeb7613670ab25acb168698
 +                        cdnUrl = new URL(cdnUrlString);
                      }
 -                    infos[i] = new ResourcePackLoadStateTracker.Info(new ResourcePack.Key(id, version), contentKey, contentId, cdnUrl);
-+                } catch (final MalformedURLException ignored) {
-                 }
+-                }
 -                wrapper.user().put(new ResourcePackLoadStateTracker(wrapper.user(), infos));
 -
 -                if (ViaBedrock.getConfig().shouldTranslateResourcePacks() && wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION)) {
@@ -1403,7 +1408,8 @@ index 35b7902bc0b9340575049110dd8900c7d1b707ae..9fce06a86aeb7613670ab25acb168698
 -                    resourcePack.write(Types.UUID, UUID.randomUUID()); // id
 -                    resourcePack.write(Types.VAR_INT, ResourcePackAction.DECLINED.ordinal()); // action
 -                    resourcePack.sendToServer(BedrockProtocol.class, false);
--                }
++                } catch (final MalformedURLException ignored) {
+                 }
 -            }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores resource packs after the initial info packet
 -        );
 +                infos[i] = new ResourcePackLoadStateTracker.Info(new ResourcePack.Key(id, version), contentKey, contentId, cdnUrl);
@@ -1530,7 +1536,7 @@ index 35b7902bc0b9340575049110dd8900c7d1b707ae..9fce06a86aeb7613670ab25acb168698
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_DATA_INFO, null, wrapper -> {
-@@ -186,26 +197,26 @@ public final class ResourcePackPackets {
+@@ -186,26 +197,31 @@ public final class ResourcePackPackets {
  
              final ResourcePackDownloadTracker downloadTracker = wrapper.user().get(ResourcePackDownloadTracker.class);
              final ResourcePackDownloadTracker.Download download = downloadTracker.get(key);
@@ -1565,10 +1571,15 @@ index 35b7902bc0b9340575049110dd8900c7d1b707ae..9fce06a86aeb7613670ab25acb168698
 +                wrapper.cancel();
 +                return;
 +            }
++            if (action != ResourcePackAction.ACCEPTED && action != ResourcePackAction.DOWNLOADED) {
++                // Native answers the pack stack once. A Java reload can report the same pack again, for example when
++                // a later pack joins the stack, and the server disconnects on a duplicate stack response.
++                wrapper.user().remove(JavaResourcePackRequest.class);
++            }
              switch (action) {
                  case SUCCESSFULLY_LOADED -> {
                      final ResourcePackStorage resourcePackStorage = wrapper.user().get(ResourcePackStorage.class);
-@@ -214,37 +225,131 @@ public final class ResourcePackPackets {
+@@ -214,37 +230,131 @@ public final class ResourcePackPackets {
                      }
                      ResourcePackClientResponse.write(wrapper, ResourcePackResponse.ResourcePackStackFinished);
                  }
@@ -3155,10 +3166,10 @@ index 0000000000000000000000000000000000000000..24076c2c01025c6b031548070ff4b073
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..4469ae242f654acad66ff7d8b6251cccbd479123
+index 0000000000000000000000000000000000000000..80092846c3865ef27b1c8bb49eeb24ae6ea239ea
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/JavaResourcePackLifecycleTest.java
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,141 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3190,6 +3201,7 @@ index 0000000000000000000000000000000000000000..4469ae242f654acad66ff7d8b6251ccc
 +import java.util.List;
 +import java.util.Map;
 +import java.util.UUID;
++import java.util.concurrent.atomic.AtomicReference;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.mockito.Mockito.*;
@@ -3253,6 +3265,32 @@ index 0000000000000000000000000000000000000000..4469ae242f654acad66ff7d8b6251ccc
 +                }
 +            }
 +        }
++    }
++
++    @Test
++    void aRepeatedLoadReportFinishesTheStackOnlyOnce() throws Exception {
++        final UserConnection user = mock(UserConnection.class);
++        final UUID id = UUID.randomUUID();
++        final var stored = new AtomicReference<>(new JavaResourcePackRequest(id));
++        when(user.get(JavaResourcePackRequest.class)).thenAnswer(ignored -> stored.get());
++        when(user.remove(JavaResourcePackRequest.class)).thenAnswer(ignored -> stored.getAndSet(null));
++        final var protocol = new ResponseProtocol();
++        final List<Boolean> cancelled = new ArrayList<>();
++        for (final ResourcePackAction action : List.of(ResourcePackAction.ACCEPTED, ResourcePackAction.DOWNLOADED,
++                ResourcePackAction.SUCCESSFULLY_LOADED, ResourcePackAction.SUCCESSFULLY_LOADED)) {
++            final var input = Unpooled.buffer();
++            try {
++                Types.UUID.write(input, id);
++                Types.VAR_INT.write(input, action.ordinal());
++                final var wrapper = new PacketWrapperImpl(ServerboundConfigurationPackets1_21_9.RESOURCE_PACK, input, user);
++                protocol.response.handle(wrapper);
++                cancelled.add(wrapper.isCancelled());
++            } finally {
++                input.release();
++            }
++        }
++        // Minehut disconnected with "Illegal duplicate resource pack response" when both reports reached it.
++        assertEquals(List.of(true, true, false, true), cancelled);
 +    }
 +
 +    private static final class ResponseProtocol extends BedrockProtocol {
