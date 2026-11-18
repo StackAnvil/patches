@@ -1202,6 +1202,13 @@ Mineville's game selector art, which comes after more than 16,384
 earlier textures in the accepted stack, so those cards drew the
 missing texture. Native Bedrock loads every pack texture.
 
+Apply insert_after, insert_before and replace array modifications at the
+first entry their control_name or where object selects. Mineville inserts
+after hotbar_grid_frame in its HUD, so its title factory failed to resolve
+and every title fell back to a Java title, including the %obj% tutorial
+data its hud_title_text hides. A relative modification whose target is
+absent changes nothing; that case is not established natively.
+
 diff --git a/build.gradle b/build.gradle
 index bef6f0274a0133eeb688266cc27ffa9a43b94b99..0d3b40fda636cda1f32acf33eb2793b9a699a4ba 100644
 --- a/build.gradle
@@ -6235,10 +6242,10 @@ index 0000000000000000000000000000000000000000..5dfbb3f8cb6cc74a7e05d034abf56dec
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..969e2857149b3945125d5f7c821150317065fdba
+index 0000000000000000000000000000000000000000..3f2f605ddb62fd91f9b01514669fa925f876ad47
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,2469 @@
+@@ -0,0 +1,2495 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7118,7 +7125,8 @@ index 0000000000000000000000000000000000000000..969e2857149b3945125d5f7c82115031
 +                removeModificationTarget(control, name, modification);
 +                continue;
 +            }
-+            if (!operation.equals("insert_back") && !operation.equals("insert_front")) {
++            final boolean relative = Set.of("insert_after", "insert_before", "replace").contains(operation);
++            if (!relative && !operation.equals("insert_back") && !operation.equals("insert_front")) {
 +                throw new IllegalArgumentException("Unsupported UI array modification: " + operation);
 +            }
 +            final JsonArray inherited = control.has(name) ? control.getAsJsonArray(name) : new JsonArray();
@@ -7127,11 +7135,28 @@ index 0000000000000000000000000000000000000000..969e2857149b3945125d5f7c82115031
 +            if (inherited.size() + inserted.size() > MAX_NODES) {
 +                throw new IllegalArgumentException("UI array modification exceeds limits");
 +            }
++            // Relative operations place the value at the first entry their control_name or where object selects.
++            final int target = relative ? modificationTarget(inherited, modification) : -1;
++            if (relative && target < 0) {
++                continue;
++            }
 +            final JsonArray result = new JsonArray();
 +            if (operation.equals("insert_front")) {
 +                inserted.forEach(item -> result.add(item.deepCopy()));
 +            }
-+            inherited.forEach(item -> result.add(item.deepCopy()));
++            for (int index = 0; index < inherited.size(); index++) {
++                if (index == target && operation.equals("insert_before")) {
++                    inserted.forEach(item -> result.add(item.deepCopy()));
++                }
++                if (index == target && operation.equals("replace")) {
++                    inserted.forEach(item -> result.add(item.deepCopy()));
++                    continue;
++                }
++                result.add(inherited.get(index).deepCopy());
++                if (index == target && operation.equals("insert_after")) {
++                    inserted.forEach(item -> result.add(item.deepCopy()));
++                }
++            }
 +            if (operation.equals("insert_back")) {
 +                inserted.forEach(item -> result.add(item.deepCopy()));
 +            }
@@ -7145,18 +7170,26 @@ index 0000000000000000000000000000000000000000..969e2857149b3945125d5f7c82115031
 +     * identities and order. A target absent from the inherited array leaves it unchanged.
 +     */
 +    private static void removeModificationTarget(final JsonObject control, final String name, final JsonObject modification) {
++        final JsonElement array = control.get(name);
++        if (array == null || !array.isJsonArray()) {
++            modificationTarget(new JsonArray(), modification);
++            return;
++        }
++        final int index = modificationTarget(array.getAsJsonArray(), modification);
++        if (index >= 0) {
++            array.getAsJsonArray().remove(index);
++        }
++    }
++
++    /** The first entry a modification's control_name or where object selects, or -1. */
++    private static int modificationTarget(final JsonArray entries, final JsonObject modification) {
 +        final String controlName = string(modification, "control_name");
 +        final JsonElement declaredWhere = modification.get("where");
 +        final JsonObject where = declaredWhere != null && declaredWhere.isJsonObject() && !declaredWhere.getAsJsonObject().isEmpty()
 +                ? declaredWhere.getAsJsonObject() : null;
 +        if (controlName.isEmpty() == (where == null)) {
-+            throw new IllegalArgumentException("UI array removal needs exactly one control_name or where target");
++            throw new IllegalArgumentException("UI array modification needs exactly one control_name or where target");
 +        }
-+        final JsonElement array = control.get(name);
-+        if (array == null || !array.isJsonArray()) {
-+            return;
-+        }
-+        final List<JsonElement> entries = array.getAsJsonArray().asList();
 +        for (int index = 0; index < entries.size(); index++) {
 +            final JsonElement candidate = entries.get(index);
 +            if (!candidate.isJsonObject()) {
@@ -7168,10 +7201,10 @@ index 0000000000000000000000000000000000000000..969e2857149b3945125d5f7c82115031
 +                    .allMatch(field -> field.getValue().equals(object.get(field.getKey())))
 +                    : object.size() == 1 && controlName.equals(object.keySet().iterator().next().split("@", 2)[0]);
 +            if (matches) {
-+                array.getAsJsonArray().remove(index);
-+                return;
++                return index;
 +            }
 +        }
++        return -1;
 +    }
 +
 +    private static void declarations(final JsonObject control, final Map<String, JsonElement> values) {
@@ -19392,10 +19425,10 @@ index 0000000000000000000000000000000000000000..bc575caa2d407c21ea95ddd709236079
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb059f876c46a8394fd8a6e4c13b661949cff163
+index 0000000000000000000000000000000000000000..f7225aa171ec07310d60a7fa8a472e6664d35d07
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
-@@ -0,0 +1,1157 @@
+@@ -0,0 +1,1175 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -19460,6 +19493,24 @@ index 0000000000000000000000000000000000000000..cb059f876c46a8394fd8a6e4c13b6619
 +        for (final JsonElement child : children) {
 +            assertEquals(0, child.getAsJsonObject().getAsJsonArray("offset").get(0).getAsInt());
 +        }
++    }
++
++    @Test
++    void relativeArrayModificationsPlaceControlsAroundTheirTarget() {
++        // Mineville inserts after hotbar_grid_frame in its HUD and replaces the pause screen's quit button.
++        final var program = new JsonUiProgram(Map.of("ui/hud_screen.json", """
++                {"namespace":"hud","root":{"type":"panel","controls":[{"a":{"type":"panel"}},{"b":{"type":"panel"}},{"c":{"type":"panel"}}]}}
++                """.getBytes(StandardCharsets.UTF_8)), List.of(Map.of("ui/hud_screen.json", """
++                {"namespace":"hud","root":{"modifications":[
++                  {"array_name":"controls","operation":"insert_after","control_name":"b","value":[{"x":{"type":"panel"}}]},
++                  {"array_name":"controls","operation":"insert_before","control_name":"a","value":[{"w":{"type":"panel"}}]},
++                  {"array_name":"controls","operation":"replace","control_name":"c","value":{"z":{"type":"panel"}}},
++                  {"array_name":"controls","operation":"insert_after","control_name":"missing","value":[{"y":{"type":"panel"}}]}]}}
++                """.getBytes(StandardCharsets.UTF_8))));
++        final var names = new ArrayList<String>();
++        program.resolve("hud.root", new Bindings()).root().getAsJsonArray("children")
++                .forEach(child -> names.add(child.getAsJsonObject().get("name").getAsString()));
++        assertEquals(List.of("w", "a", "b", "x", "z"), names);
 +    }
 +
 +    @Test
