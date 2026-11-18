@@ -616,15 +616,7 @@ async function launchNative(
   // A first connection asks to trust the server. Sample its light header right of the title text.
   const pixel = await execute(
     "bun",
-    [
-      join(root, "src/capture/cli.ts"),
-      "ui",
-      "pixel",
-      "0.66",
-      contentY(0.28),
-      "--client",
-      "bedrock",
-    ],
+    [join(root, "src/capture/cli.ts"), "ui", "pixel", "0.6", contentY(0.28), "--client", "bedrock"],
     { cwd: root },
   );
   const rgb = pixel.stdout.trim().split(/\s+/).map(Number);
