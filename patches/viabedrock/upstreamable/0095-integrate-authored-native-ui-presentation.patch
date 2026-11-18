@@ -945,6 +945,13 @@ Clear or Reset. Reset's effect on an active title's remaining time,
 subtitles before the first title, pack reload and controller reuse are
 unmeasured.
 
+Send the sidebar objective with the HUD decoration root, in both the
+core resolution and the frontend inputs, and refresh the root when the
+scoreboard changes. When the accepted HUD ignores root_panel/sidebar,
+display no Java sidebar objective: Mineville does this and presents the
+Earth sidebar rows in its own profile and currency panels, and native
+shows no vanilla sidebar.
+
 diff --git a/Data Asset Sources.md b/Data Asset Sources.md
 index 9d80118af27145d4aa7f2098434e7c1fdf0afad7..7c7f68ae88bf434a46b1feb13f836f1c22e36b63 100644
 --- a/Data Asset Sources.md	
@@ -1319,6 +1326,70 @@ index 0000000000000000000000000000000000000000..23b80ff1888c9ad9e51fce8544a4859c
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeHudInputs.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeHudInputs.java
+index 725548c06b787f50af63fdd01101cba75f185807..b4d7eb007a3f04fa672b3d2ce544c4f1d0566962 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/NativeHudInputs.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeHudInputs.java
+@@ -142,6 +142,11 @@ public record NativeHudInputs(int context, Kind kind, String inputs, boolean res
+     /** Root inputs carry the retained binding state that the backend's resolution started from. */
+     public static JsonObject root(final List<String> bossNames, final List<Float> progress, final String title, final String subtitle,
+                                   final UiRetainedBindings retained) {
++        return root(bossNames, progress, title, subtitle, retained, null);
++    }
++
++    public static JsonObject root(final List<String> bossNames, final List<Float> progress, final String title, final String subtitle,
++                                  final UiRetainedBindings retained, final HudRootUi.Sidebar sidebar) {
+         final JsonObject inputs = new JsonObject();
+         final JsonArray names = new JsonArray();
+         bossNames.forEach(names::add);
+@@ -154,6 +159,9 @@ public record NativeHudInputs(int context, Kind kind, String inputs, boolean res
+         if (retained != null) {
+             inputs.add("retained", retained.toJson());
+         }
++        if (sidebar != null) {
++            inputs.add("sidebar", scoreboard(sidebar.title(), sidebar.rows()));
++        }
+         return inputs;
+     }
+ 
+@@ -176,25 +184,29 @@ public record NativeHudInputs(int context, Kind kind, String inputs, boolean res
+                 }
+                 yield new HudChatUi(string(inputs, "text"), instances).resolve(program);
+             }
+-            case SCOREBOARD -> {
+-                final List<ScoreboardUi.Row> rows = new ArrayList<>();
+-                for (final JsonElement entry : array(inputs, "rows", ServerFormUi.MAX_BUTTONS)) {
+-                    rows.add(new ScoreboardUi.Row(string(entry.getAsJsonObject(), "name"), entry.getAsJsonObject().get("score").getAsInt()));
+-                }
+-                yield new ScoreboardUi(string(inputs, "title"), rows).resolve(program);
+-            }
++            case SCOREBOARD -> new ScoreboardUi(string(inputs, "title"), rows(inputs)).resolve(program);
+             case ROOT -> {
+                 final List<String> names = new ArrayList<>();
+                 array(inputs, "boss_names", 256).forEach(name -> names.add(name.getAsString()));
+                 final List<Float> progress = new ArrayList<>();
+                 array(inputs, "boss_progress", 256).forEach(value -> progress.add(value.getAsFloat()));
+                 final UiRetainedBindings retained = inputs.has("retained") ? UiRetainedBindings.fromJson(inputs.getAsJsonObject("retained")) : null;
+-                yield new HudRootUi(names, progress, string(inputs, "title"), string(inputs, "subtitle"), retained).resolve(program);
++                final HudRootUi.Sidebar sidebar = inputs.has("sidebar") && inputs.get("sidebar").isJsonObject()
++                        ? new HudRootUi.Sidebar(string(inputs.getAsJsonObject("sidebar"), "title"), rows(inputs.getAsJsonObject("sidebar"))) : null;
++                yield new HudRootUi(names, progress, string(inputs, "title"), string(inputs, "subtitle"), retained, sidebar).resolve(program);
+             }
+         };
+         return new NativeHudMessage(scene == null ? "" : scene.toString(), this.restart, this.ticks);
+     }
+ 
++    private static List<ScoreboardUi.Row> rows(final JsonObject inputs) {
++        final List<ScoreboardUi.Row> rows = new ArrayList<>();
++        for (final JsonElement entry : array(inputs, "rows", ServerFormUi.MAX_BUTTONS)) {
++            rows.add(new ScoreboardUi.Row(string(entry.getAsJsonObject(), "name"), entry.getAsJsonObject().get("score").getAsInt()));
++        }
++        return rows;
++    }
++
+     private static String string(final JsonObject object, final String key) {
+         final JsonElement value = object.get(key);
+         if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeItemNames.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemNames.java
 index 7b2cd8d2066926ebc819f04c90405ecc21edb6ee..9778e563103fe3e5625c0598b6dfa5b0f37a23bc 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/NativeItemNames.java
@@ -3004,6 +3075,24 @@ index 0000000000000000000000000000000000000000..b4ffd0395c961aac09da24cc818ed106
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
+index 969e2857149b3945125d5f7c821150317065fdba..4b71b26e3ba0a452453ccd9f2b258039d257cc55 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
+@@ -1106,6 +1106,13 @@ public final class JsonUiProgram {
+         return result.startsWith("@") ? result.substring(1) : result;
+     }
+ 
++    /** Whether an accepted declaration, such as hud.root_panel/sidebar, sets its control ignored. */
++    public boolean ignores(final String name) {
++        final Definition definition = this.definitions.get(name);
++        return definition != null && definition.value.has("ignored")
++                && UiExpression.truth(resolveValue(definition.value.get("ignored"), this.globals, 0));
++    }
++
+     /** Whether the program declares a control with this namespaced name. */
+     public boolean defines(final String name) {
+         return this.definitions.containsKey(name);
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/NativeStringMap.java b/src/main/java/net/raphimc/viabedrock/api/util/NativeStringMap.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..dd4f7744069269938800d11ea9a5ed46ae50ebcb
@@ -5581,7 +5670,7 @@ index 76d32f5c397f14b12d2ba8c86a40f6a1ec3860e3..89f8bc99e366ccabe1421724078751ba
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
-index 35ab3921b04cdad549f47feb3b30a32001717bc5..e82c69bf26f854dab1c3a2fce3e4ceb029c2284c 100644
+index 35ab3921b04cdad549f47feb3b30a32001717bc5..0ba34f62caf4a4e86110beb2e33674498b4688cb 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 @@ -22,18 +22,31 @@ import com.viaversion.viaversion.api.Via;
@@ -5630,7 +5719,7 @@ index 35ab3921b04cdad549f47feb3b30a32001717bc5..e82c69bf26f854dab1c3a2fce3e4ceb0
  public final class HudPackets {
  
      static void writeObjectivePresentation(final PacketWrapper wrapper, final String objectiveName,
-@@ -70,6 +76,122 @@ public final class HudPackets {
+@@ -70,6 +76,146 @@ public final class HudPackets {
          }
      }
  
@@ -5638,6 +5727,29 @@ index 35ab3921b04cdad549f47feb3b30a32001717bc5..e82c69bf26f854dab1c3a2fce3e4ceb0
 +        updateBossBarPresentation(user);
 +        sendNativeRoot(user, false);
 +        sendNativeScoreboard(user);
++    }
++
++    /** The sidebar objective the HUD shows, or null when there is none or it has more rows than a HUD collection. */
++    private static HudRootUi.Sidebar hudSidebar(final UserConnection user) {
++        final ScoreboardTracker tracker = user.get(ScoreboardTracker.class);
++        final ScoreboardObjective sidebar = tracker == null ? null : tracker.sidebar();
++        if (sidebar == null) {
++            return null;
++        }
++        final var rows = sidebar.sidebarRows();
++        return rows.size() > ServerFormUi.MAX_BUTTONS ? null : new HudRootUi.Sidebar(tracker.sidebarTitle(), rows);
++    }
++
++    /** An accepted HUD can ignore the native sidebar control; Mineville presents its rows in its own panels instead. */
++    static boolean hidesSidebar(final UserConnection user) {
++        final ResourcePackStorage resources = user.get(ResourcePackStorage.class);
++        return resources != null && resources.getJsonUiProgram().ignores("hud.root_panel/sidebar");
++    }
++
++    /** HUD decorations read the sidebar too, so a sidebar change refreshes the decoration root with the scoreboard. */
++    private static void sidebarChanged(final UserConnection user) {
++        sendNativeScoreboard(user);
++        sendNativeRoot(user, true);
 +    }
 +
 +    static void sendNativeScoreboard(final UserConnection user) {
@@ -5671,8 +5783,9 @@ index 35ab3921b04cdad549f47feb3b30a32001717bc5..e82c69bf26f854dab1c3a2fce3e4ceb0
 +        final String title = titles == null ? "" : titles.title();
 +        final String subtitle = titles == null ? "" : titles.subtitle();
 +        // The frontend resolves from the retained state this resolution starts from.
-+        final var inputs = NativeHudInputs.root(names, progress, title, subtitle, titles == null ? null : titles.rootBindings());
-+        final var root = new HudRootUi(names, progress, title, subtitle, titles == null ? null : titles.rootBindings())
++        final HudRootUi.Sidebar sidebar = hudSidebar(user);
++        final var inputs = NativeHudInputs.root(names, progress, title, subtitle, titles == null ? null : titles.rootBindings(), sidebar);
++        final var root = new HudRootUi(names, progress, title, subtitle, titles == null ? null : titles.rootBindings(), sidebar)
 +                .resolve(user.get(ResourcePackStorage.class).getJsonUiProgram());
 +        final String scene = root == null ? "" : root.toString();
 +        if (bossBars != null && !bossBars.retainRoot(scene) && onlyChanged) {
@@ -5753,7 +5866,7 @@ index 35ab3921b04cdad549f47feb3b30a32001717bc5..e82c69bf26f854dab1c3a2fce3e4ceb0
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_LIST, null, wrapper -> {
              final PlayerListStorage playerListStorage = wrapper.user().get(PlayerListStorage.class);
-@@ -209,6 +331,32 @@ public final class HudPackets {
+@@ -209,6 +355,32 @@ public final class HudPackets {
                      text = rootComponent.asString();
                  }
  
@@ -5786,39 +5899,42 @@ index 35ab3921b04cdad549f47feb3b30a32001717bc5..e82c69bf26f854dab1c3a2fce3e4ceb0
                  switch (type) {
                      case Clear, Reset -> {
                          wrapper.setPacketType(ClientboundPackets26_3.CLEAR_TITLES);
-@@ -260,7 +408,11 @@ public final class HudPackets {
+@@ -258,9 +430,13 @@ public final class HudPackets {
+                     return;
+                 }
              }
-             wrapper.write(Types.STRING, objectiveName); // objective name
+-            wrapper.write(Types.STRING, objectiveName); // objective name
++            wrapper.write(Types.STRING, displaySlot.equals("sidebar") && hidesSidebar(wrapper.user()) ? "" : objectiveName); // objective name
  
 +            if (displaySlot.equals("sidebar")) {
 +                scoreboardTracker.setSidebar(objectiveName, displayName);
 +            }
              if (objectiveName.isEmpty()) {
-+                sendNativeScoreboard(wrapper.user());
++                sidebarChanged(wrapper.user());
                  return;
              }
  
-@@ -281,6 +433,7 @@ public final class HudPackets {
+@@ -281,6 +457,7 @@ public final class HudPackets {
                      newObjective ? ObjectiveAction.ADD : ObjectiveAction.CHANGE,
                      title, displaySlot.equals("sidebar"));
              scoreboardObjective.send(BedrockProtocol.class);
-+            sendNativeScoreboard(wrapper.user());
++            sidebarChanged(wrapper.user());
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_SCORE, null, wrapper -> {
              wrapper.cancel();
-@@ -343,6 +496,7 @@ public final class HudPackets {
+@@ -343,6 +520,7 @@ public final class HudPackets {
                      }
                  }
              }
-+            sendNativeScoreboard(wrapper.user());
++            sidebarChanged(wrapper.user());
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_SCOREBOARD_IDENTITY, null, wrapper -> {
              wrapper.cancel();
-@@ -390,72 +544,89 @@ public final class HudPackets {
+@@ -390,72 +568,89 @@ public final class HudPackets {
                      default -> throw new IllegalStateException("Unhandled ScoreboardIdentityPacketType: " + action);
                  }
              }
-+            sendNativeScoreboard(wrapper.user());
++            sidebarChanged(wrapper.user());
          });
          protocol.registerClientbound(ClientboundBedrockPackets.REMOVE_OBJECTIVE, ClientboundPackets26_3.SET_OBJECTIVE, new PacketHandlers() {
              @Override
@@ -5828,7 +5944,7 @@ index 35ab3921b04cdad549f47feb3b30a32001717bc5..e82c69bf26f854dab1c3a2fce3e4ceb0
 -                handler(wrapper -> wrapper.user().get(ScoreboardTracker.class).removeObjective(wrapper.get(Types.STRING, 0)));
 +                handler(wrapper -> {
 +                    wrapper.user().get(ScoreboardTracker.class).removeObjective(wrapper.get(Types.STRING, 0));
-+                    sendNativeScoreboard(wrapper.user());
++                    sidebarChanged(wrapper.user());
 +                });
              }
          });
@@ -39369,6 +39485,30 @@ index 0000000000000000000000000000000000000000..faa2faf32c15490bc5bc7cdca7271703
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
+index cb059f876c46a8394fd8a6e4c13b661949cff163..31222626d095d0829bddf86436ec21dae09acbfd 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
+@@ -64,6 +64,19 @@ class JsonUiProgramTest {
+         }
+     }
+ 
++    @Test
++    void anAcceptedHudThatIgnoresTheSidebarHidesTheNativeOne() {
++        // Mineville ignores root_panel/sidebar and draws the Earth sidebar rows in its own panels; native shows none.
++        final var nativeFiles = Map.of("ui/hud_screen.json", """
++                {"namespace":"hud","root_panel":{"type":"panel","controls":[{"sidebar":{"type":"panel"}}]}}
++                """.getBytes(StandardCharsets.UTF_8));
++        final var accepted = Map.of("ui/hud_screen.json", """
++                {"namespace":"hud","root_panel/sidebar":{"ignored":true}}
++                """.getBytes(StandardCharsets.UTF_8));
++        assertTrue(new JsonUiProgram(nativeFiles, List.of(accepted)).ignores("hud.root_panel/sidebar"));
++        assertFalse(new JsonUiProgram(nativeFiles, List.of()).ignores("hud.root_panel/sidebar"));
++    }
++
+     @Test
+     void acceptedPackLoadsAfterLargeNativeDefinitions() {
+         // CubeCraft's UI pack added about 2,000 definitions to native's 6,500; its later files were dropped.
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/BuiltinItemNameTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/BuiltinItemNameTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..1024026f9be8de238a7e39df86e49cab45457a5d
