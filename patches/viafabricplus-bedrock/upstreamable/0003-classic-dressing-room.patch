@@ -187,7 +187,7 @@ index bb6ab986866bb7ee304f486b98af119c0cfe6d51..02ea291bf2efb176ecd358647ec9e56b
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..4c50a54c1018d710ac9cfc4432cd8e198969ccae
+index 0000000000000000000000000000000000000000..eaf85db6e54859b25c79e93ec6a573c85b4e4e7f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
 @@ -0,0 +1,464 @@
@@ -297,7 +297,7 @@ index 0000000000000000000000000000000000000000..4c50a54c1018d710ac9cfc4432cd8e19
 +        BedrockClassicOptions classicOptions = BedrockClassicOptions.EMPTY;
 +        final Path modelPath = directory.resolve(CLASSIC_APPEARANCE);
 +        if (selection == Selection.CUSTOM && Files.isRegularFile(modelPath)) {
-+            if (Files.size(modelPath) > 2 * 1024 * 1024) throw new IOException("The saved skin geometry is too large");
++            if (Files.size(modelPath) > MAX_FILE_BYTES) throw new IOException("The saved skin geometry is too large");
 +            try {
 +                final JsonObject model = JsonParser.parseString(Files.readString(modelPath)).getAsJsonObject();
 +                if (model.has("geometry")) classicModel = BedrockClassicModel.read(model.get("geometry").getAsString(), model.get("identifier").getAsString());
@@ -657,10 +657,10 @@ index 0000000000000000000000000000000000000000..4c50a54c1018d710ac9cfc4432cd8e19
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..14ea70079e10591d1e55204784b25f7a0724dc25
+index 0000000000000000000000000000000000000000..eabfe65ddf9ca5ea01e71837bf7e964dce0b8352
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,144 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -684,6 +684,10 @@ index 0000000000000000000000000000000000000000..14ea70079e10591d1e55204784b25f7a
 +/** Selected custom geometry from a Classic Skin pack, normalized for persistence and transport. */
 +public record BedrockClassicModel(String geometry, String identifier) {
 +    static final Pattern IDENTIFIER = Pattern.compile("geometry\\.[a-zA-Z0-9_.'-]{1,128}");
++    /** A selected model; detailed 4D Classic Skins exceed 1.6 MiB of compact JSON. */
++    static final int MAX_MODEL_CHARS = 4 * 1024 * 1024;
++    /** A pack geometry file, which can hold several such models. */
++    static final int MAX_DOCUMENT_CHARS = 16 * 1024 * 1024;
 +
 +    public static BedrockClassicModel read(final String data, final String identifier)
 +            throws IOException {
@@ -698,7 +702,7 @@ index 0000000000000000000000000000000000000000..14ea70079e10591d1e55204784b25f7a
 +    public static BedrockClassicModel read(
 +            final String data, final String identifier, final ModelSource source)
 +            throws IOException {
-+        if (data.length() > 1024 * 1024 || !IDENTIFIER.matcher(identifier).matches())
++        if (data.length() > MAX_DOCUMENT_CHARS || !IDENTIFIER.matcher(identifier).matches())
 +            throw new IOException("The classic skin geometry is too large or has an invalid name");
 +        try {
 +            final JsonObject document = JsonParser.parseString(data).getAsJsonObject();
@@ -759,7 +763,7 @@ index 0000000000000000000000000000000000000000..14ea70079e10591d1e55204784b25f7a
 +            normalized.addProperty("format_version", "1.12.0");
 +            normalized.add("minecraft:geometry", models);
 +            final String geometry = normalized.toString();
-+            if (geometry.length() > 1024 * 1024)
++            if (geometry.length() > MAX_MODEL_CHARS)
 +                throw new IOException("The assembled skin geometry is too large");
 +            if (BedrockGeometryModel.fromJson(geometry).size() != 1)
 +                throw new IOException("The skin geometry could not be decoded");
@@ -771,15 +775,25 @@ index 0000000000000000000000000000000000000000..14ea70079e10591d1e55204784b25f7a
 +
 +    private static void validateNumbers(final JsonElement element, final int depth)
 +            throws IOException {
++        validateNumbers(element, depth, false);
++    }
++
++    /**
++     * Bounds coordinates and sizes. Poly mesh indices only need to be vertex numbers: detailed
++     * meshes exceed 32768 vertices, and the mesh builder checks each index against its list.
++     */
++    private static void validateNumbers(final JsonElement element, final int depth, final boolean indices)
++            throws IOException {
 +        if (depth > 32) throw new IOException("The skin geometry is nested too deeply");
 +        if (element.isJsonObject()) {
 +            for (final var entry : element.getAsJsonObject().entrySet())
-+                validateNumbers(entry.getValue(), depth + 1);
++                validateNumbers(entry.getValue(), depth + 1, "polys".equals(entry.getKey()));
 +        } else if (element.isJsonArray()) {
-+            for (final var item : element.getAsJsonArray()) validateNumbers(item, depth + 1);
++            for (final var item : element.getAsJsonArray()) validateNumbers(item, depth + 1, indices);
 +        } else if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isNumber()) {
 +            final double value = element.getAsDouble();
-+            if (!Double.isFinite(value) || Math.abs(value) > 32768)
++            if (indices ? value < 0 || value > Integer.MAX_VALUE || value != Math.rint(value)
++                    : !Double.isFinite(value) || Math.abs(value) > 32768)
 +                throw new IOException("The skin geometry contains an invalid coordinate");
 +        }
 +    }
@@ -949,10 +963,10 @@ index 0000000000000000000000000000000000000000..bb78799d8ec6c5234e46578c439dc802
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..d8a2a77fd58ebab9cfc51fa022a41950bf6e31ee
+index 0000000000000000000000000000000000000000..abcaa1259fec1dd1339566c4e3fbf35db688c115
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,219 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1003,7 +1017,7 @@ index 0000000000000000000000000000000000000000..d8a2a77fd58ebab9cfc51fa022a41950
 +                throw new IOException("The archive is not a Bedrock skin pack");
 +            }
 +            final JsonObject definitions = json(zip, root + "skins.json");
-+            final JsonObject models = zip.getEntry(root + "geometry.json") == null ? null : json(zip, root + "geometry.json");
++            final JsonObject models = zip.getEntry(root + "geometry.json") == null ? null : json(zip, root + "geometry.json", BedrockClassicModel.MAX_DOCUMENT_CHARS);
 +            final String key = string(definitions, "localization_name");
 +            final Map<String, String> names = translations(zip, root);
 +            final String packName = names.getOrDefault("skinpack." + key, key);
@@ -1123,8 +1137,12 @@ index 0000000000000000000000000000000000000000..d8a2a77fd58ebab9cfc51fa022a41950
 +    }
 +
 +    private static JsonObject json(final ZipFile zip, final String name) throws IOException {
++        return json(zip, name, MAX_METADATA_BYTES);
++    }
++
++    private static JsonObject json(final ZipFile zip, final String name, final int limit) throws IOException {
 +        try {
-+            return JsonParser.parseString(new String(bytes(zip, name, MAX_METADATA_BYTES), StandardCharsets.UTF_8)).getAsJsonObject();
++            return JsonParser.parseString(new String(bytes(zip, name, limit), StandardCharsets.UTF_8)).getAsJsonObject();
 +        } catch (RuntimeException e) {
 +            throw new IOException("Invalid " + name + " in skin pack", e);
 +        }
@@ -3302,10 +3320,10 @@ index 0000000000000000000000000000000000000000..cb966681c526e2d7901bf8304b384083
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..0a8d2c5edbd054f55edaa6d4f637c6fe482de8fc
+index 0000000000000000000000000000000000000000..e860536cd6888f83daf2821e31628ff189f5b6a8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,317 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import java.awt.image.BufferedImage;
@@ -3555,6 +3573,39 @@ index 0000000000000000000000000000000000000000..0a8d2c5edbd054f55edaa6d4f637c6fe
 +        assertEquals(model, store.load("123").classicModel());
 +        store.importSkinImage("123", new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB), true);
 +        org.junit.jupiter.api.Assertions.assertNull(store.load("123").classicModel());
++    }
++
++    @Test
++    void importsAndStoresDetailedMeshSkinsBeyondFormerSizeAndIndexLimits() throws IOException {
++        final StringBuilder positions = new StringBuilder();
++        final StringBuilder polys = new StringBuilder();
++        for (int index = 0; index < 48_000; index += 4) {
++            for (int corner = 0; corner < 4; corner++) {
++                positions.append(positions.isEmpty() ? "" : ",").append('[').append(index % 16 + corner * 0.125)
++                    .append(',').append(index / 4 % 32 + 0.25).append(",-2.0625]");
++            }
++            polys.append(polys.isEmpty() ? "" : ",").append("[[").append(index).append(",0,0],[").append(index + 1)
++                .append(",0,1],[").append(index + 2).append(",0,2],[").append(index + 3).append(",0,3]]");
++        }
++        final String geometry = "{\"format_version\":\"1.12.0\",\"minecraft:geometry\":[{\"description\":{"
++            + "\"identifier\":\"geometry.detailed\",\"texture_width\":256,\"texture_height\":256},\"bones\":[{"
++            + "\"name\":\"body\",\"pivot\":[0,24,0],\"poly_mesh\":{\"normalized_uvs\":true,\"positions\":[" + positions
++            + "],\"normals\":[[0,0,-1]],\"uvs\":[[0,0],[1,0],[1,1],[0,1]],\"polys\":[" + polys + "]}}]}]}";
++        assertTrue(geometry.length() > 1024 * 1024, "fixture must exceed the former size limit");
++        assertTrue(positions.length() > 0 && polys.indexOf("[47999,") > 0, "fixture must use indices above 32768");
++        final Path archive = this.directory.resolve("detailed.mcpack");
++        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
++            put(zip, "manifest.json", "{\"modules\":[{\"type\":\"skin_pack\"}]}");
++            put(zip, "skins.json", "{\"skins\":[{\"geometry\":\"geometry.detailed\",\"texture\":\"detailed.png\"}]}");
++            put(zip, "geometry.json", geometry);
++            put(zip, "detailed.png", image(256, 256));
++        }
++        final var pack = BedrockClassicSkinPack.read(archive);
++        final var skin = pack.skins().getFirst();
++        final var store = new BedrockAppearanceStore(this.directory.resolve("appearances"),
++            _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
++        store.importSkinImage("123", pack.image(skin), skin.slim(), skin.model(), skin.options());
++        assertEquals(skin.model(), store.load("123").classicModel());
 +    }
 +
 +    @Test
