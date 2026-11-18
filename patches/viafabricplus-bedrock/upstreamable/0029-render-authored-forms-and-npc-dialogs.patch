@@ -214,6 +214,11 @@ payload channel, response format or server-side cancellation is added.
 
 Apply the resolved host screen's force_render_below policy to authored forms and their local action-form fallbacks. Native 1.26.60.5 hides the game HUD under the default accepted form and retains it when the same host explicitly sets this property. Keep the policy with projected fallback controls so renderer rejection does not change it, and let closing the screen restore normal HUD extraction without changing global HUD options. The regression resolves both screen policies through the core into the authored and rejected-scene fallback screens.
 
+Action forms download their URL button images before presenting them as
+loaded. Until then the scene resolves with native's 'loading' texture
+value, so pack loading indicators such as Galaxite's info form icon
+show; a finished download refreshes the scene in place.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 7fbe6b1a7c3874cd9138b59460240b6038a0e641..549151741ae01ef5594bf58efa083b5f51c1b306 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -266,6 +271,77 @@ index 0000000000000000000000000000000000000000..eb6051433c6bdce434068b09b7a29296
 +    @Inject(method = "handleClearDialog", at = @At("TAIL"), require = 1)
 +    private void clearNativeForm(final ClientboundClearDialogPacket packet, final CallbackInfo ci) {
 +        if ((Object) this instanceof ClientPacketListener owner) BedrockNativeForms.clearDialog(owner);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormSource.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormSource.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..e37211afaa662b97e6999ab6776f60fe430926de
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormSource.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import java.util.Set;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.function.Function;
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
++
++/**
++ * An action form resolved against its downloaded button images. Native forms publish {@code 'loading'} as a URL
++ * button texture until its image downloads and keep it when the download fails, so authored loading indicators
++ * stay visible for missing images.
++ */
++final class BedrockActionFormSource {
++    private final ServerFormUi resolver;
++    private final JsonObject form;
++    private final Set<String> loaded = ConcurrentHashMap.newKeySet();
++    private final AtomicBoolean changed = new AtomicBoolean();
++
++    BedrockActionFormSource(final ServerFormUi resolver, final JsonObject form, final Function<String, CompletableFuture<?>> loader) {
++        this.resolver = resolver;
++        this.form = form;
++        if (!form.has("elements") || !form.get("elements").isJsonArray()) return;
++        for (final JsonElement element : form.getAsJsonArray("elements")) {
++            final String url = url(element);
++            if (url == null) continue;
++            loader.apply(url).thenRun(() -> {
++                if (this.loaded.add(url)) this.changed.set(true);
++            });
++        }
++    }
++
++    JsonObject resolve() {
++        return this.resolver.resolve(this.form, this.loaded::contains);
++    }
++
++    BedrockFormScene scene() {
++        final JsonObject resolved = this.resolve();
++        if (resolved == null) throw new IllegalArgumentException("Unsupported native form");
++        return BedrockFormScene.parse(resolved.toString());
++    }
++
++    /** Returns true once after another image finished downloading. */
++    boolean takeChanged() {
++        return this.changed.getAndSet(false);
++    }
++
++    private static String url(final JsonElement element) {
++        if (!element.isJsonObject() || !element.getAsJsonObject().has("image")
++            || !element.getAsJsonObject().get("image").isJsonObject()) return null;
++        final JsonObject image = element.getAsJsonObject().getAsJsonObject("image");
++        if (!image.has("type") || !"url".equals(image.get("type").getAsString())
++            || !image.has("data") || !image.get("data").isJsonPrimitive()) return null;
++        final String url = image.get("data").getAsString();
++        return url.isEmpty() ? null : url;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormText.java
@@ -677,10 +753,10 @@ index 0000000000000000000000000000000000000000..a1bfb89acc09cfd7d02196e5ef2ca28c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormController.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormController.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f1a32aa0cb8551b1e84dd03efbada28fd9ef66ad
+index 0000000000000000000000000000000000000000..22e2d3e5dc86a6eac79cb4b3ed3010e80e6a06cc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormController.java
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,143 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -701,6 +777,7 @@ index 0000000000000000000000000000000000000000..f1a32aa0cb8551b1e84dd03efbada28f
 +    private final int formId;
 +    private final BedrockCustomFormState custom;
 +    private final BedrockActionFormText text;
++    private final BedrockActionFormSource action;
 +    private BedrockFormScene scene;
 +    private boolean responded;
 +
@@ -711,12 +788,19 @@ index 0000000000000000000000000000000000000000..f1a32aa0cb8551b1e84dd03efbada28f
 +
 +    BedrockFormController(final ClientPacketListener owner, final int formId, final BedrockFormScene scene,
 +                          final BedrockCustomFormState custom, final BedrockActionFormText text) {
-+        if (custom != null && text != null) throw new IllegalArgumentException("Custom forms carry their own inputs");
++        this(owner, formId, scene, custom, text, null);
++    }
++
++    BedrockFormController(final ClientPacketListener owner, final int formId, final BedrockFormScene scene,
++                          final BedrockCustomFormState custom, final BedrockActionFormText text,
++                          final BedrockActionFormSource action) {
++        if (custom != null && (text != null || action != null)) throw new IllegalArgumentException("Custom forms carry their own inputs");
 +        this.owner = owner;
 +        this.formId = formId;
 +        this.scene = scene;
 +        this.custom = custom;
 +        this.text = text;
++        this.action = action;
 +    }
 +
 +    @Override
@@ -746,7 +830,11 @@ index 0000000000000000000000000000000000000000..f1a32aa0cb8551b1e84dd03efbada28f
 +    @Override
 +    public void refresh() {
 +        if (this.custom != null) this.scene = this.custom.scene();
++        else if (this.action != null) this.scene = this.action.scene();
 +    }
++
++    @Override
++    public boolean refreshRequested() { return this.action != null && this.action.takeChanged(); }
 +
 +    @Override
 +    public Activation activate(final NativeUiScene.Node node) {
@@ -909,10 +997,10 @@ index 0000000000000000000000000000000000000000..91cfe9557d23545b247a069e5c1e046d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2645a7b24471c1523fd17bf33c0b572138891ec0
+index 0000000000000000000000000000000000000000..f4596e1e6398ef3474a201a6e180791d467332c5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,104 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -922,6 +1010,7 @@ index 0000000000000000000000000000000000000000..2645a7b24471c1523fd17bf33c0b5721
 +
 +import com.viaversion.viafabricplus.bedrock.screen.ui.BedrockUiContext;
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiImages;
 +import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen;
 +import java.util.Optional;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -963,15 +1052,17 @@ index 0000000000000000000000000000000000000000..2645a7b24471c1523fd17bf33c0b5721
 +                final var resolver = new ServerFormUi(program);
 +                final var form = JsonParser.parseString(message.form()).getAsJsonObject();
 +                // Expanded scenes are local data, not another network message with the 1 MiB wire bound.
-+                final var scene = resolver.resolve(form);
++                final boolean custom = "custom_form".equals(form.get("type").getAsString());
++                final var action = custom ? null : new BedrockActionFormSource(resolver, form, NativeUiImages::preload);
++                final var scene = custom ? resolver.resolve(form) : action.resolve();
 +                if (scene == null) throw new IllegalArgumentException("Unsupported native form");
-+                if ("custom_form".equals(form.get("type").getAsString())) {
++                if (custom) {
 +                    final BedrockCustomFormState state = new BedrockCustomFormState(resolver, form, scene);
 +                    client.setScreenAndShow(new NativeUiSceneScreen(new BedrockFormController(owner, message.formId(), state.scene(), state)));
 +                } else {
 +                    final String source = scene.toString();
 +                    client.setScreenAndShow(new NativeUiSceneScreen(new BedrockFormController(owner, message.formId(),
-+                        BedrockFormScene.parse(source), null, BedrockActionFormText.parse(source))));
++                        BedrockFormScene.parse(source), null, BedrockActionFormText.parse(source), action)));
 +                }
 +            } catch (final RuntimeException error) {
 +                ViaFabricPlusBedrock.impl().logger().warn("Could not render native form; requesting its ordinary controls", error);
@@ -1501,6 +1592,78 @@ index 87883cd1be169ec745a0b86882d9ed3ed5fe78fa..d24cd3f0c8178eacd2a3b8af197c429a
      "features.render.MixinNativeUiExtraction",
      "features.render.MixinNativeUiScissorArea",
      "features.render.MixinNativeUiScissorRenderer",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormSourceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormSourceTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8ea5bebf9dcb8ae9e1eb3ade5d4050eb6aa6fb0f
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormSourceTest.java
+@@ -0,0 +1,66 @@
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.CompletableFuture;
++import net.raphimc.viabedrock.api.resourcepack.ui.ServerFormUi;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockActionFormSourceTest {
++    // Mystrick's Map Voting and vanilla server_form show a loading indicator while #texture is 'loading'.
++    private static final String UI = """
++        {"namespace":"server_form","third_party_server_screen":{"$screen_content":"server_form.main_screen_content"},
++         "main_screen_content":{"type":"grid","collection_name":"form_buttons","grid_item_template":"server_form.tile"},
++         "tile":{"type":"button","$pressed_button_name":"button.form_button_click","controls":[
++           {"image":{"type":"image","bindings":[
++             {"binding_collection_name":"form_buttons","binding_name":"#form_button_texture","binding_name_override":"#texture","binding_type":"collection"},
++             {"binding_collection_name":"form_buttons","binding_name":"#form_button_texture_file_system","binding_name_override":"#texture_file_system","binding_type":"collection"}]}},
++           {"loading":{"type":"panel","bindings":[{"binding_type":"view","resolve_sibling_scope":true,"source_control_name":"image",
++             "source_property_name":"(#texture = 'loading')","target_property_name":"#visible"}]}}]}}
++        """;
++
++    @Test
++    void aUrlButtonImageShowsTheLoadingIndicatorUntilItsDownloadSucceeds() {
++        final var ui = new ServerFormUi(List.of(Map.of("ui/server_form.json", UI.getBytes(StandardCharsets.UTF_8))));
++        final var form = JsonParser.parseString("""
++            {"type":"form","title":"Map Voting","content":"","elements":[
++              {"type":"button","text":"Serenity","image":{"type":"url","data":"https://example.invalid/serenity.jpg"}},
++              {"type":"button","text":"Defract","image":{"type":"url","data":"https://example.invalid/defract.jpg"}}]}
++            """).getAsJsonObject();
++        final Map<String, CompletableFuture<Object>> downloads = new HashMap<>();
++        final var source = new BedrockActionFormSource(ui, form, url -> downloads.computeIfAbsent(url, key -> new CompletableFuture<>()));
++
++        assertTrue(loading(source.resolve(), 0));
++        assertTrue(loading(source.resolve(), 1));
++        assertFalse(source.takeChanged());
++
++        downloads.get("https://example.invalid/serenity.jpg").complete(new Object());
++        downloads.get("https://example.invalid/defract.jpg").completeExceptionally(new Exception("HTTP 404"));
++        assertTrue(source.takeChanged());
++        assertFalse(source.takeChanged());
++        final JsonObject scene = source.resolve();
++        assertFalse(loading(scene, 0));
++        assertEquals("https://example.invalid/serenity.jpg", image(scene, 0).get("texture").getAsString());
++        // Native keeps the loading value after a failed download.
++        assertTrue(loading(scene, 1));
++        assertFalse(image(scene, 1).has("texture"));
++    }
++
++    private static JsonObject tile(final JsonObject scene, final int index) {
++        return scene.getAsJsonObject("root").getAsJsonArray("children").get(index).getAsJsonObject();
++    }
++
++    private static JsonObject image(final JsonObject scene, final int index) {
++        return tile(scene, index).getAsJsonArray("children").get(0).getAsJsonObject();
++    }
++
++    private static boolean loading(final JsonObject scene, final int index) {
++        return tile(scene, index).getAsJsonArray("children").get(1).getAsJsonObject().get("visible").getAsBoolean();
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormTextTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockActionFormTextTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..8d0f2c521dfe3aec4a596fc71e52581a1e5dfe51
