@@ -1468,6 +1468,11 @@ An edit_box without a size fills its parent like other interactive controls.
 Mystrick's cosmetics search field sizes only its wrapper; native Bedrock
 draws the field across it, while the add-on measured it as empty.
 
+Menu URL images larger than 2048 pixels are subsampled while decoding
+instead of rejected. Native Bedrock 1.26.60.5 shows Mystrick's 2560 x
+1440 Serenity map preview in Bedwars Map Voting; the add-on dropped it.
+A 16384-pixel header bound and the 4 MiB download limit still apply.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index f845830418399fccf82c2278f6ff73594b9082bf..7fbe6b1a7c3874cd9138b59460240b6038a0e641 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -8820,10 +8825,10 @@ index 0000000000000000000000000000000000000000..5016ff01f19d07759adbb514f78c42de
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCache.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..1ffe21b68199c94e7c5adead2e01248d567dadae
+index 0000000000000000000000000000000000000000..166a0003973df9c0cd23426654422dba126cdc6d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCache.java
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,239 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -8861,6 +8866,8 @@ index 0000000000000000000000000000000000000000..1ffe21b68199c94e7c5adead2e01248d
 +public final class NativeUiImageCache {
 +    public static final int MAX_BYTES = 4 * 1024 * 1024;
 +    public static final int MAX_PIXELS = 4 * 1024 * 1024;
++    private static final int MAX_SIZE = 2048;
++    private static final int MAX_SOURCE_SIZE = 16384;
 +    private static final int MAX_ENTRIES = 128;
 +    private static final long MAX_CACHE_BYTES = 64L * 1024 * 1024;
 +    private static final Duration AGE = Duration.ofDays(7);
@@ -8964,10 +8971,18 @@ index 0000000000000000000000000000000000000000..1ffe21b68199c94e7c5adead2e01248d
 +                if (!reader.getFormatName().equalsIgnoreCase("png") && !reader.getFormatName().equalsIgnoreCase("jpeg"))
 +                    throw new IOException("Unsupported menu image format");
 +                reader.setInput(input, true, true);
-+                final int width = reader.getWidth(0), height = reader.getHeight(0);
-+                if (width <= 0 || height <= 0 || width > 2048 || height > 2048 || (long) width * height > MAX_PIXELS)
++                final int sourceWidth = reader.getWidth(0), sourceHeight = reader.getHeight(0);
++                if (sourceWidth <= 0 || sourceHeight <= 0 || sourceWidth > MAX_SOURCE_SIZE || sourceHeight > MAX_SOURCE_SIZE)
 +                    throw new IOException("Menu image exceeds pixel limits");
-+                final BufferedImage pixels = reader.read(0);
++                // Native shows larger server images, such as 2560 x 1440 map previews. Subsampling while
++                // decoding keeps the stored texture within the per-image bound without a full-size buffer.
++                final int step = Math.ceilDiv(Math.max(sourceWidth, sourceHeight), MAX_SIZE);
++                final var parameters = reader.getDefaultReadParam();
++                if (step > 1) parameters.setSourceSubsampling(step, step, 0, 0);
++                final BufferedImage pixels = reader.read(0, parameters);
++                final int width = pixels.getWidth(), height = pixels.getHeight();
++                if (width > MAX_SIZE || height > MAX_SIZE || (long) width * height > MAX_PIXELS)
++                    throw new IOException("Menu image exceeds pixel limits");
 +                final var output = new ByteArrayOutputStream();
 +                if (!ImageIO.write(pixels, "png", output) || output.size() > MAX_BYTES)
 +                    throw new IOException("Decoded menu image exceeds byte limits");
@@ -18287,10 +18302,10 @@ index 0000000000000000000000000000000000000000..edbb2d8ef8f90ad2311e2fd339aa0c6c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCacheTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCacheTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c782dae6704475559f34b2dd8aff678229985b5d
+index 0000000000000000000000000000000000000000..8b25a0b4952b2255598982b22ba8d092ff01635e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiImageCacheTest.java
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,152 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -18300,6 +18315,7 @@ index 0000000000000000000000000000000000000000..c782dae6704475559f34b2dd8aff6782
 +
 +import com.sun.net.httpserver.HttpServer;
 +import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
 +import java.io.ByteArrayOutputStream;
 +import java.net.InetSocketAddress;
 +import java.net.URI;
@@ -18411,11 +18427,20 @@ index 0000000000000000000000000000000000000000..c782dae6704475559f34b2dd8aff6782
 +            task -> { throw new java.util.concurrent.RejectedExecutionException(); });
 +        assertTrue(busy.load("https://example.invalid/image").isCompletedExceptionally());
 +        assertThrows(java.io.IOException.class, () -> NativeUiImageCache.decode(new byte[] {0}));
-+        assertThrows(java.io.IOException.class, () -> NativeUiImageCache.decode(png(2049, 1)));
++        assertThrows(java.io.IOException.class, () -> NativeUiImageCache.decode(png(16385, 1)));
 +        try (final var executor = Executors.newSingleThreadExecutor()) {
 +            final var production = new NativeUiImageCache(this.cache, "test", http(), executor);
 +            assertTrue(production.load("http://127.0.0.1/image").isCompletedExceptionally());
 +        }
++    }
++
++    @Test
++    void aMapPreviewLargerThanTheTextureBoundIsScaledDown() throws Exception {
++        // Mystrick sends 2560 x 1440 Bedwars map previews, which native Bedrock 1.26.60.5 shows in Map Voting.
++        final var preview = NativeUiImageCache.decode(png(2560, 1440));
++        assertEquals(1280, preview.width());
++        assertEquals(720, preview.height());
++        assertEquals(1280, ImageIO.read(new ByteArrayInputStream(preview.bytes())).getWidth());
 +    }
 +
 +    private NativeUiImageCache fixture(final java.util.concurrent.Executor executor) {
