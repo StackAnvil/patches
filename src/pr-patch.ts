@@ -19,7 +19,7 @@ function isTestPath(path: string): boolean {
 }
 
 function diffPaths(section: string): string[] {
-  const header = section.split("\n", 1)[0];
+  const header = section.split("\n", 1)[0] ?? "";
   const match = /^diff --git ("a\/.*"|a\/.*) ("b\/.*"|b\/.*)$/.exec(header);
   if (!match) throw new Error(`Unsupported PR diff header: ${header}`);
   return match.slice(1).map((path) => {
@@ -54,14 +54,15 @@ function stripTestConfiguration(lines: string[], changed: Set<number>): Filtered
   const removed = new Set<number>();
   const remove = (start: number, end: number) => {
     for (let index = start; index <= end; index++) removed.add(index);
-    if (start > 0 && !lines[start - 1].trim()) removed.add(start - 1);
-    else if (end + 1 < lines.length && !lines[end + 1].trim()) removed.add(end + 1);
+    if (start > 0 && !lines[start - 1]?.trim()) removed.add(start - 1);
+    else if (end + 1 < lines.length && !lines[end + 1]?.trim()) removed.add(end + 1);
   };
   for (let index = 0; index < lines.length; index++) {
-    if (!testConfiguration(lines[index])) continue;
+    const line = lines[index] ?? "";
+    if (!testConfiguration(line)) continue;
     let end = index;
-    let balance = delimiterBalance(lines[index]);
-    while (balance > 0 && end + 1 < lines.length) balance += delimiterBalance(lines[++end]);
+    let balance = delimiterBalance(line);
+    while (balance > 0 && end + 1 < lines.length) balance += delimiterBalance(lines[++end] ?? "");
     if (
       balance > 0 &&
       lines.slice(index, end + 1).some((_, offset) => changed.has(index + offset))
@@ -73,10 +74,11 @@ function stripTestConfiguration(lines: string[], changed: Set<number>): Filtered
   }
   // Test-only dependency and configuration blocks must not leave empty scaffolding.
   for (let index = 0; index < lines.length; index++) {
-    if (!/^\s*(?:dependencies|configurations|sourceSets)\s*\{\s*$/.test(lines[index])) continue;
+    if (!/^\s*(?:dependencies|configurations|sourceSets)\s*\{\s*$/.test(lines[index] ?? ""))
+      continue;
     let end = index;
     let balance = 1;
-    while (balance > 0 && end + 1 < lines.length) balance += delimiterBalance(lines[++end]);
+    while (balance > 0 && end + 1 < lines.length) balance += delimiterBalance(lines[++end] ?? "");
     if (balance !== 0) continue;
     const contents = lines.slice(index + 1, end);
     if (
@@ -94,18 +96,20 @@ function stripTestConfiguration(lines: string[], changed: Set<number>): Filtered
 
 function filterGradleDiff(section: string): { diff: string; omittedTests: boolean } {
   const parts = section.split(/(?=^@@ )/m);
-  const header = parts.shift()!;
+  const header = parts.shift() ?? "";
   if (!parts.length) return { diff: section, omittedTests: false };
   const hunks: string[] = [];
   let offset = 0;
   let omittedTests = false;
   for (const part of parts) {
     const lines = part.trimEnd().split("\n");
-    const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/.exec(lines.shift()!);
-    if (!match) throw new Error("Unsupported Gradle hunk in PR patch");
+    const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/.exec(lines.shift() ?? "");
+    const [, oldStartText, hunkContext] = match ?? [];
+    if (oldStartText === undefined || hunkContext === undefined)
+      throw new Error("Unsupported Gradle hunk in PR patch");
     if (lines.some((line) => line.startsWith("\\")))
       throw new Error("Gradle PR patches must end with a newline");
-    const context = match[2].trim();
+    const context = hunkContext.trim();
     const inTestBlock =
       context.endsWith("{") &&
       testConfiguration(context) &&
@@ -142,7 +146,7 @@ function filterGradleDiff(section: string): { diff: string; omittedTests: boolea
         after.lines[after.lines.length - suffix - 1]
     )
       suffix++;
-    const oldStart = Number(match[1]);
+    const oldStart = Number(oldStartText);
     const newStart = oldStart === 0 ? 1 : oldStart + offset;
     const body = [
       ...before.lines.slice(0, prefix).map((line) => ` ${line}`),

@@ -21,11 +21,12 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
   const images = new Map<string, Uint8Array>();
   const packs = new Set<string>();
   for (const [path, bytes] of files) {
-    const match = /^library\/(vanilla(?:_base|_\d+\.\d+(?:\.\d+)?)?)\/(textures\/.+)$/.exec(path);
-    if (!match) continue;
+    const [, pack, texture] =
+      /^library\/(vanilla(?:_base|_\d+\.\d+(?:\.\d+)?)?)\/(textures\/.+)$/.exec(path) ?? [];
+    if (pack === undefined || texture === undefined) continue;
     if (
-      !/\.(png|jpg|tga)$/.test(match[2]) &&
-      !["textures/item_texture.json", "textures/terrain_texture.json"].includes(match[2])
+      !/\.(png|jpg|tga)$/.test(texture) &&
+      !["textures/item_texture.json", "textures/terrain_texture.json"].includes(texture)
     )
       continue;
     if (
@@ -35,7 +36,7 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
       throw new Error("Invalid native image path");
     if (bytes.length === 0 || bytes.length > 32 * 1024 * 1024)
       throw new Error("Invalid native image size");
-    packs.add(match[1]);
+    packs.add(pack);
     images.set(path, bytes);
   }
   const ordered = [...packs].toSorted((a, b) => {
@@ -47,9 +48,11 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
     }
     return 0;
   });
-  for (let index = 1; index < ordered.length; index++) {
+  for (const [index, current] of ordered.entries()) {
+    const previous = ordered[index - 1];
     if (
-      tuple(ordered[index - 1]).every((value, part) => value === (tuple(ordered[index])[part] ?? 0))
+      previous !== undefined &&
+      tuple(previous).every((value, part) => value === (tuple(current)[part] ?? 0))
     )
       throw new Error("Ambiguous native image overlay");
   }
@@ -93,11 +96,12 @@ export async function verifyEmbeddedBuiltinImages(
 ) {
   let entries = zipEntries(await readFile(artifact));
   if (project === "viafabricplus-bedrock") {
-    const cores = [...entries.keys()].filter((path) =>
+    const [core, ...otherCores] = [...entries].filter(([path]) =>
       /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/.test(path),
     );
-    if (cores.length !== 1) throw new Error("The Bedrock add-on must embed exactly one core JAR");
-    entries = zipEntries(entries.get(cores[0])!());
+    if (!core || otherCores.length)
+      throw new Error("The Bedrock add-on must embed exactly one core JAR");
+    entries = zipEntries(core[1]());
   }
   const nativeImages = await readFile(bundle);
   if (!entries.get(builtinImagesResource)?.().equals(nativeImages))

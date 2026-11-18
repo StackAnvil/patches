@@ -137,7 +137,7 @@ export async function runValidationSteps(
 
 export async function buildArtifactEvidence(
   artifactsDirectory: string,
-  options: { projects?: readonly string[]; pin?: ViaFabricPlusPin } = {},
+  options: { projects?: readonly string[]; pin?: ViaFabricPlusPin | undefined } = {},
 ): Promise<ArtifactEvidence[]> {
   const entries: ArtifactEvidence[] = [];
   for (const project of [...(options.projects ?? (await targetIds())), "viafabricplus"]) {
@@ -160,7 +160,6 @@ export function requireReleaseEvidence(
   artifacts: ArtifactEvidence[],
 ): void {
   if (
-    report.schema !== 1 ||
     report.profile !== "release" ||
     report.revision !== revision ||
     report.dirty ||

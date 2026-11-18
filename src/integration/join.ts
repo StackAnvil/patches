@@ -33,9 +33,9 @@ export interface JoinProbe {
   route: JoinRoute;
   serverLog(): Promise<string>;
   clientLog(): Promise<string>;
-  connectionLog?(): Promise<string>;
+  connectionLog?: (() => Promise<string>) | undefined;
   clientAlive(): boolean;
-  onJoin?(player: string): void | Promise<void>;
+  onJoin?: ((player: string) => void | Promise<void>) | undefined;
   timeoutMs: number;
   dwellMs: number;
   pollMs?: number;
@@ -56,14 +56,13 @@ export const waitForJoinEffect = Effect.fn("Integration.waitForJoin")(function* 
   const started = yield* Clock.currentTimeMillis;
   let joinedAt: number | undefined;
   let player: string | undefined;
+  const connectionLog = probe.connectionLog;
   while ((yield* Clock.currentTimeMillis) - started < probe.timeoutMs) {
     const [serverOutput, client, connection] = yield* Effect.all(
       [
         labIO("read server log", () => probe.serverLog()),
         labIO("read client log", () => probe.clientLog()),
-        probe.connectionLog
-          ? labIO("read connection log", () => probe.connectionLog!())
-          : Effect.succeed(""),
+        connectionLog ? labIO("read connection log", () => connectionLog()) : Effect.succeed(""),
       ],
       { concurrency: 3 },
     );
@@ -90,7 +89,8 @@ export const waitForJoinEffect = Effect.fn("Integration.waitForJoin")(function* 
     if (current && joinedAt === undefined) {
       joinedAt = yield* Clock.currentTimeMillis;
       player = current;
-      if (probe.onJoin) yield* labIO("on join", async () => probe.onJoin!(current));
+      const onJoin = probe.onJoin;
+      if (onJoin) yield* labIO("on join", async () => onJoin(current));
     }
     if (joinedAt !== undefined && player) {
       const postJoin = server.slice(

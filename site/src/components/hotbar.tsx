@@ -73,6 +73,7 @@ export function FeatureHotbar() {
   const [selected, setSelected] = useState(0);
   const slots = useRef<(HTMLButtonElement | null)[]>([]);
   const feature = features[selected];
+  if (!feature) return null;
   const Icon = feature.icon;
   function onKeyDown(event: KeyboardEvent) {
     const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];

@@ -86,11 +86,11 @@ export async function validateNativeReplayPrefix(
   const owner: unknown = JSON.parse(await readFile(marker, "utf8"));
   if (
     !isRecord(owner) ||
-    owner.schema !== expected.schema ||
-    owner.source !== expected.source ||
-    owner.device !== expected.device ||
-    owner.inode !== expected.inode ||
-    owner.run !== expected.run
+    owner["schema"] !== expected.schema ||
+    owner["source"] !== expected.source ||
+    owner["device"] !== expected.device ||
+    owner["inode"] !== expected.inode ||
+    owner["run"] !== expected.run
   ) {
     throw new Error("The native replay prefix ownership marker does not match its source and run.");
   }

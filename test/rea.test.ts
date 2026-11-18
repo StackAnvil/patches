@@ -12,6 +12,7 @@ import {
   validateReaCapture,
   validateReaEvidence,
 } from "../src/rea.ts";
+import { required } from "../src/guards.ts";
 import { root } from "../src/model.ts";
 import { expectRejection } from "./helpers/expect-rejection.ts";
 
@@ -220,8 +221,8 @@ test("failed REA calls preserve provider stdout, stderr and the source manifest"
     "#!/usr/bin/env bun\nprocess.stdout.write('{\"code\":\"cancelled\"}'); process.stderr.write('provider cancelled'); process.exit(23);\n",
   );
   await chmod(provider, 0o700);
-  const old = process.env.REA_CLI;
-  process.env.REA_CLI = provider;
+  const old = process.env["REA_CLI"];
+  process.env["REA_CLI"] = provider;
   const output = join(f.directory, "analyses");
   try {
     await expectRejection(
@@ -231,12 +232,12 @@ test("failed REA calls preserve provider stdout, stderr and the source manifest"
       "Preserved",
     );
   } finally {
-    if (old === undefined) delete process.env.REA_CLI;
-    else process.env.REA_CLI = old;
+    if (old === undefined) delete process.env["REA_CLI"];
+    else process.env["REA_CLI"] = old;
   }
   const runs = await readdir(output);
   expect(runs).toHaveLength(1);
-  const run = join(output, runs[0]!);
+  const run = join(output, required(runs[0], "The REA run directory"));
   expect(await readFile(join(run, "evidence.json"), "utf8")).toBe('{"code":"cancelled"}');
   expect(await readFile(join(run, "rea.stderr"), "utf8")).toBe("provider cancelled");
   expect(JSON.parse(await readFile(join(run, "source.json"), "utf8")).target.artifact.sha256).toBe(
@@ -263,10 +264,10 @@ test("a REA executable on PATH retains a byte-bound result without replacing ear
     `#!/usr/bin/env bun\nconsole.log(${JSON.stringify(JSON.stringify(evidence))});\n`,
   );
   await chmod(provider, 0o700);
-  const oldCli = process.env.REA_CLI,
-    oldPath = process.env.PATH;
-  process.env.REA_CLI = basename(provider);
-  process.env.PATH = `${f.directory}:${oldPath ?? ""}`;
+  const oldCli = process.env["REA_CLI"],
+    oldPath = process.env["PATH"];
+  process.env["REA_CLI"] = basename(provider);
+  process.env["PATH"] = `${f.directory}:${oldPath ?? ""}`;
   const output = join(f.directory, "analyses");
   try {
     const first = await Effect.runPromise(
@@ -285,10 +286,10 @@ test("a REA executable on PATH retains a byte-bound result without replacing ear
       f.bytes.subarray(0x200, 0x210).toString("hex"),
     );
   } finally {
-    if (oldCli === undefined) delete process.env.REA_CLI;
-    else process.env.REA_CLI = oldCli;
-    if (oldPath === undefined) delete process.env.PATH;
-    else process.env.PATH = oldPath;
+    if (oldCli === undefined) delete process.env["REA_CLI"];
+    else process.env["REA_CLI"] = oldCli;
+    if (oldPath === undefined) delete process.env["PATH"];
+    else process.env["PATH"] = oldPath;
   }
 });
 

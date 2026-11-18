@@ -80,20 +80,20 @@ export interface IncomingProjectileObservation {
   healthBefore: number;
   healthAfter: number;
   end: Vector;
-  projectileId?: string;
+  projectileId?: string | undefined;
   launchedTick?: number;
   launches?: {
     tick: number;
     bounds: Bounds;
     velocity: Vector;
-    owner?: string;
+    owner?: string | undefined;
     accepted: boolean;
   }[];
-  frames: { tick: number; position: Vector; velocity: Vector; owner?: string }[];
+  frames: { tick: number; position: Vector; velocity: Vector; owner?: string | undefined }[];
   playerFrames: { tick: number; position: Vector; velocity: Vector }[];
   attacks: { tick: number; player: string; target: string }[];
   hits: { tick: number; projectile: string; target: string }[];
-  damage: { tick: number; amount: number; projectile?: string }[];
+  damage: { tick: number; amount: number; projectile?: string | undefined }[];
   error?: string;
 }
 
@@ -121,15 +121,16 @@ export function incomingProjectilePasses(
         !validVector(frame.velocity) ||
         !Number.isInteger(frame.tick) ||
         frame.tick < launchedTick ||
-        (index > 0 && frame.tick <= frames[index - 1].tick),
+        (index > 0 && frame.tick <= (frames[index - 1]?.tick ?? -Infinity)),
     )
   )
     return false;
   const along = (position: Vector) =>
     (position.x - start.x) * forward.x + (position.z - start.z) * forward.z;
   const toward = (velocity: Vector) => velocity.x * forward.x + velocity.z * forward.z;
-  const first = frames[0];
+  const [first] = frames;
   if (
+    !first ||
     first.owner !== observation.shooterId ||
     along(first.position) <= 1 ||
     toward(first.velocity) >= 0
@@ -178,7 +179,7 @@ export function incomingProjectilePasses(
           !validVector(frame.velocity) ||
           !Number.isInteger(frame.tick) ||
           frame.tick < launchedTick ||
-          (index > 0 && frame.tick <= observation.playerFrames[index - 1].tick),
+          (index > 0 && frame.tick <= (observation.playerFrames[index - 1]?.tick ?? -Infinity)),
       )
     )
       return false;

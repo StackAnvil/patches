@@ -1,8 +1,39 @@
-import { EnchantmentType, EquipmentSlot, GameMode, ItemStack, Potions, system, world,
-  type Block, type Container, type Dimension, type Entity, type EntityEquippableComponent, type Player, type Vector3 } from "@minecraft/server";
-import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, serverSlotUsePasses, type RangedExpectation, type RangedObservation, type RangedTarget, type ServerSlotUse } from "../../../src/integration/ranged-observation.ts";
-import { incomingProjectilePasses, projectileThreatens, type IncomingProjectileObservation } from "../../../src/integration/projectile-observation.ts";
-import { rangedKnockbackPasses, type KnockbackImpulse } from "../../../src/integration/knockback-observation.ts";
+import {
+  EnchantmentType,
+  EquipmentSlot,
+  GameMode,
+  ItemStack,
+  Potions,
+  system,
+  world,
+  type Block,
+  type Container,
+  type Dimension,
+  type Entity,
+  type EntityEquippableComponent,
+  type Player,
+  type Vector3,
+} from "@minecraft/server";
+import {
+  potionImpactPasses,
+  rangedHitPasses,
+  rangedObservationPasses,
+  rangedPiercingPasses,
+  serverSlotUsePasses,
+  type RangedExpectation,
+  type RangedObservation,
+  type RangedTarget,
+  type ServerSlotUse,
+} from "../../../src/integration/ranged-observation.ts";
+import {
+  incomingProjectilePasses,
+  projectileThreatens,
+  type IncomingProjectileObservation,
+} from "../../../src/integration/projectile-observation.ts";
+import {
+  rangedKnockbackPasses,
+  type KnockbackImpulse,
+} from "../../../src/integration/knockback-observation.ts";
 import type { FishingObservation } from "../../../src/integration/fishing-observation.ts";
 import { registerFishingGameplay } from "./fishing.ts";
 import { registerPlayerUseGameplay } from "./player-uses.ts";
@@ -18,86 +49,178 @@ interface MotionObservation {
   lavaSamples: number;
   bubbleSamples: number;
   flowingSamples: number;
-  frames: { tick: number; position: Vector3; velocity: Vector3; inWater: boolean; flying: boolean; onGround: boolean;
-    block: string; liquidDepth?: number }[];
+  frames: {
+    tick: number;
+    position: Vector3;
+    velocity: Vector3;
+    inWater: boolean;
+    flying: boolean;
+    onGround: boolean;
+    block: string;
+    liquidDepth?: number | undefined;
+  }[];
   error?: string;
 }
 
 interface Fixture {
-  playerUse?: PlayerUseObservation;
-  fishing?: FishingObservation;
-  fishingTarget?: Entity;
-  ranged?: RangedObservation;
-  motion?: MotionObservation;
-  incoming?: IncomingProjectileObservation;
-  projectile?: Entity;
-  shooter?: Entity;
-  knockback?: { pending: boolean; impulse?: KnockbackImpulse };
-  serverSlotUse?: ServerSlotUse;
-  closed?: boolean;
+  playerUse?: PlayerUseObservation | undefined;
+  fishing?: FishingObservation | undefined;
+  fishingTarget?: Entity | undefined;
+  ranged?: RangedObservation | undefined;
+  motion?: MotionObservation | undefined;
+  incoming?: IncomingProjectileObservation | undefined;
+  projectile?: Entity | undefined;
+  shooter?: Entity | undefined;
+  knockback?: { pending: boolean; impulse?: KnockbackImpulse | undefined } | undefined;
+  serverSlotUse?: ServerSlotUse | undefined;
+  closed?: boolean | undefined;
 }
 
 export interface ProbeContext {
-  define<T extends Fixture>(id: string, group: string, prepare: (player: Player) => Promise<T>,
-    inspect: (player: Player, fixture: T) => { passed: boolean; observed: unknown; expected: unknown },
-    start?: (player: Player, fixture: T) => Promise<void>): void;
-  prepareArena(player: Player, mode?: GameMode): Promise<void>;
-  inventory(player: Player): Container;
-  equipment(player: Player): EntityEquippableComponent;
-  countItem(container: Container, typeId: string): number;
-  blockAt(dimension: Dimension, x: number, y: number, z: number): Block;
-  position(x?: number, y?: number, z?: number): Vector3;
-  getActive(): { fixture: Fixture; playerName: string } | undefined;
-  tagEntity(entity: Entity): void;
+  define: <T extends Fixture>(
+    id: string,
+    group: string,
+    prepare: (player: Player) => Promise<T>,
+    inspect: (
+      player: Player,
+      fixture: T,
+    ) => { passed: boolean; observed: unknown; expected: unknown },
+    start?: (player: Player, fixture: T) => Promise<void>,
+  ) => void;
+  prepareArena: (player: Player, mode?: GameMode) => Promise<void>;
+  inventory: (player: Player) => Container;
+  equipment: (player: Player) => EntityEquippableComponent;
+  countItem: (container: Container, typeId: string) => number;
+  blockAt: (dimension: Dimension, x: number, y: number, z: number) => Block;
+  position: (x?: number, y?: number, z?: number) => Vector3;
+  getActive: () => { fixture: Fixture; playerName: string } | undefined;
+  tagEntity: (entity: Entity) => void;
+}
+
+function isPlayer(entity: Entity): entity is Player {
+  return entity.typeId === "minecraft:player";
+}
+
+function waitTicks(ticks: number): Promise<void> {
+  return new Promise((resolve) => {
+    system.runTimeout(resolve, ticks);
+  });
+}
+
+function motionFixture(player: Player) {
+  const motion: MotionObservation = {
+    start: { ...player.location },
+    samples: 0,
+    minY: player.location.y,
+    maxY: player.location.y,
+    waterSamples: 0,
+    flightSamples: 0,
+    lavaSamples: 0,
+    bubbleSamples: 0,
+    flowingSamples: 0,
+    frames: [],
+  };
+  return { motion, closed: false };
 }
 
 export function registerComplexGameplay(context: ProbeContext) {
-  const { define, prepareArena, inventory, equipment, countItem, blockAt, position, getActive, tagEntity } = context;
+  const {
+    define,
+    prepareArena,
+    inventory,
+    equipment,
+    countItem,
+    blockAt,
+    position,
+    getActive,
+    tagEntity,
+  } = context;
   registerFishingGameplay(context);
   registerPlayerUseGameplay(context);
   function fixtureFor(player: Player) {
     const current = getActive();
-    return current?.playerName === player?.name && !current.fixture.closed ? current.fixture : undefined;
+    return current?.playerName === player.name && !current.fixture.closed
+      ? current.fixture
+      : undefined;
   }
 
-  for (const [signal, action] of [[world.afterEvents.itemStartUse, "start"],
-    [world.afterEvents.itemReleaseUse, "release"], [world.afterEvents.itemCompleteUse, "complete"],
-    [world.afterEvents.itemStopUse, "stop"], [world.afterEvents.itemUse, "use"]] as const) {
+  for (const [signal, action] of [
+    [world.afterEvents.itemStartUse, "start"],
+    [world.afterEvents.itemReleaseUse, "release"],
+    [world.afterEvents.itemCompleteUse, "complete"],
+    [world.afterEvents.itemStopUse, "stop"],
+    [world.afterEvents.itemUse, "use"],
+  ] as const) {
     signal.subscribe((event: { source: Player; itemStack?: ItemStack; useDuration?: number }) => {
       const current = getActive();
       const fixture = fixtureFor(event.source);
-      const observation = fixture?.serverSlotUse && event.itemStack?.typeId === fixture.serverSlotUse.followup.item
-        ? fixture!.serverSlotUse!.followup : fixture?.ranged;
+      const observation =
+        fixture?.serverSlotUse && event.itemStack?.typeId === fixture.serverSlotUse.followup.item
+          ? fixture.serverSlotUse.followup
+          : fixture?.ranged;
       if (!observation) return;
-      const item = event.itemStack ?? inventory(event.source).getItem(event.source.selectedSlotIndex);
+      const item =
+        event.itemStack ?? inventory(event.source).getItem(event.source.selectedSlotIndex);
       if (item?.typeId !== observation.item) return;
-      observation.events.push({ action, tick: system.currentTick, remainingUseTicks: event.useDuration });
+      observation.events.push({
+        action,
+        tick: system.currentTick,
+        remainingUseTicks: event.useDuration,
+      });
       if (action === "start" && fixture?.serverSlotUse && !fixture.serverSlotUse.pending) {
-        fixture.serverSlotUse.pending = true;
+        const slotUse = fixture.serverSlotUse;
+        slotUse.pending = true;
         const startTick = system.currentTick;
         system.runTimeout(() => {
-          if (getActive() !== current || fixture.closed || event.source.selectedSlotIndex !== 0
-              || observation.events.some((entry) => ["stop", "release", "complete"].includes(entry.action) && entry.tick >= startTick)) return;
+          if (
+            getActive() !== current ||
+            fixture.closed ||
+            event.source.selectedSlotIndex !== 0 ||
+            observation.events.some(
+              (entry) =>
+                ["stop", "release", "complete"].includes(entry.action) && entry.tick >= startTick,
+            )
+          )
+            return;
           try {
             event.source.selectedSlotIndex = 1;
-            fixture.serverSlotUse!.selection = { tick: system.currentTick, from: 0, to: 1 };
-          } catch (error) { observation.error = String(error); }
+            slotUse.selection = { tick: system.currentTick, from: 0, to: 1 };
+          } catch (error) {
+            observation.error = String(error);
+          }
         }, 4);
       }
       if (action === "start" && fixture?.knockback && !fixture.knockback.pending) {
-        fixture.knockback.pending = true;
+        const knockback = fixture.knockback;
+        knockback.pending = true;
         const startTick = system.currentTick;
         system.runTimeout(() => {
-          if (getActive() !== current || fixture.closed || event.source.selectedSlotIndex !== 0
-              || observation.events.some((entry) => ["stop", "release", "complete"].includes(entry.action) && entry.tick >= startTick)) return;
+          if (
+            getActive() !== current ||
+            fixture.closed ||
+            event.source.selectedSlotIndex !== 0 ||
+            observation.events.some(
+              (entry) =>
+                ["stop", "release", "complete"].includes(entry.action) && entry.tick >= startTick,
+            )
+          )
+            return;
           try {
             const tick = system.currentTick;
-            const position = { ...event.source.location };
+            const origin = { ...event.source.location };
             const velocityBefore = event.source.getVelocity();
             const force = { x: 0.35, y: 0.4, z: 0 };
             event.source.applyKnockback({ x: force.x, z: force.z }, force.y);
-            fixture.knockback!.impulse = { tick, position, force, velocityBefore, velocityAfter: event.source.getVelocity() };
-          } catch (error) { observation.error = String(error); }
+            knockback.impulse = {
+              tick,
+              position: origin,
+              force,
+              velocityBefore,
+              velocityAfter: event.source.getVelocity(),
+            };
+          } catch (error) {
+            observation.error = String(error);
+          }
         }, 4);
       }
     });
@@ -106,35 +229,74 @@ export function registerComplexGameplay(context: ProbeContext) {
   world.afterEvents.entitySpawn.subscribe((event) => {
     const current = getActive();
     if (!current || current.fixture.closed) return;
-    if (event.entity.typeId === "minecraft:area_effect_cloud" && current.fixture.ranged?.clouds) {
-      const cloud = { id: event.entity.id, tick: system.currentTick, location: { ...event.entity.location } };
+    const cloudRanged = current.fixture.ranged;
+    if (event.entity.typeId === "minecraft:area_effect_cloud" && cloudRanged?.clouds) {
+      const clouds = cloudRanged.clouds;
+      const cloud = {
+        id: event.entity.id,
+        tick: system.currentTick,
+        location: { ...event.entity.location },
+      };
       system.run(() => {
         if (getActive() !== current || current.fixture.closed) return;
-        const ranged = current.fixture.ranged!;
-        if (!ranged.impacts?.some((impact) => ranged.projectiles.some((shot) => shot.id === impact.id)
-            && Math.hypot(cloud.location.x - impact.location.x, cloud.location.y - impact.location.y,
-              cloud.location.z - impact.location.z) < 4)) return;
-        ranged.clouds!.push(cloud);
+        if (
+          !cloudRanged.impacts?.some(
+            (impact) =>
+              cloudRanged.projectiles.some((shot) => shot.id === impact.id) &&
+              Math.hypot(
+                cloud.location.x - impact.location.x,
+                cloud.location.y - impact.location.y,
+                cloud.location.z - impact.location.z,
+              ) < 4,
+          )
+        )
+          return;
+        clouds.push(cloud);
         if (event.entity.isValid) tagEntity(event.entity);
       });
       return;
     }
-    if (!["minecraft:arrow", "minecraft:splash_potion", "minecraft:lingering_potion", "minecraft:snowball", "minecraft:fireball", "minecraft:small_fireball"].includes(event.entity.typeId)) return;
+    if (
+      ![
+        "minecraft:arrow",
+        "minecraft:splash_potion",
+        "minecraft:lingering_potion",
+        "minecraft:snowball",
+        "minecraft:fireball",
+        "minecraft:small_fireball",
+      ].includes(event.entity.typeId)
+    )
+      return;
     // Ownership and launch velocity can be assigned after the spawn notification.
     system.run(() => {
       if (getActive() !== current || current.fixture.closed) return;
       try {
         const entity = event.entity;
         const owner = entity.getComponent("minecraft:projectile")?.owner;
-        if (current.fixture.incoming && entity.typeId === current.fixture.incoming.type
-            && !current.fixture.incoming.projectileId) {
+        if (
+          current.fixture.incoming &&
+          entity.typeId === current.fixture.incoming.type &&
+          !current.fixture.incoming.projectileId
+        ) {
           const incoming = current.fixture.incoming;
           const bounds = entity.getAABB();
           const velocity = entity.getVelocity();
-          const accepted = owner?.id === incoming.shooterId
-            && projectileThreatens(incoming.playerBounds, bounds, velocity, incoming.collisionObstacles, incoming.clearancePlane);
-          incoming.launches?.push({ tick: system.currentTick, bounds, velocity,
-            owner: owner?.id, accepted });
+          const accepted =
+            owner?.id === incoming.shooterId &&
+            projectileThreatens(
+              incoming.playerBounds,
+              bounds,
+              velocity,
+              incoming.collisionObstacles,
+              incoming.clearancePlane,
+            );
+          incoming.launches?.push({
+            tick: system.currentTick,
+            bounds,
+            velocity,
+            owner: owner?.id,
+            accepted,
+          });
           if (owner?.id !== incoming.shooterId) return;
           tagEntity(entity);
           if (!accepted) {
@@ -144,19 +306,30 @@ export function registerComplexGameplay(context: ProbeContext) {
           incoming.projectileId = entity.id;
           incoming.launchedTick = system.currentTick;
           incoming.projectileExtent = { ...bounds.extent };
-          incoming.frames.push({ tick: system.currentTick, position: { ...bounds.center }, velocity, owner: owner.id });
+          incoming.frames.push({
+            tick: system.currentTick,
+            position: { ...bounds.center },
+            velocity,
+            owner: owner.id,
+          });
           current.fixture.projectile = entity;
           // A blaze fires a burst. Keep one genuine shot for a reproducible control.
           if (current.fixture.shooter?.isValid) current.fixture.shooter.remove();
           return;
         }
         if (!current.fixture.ranged) return;
-        if (owner?.typeId !== "minecraft:player" || (owner as Player).name !== current.playerName) return;
+        if (!owner || !isPlayer(owner) || owner.name !== current.playerName) return;
         const velocity = entity.getVelocity();
-        const ranged = event.entity.typeId === current.fixture.serverSlotUse?.followup.item
-          ? current.fixture.serverSlotUse.followup : current.fixture.ranged;
-        ranged.projectiles.push({ id: entity.id, type: entity.typeId, tick: system.currentTick,
-          speed: Math.hypot(velocity.x, velocity.y, velocity.z) });
+        const ranged =
+          event.entity.typeId === current.fixture.serverSlotUse?.followup.item
+            ? current.fixture.serverSlotUse.followup
+            : current.fixture.ranged;
+        ranged.projectiles.push({
+          id: entity.id,
+          type: entity.typeId,
+          tick: system.currentTick,
+          speed: Math.hypot(velocity.x, velocity.y, velocity.z),
+        });
       } catch (error) {
         const observation = current.fixture.ranged ?? current.fixture.incoming;
         if (observation) observation.error = String(error);
@@ -164,15 +337,27 @@ export function registerComplexGameplay(context: ProbeContext) {
     });
   });
 
-  for (const signal of [world.afterEvents.projectileHitBlock, world.afterEvents.projectileHitEntity]) {
+  for (const signal of [
+    world.afterEvents.projectileHitBlock,
+    world.afterEvents.projectileHitEntity,
+  ]) {
     signal.subscribe((event) => {
       const current = getActive();
       if (!current || current.fixture.closed) return;
       const target = "getEntityHit" in event ? event.getEntityHit().entity?.id : undefined;
       const ranged = current.fixture.ranged;
-      if (ranged?.impacts && (event.source?.id === world.getAllPlayers().find((player) => player.name === current.playerName)?.id
-          || ranged.projectiles.some((shot) => shot.id === event.projectile.id))) {
-        ranged.impacts.push({ id: event.projectile.id, tick: system.currentTick, location: { ...event.location }, target });
+      if (
+        ranged?.impacts &&
+        (event.source?.id ===
+          world.getAllPlayers().find((player) => player.name === current.playerName)?.id ||
+          ranged.projectiles.some((shot) => shot.id === event.projectile.id))
+      ) {
+        ranged.impacts.push({
+          id: event.projectile.id,
+          tick: system.currentTick,
+          location: { ...event.location },
+          target,
+        });
       }
       const incoming = current.fixture.incoming;
       if (incoming?.projectileId === event.projectile.id && target) {
@@ -181,45 +366,85 @@ export function registerComplexGameplay(context: ProbeContext) {
     });
   }
   world.afterEvents.effectAdd.subscribe((event) => {
-    const ranged = event.entity.typeId === "minecraft:player" ? fixtureFor(event.entity as Player)?.ranged : undefined;
-    if (ranged?.effects) ranged.effects.push({ tick: system.currentTick, type: event.effect.typeId,
-      duration: event.effect.duration, amplifier: event.effect.amplifier });
+    const ranged = isPlayer(event.entity) ? fixtureFor(event.entity)?.ranged : undefined;
+    if (ranged?.effects)
+      ranged.effects.push({
+        tick: system.currentTick,
+        type: event.effect.typeId,
+        duration: event.effect.duration,
+        amplifier: event.effect.amplifier,
+      });
   });
   world.afterEvents.entityHitEntity.subscribe((event) => {
     const incoming = getActive()?.fixture;
-    if (!incoming?.closed && incoming?.incoming && event.damagingEntity.id === incoming.incoming.playerId) {
-      incoming.incoming.attacks.push({ tick: system.currentTick, player: event.damagingEntity.id, target: event.hitEntity.id });
+    if (
+      !incoming?.closed &&
+      incoming?.incoming &&
+      event.damagingEntity.id === incoming.incoming.playerId
+    ) {
+      incoming.incoming.attacks.push({
+        tick: system.currentTick,
+        player: event.damagingEntity.id,
+        target: event.hitEntity.id,
+      });
     }
   });
   world.afterEvents.entityHurt.subscribe((event) => {
     const fixture = getActive()?.fixture;
     if (fixture?.closed) return;
     const ranged = fixture?.ranged;
-    const target = ranged?.targets?.find((candidate) => candidate.id === event.hurtEntity.id)
-      ?? (ranged?.target?.id === event.hurtEntity.id ? ranged.target : undefined);
+    const target =
+      ranged?.targets?.find((candidate) => candidate.id === event.hurtEntity.id) ??
+      (ranged?.target?.id === event.hurtEntity.id ? ranged.target : undefined);
     if (target) {
-      target.damage.push({ tick: system.currentTick, amount: event.damage, projectile: event.damageSource.damagingProjectile?.id });
+      target.damage.push({
+        tick: system.currentTick,
+        amount: event.damage,
+        projectile: event.damageSource.damagingProjectile?.id,
+      });
       target.healthAfter = event.hurtEntity.getComponent("minecraft:health")?.currentValue ?? 0;
     }
-    if (!fixture?.closed && fixture?.incoming && event.hurtEntity.id === fixture.incoming.playerId) {
-      fixture.incoming.damage.push({ tick: system.currentTick, amount: event.damage, projectile: event.damageSource.damagingProjectile?.id });
+    if (
+      !fixture?.closed &&
+      fixture?.incoming &&
+      event.hurtEntity.id === fixture.incoming.playerId
+    ) {
+      fixture.incoming.damage.push({
+        tick: system.currentTick,
+        amount: event.damage,
+        projectile: event.damageSource.damagingProjectile?.id,
+      });
     }
   });
 
-  for (const [id, item, mode] of [["bow-release", "bow", "release"], ["bow-cancel", "bow", "cancel"],
-    ["bow-no-ammo", "bow", "empty"], ["crossbow-load", "crossbow", "load"],
-    ["crossbow-retain", "crossbow", "retain"], ["crossbow-fire", "crossbow", "fire"],
-    ["splash-potion-throw", "splash_potion", "throw"], ["lingering-potion-throw", "lingering_potion", "throw"],
-    ["bow-short-release", "bow", "release"], ["bow-water-release", "bow", "release"],
-    ["crossbow-cancel", "crossbow", "cancel"], ["crossbow-no-ammo", "crossbow", "empty"],
-    ["bow-hit", "bow", "release"], ["crossbow-hit", "crossbow", "fire"],
-    ["bow-infinity", "bow", "release"], ["bow-infinity-no-ammo", "bow", "empty"],
+  for (const [id, item, mode] of [
+    ["bow-release", "bow", "release"],
+    ["bow-cancel", "bow", "cancel"],
+    ["bow-no-ammo", "bow", "empty"],
+    ["crossbow-load", "crossbow", "load"],
+    ["crossbow-retain", "crossbow", "retain"],
+    ["crossbow-fire", "crossbow", "fire"],
+    ["splash-potion-throw", "splash_potion", "throw"],
+    ["lingering-potion-throw", "lingering_potion", "throw"],
+    ["bow-short-release", "bow", "release"],
+    ["bow-water-release", "bow", "release"],
+    ["crossbow-cancel", "crossbow", "cancel"],
+    ["crossbow-no-ammo", "crossbow", "empty"],
+    ["bow-hit", "bow", "release"],
+    ["crossbow-hit", "crossbow", "fire"],
+    ["bow-infinity", "bow", "release"],
+    ["bow-infinity-no-ammo", "bow", "empty"],
     ["crossbow-multishot", "crossbow", "fire"],
-    ["crossbow-quick-charge-1", "crossbow", "fire"], ["crossbow-quick-charge-2", "crossbow", "fire"],
+    ["crossbow-quick-charge-1", "crossbow", "fire"],
+    ["crossbow-quick-charge-2", "crossbow", "fire"],
     ["crossbow-quick-charge-3", "crossbow", "fire"],
-    ["bow-knockback-release", "bow", "release"], ["bow-knockback-cancel", "bow", "cancel"],
-    ["crossbow-knockback-fire", "crossbow", "fire"], ["crossbow-knockback-cancel", "crossbow", "cancel"],
-    ["bow-server-slot-use", "bow", "cancel"], ["crossbow-server-slot-use", "crossbow", "cancel"]] as const) {
+    ["bow-knockback-release", "bow", "release"],
+    ["bow-knockback-cancel", "bow", "cancel"],
+    ["crossbow-knockback-fire", "crossbow", "fire"],
+    ["crossbow-knockback-cancel", "crossbow", "cancel"],
+    ["bow-server-slot-use", "bow", "cancel"],
+    ["crossbow-server-slot-use", "crossbow", "cancel"],
+  ] as const) {
     const knockback = id.includes("-knockback-");
     const serverSlotUse = id.endsWith("-server-slot-use");
     const infinity = id === "bow-infinity" || id === "bow-infinity-no-ammo";
@@ -232,120 +457,230 @@ export function registerComplexGameplay(context: ProbeContext) {
       minChargeTicks: quickCharge ? 24 - 5 * quickCharge : undefined,
       maxChargeTicks: quickCharge ? 26 - 5 * quickCharge : undefined,
     };
-    define(id, "ranged", async (player) => {
-      await prepareArena(player);
-      if (id === "bow-water-release") {
-        for (let x = -2; x <= 2; x++) for (let z = -2; z <= 4; z++) for (const y of [0, 1, 2]) {
-          blockAt(player.dimension, x, y, z).setType("minecraft:water");
+    define(
+      id,
+      "ranged",
+      async (player) => {
+        await prepareArena(player);
+        if (id === "bow-water-release") {
+          for (let x = -2; x <= 2; x++)
+            for (let z = -2; z <= 4; z++)
+              for (const y of [0, 1, 2]) {
+                blockAt(player.dimension, x, y, z).setType("minecraft:water");
+              }
         }
-      }
-      const container = inventory(player);
-      const itemId = `minecraft:${item}`;
-      const weapon = new ItemStack(itemId);
-      if (infinity || multishot || quickCharge) {
-        const enchantable = weapon.getComponent("minecraft:enchantable");
-        if (!enchantable) throw new Error("The ranged weapon cannot receive its fixture enchantment.");
-        enchantable.addEnchantment({ type: new EnchantmentType(infinity ? "infinity" : multishot ? "multishot" : "quick_charge"),
-          level: quickCharge || 1 });
-      }
-      container.setItem(0, weapon);
-      if (serverSlotUse) container.setItem(1, new ItemStack("minecraft:snowball", 4));
-      const ammunition = mode === "throw" ? itemId : "minecraft:arrow";
-      if (mode !== "empty" && mode !== "throw") container.setItem(9, new ItemStack(ammunition, 4));
-      const initialCount = countItem(container, ammunition);
-      const ranged: RangedObservation = { item: itemId, ammunition, initialCount, remainingCount: initialCount, events: [], projectiles: [], slots: [] };
-      if (id === "bow-hit" || id === "crossbow-hit") {
-        const target = player.dimension.spawnEntity("minecraft:cow", position(0.5, 0, 4.5));
-        tagEntity(target);
-        target.addEffect("slowness", 400, { amplifier: 255, showParticles: false });
-        const health = target.getComponent("minecraft:health")?.currentValue;
-        if (health === undefined) throw new Error("Target health is unavailable.");
-        ranged.target = { id: target.id, healthBefore: health, healthAfter: health, damage: [] };
-        ranged.impacts = [];
-        player.teleport(position(), { rotation: { x: 5, y: 0 } });
-      }
-      const fixture = { ranged, closed: false, motion: motionFixture(player).motion,
-        serverSlotUse: serverSlotUse ? { pending: false, selection: undefined as ServerSlotUse["selection"],
-          followup: { item: "minecraft:snowball", ammunition: "minecraft:snowball", initialCount: 4, remainingCount: 4,
-            events: [], projectiles: [] } as RangedObservation } : undefined,
-        knockback: knockback ? { pending: false, impulse: undefined as KnockbackImpulse | undefined } : undefined };
-      return fixture;
-    }, (player, fixture) => {
-      fixture.closed = true;
-      fixture.ranged.remainingCount = countItem(inventory(player), fixture.ranged.ammunition);
-      if (fixture.serverSlotUse) fixture.serverSlotUse.followup.remainingCount = countItem(inventory(player), "minecraft:snowball");
-      const release = fixture.ranged.events.find((event) => event.action === "release");
-      const start = fixture.ranged.events.find((event) => event.action === "start");
-      const charge = release && start ? release.tick - start.tick : undefined;
-      return { passed: rangedObservationPasses(mode, fixture.ranged, expectation)
-          && (!serverSlotUse || serverSlotUsePasses(fixture.ranged, fixture.serverSlotUse))
-          && (id !== "bow-short-release" || (charge !== undefined && charge > 0 && charge <= 12))
-          && (id !== "bow-water-release" || fixture.motion.waterSamples >= 10)
-          && (!knockback || ((mode === "release" || mode === "fire" || mode === "cancel")
-            && !fixture.motion.error && rangedKnockbackPasses(mode, fixture.ranged, fixture.knockback?.impulse, fixture.motion.frames)))
-          && (id !== "bow-hit" || rangedHitPasses("release", fixture.ranged))
-          && (id !== "crossbow-hit" || rangedHitPasses("fire", fixture.ranged)),
-        observed: { ...fixture.ranged, charge, motion: fixture.motion, knockback: fixture.knockback?.impulse, serverSlotUse: fixture.serverSlotUse },
-        expected: { mode, ...expectation,
-          projectileCount: ["release", "fire", "retain", "throw"].includes(mode) ? expectation.projectileCount : 0 } };
-    });
+        const container = inventory(player);
+        const itemId = `minecraft:${item}`;
+        const weapon = new ItemStack(itemId);
+        if (infinity || multishot || quickCharge) {
+          const enchantable = weapon.getComponent("minecraft:enchantable");
+          if (!enchantable)
+            throw new Error("The ranged weapon cannot receive its fixture enchantment.");
+          enchantable.addEnchantment({
+            type: new EnchantmentType(
+              infinity ? "infinity" : multishot ? "multishot" : "quick_charge",
+            ),
+            level: quickCharge || 1,
+          });
+        }
+        container.setItem(0, weapon);
+        if (serverSlotUse) container.setItem(1, new ItemStack("minecraft:snowball", 4));
+        const ammunition = mode === "throw" ? itemId : "minecraft:arrow";
+        if (mode !== "empty" && mode !== "throw")
+          container.setItem(9, new ItemStack(ammunition, 4));
+        const initialCount = countItem(container, ammunition);
+        const ranged: RangedObservation = {
+          item: itemId,
+          ammunition,
+          initialCount,
+          remainingCount: initialCount,
+          events: [],
+          projectiles: [],
+          slots: [],
+        };
+        if (id === "bow-hit" || id === "crossbow-hit") {
+          const target = player.dimension.spawnEntity("minecraft:cow", position(0.5, 0, 4.5));
+          tagEntity(target);
+          target.addEffect("slowness", 400, { amplifier: 255, showParticles: false });
+          const health = target.getComponent("minecraft:health")?.currentValue;
+          if (health === undefined) throw new Error("Target health is unavailable.");
+          ranged.target = { id: target.id, healthBefore: health, healthAfter: health, damage: [] };
+          ranged.impacts = [];
+          player.teleport(position(), { rotation: { x: 5, y: 0 } });
+        }
+        const fixture = {
+          ranged,
+          closed: false,
+          motion: motionFixture(player).motion,
+          serverSlotUse: serverSlotUse
+            ? {
+                pending: false,
+                selection: undefined as ServerSlotUse["selection"],
+                followup: {
+                  item: "minecraft:snowball",
+                  ammunition: "minecraft:snowball",
+                  initialCount: 4,
+                  remainingCount: 4,
+                  events: [],
+                  projectiles: [],
+                } as RangedObservation,
+              }
+            : undefined,
+          knockback: knockback
+            ? { pending: false, impulse: undefined as KnockbackImpulse | undefined }
+            : undefined,
+        };
+        return fixture;
+      },
+      (player, fixture) => {
+        fixture.closed = true;
+        fixture.ranged.remainingCount = countItem(inventory(player), fixture.ranged.ammunition);
+        if (fixture.serverSlotUse)
+          fixture.serverSlotUse.followup.remainingCount = countItem(
+            inventory(player),
+            "minecraft:snowball",
+          );
+        const release = fixture.ranged.events.find((event) => event.action === "release");
+        const start = fixture.ranged.events.find((event) => event.action === "start");
+        const charge = release && start ? release.tick - start.tick : undefined;
+        return {
+          passed:
+            rangedObservationPasses(mode, fixture.ranged, expectation) &&
+            (!serverSlotUse || serverSlotUsePasses(fixture.ranged, fixture.serverSlotUse)) &&
+            (id !== "bow-short-release" || (charge !== undefined && charge > 0 && charge <= 12)) &&
+            (id !== "bow-water-release" || fixture.motion.waterSamples >= 10) &&
+            (!knockback ||
+              ((mode === "release" || mode === "fire" || mode === "cancel") &&
+                !fixture.motion.error &&
+                rangedKnockbackPasses(
+                  mode,
+                  fixture.ranged,
+                  fixture.knockback?.impulse,
+                  fixture.motion.frames,
+                ))) &&
+            (id !== "bow-hit" || rangedHitPasses("release", fixture.ranged)) &&
+            (id !== "crossbow-hit" || rangedHitPasses("fire", fixture.ranged)),
+          observed: {
+            ...fixture.ranged,
+            charge,
+            motion: fixture.motion,
+            knockback: fixture.knockback?.impulse,
+            serverSlotUse: fixture.serverSlotUse,
+          },
+          expected: {
+            mode,
+            ...expectation,
+            projectileCount: ["release", "fire", "retain", "throw"].includes(mode)
+              ? expectation.projectileCount
+              : 0,
+          },
+        };
+      },
+    );
   }
 
   for (const level of [0, 1, 4]) {
-    define(`crossbow-piercing-${level}`, "ranged", async (player) => {
-      await prepareArena(player);
-      // Tall targets catch the native trajectory. Spacing keeps consecutive ticks
-      // from hitting one wide target twice and consuming the piercing allowance.
-      for (let z = 2; z <= 24; z++) for (let x = -1; x <= 1; x++) {
-        blockAt(player.dimension, x, -1, z).setType("minecraft:stone");
-        for (let y = 0; y <= 3; y++) blockAt(player.dimension, x, y, z).setType("minecraft:air");
-      }
-      const crossbow = new ItemStack("minecraft:crossbow");
-      if (level) {
-        const enchantable = crossbow.getComponent("minecraft:enchantable");
-        if (!enchantable) throw new Error("The crossbow cannot receive its fixture enchantment.");
-        enchantable.addEnchantment({ type: new EnchantmentType("piercing"), level });
-      }
-      const container = inventory(player);
-      container.setItem(0, crossbow);
-      container.setItem(9, new ItemStack("minecraft:arrow", 4));
-      const targets: RangedTarget[] = [];
-      for (let index = 0; index < level + 2; index++) {
-        const entity = player.dimension.spawnEntity("minecraft:iron_golem", position(0.5, 0, 5.5 + 3 * index));
-        tagEntity(entity);
-        entity.addEffect("slowness", 400, { amplifier: 255, showParticles: false });
-        const health = entity.getComponent("minecraft:health")?.currentValue;
-        if (health === undefined) throw new Error("Piercing target health is unavailable.");
-        targets.push({ id: entity.id, healthBefore: health, healthAfter: health, damage: [] });
-      }
-      player.teleport(position(), { rotation: { x: 0, y: 0 } });
-      const ranged: RangedObservation = { item: crossbow.typeId, ammunition: "minecraft:arrow",
-        initialCount: 4, remainingCount: 4, events: [], projectiles: [], slots: [], impacts: [], targets };
-      return { ranged, closed: false as boolean };
-    }, (player, fixture) => {
-      fixture.closed = true;
-      fixture.ranged.remainingCount = countItem(inventory(player), fixture.ranged.ammunition);
-      return { passed: rangedPiercingPasses(fixture.ranged, level + 1), observed: fixture.ranged,
-        expected: { hitCount: level + 1, untouchedTargets: 1, projectileCount: 1, consumed: 1 } };
-    });
+    define(
+      `crossbow-piercing-${level}`,
+      "ranged",
+      async (player) => {
+        await prepareArena(player);
+        // Tall targets catch the native trajectory. Spacing keeps consecutive ticks
+        // from hitting one wide target twice and consuming the piercing allowance.
+        for (let z = 2; z <= 24; z++)
+          for (let x = -1; x <= 1; x++) {
+            blockAt(player.dimension, x, -1, z).setType("minecraft:stone");
+            for (let y = 0; y <= 3; y++)
+              blockAt(player.dimension, x, y, z).setType("minecraft:air");
+          }
+        const crossbow = new ItemStack("minecraft:crossbow");
+        if (level) {
+          const enchantable = crossbow.getComponent("minecraft:enchantable");
+          if (!enchantable) throw new Error("The crossbow cannot receive its fixture enchantment.");
+          enchantable.addEnchantment({ type: new EnchantmentType("piercing"), level });
+        }
+        const container = inventory(player);
+        container.setItem(0, crossbow);
+        container.setItem(9, new ItemStack("minecraft:arrow", 4));
+        const targets: RangedTarget[] = [];
+        for (let index = 0; index < level + 2; index++) {
+          const entity = player.dimension.spawnEntity(
+            "minecraft:iron_golem",
+            position(0.5, 0, 5.5 + 3 * index),
+          );
+          tagEntity(entity);
+          entity.addEffect("slowness", 400, { amplifier: 255, showParticles: false });
+          const health = entity.getComponent("minecraft:health")?.currentValue;
+          if (health === undefined) throw new Error("Piercing target health is unavailable.");
+          targets.push({ id: entity.id, healthBefore: health, healthAfter: health, damage: [] });
+        }
+        player.teleport(position(), { rotation: { x: 0, y: 0 } });
+        const ranged: RangedObservation = {
+          item: crossbow.typeId,
+          ammunition: "minecraft:arrow",
+          initialCount: 4,
+          remainingCount: 4,
+          events: [],
+          projectiles: [],
+          slots: [],
+          impacts: [],
+          targets,
+        };
+        return { ranged, closed: false as boolean };
+      },
+      (player, fixture) => {
+        fixture.closed = true;
+        fixture.ranged.remainingCount = countItem(inventory(player), fixture.ranged.ammunition);
+        return {
+          passed: rangedPiercingPasses(fixture.ranged, level + 1),
+          observed: fixture.ranged,
+          expected: { hitCount: level + 1, untouchedTargets: 1, projectileCount: 1, consumed: 1 },
+        };
+      },
+    );
   }
 
   for (const lingering of [false, true]) {
-    define(lingering ? "lingering-potion-slowness" : "splash-potion-speed", "ranged", async (player) => {
-      await prepareArena(player);
-      const item = Potions.resolve(lingering ? "minecraft:slowness" : "minecraft:swiftness", lingering ? "ThrownLingering" : "ThrownSplash");
-      inventory(player).setItem(0, item);
-      player.teleport(position(), { rotation: { x: 80, y: 0 } });
-      const ranged: RangedObservation = { item: item.typeId, ammunition: item.typeId, initialCount: 1, remainingCount: 1,
-        events: [], projectiles: [], slots: [], impacts: [], effects: [], clouds: [] };
-      return { ranged, closed: false as boolean, motion: motionFixture(player).motion };
-    }, (player, fixture) => {
-      fixture.closed = true;
-      fixture.ranged.remainingCount = countItem(inventory(player), fixture.ranged.ammunition);
-      return { passed: potionImpactPasses(fixture.ranged, lingering ? "minecraft:slowness" : "minecraft:speed", lingering),
-        observed: { ...fixture.ranged, motion: fixture.motion },
-        expected: "One consumed potion, an owned projectile impact, and the matching effect; lingering use also creates a nearby cloud." };
-    });
+    define(
+      lingering ? "lingering-potion-slowness" : "splash-potion-speed",
+      "ranged",
+      async (player) => {
+        await prepareArena(player);
+        const item = Potions.resolve(
+          lingering ? "minecraft:slowness" : "minecraft:swiftness",
+          lingering ? "ThrownLingering" : "ThrownSplash",
+        );
+        inventory(player).setItem(0, item);
+        player.teleport(position(), { rotation: { x: 80, y: 0 } });
+        const ranged: RangedObservation = {
+          item: item.typeId,
+          ammunition: item.typeId,
+          initialCount: 1,
+          remainingCount: 1,
+          events: [],
+          projectiles: [],
+          slots: [],
+          impacts: [],
+          effects: [],
+          clouds: [],
+        };
+        return { ranged, closed: false as boolean, motion: motionFixture(player).motion };
+      },
+      (player, fixture) => {
+        fixture.closed = true;
+        fixture.ranged.remainingCount = countItem(inventory(player), fixture.ranged.ammunition);
+        return {
+          passed: potionImpactPasses(
+            fixture.ranged,
+            lingering ? "minecraft:slowness" : "minecraft:speed",
+            lingering,
+          ),
+          observed: { ...fixture.ranged, motion: fixture.motion },
+          expected:
+            "One consumed potion, an owned projectile impact, and the matching effect; lingering use also creates a nearby cloud.",
+        };
+      },
+    );
   }
 
   system.runInterval(() => {
@@ -354,23 +689,43 @@ export function registerComplexGameplay(context: ProbeContext) {
     const player = world.getAllPlayers().find((candidate) => candidate.name === current.playerName);
     if (!player) return;
     const incoming = current.fixture.incoming;
-    if (incoming?.projectileId && incoming.playerFrames.length < 200
-        && incoming.playerFrames.at(-1)?.tick !== system.currentTick) {
+    if (
+      incoming?.projectileId &&
+      incoming.playerFrames.length < 200 &&
+      incoming.playerFrames.at(-1)?.tick !== system.currentTick
+    ) {
       try {
-        incoming.playerFrames.push({ tick: system.currentTick, position: { ...player.location }, velocity: player.getVelocity() });
-      } catch (error) { incoming.error = String(error); }
+        incoming.playerFrames.push({
+          tick: system.currentTick,
+          position: { ...player.location },
+          velocity: player.getVelocity(),
+        });
+      } catch (error) {
+        incoming.error = String(error);
+      }
     }
-    if (incoming && current.fixture.projectile?.isValid && incoming.frames.length < 200
-        && incoming.frames.at(-1)?.tick !== system.currentTick) {
+    if (
+      incoming &&
+      current.fixture.projectile?.isValid &&
+      incoming.frames.length < 200 &&
+      incoming.frames.at(-1)?.tick !== system.currentTick
+    ) {
       try {
         const projectile = current.fixture.projectile;
-        incoming.frames.push({ tick: system.currentTick, position: { ...projectile.getAABB().center }, velocity: projectile.getVelocity(),
-          owner: projectile.getComponent("minecraft:projectile")?.owner?.id });
-      } catch (error) { incoming.error = String(error); }
+        incoming.frames.push({
+          tick: system.currentTick,
+          position: { ...projectile.getAABB().center },
+          velocity: projectile.getVelocity(),
+          owner: projectile.getComponent("minecraft:projectile")?.owner?.id,
+        });
+      } catch (error) {
+        incoming.error = String(error);
+      }
     }
     if (current.fixture.ranged) {
-      const slots = current.fixture.ranged.slots!;
-      if (slots.at(-1)?.slot !== player.selectedSlotIndex) slots.push({ slot: player.selectedSlotIndex, tick: system.currentTick });
+      const slots = current.fixture.ranged.slots;
+      if (slots && slots.at(-1)?.slot !== player.selectedSlotIndex)
+        slots.push({ slot: player.selectedSlotIndex, tick: system.currentTick });
     }
     const motion = current.fixture.motion;
     if (!motion) return;
@@ -380,180 +735,319 @@ export function registerComplexGameplay(context: ProbeContext) {
       motion.maxY = Math.max(motion.maxY, player.location.y);
       if (player.isInWater) motion.waterSamples++;
       if (player.isFlying) motion.flightSamples++;
-      const block = player.dimension.getBlock({ x: Math.floor(player.location.x), y: Math.floor(player.location.y), z: Math.floor(player.location.z) });
+      const block = player.dimension.getBlock({
+        x: Math.floor(player.location.x),
+        y: Math.floor(player.location.y),
+        z: Math.floor(player.location.z),
+      });
       const depth = block?.permutation.getState("liquid_depth");
       const liquidDepth = typeof depth === "number" ? depth : undefined;
-      if (block?.typeId === "minecraft:lava" || block?.typeId === "minecraft:flowing_lava") motion.lavaSamples++;
+      if (block?.typeId === "minecraft:lava" || block?.typeId === "minecraft:flowing_lava")
+        motion.lavaSamples++;
       if (block?.typeId === "minecraft:bubble_column") motion.bubbleSamples++;
       if (player.isInWater && liquidDepth !== undefined && liquidDepth > 0) motion.flowingSamples++;
-      if (motion.frames.length < 200) motion.frames.push({ tick: system.currentTick, position: { ...player.location },
-        velocity: player.getVelocity(), inWater: player.isInWater, flying: player.isFlying, onGround: player.isOnGround,
-        block: block?.typeId ?? "unavailable", liquidDepth });
+      if (motion.frames.length < 200)
+        motion.frames.push({
+          tick: system.currentTick,
+          position: { ...player.location },
+          velocity: player.getVelocity(),
+          inWater: player.isInWater,
+          flying: player.isFlying,
+          onGround: player.isOnGround,
+          block: block?.typeId ?? "unavailable",
+          liquidDepth,
+        });
     } catch (error) {
       motion.error = String(error);
     }
   }, 1);
 
-  function motionFixture(player: Player) {
-    const motion: MotionObservation = { start: { ...player.location }, samples: 0, minY: player.location.y,
-      maxY: player.location.y, waterSamples: 0, flightSamples: 0, lavaSamples: 0, bubbleSamples: 0, flowingSamples: 0, frames: [] };
-    return { motion, closed: false };
-  }
-
   for (const boots of [false, true]) {
-    define(boots ? "powder-snow-boots" : "powder-snow-sink", "terrain", async (player) => {
-      await prepareArena(player);
-      for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) {
-        blockAt(player.dimension, x, -3, z).setType("minecraft:stone");
-        for (const y of [-2, -1]) blockAt(player.dimension, x, y, z).setType("minecraft:powder_snow");
-      }
-      if (boots) equipment(player).setEquipment(EquipmentSlot.Feet, new ItemStack("minecraft:leather_boots"));
-      player.teleport(position());
-      return motionFixture(player);
-    }, (player, fixture) => {
-      fixture.closed = true;
-      const motion = fixture.motion;
-      const displacement = player.location.y - motion.start.y;
-      return { passed: !motion.error && motion.samples >= 10 && (boots
-          ? motion.minY >= motion.start.y - 0.05 && Math.abs(displacement) < 0.05
-          : motion.minY < motion.start.y - 0.25 && displacement < -0.25),
-        observed: { ...motion, displacement, boots: equipment(player).getEquipment(EquipmentSlot.Feet)?.typeId },
-        expected: boots ? "Leather boots keep the player on the powder snow surface." : "The player sinks into powder snow." };
-    });
+    define(
+      boots ? "powder-snow-boots" : "powder-snow-sink",
+      "terrain",
+      async (player) => {
+        await prepareArena(player);
+        for (let x = -1; x <= 1; x++)
+          for (let z = -1; z <= 1; z++) {
+            blockAt(player.dimension, x, -3, z).setType("minecraft:stone");
+            for (const y of [-2, -1])
+              blockAt(player.dimension, x, y, z).setType("minecraft:powder_snow");
+          }
+        if (boots)
+          equipment(player).setEquipment(
+            EquipmentSlot.Feet,
+            new ItemStack("minecraft:leather_boots"),
+          );
+        player.teleport(position());
+        return motionFixture(player);
+      },
+      (player, fixture) => {
+        fixture.closed = true;
+        const motion = fixture.motion;
+        const displacement = player.location.y - motion.start.y;
+        return {
+          passed:
+            !motion.error &&
+            motion.samples >= 10 &&
+            (boots
+              ? motion.minY >= motion.start.y - 0.05 && Math.abs(displacement) < 0.05
+              : motion.minY < motion.start.y - 0.25 && displacement < -0.25),
+          observed: {
+            ...motion,
+            displacement,
+            boots: equipment(player).getEquipment(EquipmentSlot.Feet)?.typeId,
+          },
+          expected: boots
+            ? "Leather boots keep the player on the powder snow surface."
+            : "The player sinks into powder snow.",
+        };
+      },
+    );
   }
 
-  define("water-forward", "fluids", async (player) => {
-    await prepareArena(player);
-    for (let x = -2; x <= 2; x++) for (let z = -2; z <= 4; z++) {
-      for (const y of [0, 1, 2]) blockAt(player.dimension, x, y, z).setType("minecraft:water");
-    }
-    player.teleport(position());
-    return { ...motionFixture(player), forward: player.getViewDirection() };
-  }, (player, fixture) => {
-    fixture.closed = true;
-    const delta = { x: player.location.x - fixture.motion.start.x, z: player.location.z - fixture.motion.start.z };
-    const forward = delta.x * fixture.forward.x + delta.z * fixture.forward.z;
-    return { passed: !fixture.motion.error && fixture.motion.waterSamples >= 10 && forward > 0.6,
-      observed: { ...fixture.motion, delta, forward }, expected: "Forward movement of at least 0.6 blocks with ten water samples." };
-  });
+  define(
+    "water-forward",
+    "fluids",
+    async (player) => {
+      await prepareArena(player);
+      for (let x = -2; x <= 2; x++)
+        for (let z = -2; z <= 4; z++) {
+          for (const y of [0, 1, 2]) blockAt(player.dimension, x, y, z).setType("minecraft:water");
+        }
+      player.teleport(position());
+      return { ...motionFixture(player), forward: player.getViewDirection() };
+    },
+    (player, fixture) => {
+      fixture.closed = true;
+      const delta = {
+        x: player.location.x - fixture.motion.start.x,
+        z: player.location.z - fixture.motion.start.z,
+      };
+      const forward = delta.x * fixture.forward.x + delta.z * fixture.forward.z;
+      return {
+        passed: !fixture.motion.error && fixture.motion.waterSamples >= 10 && forward > 0.6,
+        observed: { ...fixture.motion, delta, forward },
+        expected: "Forward movement of at least 0.6 blocks with ten water samples.",
+      };
+    },
+  );
 
-  define("water-current", "fluids", async (player) => {
-    await prepareArena(player);
-    for (let z = -1; z <= 8; z++) {
-      blockAt(player.dimension, 0, -1, z).setType("minecraft:stone");
-      for (let y = 0; y <= 2; y++) for (const x of [-1, 1]) blockAt(player.dimension, x, y, z).setType("minecraft:stone");
-    }
-    for (const z of [-1, 8]) for (let y = 0; y <= 2; y++) blockAt(player.dimension, 0, y, z).setType("minecraft:stone");
-    // Server commands schedule fluid updates; a Script API permutation can remain stationary.
-    const source = blockAt(player.dimension, 0, 0, 0).location;
-    player.runCommand(`setblock ${source.x} ${source.y} ${source.z} flowing_water`);
-    await new Promise<void>((resolve) => system.runTimeout(resolve, 40));
-    player.teleport(position(0.5, 0, 1.5), { rotation: { x: 0, y: 0 } });
-    return motionFixture(player);
-  }, (player, fixture) => {
-    fixture.closed = true;
-    const delta = player.location.z - fixture.motion.start.z;
-    return { passed: !fixture.motion.error && fixture.motion.flowingSamples >= 10 && delta > 0.25,
-      observed: { ...fixture.motion, delta }, expected: "Flowing water moves an idle player downstream with ten flowing-water samples." };
-  });
+  define(
+    "water-current",
+    "fluids",
+    async (player) => {
+      await prepareArena(player);
+      for (let z = -1; z <= 8; z++) {
+        blockAt(player.dimension, 0, -1, z).setType("minecraft:stone");
+        for (let y = 0; y <= 2; y++)
+          for (const x of [-1, 1]) blockAt(player.dimension, x, y, z).setType("minecraft:stone");
+      }
+      for (const z of [-1, 8])
+        for (let y = 0; y <= 2; y++) blockAt(player.dimension, 0, y, z).setType("minecraft:stone");
+      // Server commands schedule fluid updates; a Script API permutation can remain stationary.
+      const source = blockAt(player.dimension, 0, 0, 0).location;
+      player.runCommand(`setblock ${source.x} ${source.y} ${source.z} flowing_water`);
+      await waitTicks(40);
+      player.teleport(position(0.5, 0, 1.5), { rotation: { x: 0, y: 0 } });
+      return motionFixture(player);
+    },
+    (player, fixture) => {
+      fixture.closed = true;
+      const delta = player.location.z - fixture.motion.start.z;
+      return {
+        passed: !fixture.motion.error && fixture.motion.flowingSamples >= 10 && delta > 0.25,
+        observed: { ...fixture.motion, delta },
+        expected: "Flowing water moves an idle player downstream with ten flowing-water samples.",
+      };
+    },
+  );
 
-  define("lava-forward", "fluids", async (player) => {
-    await prepareArena(player);
-    player.addEffect("fire_resistance", 400, { showParticles: false });
-    for (let x = -2; x <= 2; x++) for (let z = -2; z <= 4; z++) for (const y of [0, 1, 2]) {
-      blockAt(player.dimension, x, y, z).setType("minecraft:lava");
-    }
-    player.teleport(position());
-    return { ...motionFixture(player), forward: player.getViewDirection() };
-  }, (player, fixture) => {
-    fixture.closed = true;
-    const delta = { x: player.location.x - fixture.motion.start.x, z: player.location.z - fixture.motion.start.z };
-    const forward = delta.x * fixture.forward.x + delta.z * fixture.forward.z;
-    return { passed: !fixture.motion.error && fixture.motion.lavaSamples >= 10 && forward > 0.25,
-      observed: { ...fixture.motion, forward, delta }, expected: "Forward travel in lava with ten lava samples and fire resistance." };
-  });
+  define(
+    "lava-forward",
+    "fluids",
+    async (player) => {
+      await prepareArena(player);
+      player.addEffect("fire_resistance", 400, { showParticles: false });
+      for (let x = -2; x <= 2; x++)
+        for (let z = -2; z <= 4; z++)
+          for (const y of [0, 1, 2]) {
+            blockAt(player.dimension, x, y, z).setType("minecraft:lava");
+          }
+      player.teleport(position());
+      return { ...motionFixture(player), forward: player.getViewDirection() };
+    },
+    (player, fixture) => {
+      fixture.closed = true;
+      const delta = {
+        x: player.location.x - fixture.motion.start.x,
+        z: player.location.z - fixture.motion.start.z,
+      };
+      const forward = delta.x * fixture.forward.x + delta.z * fixture.forward.z;
+      return {
+        passed: !fixture.motion.error && fixture.motion.lavaSamples >= 10 && forward > 0.25,
+        observed: { ...fixture.motion, forward, delta },
+        expected: "Forward travel in lava with ten lava samples and fire resistance.",
+      };
+    },
+  );
 
   for (const down of [false, true]) {
-    define(down ? "bubble-column-down" : "bubble-column-up", "fluids", async (player) => {
-      await prepareArena(player);
-      for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) {
-        blockAt(player.dimension, x, -4, z).setType(down ? "minecraft:magma" : "minecraft:soul_sand");
-        for (let y = -3; y <= 2; y++) blockAt(player.dimension, x, y, z).setType("minecraft:water");
-      }
-      await new Promise<void>((resolve) => system.runTimeout(resolve, 40));
-      player.teleport(position(0.5, 0, 0.5));
+    define(
+      down ? "bubble-column-down" : "bubble-column-up",
+      "fluids",
+      async (player) => {
+        await prepareArena(player);
+        for (let x = -1; x <= 1; x++)
+          for (let z = -1; z <= 1; z++) {
+            blockAt(player.dimension, x, -4, z).setType(
+              down ? "minecraft:magma" : "minecraft:soul_sand",
+            );
+            for (let y = -3; y <= 2; y++)
+              blockAt(player.dimension, x, y, z).setType("minecraft:water");
+          }
+        await waitTicks(40);
+        player.teleport(position(0.5, 0, 0.5));
+        return motionFixture(player);
+      },
+      (player, fixture) => {
+        fixture.closed = true;
+        const delta = player.location.y - fixture.motion.start.y;
+        return {
+          passed:
+            !fixture.motion.error &&
+            fixture.motion.bubbleSamples >= 10 &&
+            (down ? delta < -0.5 : delta > 0.5),
+          observed: { ...fixture.motion, delta },
+          expected:
+            "An idle player moves in the column's direction with ten bubble-column samples.",
+        };
+      },
+    );
+  }
+
+  for (const [id, small, mode] of [
+    ["fireball-hit", false, "hit"],
+    ["fireball-dodge", false, "dodge"],
+    ["fireball-reflect", false, "reflect"],
+    ["small-fireball-hit", true, "hit"],
+    ["small-fireball-dodge", true, "dodge"],
+  ] as const) {
+    define(
+      id,
+      "combat",
+      async (player) => {
+        await prepareArena(player);
+        player.runCommand("difficulty normal");
+        // Rain damages the exposed blaze and can kill it before a qualifying shot.
+        // Separate weather controls cover that interaction.
+        // Bedrock weather duration is in ticks: keep this control dry for two minutes.
+        player.runCommand("weather clear 2400");
+        for (let x = -8; x <= 8; x++)
+          for (let z = -8; z <= 14; z++) {
+            blockAt(player.dimension, x, -1, z).setType("minecraft:stone");
+            for (let y = 0; y <= 5; y++)
+              blockAt(player.dimension, x, y, z).setType("minecraft:air");
+          }
+        // The native rain level fades after the command. Let that transition finish.
+        await waitTicks(80);
+        player.teleport(position(), { rotation: { x: 0, y: 0 } });
+        const health = player.getComponent("minecraft:health")?.currentValue;
+        if (health === undefined) throw new Error("Player health is unavailable.");
+        const incoming: IncomingProjectileObservation = {
+          playerId: player.id,
+          shooterId: "",
+          type: small ? "minecraft:small_fireball" : "minecraft:fireball",
+          start: { ...player.location },
+          end: { ...player.location },
+          forward: player.getViewDirection(),
+          healthBefore: health,
+          healthAfter: health,
+          playerBounds: player.getAABB(),
+          collisionObstacles: [
+            { center: position(0.5, -0.5, 3.5), extent: { x: 8.5, y: 0.5, z: 11.5 } },
+          ],
+          launches: [],
+          frames: [],
+          playerFrames: [],
+          attacks: [],
+          hits: [],
+          damage: [],
+        };
+        if (mode === "dodge") {
+          incoming.clearancePlane = {
+            point: {
+              x: incoming.start.x - incoming.forward.x,
+              y: incoming.start.y,
+              z: incoming.start.z - incoming.forward.z,
+            },
+            normal: { ...incoming.forward },
+          };
+        }
+        return {
+          incoming,
+          closed: false as boolean,
+          projectile: undefined as Entity | undefined,
+          shooter: undefined as Entity | undefined,
+        };
+      },
+      (player, fixture) => {
+        fixture.closed = true;
+        fixture.incoming.end = { ...player.location };
+        fixture.incoming.healthAfter = player.getComponent("minecraft:health")?.currentValue ?? 0;
+        return {
+          passed: incomingProjectilePasses(mode, fixture.incoming),
+          observed: fixture.incoming,
+          expected:
+            mode === "hit"
+              ? "A genuine incoming projectile hits and damages the player."
+              : mode === "dodge"
+                ? "The player moves aside, the projectile passes the original position, and the player takes no damage."
+                : "A player attack reverses the incoming projectile and changes its owner without damaging the player.",
+        };
+      },
+      async (player, fixture) => {
+        const shooter = player.dimension.spawnEntity(
+          small ? "minecraft:blaze" : "minecraft:ghast",
+          position(0.5, small ? 0 : -1, 12.5),
+        );
+        tagEntity(shooter);
+        shooter.addEffect("slowness", 400, { amplifier: 255, showParticles: false });
+        fixture.shooter = shooter;
+        fixture.incoming.shooterId = shooter.id;
+        if (small) shooter.triggerEvent("switch_to_ranged");
+        // Wait for the actual shot, so HUD loading time cannot consume the dodge window.
+        for (let tick = 0; tick < 400; tick++) {
+          if (getActive()?.fixture !== fixture || fixture.closed)
+            throw new Error("The projectile fixture was replaced.");
+          if (fixture.incoming.error) throw new Error(fixture.incoming.error);
+          if (fixture.incoming.projectileId) return;
+          await waitTicks(1);
+        }
+        fixture.closed = true;
+        if (shooter.isValid) shooter.remove();
+        throw new Error(
+          "The native shooter did not produce a projectile on a collision course within twenty seconds.",
+        );
+      },
+    );
+  }
+
+  define(
+    "creative-flight-ascend",
+    "flight",
+    async (player) => {
+      await prepareArena(player, GameMode.Creative);
       return motionFixture(player);
-    }, (player, fixture) => {
+    },
+    (player, fixture) => {
       fixture.closed = true;
-      const delta = player.location.y - fixture.motion.start.y;
-      return { passed: !fixture.motion.error && fixture.motion.bubbleSamples >= 10 && (down ? delta < -0.5 : delta > 0.5),
-        observed: { ...fixture.motion, delta }, expected: "An idle player moves in the column's direction with ten bubble-column samples." };
-    });
-  }
-
-  for (const [id, small, mode] of [["fireball-hit", false, "hit"], ["fireball-dodge", false, "dodge"],
-    ["fireball-reflect", false, "reflect"], ["small-fireball-hit", true, "hit"], ["small-fireball-dodge", true, "dodge"]] as const) {
-    define(id, "combat", async (player) => {
-      await prepareArena(player);
-      player.runCommand("difficulty normal");
-      // Rain damages the exposed blaze and can kill it before a qualifying shot.
-      // Separate weather controls cover that interaction.
-      // Bedrock weather duration is in ticks: keep this control dry for two minutes.
-      player.runCommand("weather clear 2400");
-      for (let x = -8; x <= 8; x++) for (let z = -8; z <= 14; z++) {
-        blockAt(player.dimension, x, -1, z).setType("minecraft:stone");
-        for (let y = 0; y <= 5; y++) blockAt(player.dimension, x, y, z).setType("minecraft:air");
-      }
-      // The native rain level fades after the command. Let that transition finish.
-      await new Promise<void>((resolve) => system.runTimeout(resolve, 80));
-      player.teleport(position(), { rotation: { x: 0, y: 0 } });
-      const health = player.getComponent("minecraft:health")?.currentValue;
-      if (health === undefined) throw new Error("Player health is unavailable.");
-      const incoming: IncomingProjectileObservation = { playerId: player.id, shooterId: "", type: small ? "minecraft:small_fireball" : "minecraft:fireball",
-        start: { ...player.location }, end: { ...player.location }, forward: player.getViewDirection(), healthBefore: health, healthAfter: health,
-        playerBounds: player.getAABB(),
-        collisionObstacles: [{ center: position(0.5, -0.5, 3.5), extent: { x: 8.5, y: 0.5, z: 11.5 } }],
-        launches: [], frames: [], playerFrames: [], attacks: [], hits: [], damage: [] };
-      if (mode === "dodge") {
-        incoming.clearancePlane = { point: { x: incoming.start.x - incoming.forward.x,
-          y: incoming.start.y, z: incoming.start.z - incoming.forward.z }, normal: { ...incoming.forward } };
-      }
-      return { incoming, closed: false as boolean, projectile: undefined as Entity | undefined, shooter: undefined as Entity | undefined };
-    }, (player, fixture) => {
-      fixture.closed = true;
-      fixture.incoming.end = { ...player.location };
-      fixture.incoming.healthAfter = player.getComponent("minecraft:health")?.currentValue ?? 0;
-      return { passed: incomingProjectilePasses(mode, fixture.incoming), observed: fixture.incoming,
-        expected: mode === "hit" ? "A genuine incoming projectile hits and damages the player."
-          : mode === "dodge" ? "The player moves aside, the projectile passes the original position, and the player takes no damage."
-          : "A player attack reverses the incoming projectile and changes its owner without damaging the player." };
-    }, async (player, fixture) => {
-      const shooter = player.dimension.spawnEntity(small ? "minecraft:blaze" : "minecraft:ghast", position(0.5, small ? 0 : -1, 12.5));
-      tagEntity(shooter);
-      shooter.addEffect("slowness", 400, { amplifier: 255, showParticles: false });
-      fixture.shooter = shooter;
-      fixture.incoming.shooterId = shooter.id;
-      if (small) shooter.triggerEvent("switch_to_ranged");
-      // Wait for the actual shot, so HUD loading time cannot consume the dodge window.
-      for (let tick = 0; tick < 400; tick++) {
-        if (getActive()?.fixture !== fixture || fixture.closed) throw new Error("The projectile fixture was replaced.");
-        if (fixture.incoming.error) throw new Error(fixture.incoming.error);
-        if (fixture.incoming.projectileId) return;
-        await new Promise<void>((resolve) => system.runTimeout(resolve, 1));
-      }
-      fixture.closed = true;
-      if (shooter.isValid) shooter.remove();
-      throw new Error("The native shooter did not produce a projectile on a collision course within twenty seconds.");
-    });
-  }
-
-  define("creative-flight-ascend", "flight", async (player) => {
-    await prepareArena(player, GameMode.Creative);
-    return motionFixture(player);
-  }, (player, fixture) => {
-    fixture.closed = true;
-    const ascent = player.location.y - fixture.motion.start.y;
-    return { passed: !fixture.motion.error && fixture.motion.flightSamples >= 10 && ascent > 1,
-      observed: { ...fixture.motion, ascent }, expected: "Creative flight remains active for ten samples and ascends more than one block." };
-  });
+      const ascent = player.location.y - fixture.motion.start.y;
+      return {
+        passed: !fixture.motion.error && fixture.motion.flightSamples >= 10 && ascent > 1,
+        observed: { ...fixture.motion, ascent },
+        expected: "Creative flight remains active for ten samples and ascends more than one block.",
+      };
+    },
+  );
 }

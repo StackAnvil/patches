@@ -32,44 +32,47 @@ export function geyserEntityUpdatesMatch(id: string, observed: unknown, log: str
   ].map((match) => ({ uuid: match[1], phase: Number(match[2]), health: Number(match[3]) }));
   if (id === "complex-world") {
     if (
-      !Array.isArray(value.entityIds) ||
-      value.entityIds.length !== 24 ||
-      new Set(value.entityIds).size !== 24
+      !Array.isArray(value["entityIds"]) ||
+      value["entityIds"].length !== 24 ||
+      new Set(value["entityIds"]).size !== 24
     )
       return false;
-    return value.entityIds.every(
+    return value["entityIds"].every(
       (uuid) =>
         new Set(updates.filter((update) => update.uuid === uuid).map((update) => update.phase))
           .size > 1,
     );
   }
-  if (typeof value.uuid !== "string") return false;
+  if (typeof value["uuid"] !== "string") return false;
   if (id === "custom-entity-attack") {
     const { health } = value;
     return (
       typeof health === "number" &&
       health < 20 &&
       updates.some(
-        (update) => update.uuid === value.uuid && Math.abs(update.health * 20 - health) < 0.001,
+        (update) => update.uuid === value["uuid"] && Math.abs(update.health * 20 - health) < 0.001,
       )
     );
   }
   return (
     id === "custom-entity-interact" &&
-    value.phase === 1 &&
-    updates.some((update) => update.uuid === value.uuid && update.phase === value.phase)
+    value["phase"] === 1 &&
+    updates.some((update) => update.uuid === value["uuid"] && update.phase === value["phase"])
   );
 }
 
+const texture = (name: string) =>
+  Bun.file(join(source, "resource_pack", "textures", name))
+    .arrayBuffer()
+    .then((bytes) => Buffer.from(bytes));
+
 export async function convertedGeyserTexturesMatch(proxyHome: string): Promise<boolean> {
   const converted = join(proxyHome, "viabedrock", "server_packs", "converted");
-  const expected = await Promise.all(
-    ["items/probe_token.png", "entity/probe.png", "blocks/probe_block.png"].map((name) =>
-      Bun.file(join(source, "resource_pack", "textures", name))
-        .arrayBuffer()
-        .then((bytes) => Buffer.from(bytes)),
-    ),
-  );
+  const [expectedItem, expectedEntity, expectedBlock] = await Promise.all([
+    texture("items/probe_token.png"),
+    texture("entity/probe.png"),
+    texture("blocks/probe_block.png"),
+  ]);
   for (const file of await readdir(converted)) {
     if (!file.endsWith(".zip")) continue;
     const zip = join(converted, file);
@@ -95,11 +98,11 @@ export async function convertedGeyserTexturesMatch(proxyHome: string): Promise<b
           maxBuffer: 16 * 1024 * 1024,
         })
       ).stdout;
-    if (!(await read(item)).equals(expected[0]) || !(await read(entity)).equals(expected[1]))
+    if (!(await read(item)).equals(expectedItem) || !(await read(entity)).equals(expectedEntity))
       continue;
     for (const block of blocks) {
       if (
-        (await read(block)).equals(expected[2]) &&
+        (await read(block)).equals(expectedBlock) &&
         entries.includes(block.replace("/textures/", "/models/").replace(/\.png$/, ".json"))
       )
         return true;

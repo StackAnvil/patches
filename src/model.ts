@@ -139,7 +139,7 @@ export async function getSeries(id: string, repository = root): Promise<Series> 
       if (
         !targets[prerequisite.project] ||
         !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.patch$/.test(prerequisite.patch) ||
-        !prerequisite.reason?.trim() ||
+        !prerequisite.reason.trim() ||
         (prerequisite.testOnly !== undefined && typeof prerequisite.testOnly !== "boolean")
       ) {
         throw new Error(`Invalid prerequisite for ${id}/${patch.file}`);

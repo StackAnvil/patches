@@ -9,8 +9,8 @@ import { assertPrProductionChanges, prMode, StackError, sync } from "./stack.ts"
 import { printError } from "./output.ts";
 
 export interface ArtifactReference {
-  runId?: string;
-  artifactId?: string;
+  runId?: string | undefined;
+  artifactId?: string | undefined;
 }
 
 const Login = Schema.Struct({ login: Schema.String });
@@ -41,9 +41,9 @@ const RepositorySchema = Schema.Struct({
 export function missingPrParticipants(desired: string[], pr: PrParticipants) {
   const assignees = new Set(pr.assignees.map(({ login }) => login.toLowerCase()));
   const requested = new Set(
-    pr.reviewRequests
-      .filter((request) => request.__typename === "User" && request.login)
-      .map(({ login }) => login!.toLowerCase()),
+    pr.reviewRequests.flatMap((request) =>
+      request.__typename === "User" && request.login ? [request.login.toLowerCase()] : [],
+    ),
   );
   const reviewed = new Set(
     pr.reviews.flatMap(({ author }) => (author ? [author.login.toLowerCase()] : [])),

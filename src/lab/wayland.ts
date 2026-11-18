@@ -7,9 +7,9 @@ const privateTools = join(root, ".stackanvil", "tools", "wayland-root", "usr");
 export function waylandTool(name: string): string | undefined {
   const configured =
     name === "sway"
-      ? process.env.STACKANVIL_SWAY_BINARY
+      ? process.env["STACKANVIL_SWAY_BINARY"]
       : name === "swaymsg"
-        ? process.env.STACKANVIL_SWAYMSG_BINARY
+        ? process.env["STACKANVIL_SWAYMSG_BINARY"]
         : undefined;
   const installed = configured ?? Bun.which(name);
   if (installed) return installed;
@@ -22,9 +22,9 @@ export function waylandToolEnvironment(environment: NodeJS.ProcessEnv): NodeJS.P
   if (!existsSync(join(privateTools, "bin"))) return environment;
   return {
     ...environment,
-    PATH: [environment.PATH, join(privateTools, "bin")].filter(Boolean).join(delimiter),
+    PATH: [environment["PATH"], join(privateTools, "bin")].filter(Boolean).join(delimiter),
     LD_LIBRARY_PATH: [
-      environment.LD_LIBRARY_PATH,
+      environment["LD_LIBRARY_PATH"],
       join(privateTools, "lib64"),
       join(privateTools, "lib"),
     ]
@@ -35,7 +35,7 @@ export function waylandToolEnvironment(environment: NodeJS.ProcessEnv): NodeJS.P
 
 /** Force supported toolkits onto the chosen native display without an X11 fallback. */
 export function nativeWaylandEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (!environment.WAYLAND_DISPLAY)
+  if (!environment["WAYLAND_DISPLAY"])
     throw new Error("A native Wayland display is required. X11 and XWayland are unsupported.");
   const native: NodeJS.ProcessEnv = {
     ...environment,
@@ -46,9 +46,9 @@ export function nativeWaylandEnvironment(environment: NodeJS.ProcessEnv): NodeJS
     BOL_INPUT: "wayland",
     BOL_GAMESCOPE: "0",
   };
-  delete native.DISPLAY;
-  delete native.XAUTHORITY;
-  delete native.WAYLAND_SOCKET;
+  delete native["DISPLAY"];
+  delete native["XAUTHORITY"];
+  delete native["WAYLAND_SOCKET"];
   return native;
 }
 

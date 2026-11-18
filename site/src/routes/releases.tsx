@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useHydrated } from "@tanstack/react-router";
 import release from "virtual:stackanvil-release";
 import { Suspense } from "react";
-import { getDocument } from "../lib/documents";
+import { requireDocument } from "../lib/documents";
 import { documentLoader } from "../lib/document-content";
 import { pageHead } from "../lib/metadata";
 import { NextSteps, SetupStage } from "../components/downloads";
@@ -9,12 +9,12 @@ import { releaseLink, type Setup } from "../lib/releases";
 import { setupGuides } from "../lib/setups";
 import { site } from "../lib/site";
 
-const page = getDocument("releases")!;
+const page = requireDocument("releases");
 
 export const Route = createFileRoute("/releases")({
   validateSearch: (search: Record<string, unknown>): { setup?: Setup } =>
-    search.setup === "proxy" || search.setup === "fabric" || search.setup === "modpack"
-      ? { setup: search.setup }
+    search["setup"] === "proxy" || search["setup"] === "fabric" || search["setup"] === "modpack"
+      ? { setup: search["setup"] }
       : {},
   loader: async () => {
     await (await import("../lib/document-content")).documentLoader.preload(page.path);

@@ -37,7 +37,7 @@ function validFrames(observation: PlayerUseObservation): boolean {
     observation.frames.every(
       (frame, index, frames) =>
         Number.isInteger(frame.tick) &&
-        (index === 0 || frame.tick === frames[index - 1].tick + 1) &&
+        (index === 0 || frame.tick === (frames[index - 1]?.tick ?? Number.NaN) + 1) &&
         [frame.position, frame.velocity].every((v) => [v.x, v.y, v.z].every(Number.isFinite)),
     )
   );
@@ -147,12 +147,15 @@ export function movingFoodUsePasses(observation: PlayerUseObservation): boolean 
       start = undefined;
     } else if (event.action === "stop" || event.action === "release") start = undefined;
   }
-  const lastCompletion = completed.at(-1)!;
+  const lastCompletion = completed.at(-1);
+  const lastFrame = observation.frames.at(-1);
+  if (!lastCompletion) return false;
   return (
     movedWhileUsing &&
     (observation.initialFood !== 1 ||
       (observation.remainingFood === 0 &&
-        observation.frames.at(-1)!.tick - lastCompletion.tick >= 30 &&
+        lastFrame !== undefined &&
+        lastFrame.tick - lastCompletion.tick >= 30 &&
         !events.some(
           (event) => ["start", "use"].includes(event.action) && event.tick > lastCompletion.tick,
         )))

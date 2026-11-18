@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Data, Effect } from "effect";
 import { journalMagic, maxJournalBytes, summarizeJournal } from "./journal.ts";
-import { errorCode, isRecord } from "../guards.ts";
+import { errorCode, isRecord, required } from "../guards.ts";
 
 const execute = promisify(execFile);
 const protocol = 2193;
@@ -80,7 +80,7 @@ class Reader {
   uint(): number {
     let value = 0;
     for (let i = 0; i < 5; i++) {
-      const part = this.take(1)[0];
+      const part = this.take(1).readUInt8(0);
       if (i === 4 && part > 15) throw new Error("Unbounded fixture integer.");
       value += (part & 127) * 2 ** (7 * i);
       if (!(part & 128)) return value;
@@ -108,9 +108,9 @@ function uuidBytes(value: string): Buffer {
   return bytes;
 }
 function identity(name: string): { id: string; version: string } {
-  const match = packName.exec(name);
-  if (!match) throw new Error("Invalid fixture pack identity.");
-  return { id: match[1].toLowerCase(), version: match[2] };
+  const [, id, version] = packName.exec(name) ?? [];
+  if (id === undefined || version === undefined) throw new Error("Invalid fixture pack identity.");
+  return { id: id.toLowerCase(), version };
 }
 
 /** Protocol 2193 ResourcePackPackets/UuidType fields; no digest field exists in packet 6. */
@@ -193,10 +193,12 @@ export function buildFormFixtureJournal(
   for (const pack of packs) {
     const from = identity(pack.from);
     const to = identity(pack.to);
+    // Untyped callers can bypass the literal type, so recheck the provenance flag at runtime.
+    const decrypted: unknown = pack.decrypted;
     if (
+      decrypted !== true ||
       from.version !== to.version ||
       replacements.has(pack.from) ||
-      !pack.decrypted ||
       !Number.isInteger(pack.bytes) ||
       pack.bytes < 1 ||
       pack.bytes > maxPackBytes
@@ -210,7 +212,7 @@ export function buildFormFixtureJournal(
   const cutoff = BigInt(bootstrapSeconds) * 1_000_000_000n;
   let offset = 8;
   while (offset < bytes.length) {
-    const direction = bytes[offset];
+    const direction = bytes.readUInt8(offset);
     const nanos = bytes.readBigInt64BE(offset + 1);
     const length = bytes.readInt32BE(offset + 9);
     offset += 13;
@@ -282,54 +284,64 @@ function digest(value: unknown): string {
 function validatePlan(value: unknown): FormFixturePlan {
   const plan = object(value);
   if (
-    !Array.isArray(plan.forms) ||
-    plan.forms.length < 1 ||
-    plan.forms.length > 16 ||
-    !Array.isArray(plan.packs) ||
-    plan.packs.length > 64
+    !Array.isArray(plan["forms"]) ||
+    plan["forms"].length < 1 ||
+    plan["forms"].length > 16 ||
+    !Array.isArray(plan["packs"]) ||
+    plan["packs"].length > 64
   )
     throw new Error("Invalid fixture input counts.");
   if (
-    !Number.isInteger(plan.bootstrapSeconds) ||
-    Number(plan.bootstrapSeconds) < 10 ||
-    Number(plan.bootstrapSeconds) > 120 ||
-    !Number.isInteger(plan.intervalSeconds) ||
-    Number(plan.intervalSeconds) < 10 ||
-    Number(plan.intervalSeconds) > 60
+    !Number.isInteger(plan["bootstrapSeconds"]) ||
+    Number(plan["bootstrapSeconds"]) < 10 ||
+    Number(plan["bootstrapSeconds"]) > 120 ||
+    !Number.isInteger(plan["intervalSeconds"]) ||
+    Number(plan["intervalSeconds"]) < 10 ||
+    Number(plan["intervalSeconds"]) > 60
   ) {
     throw new Error("Invalid fixture timeline bounds.");
   }
   return {
-    source: path(plan.source),
-    sourceSha256: digest(plan.sourceSha256),
-    output: path(plan.output),
-    bootstrapSeconds: Number(plan.bootstrapSeconds),
-    intervalSeconds: Number(plan.intervalSeconds),
-    forms: plan.forms.map((entry) => {
+    source: path(plan["source"]),
+    sourceSha256: digest(plan["sourceSha256"]),
+    output: path(plan["output"]),
+    bootstrapSeconds: Number(plan["bootstrapSeconds"]),
+    intervalSeconds: Number(plan["intervalSeconds"]),
+    forms: plan["forms"].map((entry) => {
       const form = object(entry);
-      if (!Number.isInteger(form.id) || Number(form.id) < 0 || Number(form.id) > 0xffffffff)
+      if (
+        !Number.isInteger(form["id"]) ||
+        Number(form["id"]) < 0 ||
+        Number(form["id"]) > 0xffffffff
+      )
         throw new Error("Invalid fixture form ID.");
-      return { id: Number(form.id), source: path(form.source), sha256: digest(form.sha256) };
+      return {
+        id: Number(form["id"]),
+        source: path(form["source"]),
+        sha256: digest(form["sha256"]),
+      };
     }),
     // oxlint-disable-next-line oxc/no-map-spread -- the spread only adds an optional field to a new object
-    packs: plan.packs.map((entry) => {
+    packs: plan["packs"].map((entry) => {
       const pack = object(entry);
-      if (typeof pack.from !== "string") throw new Error("Invalid source pack identity.");
-      identity(pack.from);
-      if (pack.decrypted !== true)
+      if (typeof pack["from"] !== "string") throw new Error("Invalid source pack identity.");
+      identity(pack["from"]);
+      if (pack["decrypted"] !== true)
         throw new Error("Fixture replacements require explicit decrypted-export provenance.");
       if (
-        pack.uiFiles !== undefined &&
-        (!Number.isInteger(pack.uiFiles) || Number(pack.uiFiles) < 0 || Number(pack.uiFiles) > 8192)
+        pack["uiFiles"] !== undefined &&
+        (!Number.isInteger(pack["uiFiles"]) ||
+          Number(pack["uiFiles"]) < 0 ||
+          Number(pack["uiFiles"]) > 8192)
       ) {
         throw new Error("Invalid fixture UI file count.");
       }
       return {
-        from: pack.from,
-        source: path(pack.source),
-        sha256: digest(pack.sha256),
+        from: pack["from"],
+        source: path(pack["source"]),
+        sha256: digest(pack["sha256"]),
         decrypted: true,
-        ...(pack.uiFiles === undefined ? {} : { uiFiles: Number(pack.uiFiles) }),
+        ...(pack["uiFiles"] === undefined ? {} : { uiFiles: Number(pack["uiFiles"]) }),
       };
     }),
   };
@@ -479,11 +491,13 @@ export const prepareFormFixture = (
         const { stdout: manifest } = await execute("unzip", ["-p", source, "manifest.json"], {
           maxBuffer: 65536,
         });
-        const header = object(object(JSON.parse(manifest)).header);
-        const version = Array.isArray(header.version) ? header.version.join(".") : header.version;
+        const header = object(object(JSON.parse(manifest))["header"]);
+        const version = Array.isArray(header["version"])
+          ? header["version"].join(".")
+          : header["version"];
         if (
-          typeof header.uuid !== "string" ||
-          header.uuid.toLowerCase() !== expected.id ||
+          typeof header["uuid"] !== "string" ||
+          header["uuid"].toLowerCase() !== expected.id ||
           version !== expected.version
         ) {
           throw new Error("Fixture archive identity differs from its advertised pack.");
@@ -514,7 +528,10 @@ export const prepareFormFixture = (
       const replacements = plan.packs.map((pack) => ({
         from: pack.from,
         to: basename(pack.source),
-        bytes: copied.find((copy) => copy.source === pack.source)!.bytes.length,
+        bytes: required(
+          copied.find((copy) => copy.source === pack.source),
+          `The copied fixture pack ${pack.source}`,
+        ).bytes.length,
         decrypted: true as const,
       }));
       const journal = buildFormFixtureJournal(

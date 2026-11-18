@@ -182,7 +182,7 @@ export async function inspectUpstream(
     await runGit(["checkout", "--detach", report.upstreamSha], directory);
     for (const [index, patch] of report.patches.entries()) {
       // A matching historical commit can have been reverted or rewritten at the inspected tip.
-      const matchingCommit = absorbed.has(commits[index]);
+      const matchingCommit = absorbed.has(commits[index] ?? "");
       patch.upstreamEquivalent =
         matchingCommit && (await applies(directory, patchPath(patch), true)) === "passed"
           ? "present"
@@ -226,7 +226,7 @@ export async function inspectUpstream(
 
 export async function patchHealth(
   requested = "all",
-  options: { repository?: string; upstream?: boolean } = {},
+  options: { repository?: string; upstream?: boolean | undefined } = {},
 ): Promise<HealthReport> {
   const repository = options.repository ?? root;
   const targets = await getTargets(repository);
@@ -267,10 +267,11 @@ export async function patchHealth(
   }
   for (const id of ids) {
     const stack = stacks[id];
-    if (!stack) continue;
+    const target = targets[id];
+    if (!stack || !target) continue;
     const project: ProjectHealth = {
       project: id,
-      baseSha: targets[id].baseSha,
+      baseSha: target.baseSha,
       pinnedReplay: "not-run",
       upstreamReplay: "not-run",
       patches: [],
@@ -297,7 +298,7 @@ export async function patchHealth(
         });
       }
     }
-    if (options.upstream) await inspectUpstream(project, targets[id], repository);
+    if (options.upstream) await inspectUpstream(project, target, repository);
     report.projects.push(project);
   }
   return report;

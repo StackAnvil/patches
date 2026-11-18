@@ -118,7 +118,7 @@ export const importReaArtifact = Effect.fn("importReaArtifact")(function* (optio
   source: string;
   sha256: string;
   version: string;
-  protocol?: number;
+  protocol?: number | undefined;
   directory?: string;
 }) {
   return yield* Effect.tryPromise({
@@ -161,7 +161,7 @@ export const importReaArtifact = Effect.fn("importReaArtifact")(function* (optio
           sha256,
           name: basename(source),
           version: options.version,
-          protocol: options.protocol,
+          ...(options.protocol === undefined ? {} : { protocol: options.protocol }),
         },
       };
       const temporary = join(directory, `current-${randomUUID()}.json`);
@@ -186,9 +186,9 @@ async function targetFrom(path = join(privateRoot, "current.json")): Promise<Tar
 
 function environment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PYTHONNOUSERSITE: "1" };
-  delete env.PYTHONPATH;
-  delete env.PYTHONHOME;
-  delete env.VIRTUAL_ENV;
+  delete env["PYTHONPATH"];
+  delete env["PYTHONHOME"];
+  delete env["VIRTUAL_ENV"];
   return env;
 }
 
@@ -262,8 +262,9 @@ export function validateReaEvidence(value: unknown, slice: Slice): { id: string;
 }
 
 async function invokeRea(args: string[], run: string, signal: AbortSignal): Promise<unknown> {
-  const cli = process.env.REA_CLI;
-  const executable = Bun.which(cli ?? "bunx", { PATH: process.env.PATH });
+  const cli = process.env["REA_CLI"];
+  const path = process.env["PATH"];
+  const executable = Bun.which(cli ?? "bunx", path === undefined ? {} : { PATH: path });
   if (!executable) throw new Error("Install Bun or set REA_CLI to a REA executable");
   await independentPath(executable);
   let result: { stdout: string; stderr: string };
@@ -297,8 +298,8 @@ async function invokeRea(args: string[], run: string, signal: AbortSignal): Prom
 
 export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (options: {
   address: string;
-  end?: string;
-  target?: string;
+  end?: string | undefined;
+  target?: string | undefined;
   directory?: string;
 }) {
   const target = yield* Effect.tryPromise({ try: () => targetFrom(options.target), catch: error });
@@ -339,9 +340,10 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
     "--format",
     "json",
   ];
-  if (process.env.GHIDRA_INSTALL_DIR)
+  const ghidra = process.env["GHIDRA_INSTALL_DIR"];
+  if (ghidra)
     yield* Effect.tryPromise({
-      try: () => independentPath(process.env.GHIDRA_INSTALL_DIR!),
+      try: () => independentPath(ghidra),
       catch: error,
     });
   yield* Effect.tryPromise({
@@ -388,9 +390,9 @@ export function validateReaCapture(value: unknown): {
 
 export const captureReaControl = Effect.fn("captureReaControl")(function* (options: {
   script: string;
-  args?: string[];
-  target?: string;
-  timeoutMs?: number;
+  args?: string[] | undefined;
+  target?: string | undefined;
+  timeoutMs?: number | undefined;
 }) {
   return yield* Effect.tryPromise({
     try: async (signal) => {

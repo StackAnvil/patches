@@ -6,7 +6,7 @@ export function pageEmbed(
   page: { title: string; description?: string },
   slug: string,
   website: { title: string; url: string; description: string } = site,
-  release?: { version: string; minecraft?: string },
+  release?: { version: string; minecraft?: string | undefined },
 ) {
   return createDiscordEmbed({
     title: `${page.title} · ${website.title}`,

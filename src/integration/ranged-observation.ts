@@ -55,28 +55,28 @@ export type RangedAction = "start" | "release" | "complete" | "stop" | "use";
 export interface RangedExpectation {
   consumed?: number;
   projectileCount?: number;
-  minChargeTicks?: number;
-  maxChargeTicks?: number;
+  minChargeTicks?: number | undefined;
+  maxChargeTicks?: number | undefined;
 }
 export interface RangedTarget {
   id: string;
   healthBefore: number;
   healthAfter: number;
-  damage: { tick: number; amount: number; projectile?: string }[];
+  damage: { tick: number; amount: number; projectile?: string | undefined }[];
 }
 export interface RangedObservation {
   item: string;
   ammunition: string;
   initialCount: number;
   remainingCount: number;
-  events: { action: RangedAction; tick: number; remainingUseTicks?: number }[];
+  events: { action: RangedAction; tick: number; remainingUseTicks?: number | undefined }[];
   slots?: { slot: number; tick: number }[];
   projectiles: { id: string; tick: number; type: string; speed: number }[];
   impacts?: {
     id: string;
     tick: number;
     location: { x: number; y: number; z: number };
-    target?: string;
+    target?: string | undefined;
   }[];
   effects?: { tick: number; type: string; amplifier: number; duration: number }[];
   clouds?: { id: string; tick: number; location: { x: number; y: number; z: number } }[];
@@ -87,7 +87,7 @@ export interface RangedObservation {
 
 export interface ServerSlotUse {
   pending: boolean;
-  selection?: { tick: number; from: number; to: number };
+  selection?: { tick: number; from: number; to: number } | undefined;
   followup: RangedObservation;
 }
 
@@ -103,8 +103,9 @@ export function serverSlotUsePasses(
   )
     return false;
   const selection = switched.selection;
-  const start = ranged.events.find((event) => event.action === "start")!;
-  const use = switched.followup.events.find((event) => event.action === "use")!;
+  const start = ranged.events.find((event) => event.action === "start");
+  const use = switched.followup.events.find((event) => event.action === "use");
+  if (!start || !use) return false;
   return (
     Number.isInteger(selection.tick) &&
     selection.tick > start.tick &&
@@ -128,7 +129,8 @@ export function rangedPiercingPasses(observation: RangedObservation, hitCount: n
     new Set(targets.map((target) => target.id)).size !== targets.length
   )
     return false;
-  const shot = observation.projectiles[0];
+  const [shot] = observation.projectiles;
+  if (!shot) return false;
   let previousTick = shot.tick;
   for (const [index, target] of targets.entries()) {
     if (
@@ -151,9 +153,11 @@ export function rangedPiercingPasses(observation: RangedObservation, hitCount: n
       target.healthAfter >= target.healthBefore
     )
       return false;
-    const contact = contacts[0];
-    const damage = target.damage[0];
+    const [contact] = contacts;
+    const [damage] = target.damage;
     if (
+      !contact ||
+      !damage ||
       contact.id !== shot.id ||
       !Number.isInteger(contact.tick) ||
       contact.tick < previousTick ||
@@ -171,9 +175,10 @@ export function rangedPiercingPasses(observation: RangedObservation, hitCount: n
 
 export function rangedHitPasses(mode: "release" | "fire", observation: RangedObservation): boolean {
   if (!rangedObservationPasses(mode, observation)) return false;
-  const shot = observation.projectiles[0];
+  const [shot] = observation.projectiles;
   const target = observation.target;
   return (
+    !!shot &&
     !!target &&
     Number.isFinite(target.healthBefore) &&
     Number.isFinite(target.healthAfter) &&
@@ -195,7 +200,8 @@ export function potionImpactPasses(
   lingering: boolean,
 ): boolean {
   if (!rangedObservationPasses("throw", observation)) return false;
-  const projectile = observation.projectiles[0];
+  const [projectile] = observation.projectiles;
+  if (!projectile) return false;
   const impact = observation.impacts?.find(
     (hit) => hit.id === projectile.id && Number.isInteger(hit.tick) && hit.tick >= projectile.tick,
   );

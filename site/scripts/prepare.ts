@@ -5,7 +5,7 @@ import { pageUrl, site } from "../src/lib/site";
 
 async function fetchRelease() {
   try {
-    const token = process.env.GITHUB_TOKEN;
+    const token = process.env["GITHUB_TOKEN"];
     const response = await fetch(
       "https://api.github.com/repos/StackAnvil/patches/releases/latest",
       {

@@ -40,7 +40,7 @@ export function summarizeJournal(bytes: Buffer): PacketSummary {
   let initialized = false;
   while (offset < bytes.length) {
     if (offset + 13 > bytes.length) throw new Error("Truncated packet journal entry.");
-    const direction = bytes[offset];
+    const direction = bytes.readUInt8(offset);
     const nanos = bytes.readBigInt64BE(offset + 1);
     const length = bytes.readInt32BE(offset + 9);
     offset += 13;
@@ -56,7 +56,7 @@ export function summarizeJournal(bytes: Buffer): PacketSummary {
     let header = 0;
     let width = 0;
     for (; width < Math.min(5, length); width++) {
-      const part = bytes[offset + width];
+      const part = bytes.readUInt8(offset + width);
       header += (part & 127) * 2 ** (width * 7);
       if (!(part & 128)) break;
     }

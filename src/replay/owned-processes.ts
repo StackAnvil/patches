@@ -19,7 +19,9 @@ function entry(pid: number): ProcessEntry | undefined {
     const value = readFileSync(`/proc/${pid}/stat`, "utf8");
     const fields = value.slice(value.lastIndexOf(")") + 2).split(" ");
     if (fields[0] === "Z") return undefined;
-    return { pid, parent: Number(fields[1]), startTicks: fields[19] };
+    const startTicks = fields[19];
+    if (startTicks === undefined) throw new Error(`Process ${pid} has malformed status.`);
+    return { pid, parent: Number(fields[1]), startTicks };
   } catch (error) {
     if (errorCode(error) === "ENOENT" || errorCode(error) === "ESRCH") return undefined;
     throw error;
@@ -124,11 +126,11 @@ export function requireOwnedSilentModule(output: string, id: number): void {
     .split("\n")
     .map((line) => line.split("\t"))
     .filter((fields) => fields[0] === String(id));
+  const [module] = matches;
   if (
     matches.length !== 1 ||
-    matches[0][1] !== "module-null-sink" ||
-    matches[0][2] !==
-      "sink_name=stackanvil_silent sink_properties=device.description=StackAnvil-Silent"
+    module?.[1] !== "module-null-sink" ||
+    module[2] !== "sink_name=stackanvil_silent sink_properties=device.description=StackAnvil-Silent"
   ) {
     throw new Error("Owned audio module identity changed; unload refused.");
   }

@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Data, Effect, Schema } from "effect";
-import { parseJson } from "./guards.ts";
+import { parseJson, required } from "./guards.ts";
 import {
   assertPrReady,
   getSeries,
@@ -49,7 +49,7 @@ interface ApplySession {
   baseSha: string;
   patches: string[];
   nextIndex: number;
-  prPatch?: string;
+  prPatch?: string | undefined;
 }
 
 export const workdir = (id: string, mode = "full") =>
@@ -102,8 +102,9 @@ const applyRemaining = Effect.fn("applyRemaining")(function* (
   patchFile?: string,
 ) {
   const recoveryCommand = `bun run stack continue ${id}${mode === "pr" ? " --pr" : ""}${patchFile ? ` --patch ${patchFile}` : ""}`;
-  for (let index = session.nextIndex; index < session.patches.length; index++) {
-    const patch = session.prPatch ?? session.patches[index];
+  for (const [index, file] of session.patches.entries()) {
+    if (index < session.nextIndex) continue;
+    const patch = session.prPatch ?? file;
     yield* applyPatch(["am", "--3way", "--committer-date-is-author-date", patch], dir, patch).pipe(
       Effect.mapError(
         (cause) =>
@@ -184,24 +185,30 @@ export const sync = Effect.fn("sync")(function* (
     });
   }
   const patches = seriesPaths(id, series, mode, patchFile);
-  if (mode === "pr" && patches.length !== 1) {
+  const [prSource] = patches;
+  if (mode === "pr" && (prSource === undefined || patches.length !== 1)) {
     return yield* new StackError({
       message: `No upstreamable patch ${patchFile ?? "at the front of the series"} for ${id}`,
     });
   }
   if (mode === "pr") {
     const selected = patchFile
-      ? series.upstreamable.find(({ file }) => file === patchFile)!
+      ? series.upstreamable.find(({ file }) => file === patchFile)
       : series.upstreamable[0];
+    if (!selected) {
+      return yield* new StackError({
+        message: `No upstreamable patch ${patchFile ?? "at the front of the series"} for ${id}`,
+      });
+    }
     yield* Effect.try({
       try: () => assertPrReady(selected),
       catch: (cause) => stackError(cause),
     });
   }
   const projected =
-    mode === "pr"
+    mode === "pr" && prSource !== undefined
       ? yield* Effect.tryPromise({
-          try: () => readFile(patches[0], "utf8").then((patch) => projectPrPatch(patch, id)),
+          try: () => readFile(prSource, "utf8").then((patch) => projectPrPatch(patch, id)),
           catch: stackError,
         })
       : undefined;
@@ -212,8 +219,12 @@ export const sync = Effect.fn("sync")(function* (
     return dir;
   }
   yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
-  const prPatch = projected ? join(root, ".stackanvil", `${id}-${modeKey}.patch`) : undefined;
-  if (prPatch) yield* Effect.promise(() => writeFile(prPatch, projected!.patch));
+  let prPatch: string | undefined;
+  if (projected) {
+    const file = join(root, ".stackanvil", `${id}-${modeKey}.patch`);
+    yield* Effect.promise(() => writeFile(file, projected.patch));
+    prPatch = file;
+  }
   const session: ApplySession = { baseSha: target.baseSha, patches, nextIndex: 0, prPatch };
   yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
   return yield* applyRemaining(id, dir, path, mode, modeKey, session, patchFile);
@@ -262,11 +273,13 @@ export const continueApply = Effect.fn("continueApply")(function* (
     });
   }
   if (mode === "pr") yield* assertPrProductionChanges(dir, target.baseSha, true, id);
-  yield* applyPatch(
-    ["am", "--continue"],
-    dir,
-    session.prPatch ?? session.patches[session.nextIndex],
-  );
+  const patch = session.prPatch ?? session.patches[session.nextIndex];
+  if (patch === undefined) {
+    return yield* new StackError({
+      message: `No patch remains after ${session.nextIndex} applied patches. Inspect ${dir} before continuing.`,
+    });
+  }
+  yield* applyPatch(["am", "--continue"], dir, patch);
   session.nextIndex++;
   yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
   return yield* applyRemaining(id, dir, path, mode, modeKey, session, patchFile);
@@ -349,7 +362,8 @@ export const edit = Effect.fn("edit")(function* (id: string, file: string) {
     return yield* new StackError({ message: `Patch ${file} is not in ${id}/series.json` });
   const dir = yield* sync(id);
   const commits = yield* commitIds(dir, target.baseSha);
-  if (commits.length !== paths.length)
+  const commit = commits[patchIndex];
+  if (commit === undefined || commits.length !== paths.length)
     return yield* new StackError({ message: "Patch/commit count mismatch" });
   const backupRef = `refs/stackanvil/backup/${Date.now()}`;
   yield* git(["update-ref", backupRef, "HEAD"], dir);
@@ -369,7 +383,7 @@ export const edit = Effect.fn("edit")(function* (id: string, file: string) {
       ),
     ),
   );
-  yield* git(["reset", "--hard", commits[patchIndex]], dir);
+  yield* git(["reset", "--hard", commit], dir);
   return dir;
 });
 
@@ -398,9 +412,10 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
       const staged = yield* git(["diff", "--cached", "--name-only"], dir);
       if (staged) yield* git(["commit", "--amend", "--no-edit"], dir);
     }
-    for (; session.applied < session.remaining.length; session.applied++) {
-      yield* git(["cherry-pick", session.remaining[session.applied]], dir);
-      yield* writeSession(id, { ...session, applied: session.applied + 1 });
+    for (const commit of session.remaining.slice(session.applied)) {
+      yield* git(["cherry-pick", commit], dir);
+      session.applied++;
+      yield* writeSession(id, session);
     }
   }
   yield* ensureClean(dir);
@@ -413,7 +428,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
   }
   let titleChanged = false;
   for (const [index, path] of paths.entries()) {
-    const patch = yield* exportCommit(dir, commits[index]);
+    const patch = yield* exportCommit(dir, required(commits[index], `The commit for ${path}`));
     const upstreamable = series.upstreamable[index - series.setup.length];
     if (upstreamable && index < series.setup.length + series.upstreamable.length) {
       const message = parsePatchMessage(patch);
@@ -468,7 +483,7 @@ export const addPatch = Effect.fn("addPatch")(function* (
       message: `Commit one new change after the current stack before adding a patch. Expected ${previous + 1} commits, found ${commits.length}.`,
     });
   }
-  const patch = yield* exportCommit(dir, commits.at(-1)!);
+  const patch = yield* exportCommit(dir, required(commits.at(-1), "The new commit"));
   const { title, description } = parsePatchMessage(patch);
   if (expectedTitle && expectedTitle !== title)
     return yield* new StackError({
@@ -490,7 +505,7 @@ export const addPatch = Effect.fn("addPatch")(function* (
   ).padStart(4, "0");
   const file = `${number}-${slug}.patch`;
   if (group === "upstreamable") series.upstreamable.push({ file, title });
-  else series.deferred.push({ file, reason: reason!.trim() });
+  else series.deferred.push({ file, reason: required(reason, "The deferred patch reason").trim() });
   const path = join(root, "patches", id, group, file);
   yield* Effect.promise(() => writeFile(path, patch));
   yield* Effect.promise(() =>

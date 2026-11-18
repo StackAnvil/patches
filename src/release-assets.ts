@@ -42,11 +42,11 @@ export async function prepareReleaseAssets(
       ArtifactManifestSchema,
       await readFile(join(projectDir, "manifest.json"), "utf8"),
     );
-    if (manifest.target !== project || manifest.artifacts.length !== 1) {
+    const [artifact] = manifest.artifacts;
+    if (manifest.target !== project || artifact === undefined || manifest.artifacts.length !== 1) {
       throw new Error(`Expected one ${project} release JAR in its build manifest`);
     }
     if (project === "viafabricplus") await verifyPinnedManifest(manifest, viaFabricPlusPin);
-    const artifact = manifest.artifacts[0];
     if (
       basename(artifact.file) !== artifact.file ||
       (project === "viafabricplus"

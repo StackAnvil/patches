@@ -224,26 +224,29 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
   const original: unknown = JSON.parse(await readFile(join(source, "settings.json"), "utf8"));
   if (
     !isRecord(original) ||
-    typeof original.mc_version !== "string" ||
-    !/^1\.26\.60(?:\.|$)/.test(original.mc_version)
+    typeof original["mc_version"] !== "string" ||
+    !/^1\.26\.60(?:\.|$)/.test(original["mc_version"])
   ) {
     throw new Error("Native recording requires the official Bedrock 1.26.60 client.");
   }
-  const sourcePaths: Record<string, string> = {};
   const sourceGames = await realpath(join(source, "games"));
   if (!(await lstat(sourceGames)).isDirectory())
     throw new Error("The native games path is not a directory.");
-  for (const key of ["game_dir", "proton"] as const) {
-    if (typeof original[key] !== "string")
-      throw new Error("The native installation path is missing.");
-    const path = await realpath(original[key]);
+  const sourcePath = async (key: "game_dir" | "proton") => {
+    const configured = original[key];
+    if (typeof configured !== "string") throw new Error("The native installation path is missing.");
+    const path = await realpath(configured);
     if (
       !(inside(source, path) || (key === "game_dir" && inside(sourceGames, path))) ||
       !(await lstat(path)).isDirectory()
     )
       throw new Error("The native installation path escapes its source profile.");
-    sourcePaths[key] = path;
-  }
+    return path;
+  };
+  const sourcePaths = {
+    game_dir: await sourcePath("game_dir"),
+    proton: await sourcePath("proton"),
+  };
   const idle = options.assertIdle ?? requireNativeProfileIdle;
   await idle(source);
   let created: Stats | undefined;
@@ -308,13 +311,13 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
       throw new Error("The copied native profile settings are not an object.");
     const settings: NativeProfile["settings"] = {
       ...runtimeSettings,
-      mc_version: original.mc_version,
+      mc_version: original["mc_version"],
       // The loop below maps both installation paths into the private profile.
       game_dir: "",
       proton: "",
     };
-    settings.input_backend = "wayland";
-    settings.gamescope = "0";
+    settings["input_backend"] = "wayland";
+    settings["gamescope"] = "0";
     for (const key of ["game_dir", "proton"] as const) {
       const mapped =
         key === "game_dir" && inside(sourceGames, sourcePaths[key])

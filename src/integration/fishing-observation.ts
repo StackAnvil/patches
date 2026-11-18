@@ -6,18 +6,20 @@ interface Vector3 {
 
 export interface FishingObservation {
   uses: number[];
-  hooks: { id: string; spawned: number; removed?: number }[];
+  hooks: { id: string; spawned: number; removed?: number | undefined }[];
   remainingHooks: string[];
   rodCount: number;
   rodDamage: number;
   rewards: number;
-  target?: {
-    id: string;
-    valid: boolean;
-    healthBefore: number;
-    healthAfter: number;
-    frames: { tick: number; position: Vector3; velocity: Vector3; player: Vector3 }[];
-  };
+  target?:
+    | {
+        id: string;
+        valid: boolean;
+        healthBefore: number;
+        healthAfter: number;
+        frames: { tick: number; position: Vector3; velocity: Vector3; player: Vector3 }[];
+      }
+    | undefined;
   error?: string;
 }
 
@@ -37,7 +39,8 @@ export function fishingRetrievalPasses(
   )
     return false;
   const [cast, reel] = observation.uses;
-  const hook = observation.hooks[0];
+  const [hook] = observation.hooks;
+  if (cast === undefined || reel === undefined || hook === undefined) return false;
   const removed = hook.removed;
   if (
     removed === undefined ||
@@ -71,7 +74,10 @@ export function fishingRetrievalPasses(
   )
     return false;
   if (
-    target.frames.some((frame, index) => index > 0 && frame.tick <= target.frames[index - 1].tick)
+    target.frames.some((frame, index) => {
+      const previous = target.frames[index - 1];
+      return previous !== undefined && frame.tick <= previous.tick;
+    })
   )
     return false;
   const before = target.frames.findLast((frame) => frame.tick < reel);

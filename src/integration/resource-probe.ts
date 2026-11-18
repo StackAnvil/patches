@@ -27,9 +27,10 @@ export async function installResourceProbe(
     PackManifestSchema,
     await readFile(join(packSource, "manifest.json"), "utf8"),
   );
-  if (!manifest.header.uuid || manifest.header.version.length !== 3)
+  const patchVersion = manifest.header.version[2];
+  if (!manifest.header.uuid || manifest.header.version.length !== 3 || patchVersion === undefined)
     throw new Error("Resource probe pack has an invalid manifest.");
-  if (variant === "b") manifest.header.version[2]++;
+  if (variant === "b") manifest.header.version[2] = patchVersion + 1;
 
   const pack = join(serverHome, "resource_packs", "stackanvil-resource-probe");
   await mkdir(join(pack, "textures", "items"), { recursive: true });

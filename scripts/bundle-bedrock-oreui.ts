@@ -9,6 +9,7 @@ import {
   verifyBuiltinOreUiContents,
   type OreUiDescriptor,
 } from "../src/bedrock-oreui.ts";
+import { required } from "../src/guards.ts";
 import { print } from "../src/output.ts";
 
 /** Acquire original Gameface resources; do not execute or translate the shipped JavaScript. */
@@ -44,9 +45,11 @@ export async function planBedrockOreUi(game: string, version: string, output: st
   }
   const hbui = join(game, "data", "gui", "dist", "hbui");
   const styles = (await readdir(hbui)).filter((name) => /^gameplay-[0-9a-f]+\.css$/.test(name));
-  if (styles.length !== 1) throw new Error("Expected one active OreUI gameplay stylesheet");
-  const stylesheet = `hbui/${styles[0]}`;
-  const css = await read(join(hbui, styles[0]));
+  const [style] = styles;
+  if (style === undefined || styles.length !== 1)
+    throw new Error("Expected one active OreUI gameplay stylesheet");
+  const stylesheet = `hbui/${style}`;
+  const css = await read(join(hbui, style));
   add(stylesheet, css);
   const fonts = oreUiFonts(css.toString("utf8"));
   const fontDirectory = join(hbui, "fonts");
@@ -69,7 +72,7 @@ export async function planBedrockOreUi(game: string, version: string, output: st
       return archive;
     });
   const texts = readBedrockArchive(await read(selected));
-  sources.at(-1)!.entries = texts.size;
+  required(sources.at(-1), "The OreUI text archive source").entries = texts.size;
   for (const [name, bytes] of texts) {
     if (/^[a-z]{2}_[A-Z]{2}\.lang$/.test(name)) add(`texts/${name}`, bytes);
   }

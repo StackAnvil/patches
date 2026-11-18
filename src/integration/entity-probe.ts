@@ -17,13 +17,14 @@ export async function buildEntityProbe(destination: string): Promise<void> {
     format: "esm",
     external: ["@minecraft/server"],
   });
-  if (!result.success || result.outputs.length !== 1) {
+  const [output] = result.outputs;
+  if (!result.success || output === undefined || result.outputs.length !== 1) {
     throw new Error(`Entity probe build failed: ${result.logs.map(String).join("\n")}`);
   }
   await rm(destination, { recursive: true, force: true });
   await cp(packSource, destination, { recursive: true });
   await mkdir(join(destination, "scripts"), { recursive: true });
-  await writeFile(join(destination, "scripts", "main.js"), await result.outputs[0].text());
+  await writeFile(join(destination, "scripts", "main.js"), await output.text());
 }
 
 export async function installEntityProbe(serverHome: string, worldName: string): Promise<void> {

@@ -112,14 +112,14 @@ export async function ensureDisplay(): Promise<DisplayState> {
     }
     return current;
   }
-  if (process.env.STACKANVIL_USE_DESKTOP === "1")
+  if (process.env["STACKANVIL_USE_DESKTOP"] === "1")
     throw new Error("Desktop mode does not use a private display.");
   if (!sway || !swaymsg)
     throw new Error(
       "Install sway and swaymsg for the private Wayland lab. No game was launched on your desktop.",
     );
   if (!Bun.which("pactl")) throw new Error("pactl is required to keep lab games silent.");
-  const runtimeRoot = process.env.XDG_RUNTIME_DIR;
+  const runtimeRoot = process.env["XDG_RUNTIME_DIR"];
   if (!runtimeRoot)
     throw new Error("Set XDG_RUNTIME_DIR to your session's private runtime directory.");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
@@ -174,7 +174,7 @@ export async function ensureDisplay(): Promise<DisplayState> {
         WLR_BACKENDS: "headless",
         WLR_HEADLESS_OUTPUTS: "1",
         WLR_LIBINPUT_NO_DEVICES: "1",
-        WLR_RENDERER: process.env.STACKANVIL_WAYLAND_RENDERER ?? "gles2",
+        WLR_RENDERER: process.env["STACKANVIL_WAYLAND_RENDERER"] ?? "gles2",
         WLR_RENDERER_ALLOW_SOFTWARE: "1",
       }),
     });
@@ -293,7 +293,7 @@ async function startAudio(state: DisplayState): Promise<void> {
 }
 
 export async function displayEnv(start = false): Promise<NodeJS.ProcessEnv | undefined> {
-  if (process.env.STACKANVIL_USE_DESKTOP === "1") return undefined;
+  if (process.env["STACKANVIL_USE_DESKTOP"] === "1") return undefined;
   const state = start ? await ensureDisplay() : await activeDisplay();
   if (!state) return undefined;
   return nativeWaylandEnvironment({
@@ -303,8 +303,8 @@ export async function displayEnv(start = false): Promise<NodeJS.ProcessEnv | und
     STACKANVIL_INPUT_SOCKET: join(state.runtime, "input.sock"),
     STACKANVIL_UI_ISOLATED: "1",
     PULSE_SINK: "stackanvil_silent",
-    PULSE_PROP: `${process.env.PULSE_PROP ?? ""} stackanvil.lab=${identity}`.trim(),
-    PIPEWIRE_PROPS: `${process.env.PIPEWIRE_PROPS ?? ""} stackanvil.lab=${identity}`.trim(),
+    PULSE_PROP: `${process.env["PULSE_PROP"] ?? ""} stackanvil.lab=${identity}`.trim(),
+    PIPEWIRE_PROPS: `${process.env["PIPEWIRE_PROPS"] ?? ""} stackanvil.lab=${identity}`.trim(),
   });
 }
 

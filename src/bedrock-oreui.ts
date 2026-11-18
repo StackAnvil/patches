@@ -47,7 +47,7 @@ export function oreUiFonts(css: string): OreUiFont[] {
   const fonts: OreUiFont[] = [];
   for (const match of css.matchAll(/@font-face\{([^}]+)\}/g)) {
     const properties = new Map(
-      match[1].split(";").map((property) => {
+      (match[1] ?? "").split(";").map((property) => {
         const colon = property.indexOf(":");
         return [property.slice(0, colon).trim(), property.slice(colon + 1).trim()];
       }),
@@ -95,8 +95,9 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
   }
   const images = [...entries.keys()].filter((path) => path.startsWith("hbui/assets/")).toSorted();
   for (const path of images) {
-    const image = entries.get(path)!();
+    const image = entries.get(path)?.();
     if (
+      !image ||
       image.length < 13 ||
       !["GIF87a", "GIF89a"].includes(image.subarray(0, 6).toString("ascii")) ||
       image.readUInt16LE(6) === 0 ||
@@ -122,10 +123,9 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
     new Set(descriptor.languages).size !== descriptor.languages.length
   )
     throw new Error("Invalid bundled OreUI descriptor");
-  if (
-    JSON.stringify(descriptor.fonts) !==
-    JSON.stringify(oreUiFonts(entries.get(descriptor.stylesheet)!().toString("utf8")))
-  )
+  const stylesheet = entries.get(descriptor.stylesheet)?.();
+  if (!stylesheet) throw new Error("Bundled OreUI stylesheet is missing");
+  if (JSON.stringify(descriptor.fonts) !== JSON.stringify(oreUiFonts(stylesheet.toString("utf8"))))
     throw new Error("Bundled OreUI font registrations do not match the stylesheet");
   if (
     !Array.isArray(descriptor.images ?? []) ||

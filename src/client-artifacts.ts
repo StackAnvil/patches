@@ -36,9 +36,10 @@ export async function artifact(
     ArtifactManifestSchema,
     await readFile(join(dir, "manifest.json"), "utf8"),
   );
-  if (manifest.artifacts.length !== 1) throw new Error(`Expected one ${project} release JAR`);
+  const [entry] = manifest.artifacts;
+  if (!entry || manifest.artifacts.length !== 1)
+    throw new Error(`Expected one ${project} release JAR`);
   if (project === "viafabricplus") await verifyPinnedManifest(manifest, pin);
-  const entry = manifest.artifacts[0];
   if (basename(entry.file) !== entry.file || !entry.file.endsWith(".jar"))
     throw new Error(`Invalid ${project} release JAR name`);
   const file = join(dir, entry.file);

@@ -45,7 +45,7 @@ export function readBedrockArchive(data: Uint8Array): Map<string, Buffer> {
   let expanded = 0;
   for (let index = 0; index < count; index++) {
     const record = 16 + index * 256;
-    const length = bytes[record];
+    const length = bytes.readUInt8(record);
     if (length === 0 || length > 247) throw new Error("Invalid Bedrock archive name");
     const name = new TextDecoder("utf-8", { fatal: true }).decode(
       bytes.subarray(record + 1, record + 1 + length),
@@ -75,7 +75,7 @@ const crcTable = Array.from({ length: 256 }, (_, value) => {
 
 function crc32(bytes: Uint8Array) {
   let crc = 0xffffffff;
-  for (const byte of bytes) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  for (const byte of bytes) crc = (crcTable[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
 }
 
@@ -159,7 +159,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
         !(
           path === "manifest.json" ||
           path === "sounds.json" ||
-          (libraryDirectories.has(logical.split("/")[0]) &&
+          (libraryDirectories.has(logical.split("/")[0] ?? "") &&
             (archived || /\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/.test(path)))
         )
       )

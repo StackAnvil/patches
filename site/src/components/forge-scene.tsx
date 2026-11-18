@@ -68,7 +68,7 @@ function Packets({ lane, hidden }: { lane: Lane; hidden?: boolean }) {
  * The route a connection takes. ViaProxy sits between the client and the
  * server; the Fabric setups move the same translation inside the client.
  */
-export function ForgeScene({ setup, minecraft }: { setup: Setup; minecraft?: string }) {
+export function ForgeScene({ setup, minecraft }: { setup: Setup; minecraft?: string | undefined }) {
   const docked = setup !== "proxy";
   const anvil = docked ? 318 : 500;
   const lanes: Lane[] = [

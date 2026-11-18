@@ -22,7 +22,7 @@ const prismHome = join(
   "PrismLauncher",
   "instances",
 );
-const prismInstance = process.env.STACKANVIL_JAVA_INSTANCE ?? "StackAnvil 26.3";
+const prismInstance = process.env["STACKANVIL_JAVA_INSTANCE"] ?? "StackAnvil 26.3";
 
 async function prepareFiles(): Promise<{ directory: string; version: string }> {
   const { baseJar, addonJar, version, loader } = await clientArtifacts();

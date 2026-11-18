@@ -65,8 +65,7 @@ function guest(value: string | undefined): Guest {
 
 export function validateSpec(spec: VmSpec): VmSpec {
   if (
-    spec.version !== 1 ||
-    !releases[spec.guest]?.includes(spec.release) ||
+    !releases[spec.guest].includes(spec.release) ||
     !/^sa-(windows|macos)-[0-9a-f]{12}$/.test(spec.name) ||
     !spec.name.startsWith(`sa-${spec.guest}-`)
   ) {
@@ -119,8 +118,8 @@ export function vmConfig(spec: VmSpec): string {
 /** Quickget can return success after a blocked download or save an HTML error page as an ISO. */
 export async function validateInstallMedia(config: string): Promise<void> {
   const contents = await readFile(config, "utf8");
-  for (const match of contents.matchAll(/^(?:iso|fixed_iso)=["']([^"'\n]+)["']\s*$/gm)) {
-    const media = resolve(dirname(config), match[1]);
+  for (const [, path = ""] of contents.matchAll(/^(?:iso|fixed_iso)=["']([^"'\n]+)["']\s*$/gm)) {
+    const media = resolve(dirname(config), path);
     let handle;
     try {
       handle = await open(media, "r");
@@ -235,11 +234,12 @@ async function requireHost(): Promise<void> {
     if (!Bun.which(tool)) throw new Error(`Missing ${tool}. See docs/platform-testing.md.`);
   }
   const version = (await execute("quickemu", ["--version"])).stdout.trim().split(".").map(Number);
+  const [major = 0, minor = 0, patch = 0] = version;
   if (
     version.length !== 3 ||
     !version.every(Number.isInteger) ||
-    version[0] < 4 ||
-    (version[0] === 4 && (version[1] < 9 || (version[1] === 9 && version[2] < 9)))
+    major < 4 ||
+    (major === 4 && (minor < 9 || (minor === 9 && patch < 9)))
   ) {
     throw new Error("The VM lab needs Quickemu 4.9.9 or newer. Update the host package.");
   }
@@ -558,11 +558,12 @@ export async function vmMain(args: string[]): Promise<void> {
     return;
   }
   if (action === "key") {
-    if (rest.length < 1 || rest.length > 2)
+    const [chord, hold] = rest;
+    if (chord === undefined || rest.length > 2)
       throw new Error("Usage: bun run lab vm key <guest> <qcode+chord> [hold-ms]");
-    const holdMs = Number(rest[1] ?? 100);
+    const holdMs = Number(hold ?? 100);
     validateHoldMs(holdMs);
-    const keys = keyEvents(rest[0]);
+    const keys = keyEvents(chord);
     await control(spec, (command) => command("send-key", { keys, "hold-time": holdMs }));
     return;
   }

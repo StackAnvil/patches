@@ -37,3 +37,9 @@ export function stringProperty(value: unknown, key: string): string | undefined 
   const property = isRecord(value) ? value[key] : undefined;
   return typeof property === "string" ? property : undefined;
 }
+
+/** Returns the value, or throws a descriptive error when an expected value is missing. */
+export function required<T>(value: T | undefined, description: string): T {
+  if (value === undefined) throw new Error(`${description} is missing.`);
+  return value;
+}

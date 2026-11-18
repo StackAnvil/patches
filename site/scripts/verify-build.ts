@@ -9,7 +9,7 @@ interface HtmlPage {
   links: string[];
   h1s: number;
   canonical?: string;
-  description?: string;
+  description?: string | undefined;
   discord?: string;
 }
 
@@ -18,22 +18,26 @@ async function inspect(path: string, html: string): Promise<HtmlPage> {
   const parser = new HTMLRewriter()
     .on("[id]", {
       element(element) {
-        page.ids.add(element.getAttribute("id")!);
+        const id = element.getAttribute("id");
+        if (id !== null) page.ids.add(id);
       },
     })
     .on("a[href]", {
       element(element) {
-        page.links.push(element.getAttribute("href")!);
+        const href = element.getAttribute("href");
+        if (href !== null) page.links.push(href);
       },
     })
     .on("script[src], img[src]", {
       element(element) {
-        page.links.push(element.getAttribute("src")!);
+        const src = element.getAttribute("src");
+        if (src !== null) page.links.push(src);
       },
     })
     .on("link[href]", {
       element(element) {
-        const href = element.getAttribute("href")!;
+        const href = element.getAttribute("href");
+        if (href === null) return;
         page.links.push(href);
         if (element.getAttribute("rel") === "canonical") page.canonical = href;
       },

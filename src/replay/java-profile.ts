@@ -103,15 +103,17 @@ export async function prepareReplayInstanceCleanup(
   game: string,
 ): Promise<() => Promise<void>> {
   const parts = relative(prism, game).split("/");
+  const [instances, instance, minecraft] = parts;
   if (
     parts.length !== 3 ||
-    parts[0] !== "instances" ||
-    parts[1] === ".." ||
-    parts[2] !== "minecraft"
+    instances !== "instances" ||
+    instance === undefined ||
+    instance === ".." ||
+    minecraft !== "minecraft"
   ) {
     throw new Error("Replay game must belong to the private Prism directory.");
   }
-  const paths = [prism, join(prism, "instances"), join(prism, "instances", parts[1]), game];
+  const paths = [prism, join(prism, "instances"), join(prism, "instances", instance), game];
   const owners = await Promise.all(
     paths.map(async (path) => {
       const identity = await lstat(path);

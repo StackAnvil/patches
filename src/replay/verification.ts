@@ -88,7 +88,7 @@ export const isControllerAudit = Schema.is(
 
 export interface ControllerObservation {
   required: boolean;
-  audit?: ControllerAudit;
+  audit?: ControllerAudit | undefined;
 }
 
 /** Compare packet expectations with client drawing and controller evaluation on the active route. */
@@ -110,7 +110,6 @@ export function verifyRendering(
       (expected.customActorIdentifiers.length > 0 && !audit.transformed) ||
       !Array.isArray(audit.failures) ||
       audit.failures.length ||
-      !audit.identifiers ||
       typeof audit.identifiers !== "object" ||
       Array.isArray(audit.identifiers) ||
       Object.values(audit.identifiers).some((count) => !Number.isSafeInteger(count) || count <= 0)
@@ -131,7 +130,7 @@ export function verifyRendering(
       installed.size !== expected.skinTextures.length
     )
       failures.push("Installed skin dimensions or pixels differ from the recording.");
-    const records = actual.fullSkinRecords ?? {};
+    const records = actual.fullSkinRecords;
     if (
       Object.entries(expected.fullSkinRecords).some(([hash, count]) => records[hash] !== count) ||
       Object.keys(records).length !== Object.keys(expected.fullSkinRecords).length
@@ -188,7 +187,7 @@ export function verifyRendering(
     failures.push("The scene has unresolved block, entity, or texture mappings.");
   if (
     [...clientLog.matchAll(/Unknown bedrock entity type: ([^\s]+)/g)].some(
-      (match) => !unregistered.has(match[1]),
+      ([, type]) => type === undefined || !unregistered.has(type),
     )
   )
     failures.push("The client rejected an advertised actor type.");

@@ -134,9 +134,9 @@ export async function verifyEmbeddedOreUiShaper(
         throw new Error(`Add-on did not embed the verified OreUI shaper resource: ${name}`);
     }
   }
-  for (const name of entries.keys()) {
+  for (const [name, read] of entries) {
     if (!name.startsWith(`${oreUiShaperResource}/`)) continue;
-    if (name.endsWith("/") && entries.get(name)!().length === 0) continue;
+    if (name.endsWith("/") && read().length === 0) continue;
     if (!expected.has(name)) throw new Error(`Unexpected embedded OreUI shaper resource: ${name}`);
   }
 }

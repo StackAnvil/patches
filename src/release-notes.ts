@@ -6,17 +6,17 @@ import { parsePatchMessage } from "./patch-message.ts";
 import { releaseDownloadSection } from "./release-downloads.ts";
 import { readViaFabricPlusPin } from "./viafabricplus.ts";
 
-const repository = process.env.GITHUB_REPOSITORY ?? "StackAnvil/patches";
+const repository = process.env["GITHUB_REPOSITORY"] ?? "StackAnvil/patches";
 const commit =
-  process.env.GITHUB_SHA ??
+  process.env["GITHUB_SHA"] ??
   execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 const groupTitles = { setup: "Setup", upstreamable: "Upstreamable", deferred: "Deferred" } as const;
 const tag =
   process.argv[2] ??
-  (process.env.GITHUB_REF_TYPE === "tag"
-    ? process.env.GITHUB_REF_NAME
-    : process.env.GITHUB_RUN_NUMBER
-      ? `stack-v0.0.${process.env.GITHUB_RUN_NUMBER}`
+  (process.env["GITHUB_REF_TYPE"] === "tag"
+    ? process.env["GITHUB_REF_NAME"]
+    : process.env["GITHUB_RUN_NUMBER"]
+      ? `stack-v0.0.${process.env["GITHUB_RUN_NUMBER"]}`
       : undefined);
 if (!tag)
   throw new Error("Usage: bun src/release-notes.ts <release-tag> [release-assets-directory]");

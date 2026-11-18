@@ -27,9 +27,9 @@ export const devSetup = Effect.fn("devSetup")(function* () {
     yield* command("python3", ["-m", "venv", join(toolsDir, "mitmproxy")], root);
     yield* command(join(toolsDir, "mitmproxy", "bin", "pip"), ["install", "mitmproxy"], root);
   }
-  const server = process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server");
+  const server = process.env["BEDROCK_SERVER_HOME"] ?? join(homedir(), "bedrock-server");
   const launcher =
-    process.env.BEDROCK_LAUNCHER ?? join(homedir(), "AppImages", "bedrockonlinux.appimage");
+    process.env["BEDROCK_LAUNCHER"] ?? join(homedir(), "AppImages", "bedrockonlinux.appimage");
   const missing: string[] = [];
   if (!Bun.which("cargo")) missing.push("Cargo: install Rust to build the Wayland capture helper");
   if (!existsSync(join(server, "bedrock_server")))
@@ -37,8 +37,8 @@ export const devSetup = Effect.fn("devSetup")(function* () {
       "BEDROCK_SERVER_HOME: download the official Bedrock Dedicated Server and point this variable at its extracted directory (https://www.minecraft.net/en-us/download/server/bedrock)",
     );
   if (
-    !process.env.BEDROCK_DEVICE_HOST &&
-    !process.env.BEDROCK_CLIENT_COMMAND &&
+    !process.env["BEDROCK_DEVICE_HOST"] &&
+    !process.env["BEDROCK_CLIENT_COMMAND"] &&
     !existsSync(launcher)
   ) {
     missing.push(

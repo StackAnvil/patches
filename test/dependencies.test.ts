@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { buildOrder } from "../src/dependencies.ts";
+import { required } from "../src/guards.ts";
 import { getTargets } from "../src/model.ts";
 
 test("dependent targets build after their patched dependencies", async () => {
@@ -15,7 +16,17 @@ test("dependent targets build after their patched dependencies", async () => {
 
 test("dependency cycles and unknown targets stop the build", async () => {
   const targets = await getTargets();
-  expect(() => buildOrder({ ...targets, cubeconverter: { ...targets.cubeconverter!, dependsOn: ["viabedrock"] } }, "all"))
-    .toThrow(/Dependency cycle/);
+  expect(() =>
+    buildOrder(
+      {
+        ...targets,
+        cubeconverter: {
+          ...required(targets["cubeconverter"], "The cubeconverter target"),
+          dependsOn: ["viabedrock"],
+        },
+      },
+      "all",
+    ),
+  ).toThrow(/Dependency cycle/);
   expect(() => buildOrder(targets, "missing")).toThrow(/Unknown target/);
 });

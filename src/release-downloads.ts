@@ -45,12 +45,13 @@ export function releaseDownloads(
   if (!tag) throw new Error("A release tag is required for download links");
   return downloads.map(({ title, description, pattern }) => {
     const matches = files.filter((file) => pattern.test(file));
-    if (matches.length !== 1)
+    const [match] = matches;
+    if (match === undefined || matches.length !== 1)
       throw new Error(`Expected one ${title} download, found ${matches.length}`);
     return {
       title,
       description,
-      url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(matches[0])}`,
+      url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(match)}`,
     };
   });
 }

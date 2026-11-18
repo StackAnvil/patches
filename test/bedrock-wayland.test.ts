@@ -33,7 +33,7 @@ async function fixture() {
         TEST_SETTINGS: JSON.stringify(settings),
         TEST_DRIVER_PROBLEM: problem,
       };
-      delete env.DISPLAY;
+      delete env["DISPLAY"];
       return spawnSync("python3", [resolve("scripts/bedrock-wayland.py"), launcher, "play"], {
         env,
         encoding: "utf8",

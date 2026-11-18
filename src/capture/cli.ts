@@ -23,7 +23,7 @@ const caDirectory = join(captureRoot, "ca");
 const mitmdump =
   Bun.which("mitmdump") ?? join(root, ".stackanvil", "tools", "mitmproxy", "bin", "mitmdump");
 const launcher =
-  process.env.BEDROCK_LAUNCHER ??
+  process.env["BEDROCK_LAUNCHER"] ??
   Bun.which("bedrock-on-linux") ??
   join(homedir(), "AppImages", "bedrockonlinux.appimage");
 const ui = createCaptureUi({
@@ -229,7 +229,7 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await mkdir(caDirectory, { recursive: true, mode: 0o700 });
   const log = openSync(join(dir, "proxy.log"), "a", 0o600);
-  const port = Number(process.env.STACKANVIL_PROXY_PORT ?? 18080);
+  const port = Number(process.env["STACKANVIL_PROXY_PORT"] ?? 18080);
   if (!Number.isInteger(port) || port < 1024 || port > 65535)
     throw new Error("STACKANVIL_PROXY_PORT must be an unprivileged TCP port.");
   const args = [
@@ -288,7 +288,7 @@ async function launchGame(): Promise<void> {
     throw new Error("Start a capture before launching Bedrock.");
   if (!existsSync(launcher)) throw new Error(`BedrockOnLinux launcher not found: ${launcher}`);
   const isolated = await displayEnv(true);
-  if (!isolated && process.env.STACKANVIL_USE_DESKTOP !== "1")
+  if (!isolated && process.env["STACKANVIL_USE_DESKTOP"] !== "1")
     throw new Error("A virtual display is required before launching Bedrock.");
   await muteBedrockSettings();
   const proxy = `http://127.0.0.1:${session.port}`;
@@ -756,7 +756,8 @@ async function doctor(): Promise<void> {
   const checks = {
     launcher: existsSync(launcher) ? launcher : "missing",
     mitmdump: existsSync(mitmdump) ? mitmdump : "missing",
-    display: (await displayEnv())?.WAYLAND_DISPLAY ?? process.env.WAYLAND_DISPLAY ?? "missing",
+    display:
+      (await displayEnv())?.["WAYLAND_DISPLAY"] ?? process.env["WAYLAND_DISPLAY"] ?? "missing",
     grim: waylandTool("grim") ?? "missing",
     recorder: waylandTool("wf-recorder") ?? "missing",
     compiler: Bun.which("cargo") ?? "missing",

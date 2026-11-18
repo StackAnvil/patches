@@ -13,15 +13,15 @@ test("native client launches discard inherited X11 drivers and Wayland connectio
     PULSE_SINK: "stackanvil_silent",
     PULSE_PROP: "stackanvil.lab=private",
   });
-  expect(environment.DISPLAY).toBeUndefined();
-  expect(environment.XAUTHORITY).toBeUndefined();
-  expect(environment.WAYLAND_SOCKET).toBeUndefined();
-  expect(environment.WAYLAND_DISPLAY).toBe("/run/user/1000/private/wayland-1");
-  expect(environment.QT_QPA_PLATFORM).toBe("wayland");
-  expect(environment.SDL_VIDEO_DRIVER).toBe("wayland");
-  expect(environment.SDL_VIDEODRIVER).toBe("wayland");
-  expect(environment.PULSE_SINK).toBe("stackanvil_silent");
-  expect(environment.PULSE_PROP).toBe("stackanvil.lab=private");
+  expect(environment["DISPLAY"]).toBeUndefined();
+  expect(environment["XAUTHORITY"]).toBeUndefined();
+  expect(environment["WAYLAND_SOCKET"]).toBeUndefined();
+  expect(environment["WAYLAND_DISPLAY"]).toBe("/run/user/1000/private/wayland-1");
+  expect(environment["QT_QPA_PLATFORM"]).toBe("wayland");
+  expect(environment["SDL_VIDEO_DRIVER"]).toBe("wayland");
+  expect(environment["SDL_VIDEODRIVER"]).toBe("wayland");
+  expect(environment["PULSE_SINK"]).toBe("stackanvil_silent");
+  expect(environment["PULSE_PROP"]).toBe("stackanvil.lab=private");
   expect(() => nativeWaylandEnvironment({ DISPLAY: ":0" })).toThrow(
     "X11 and XWayland are unsupported",
   );

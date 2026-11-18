@@ -66,9 +66,9 @@ test("copies absolute launcher content into the private installation without cha
   expect(await readFile(join(input.game, "Minecraft.Windows.exe"))).toEqual(input.payload);
   expect(await readFile(join(input.source, "settings.json"))).toEqual(sourceSettings);
   expect(await readlink(join(input.source, "content"))).toBe(input.game);
-  expect(result.settings.retain).toBe(input.settings.retain);
-  expect(result.settings.input_backend).toBe("wayland");
-  expect(result.settings.gamescope).toBe("0");
+  expect(result.settings["retain"]).toBe(input.settings.retain);
+  expect(result.settings["input_backend"]).toBe("wayland");
+  expect(result.settings["gamescope"]).toBe("0");
   expect(await realpath(result.settings.proton)).toBe(
     join(input.runtime, relative(input.source, input.proton)),
   );
@@ -315,9 +315,10 @@ test("retains a fresh copy when its launcher becomes busy before rollback", asyn
     await expectRejection(
       prepareNativeProfile({
         ...input,
-        assertIdle: async (profile) => {
-          if (profile === input.runtime) throw new Error("Concurrent launcher");
-        },
+        assertIdle: (profile) =>
+          profile === input.runtime
+            ? Promise.reject(new Error("Concurrent launcher"))
+            : Promise.resolve(),
       }),
     ),
   ).toBeInstanceOf(AggregateError);
@@ -405,9 +406,10 @@ test("refuses a busy cached profile before repairing launcher pointers", async (
   await expectRejection(
     prepareNativeProfile({
       ...input,
-      assertIdle: async (profile) => {
-        if (profile === input.runtime) throw new Error("Concurrent launcher");
-      },
+      assertIdle: (profile) =>
+        profile === input.runtime
+          ? Promise.reject(new Error("Concurrent launcher"))
+          : Promise.resolve(),
     }),
   );
   expect(await readlink(join(input.runtime, "content"))).toBe(input.game);

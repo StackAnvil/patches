@@ -5,7 +5,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { Schema } from "effect";
-import { isRecord, parseJson } from "../guards.ts";
+import { isRecord, parseJson, required } from "../guards.ts";
 import { root } from "../model.ts";
 import { print, printError } from "../output.ts";
 
@@ -104,30 +104,30 @@ export function validatePackIndex(
   lock: Pick<PackLock, "minecraft" | "fabricLoader">,
 ): PackIndex {
   if (!isRecord(value)) throw new Error("The modpack index is missing.");
-  if (value.formatVersion !== 1 || value.game !== "minecraft")
+  if (value["formatVersion"] !== 1 || value["game"] !== "minecraft")
     throw new Error("Unsupported Modrinth modpack format.");
-  const dependencies = isRecord(value.dependencies) ? value.dependencies : {};
+  const dependencies = isRecord(value["dependencies"]) ? value["dependencies"] : {};
   if (
-    dependencies.minecraft !== lock.minecraft ||
+    dependencies["minecraft"] !== lock.minecraft ||
     dependencies["fabric-loader"] !== lock.fabricLoader
   ) {
     throw new Error(
       `The modpack must target Minecraft ${lock.minecraft} with Fabric ${lock.fabricLoader}.`,
     );
   }
-  const files: unknown = value.files;
+  const files: unknown = value["files"];
   if (!Array.isArray(files) || !files.length) throw new Error("The modpack contains no files.");
   const entries: readonly unknown[] = files;
   const paths = new Set<string>();
   for (const file of entries) {
-    const path = isRecord(file) ? file.path : undefined;
+    const path = isRecord(file) ? file["path"] : undefined;
     if (typeof path !== "string" || !safePath(path) || paths.has(path))
       throw new Error(`Invalid or repeated modpack path: ${String(path)}`);
     paths.add(path);
-    const hash = isRecord(file) && isRecord(file.hashes) ? file.hashes.sha512 : undefined;
+    const hash = isRecord(file) && isRecord(file["hashes"]) ? file["hashes"]["sha512"] : undefined;
     if (typeof hash !== "string" || !/^[a-f0-9]{128}$/i.test(hash))
       throw new Error(`Missing SHA-512 for ${path}.`);
-    const downloads: unknown = isRecord(file) ? file.downloads : undefined;
+    const downloads: unknown = isRecord(file) ? file["downloads"] : undefined;
     if (
       !Array.isArray(downloads) ||
       !downloads.some((url) => {
@@ -224,9 +224,9 @@ async function assertNoPatchedModCollision(file: string, path: string): Promise<
     return;
   }
   if (!isRecord(metadata)) return;
-  if (metadata.id === "viafabricplus" || metadata.id === "viafabricplus-bedrock") {
+  if (metadata["id"] === "viafabricplus" || metadata["id"] === "viafabricplus-bedrock") {
     throw new Error(
-      `Fabulously Optimized includes ${metadata.id}. Remove that mod from the pack before overlaying StackAnvil builds.`,
+      `Fabulously Optimized includes ${metadata["id"]}. Remove that mod from the pack before overlaying StackAnvil builds.`,
     );
   }
 }
@@ -242,8 +242,11 @@ export function replacePackFiles(
   return validatePackIndex(
     { ...index, files: index.files.map((file) => replacements[file.path] ?? file) },
     {
-      minecraft: index.dependencies.minecraft,
-      fabricLoader: index.dependencies["fabric-loader"],
+      minecraft: required(index.dependencies["minecraft"], "The modpack Minecraft dependency"),
+      fabricLoader: required(
+        index.dependencies["fabric-loader"],
+        "The modpack Fabric Loader dependency",
+      ),
     },
   );
 }
@@ -362,7 +365,9 @@ export async function updateModpack(versionNumber?: string): Promise<void> {
     Buffer.from(await zipEntry(temporary, "modrinth.index.json")).toString("utf8"),
   );
   const fabricLoader =
-    isRecord(raw) && isRecord(raw.dependencies) ? raw.dependencies["fabric-loader"] : undefined;
+    isRecord(raw) && isRecord(raw["dependencies"])
+      ? raw["dependencies"]["fabric-loader"]
+      : undefined;
   if (typeof fabricLoader !== "string" || !fabricLoader)
     throw new Error("The modpack does not specify a Fabric loader.");
   const index = validatePackIndex(raw, { minecraft: current.minecraft, fabricLoader });

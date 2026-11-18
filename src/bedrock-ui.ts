@@ -90,12 +90,12 @@ export async function verifyEmbeddedBuiltinUi(
   await verifyBuiltinUi(bundle, version);
   let entries = zipEntries(await readFile(artifact));
   if (project === "viafabricplus-bedrock") {
-    const cores = [...entries.keys()].filter((path) =>
+    const [core, ...otherCores] = [...entries].filter(([path]) =>
       /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/.test(path),
     );
-    if (cores.length !== 1)
+    if (!core || otherCores.length)
       throw new Error("The Bedrock add-on must embed exactly one ViaBedrock JAR");
-    entries = zipEntries(entries.get(cores[0])!());
+    entries = zipEntries(core[1]());
   }
   const embedded = entries.get(builtinUiResource)?.();
   if (!embedded || !embedded.equals(await readFile(bundle))) {

@@ -43,7 +43,8 @@ async function main(): Promise<void> {
   }
   if (area !== "stack" && area !== "pr")
     throw new Error("Usage: bun run stack <stack|pr|dev> <command> [project]");
-  if (!id) throw new Error(`Choose a project: ${(await targetIds()).join(", ")}`);
+  // The project follows the action, so a missing action also means a missing project.
+  if (!action || !id) throw new Error(`Choose a project: ${(await targetIds()).join(", ")}`);
   if (area === "stack") {
     switch (action) {
       case "sync":

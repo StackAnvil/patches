@@ -58,7 +58,7 @@ export type UiRecorder = (
 const spawnRecorder: UiRecorder = (program, args, env) => {
   const child = spawn(program, args, { cwd: root, env, stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
-  child.stderr?.on("data", (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-4000)));
+  child.stderr.on("data", (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-4000)));
   const exited = new Promise<number | null>((done) => {
     child.once("exit", (code) => done(code));
   });
@@ -103,9 +103,8 @@ export function createCaptureUi(
     );
   const captureDirectory =
     options.captureDirectory ??
-    (async () => {
-      throw new Error("Supply --output-dir for a screenshot outside a capture session.");
-    });
+    (() =>
+      Promise.reject(new Error("Supply --output-dir for a screenshot outside a capture session.")));
   const prepareNative =
     options.prepareNative ??
     createCaptureWaylandBuilder(async (args, cwd, env) => {
@@ -114,7 +113,7 @@ export function createCaptureUi(
   let nativeBinary: string;
 
   async function compileUi(): Promise<void> {
-    if (!(await uiEnvironment()).WAYLAND_DISPLAY)
+    if (!(await uiEnvironment())["WAYLAND_DISPLAY"])
       throw new Error("Set WAYLAND_DISPLAY to the game's native display.");
     nativeBinary = await prepareNative(await uiEnvironment());
   }
@@ -139,7 +138,8 @@ export function createCaptureUi(
         ? bedrockTitle.test(window.title)
         : /^minecraft\*?\s/i.test(window.title),
     );
-    if (matches.length === 1) return matches[0];
+    const [match] = matches;
+    if (match && matches.length === 1) return match;
     if (matches.length === 0)
       throw new Error(
         `No visible ${client} window is open on this display. Check that the client is still running and read its log.`,
@@ -199,7 +199,7 @@ export function createCaptureUi(
       throw new Error("Video frame rate must be an integer from 1 to 120.");
     if (!outputDir) throw new Error("Supply --output-dir for a recording.");
     const env = await uiEnvironment();
-    if (env.STACKANVIL_UI_ISOLATED !== "1")
+    if (env["STACKANVIL_UI_ISOLATED"] !== "1")
       throw new Error("Recording requires the private display so your desktop is never captured.");
     const window = await chosenWindow(windowId, client);
     const directory = resolve(outputDir);
@@ -235,7 +235,7 @@ export function createCaptureUi(
     if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1))
       throw new Error("Pointer coordinates must be ratios between 0 and 1.");
     const env = await uiEnvironment();
-    if (env.STACKANVIL_UI_ISOLATED !== "1")
+    if (env["STACKANVIL_UI_ISOLATED"] !== "1")
       throw new Error("Pointer positioning requires the private Wayland display.");
     const window = await chosenWindow(windowId, client);
     await run(
@@ -255,7 +255,7 @@ export function createCaptureUi(
     if (![dx, dy].every((value) => Number.isInteger(value) && Math.abs(value) <= 2000))
       throw new Error("Look deltas must be integers within 2000 pixels.");
     const env = await uiEnvironment();
-    if (env.STACKANVIL_UI_ISOLATED !== "1")
+    if (env["STACKANVIL_UI_ISOLATED"] !== "1")
       throw new Error("Relative pointer motion requires the private Wayland display.");
     const window = await chosenWindow(windowId, client);
     await run(nativeBinary, ["look", window.id, String(dx), String(dy)], root, env);
@@ -284,7 +284,7 @@ export function createCaptureUi(
     const localX = Math.floor(x * (window.width - 1));
     const localY = Math.floor(y * (window.height - 1));
     const env = await uiEnvironment();
-    const isolated = env.STACKANVIL_UI_ISOLATED === "1";
+    const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";
     if (!isolated && !allowFocus)
       throw new Error(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
@@ -337,7 +337,7 @@ export function createCaptureUi(
     }
     const window = await chosenWindow(windowId, client);
     const env = await uiEnvironment();
-    const isolated = env.STACKANVIL_UI_ISOLATED === "1";
+    const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";
     if (!isolated && !allowFocus)
       throw new Error(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
@@ -364,7 +364,7 @@ export function createCaptureUi(
       throw new Error("Button hold must be 1 to 10000 ms.");
     const window = await chosenWindow(windowId, client);
     const env = await uiEnvironment();
-    const isolated = env.STACKANVIL_UI_ISOLATED === "1";
+    const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";
     if (!isolated && !allowFocus)
       throw new Error(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
@@ -393,7 +393,6 @@ export function createCaptureUi(
     ) {
       throw new Error("Drag needs 2 to 64 points with coordinates between 0 and 1.");
     }
-    if (button !== "left" && button !== "right") throw new Error("Use left or right mouse button.");
     if (
       !Number.isInteger(dwellMs) ||
       dwellMs < 1 ||
@@ -404,7 +403,7 @@ export function createCaptureUi(
     }
     const window = await chosenWindow(windowId, client);
     const env = await uiEnvironment();
-    const isolated = env.STACKANVIL_UI_ISOLATED === "1";
+    const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";
     if (!isolated && !allowFocus)
       throw new Error(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
@@ -434,7 +433,7 @@ export function createCaptureUi(
       );
     const window = await chosenWindow(windowId, client);
     const env = await uiEnvironment();
-    const isolated = env.STACKANVIL_UI_ISOLATED === "1";
+    const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";
     if (!isolated && !allowFocus)
       throw new Error(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
@@ -555,10 +554,11 @@ export function createCaptureUi(
         if (!input[0]) throw new Error("Supply text.");
         await typeText(input[0], windowId, client, allowFocus);
         return "";
+      default:
+        throw new Error(
+          "Usage: bun run capture ui <list|screenshot|record|pixel|move|look|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
+        );
     }
-    throw new Error(
-      "Usage: bun run capture ui <list|screenshot|record|pixel|move|look|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
-    );
   }
   return {
     command,

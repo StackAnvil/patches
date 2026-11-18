@@ -85,8 +85,8 @@ const prismData = join(
   "data",
   "PrismLauncher",
 );
-const bdsSource = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
-const proxyBdsSource = resolve(process.env.STACKANVIL_JAVA_BEDROCK_SERVER_HOME ?? bdsSource);
+const bdsSource = resolve(process.env["BEDROCK_SERVER_HOME"] ?? join(homedir(), "bedrock-server"));
+const proxyBdsSource = resolve(process.env["STACKANVIL_JAVA_BEDROCK_SERVER_HOME"] ?? bdsSource);
 const textFileEffect = Effect.fn("Integration.textFile")(function* (path: string) {
   return yield* existsSync(path)
     ? labIO("textFile", async () => readFile(path, "utf8"))
@@ -157,8 +157,8 @@ const downloadEffect = Effect.fn("Integration.download")(function* (
   yield* labIO("download", async () => writeFile(path, new Uint8Array(bytes), { mode: 0o600 }));
 });
 const vanillaServerEffect = Effect.fn("Integration.vanillaServer")(function* () {
-  if (process.env.STACKANVIL_JAVA_SERVER_JAR)
-    return resolve(process.env.STACKANVIL_JAVA_SERVER_JAR);
+  if (process.env["STACKANVIL_JAVA_SERVER_JAR"])
+    return resolve(process.env["STACKANVIL_JAVA_SERVER_JAR"]);
   const manifest = yield* labRequestJson(
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
     Schema.Struct({
@@ -354,8 +354,8 @@ const viaProxyEffect = Effect.fn("Integration.viaProxy")(function* (
   name = "viaproxy",
   homeName = name,
 ) {
-  const jar = process.env.VIAPROXY_JAR
-    ? resolve(process.env.VIAPROXY_JAR)
+  const jar = process.env["VIAPROXY_JAR"]
+    ? resolve(process.env["VIAPROXY_JAR"])
     : yield* labIO("viaProxy", async () => artifact("viaproxy"));
   if (!existsSync(jar))
     return yield* labError(
@@ -482,7 +482,8 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
   );
   if (gameplayCases.length) yield* labIO("javaJoin", async () => installProbeGuiScale(instance));
   const serverLogStart = (yield* textFileEffect(target.log)).length;
-  const connectionLogStart = target.proxyLog ? (yield* textFileEffect(target.proxyLog)).length : 0;
+  const proxyLog = target.proxyLog;
+  const connectionLogStart = proxyLog ? (yield* textFileEffect(proxyLog)).length : 0;
   const clientLog = join(instance, "minecraft", "logs", "latest.log");
   yield* labIO("javaJoin", async () => rm(clientLog, { force: true }));
   const isolated = yield* labIO("javaJoin", async () => displayEnv(true));
@@ -525,9 +526,8 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
           () => alive(gamePid),
           120000,
         );
-        if (route === "java-geyser" && target.proxyLog) {
-          const proxyLogText = async () =>
-            (await textFile(target.proxyLog!)).slice(connectionLogStart);
+        if (route === "java-geyser" && proxyLog) {
+          const proxyLogText = async () => (await textFile(proxyLog)).slice(connectionLogStart);
           const deadline = Date.now() + 120000;
           while (
             !/All resource packs have been loaded/.test(
@@ -554,8 +554,8 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
         route,
         serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
         clientLog: () => textFile(clientLog),
-        connectionLog: target.proxyLog
-          ? async () => (await textFile(target.proxyLog!)).slice(connectionLogStart)
+        connectionLog: proxyLog
+          ? async () => (await textFile(proxyLog)).slice(connectionLogStart)
           : undefined,
         clientAlive: () => alive(gamePid),
         timeoutMs: 150000,
@@ -685,8 +685,8 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
     ),
     Effect.orDie(
       Effect.gen(function* () {
-        if (alive(gamePid)) interrupt(gamePid!);
-        if (alive(child.pid)) interrupt(-child.pid!);
+        if (gamePid !== undefined && alive(gamePid)) interrupt(gamePid);
+        if (child.pid !== undefined && alive(child.pid)) interrupt(-child.pid);
         for (let attempt = 0; attempt < 40 && alive(gamePid); attempt++) yield* Effect.sleep(250);
         if (existsSync(clientLog))
           yield* labIO("javaJoin", async () =>
@@ -742,12 +742,13 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
   return yield* Effect.ensuring(
     Effect.gen(function* () {
       yield* captureEffect(["start", "native-join"], env);
-      session = parseJson(
+      const captureId = parseJson(
         CaptureIdSchema,
         yield* labIO("bedrockJoin", async () => readFile(current, "utf8")),
       ).id;
+      session = captureId;
       yield* captureEffect(["launch"]);
-      const sessionPath = join(root, ".stackanvil", "captures", session, "session.json");
+      const sessionPath = join(root, ".stackanvil", "captures", captureId, "session.json");
       const gamePid = parseJson(
         Schema.Struct({ gamePid: Schema.optionalKey(Schema.Finite) }),
         yield* labIO("bedrockJoin", async () => readFile(sessionPath, "utf8")),
@@ -803,7 +804,7 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
       const player = yield* waitForJoinEffect({
         route: "bedrock-bedrock",
         serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
-        clientLog: () => textFile(join(root, ".stackanvil", "captures", session!, "game.log")),
+        clientLog: () => textFile(join(root, ".stackanvil", "captures", captureId, "game.log")),
         clientAlive: () => alive(gamePid),
         timeoutMs: 90000,
         dwellMs: 20000,
@@ -910,6 +911,14 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
       new Error("Use --route java-java, java-bedrock, bedrock-bedrock, or java-geyser."),
     );
   }
+  // Reject the route before building the route list so the retained Geyser paths stay type-checked.
+  if (requestedRoute === "java-geyser")
+    return yield* labError(
+      "main",
+      new Error(
+        "The pinned Geyser fixture does not provide NetherNet. Use the java-bedrock route.",
+      ),
+    );
   const routes: JoinRoute[] =
     requestedRoute !== undefined
       ? [requestedRoute]
@@ -917,13 +926,6 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
   if (shaders && !routes.some((candidate) => candidate.startsWith("java-")))
     return yield* labError("main", new Error("--shaders requires a Java client route."));
   const geyserRoute = routes.includes("java-geyser");
-  if (geyserRoute)
-    return yield* labError(
-      "main",
-      new Error(
-        "The pinned Geyser fixture does not provide NetherNet. Use the java-bedrock route.",
-      ),
-    );
   const requestedInput = gameplayInput?.split(",") ?? [];
   const requestedCases = requestedInput.filter((id) => isOneOf(allGameplayCaseIds, id));
   const gameplayCases: GameplayCaseId[] = [
@@ -1002,7 +1004,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     );
   if ((entityProbe || gameplayCases.length || resourceProbe) && modpackOnly)
     return yield* labError("main", new Error("Probe cases require the plain Java client run."));
-  if (process.env.STACKANVIL_USE_DESKTOP === "1")
+  if (process.env["STACKANVIL_USE_DESKTOP"] === "1")
     return yield* labError(
       "main",
       new Error("Integration tests require a private display and never take desktop focus."),
@@ -1125,7 +1127,8 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
               new Error("Resource probe A converted the same content again."),
             );
           print("PASS resource pack cache: unchanged content reused the conversion.");
-          if (alive(proxy.child.pid)) process.kill(-proxy.child.pid!, "SIGINT");
+          if (proxy.child.pid !== undefined && alive(proxy.child.pid))
+            process.kill(-proxy.child.pid, "SIGINT");
           for (let attempt = 0; attempt < 40 && alive(proxy.child.pid); attempt++)
             yield* Effect.sleep(250);
           if (alive(proxy.child.pid))
@@ -1133,7 +1136,8 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
               "main",
               new Error("ViaProxy did not stop before the changed resource pack run."),
             );
-          if (alive(proxyBedrock.child.pid)) process.kill(-proxyBedrock.child.pid!, "SIGINT");
+          if (proxyBedrock.child.pid !== undefined && alive(proxyBedrock.child.pid))
+            process.kill(-proxyBedrock.child.pid, "SIGINT");
           for (let attempt = 0; attempt < 40 && alive(proxyBedrock.child.pid); attempt++)
             yield* Effect.sleep(250);
           if (alive(proxyBedrock.child.pid))

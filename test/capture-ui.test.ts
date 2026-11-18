@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createCaptureUi, type UiExecutor } from "../src/capture/ui.ts";
+import { required } from "../src/guards.ts";
 import { expectRejection } from "./helpers/expect-rejection.ts";
 
 const window = { id: "0x123", title: "Minecraft 26.3", x: 0, y: 0, width: 854, height: 480 };
@@ -13,17 +14,17 @@ function fixture(environment: NodeJS.ProcessEnv | undefined, desktop: NodeJS.Pro
   const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
   let windows = [window];
   let lookups = 0;
-  const execute: UiExecutor = async (_program, args, _cwd, env) => {
+  const execute: UiExecutor = (_program, args, _cwd, env) => {
     calls.push({ args, env });
-    return args[0] === "list" ? JSON.stringify(windows) : "";
+    return Promise.resolve(args[0] === "list" ? JSON.stringify(windows) : "");
   };
   const ui = createCaptureUi({
     execute,
-    prepareNative: async () => "/test/capture-wayland",
+    prepareNative: () => Promise.resolve("/test/capture-wayland"),
     desktopEnvironment: desktop,
-    environment: async () => {
+    environment: () => {
       lookups++;
-      return environment;
+      return Promise.resolve(environment);
     },
   });
   return {
@@ -43,11 +44,11 @@ test("repeated private input stays on one owned display and revalidates its wind
   expect(f.lookups()).toBe(1);
   expect(
     f.calls.every(
-      (call) => call.env.WAYLAND_DISPLAY === isolated.WAYLAND_DISPLAY && !call.env.DISPLAY,
+      (call) => call.env["WAYLAND_DISPLAY"] === isolated.WAYLAND_DISPLAY && !call.env["DISPLAY"],
     ),
   ).toBe(true);
   expect(f.calls.filter((call) => call.args[0] === "focus")).toHaveLength(0);
-  const input = f.calls.filter((call) => ["key-hold", "button-hold"].includes(call.args[0]));
+  const input = f.calls.filter((call) => ["key-hold", "button-hold"].includes(call.args[0] ?? ""));
   expect(input.map((call) => call.args)).toEqual([
     ["key-hold", window.id, "d", "650"],
     ["button-hold", window.id, "left", "200"],
@@ -109,10 +110,10 @@ test("native desktop clicks retain the selected button and require authorization
     STACKANVIL_USE_DESKTOP: "1",
   });
   await expectRejection(f.ui.click(0.5, 0.5, window.id, "java", false, "right"));
-  expect(f.calls.filter((call) => ["focus", "click"].includes(call.args[0]))).toHaveLength(0);
+  expect(f.calls.filter((call) => ["focus", "click"].includes(call.args[0] ?? ""))).toHaveLength(0);
   for (const button of ["left", "right"] as const) {
     await f.ui.click(0.5, 0.5, window.id, "java", true, button);
-    expect(f.calls.at(-1)!.args).toEqual(["click", window.id, "426", "239", button]);
+    expect(f.calls.at(-1)?.args).toEqual(["click", window.id, "426", "239", button]);
   }
 });
 
@@ -188,7 +189,7 @@ test("drag sends the complete ordered path in one native call on the bound priva
   expect(f.lookups()).toBe(1);
   expect(
     f.calls.every(
-      (call) => call.env.WAYLAND_DISPLAY === isolated.WAYLAND_DISPLAY && !call.env.DISPLAY,
+      (call) => call.env["WAYLAND_DISPLAY"] === isolated.WAYLAND_DISPLAY && !call.env["DISPLAY"],
     ),
   ).toBe(true);
   expect(f.calls.filter((call) => call.args[0] === "focus")).toHaveLength(0);
@@ -213,7 +214,7 @@ test("invalid drag paths and duration bounds emit no native calls", async () => 
   const points = [
     { x: 0.25, y: 0.5 },
     { x: 0.75, y: 0.5 },
-  ];
+  ] as const;
   for (const duration of [0, -1, 1.5, 1001, NaN, Infinity]) {
     await expectRejection(f.ui.drag(points, "left", duration));
   }
@@ -253,7 +254,10 @@ test("drag enforces the total hold boundary and resolves an explicit window amon
   await expectRejection(f.ui.drag(path, "left", 1000, undefined, "java"));
   expect(f.calls.filter((call) => call.args[0] === "drag")).toHaveLength(0);
   await f.ui.drag(path, "left", 1000, "0x456", "java");
-  const emitted = f.calls.find((call) => call.args[0] === "drag")!;
+  const emitted = required(
+    f.calls.find((call) => call.args[0] === "drag"),
+    "The drag call",
+  );
   expect(emitted.args.slice(0, 4)).toEqual(["drag", "0x456", "left", "1000"]);
   expect(emitted.args).toHaveLength(24);
 });
@@ -262,7 +266,7 @@ test("drag refuses desktop input without explicit authorization", async () => {
   const points = [
     { x: 0.25, y: 0.5 },
     { x: 0.75, y: 0.5 },
-  ];
+  ] as const;
   const unavailable = fixture(undefined, { DISPLAY: ":0" });
   await expectRejection(unavailable.ui.drag(points, "left", 100));
   expect(unavailable.calls).toHaveLength(0);
@@ -272,11 +276,13 @@ test("drag refuses desktop input without explicit authorization", async () => {
     STACKANVIL_USE_DESKTOP: "1",
   });
   await expectRejection(desktop.ui.drag(points, "right", 100, window.id, "java"));
-  expect(desktop.calls.filter((call) => ["focus", "drag"].includes(call.args[0]))).toHaveLength(0);
+  expect(
+    desktop.calls.filter((call) => ["focus", "drag"].includes(call.args[0] ?? "")),
+  ).toHaveLength(0);
   await desktop.ui.drag(points, "right", 100, window.id, "java", true);
   expect(
     desktop.calls
-      .filter((call) => ["focus", "drag"].includes(call.args[0]))
+      .filter((call) => ["focus", "drag"].includes(call.args[0] ?? ""))
       .map((call) => call.args[0]),
   ).toEqual(["focus", "drag"]);
 });
@@ -287,12 +293,13 @@ test("screenshots publish private images without replacing an earlier capture", 
   const { join } = await import("node:path");
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-capture-"));
   const ui = createCaptureUi({
-    environment: async () => isolated,
-    prepareNative: async () => "/test/capture-wayland",
+    environment: () => Promise.resolve(isolated),
+    prepareNative: () => Promise.resolve("/test/capture-wayland"),
     execute: async (program, args) => {
       if (args[0] === "list") return JSON.stringify([window]);
-      if (args[0] === "screenshot") await writeFile(args[2], "PPM fixture");
-      if (program === "ffmpeg") await writeFile(args.at(-1)!, "PNG fixture");
+      if (args[0] === "screenshot") await writeFile(args[2] ?? "", "PPM fixture");
+      if (program === "ffmpeg")
+        await writeFile(required(args.at(-1), "The ffmpeg output path"), "PNG fixture");
       return "";
     },
   });
@@ -311,12 +318,15 @@ test("bedrock clicks hover first and hold long enough for winewayland to registe
   const waits: number[] = [];
   const bedrock = { ...window, title: "Minecraft" };
   const ui = createCaptureUi({
-    environment: async () => isolated,
-    prepareNative: async () => "/test/capture-wayland",
-    sleep: async (ms) => void waits.push(ms),
-    execute: async (_program, args) => {
+    environment: () => Promise.resolve(isolated),
+    prepareNative: () => Promise.resolve("/test/capture-wayland"),
+    sleep: (ms) => {
+      waits.push(ms);
+      return Promise.resolve();
+    },
+    execute: (_program, args) => {
       calls.push(args);
-      return args[0] === "list" ? JSON.stringify([bedrock, window]) : "";
+      return Promise.resolve(args[0] === "list" ? JSON.stringify([bedrock, window]) : "");
     },
   });
   await ui.command(["ui", "click", "0.5", "0.25", "--client", "bedrock"]);
@@ -335,12 +345,13 @@ test("a repeated screenshot name reports the existing file", async () => {
   const { join } = await import("node:path");
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-capture-"));
   const ui = createCaptureUi({
-    environment: async () => isolated,
-    prepareNative: async () => "/test/capture-wayland",
+    environment: () => Promise.resolve(isolated),
+    prepareNative: () => Promise.resolve("/test/capture-wayland"),
     execute: async (program, args) => {
       if (args[0] === "list") return JSON.stringify([window]);
-      if (args[0] === "screenshot") await writeFile(args[2], "PPM fixture");
-      if (program === "ffmpeg") await writeFile(args.at(-1)!, "PNG fixture");
+      if (args[0] === "screenshot") await writeFile(args[2] ?? "", "PPM fixture");
+      if (program === "ffmpeg")
+        await writeFile(required(args.at(-1), "The ffmpeg output path"), "PNG fixture");
       return "";
     },
   });
@@ -362,14 +373,23 @@ test("recordings run for the requested time on the private display only", async 
   const waits: number[] = [];
   const make = (environment: NodeJS.ProcessEnv | undefined, desktop: NodeJS.ProcessEnv = {}) =>
     createCaptureUi({
-      environment: async () => environment,
+      environment: () => Promise.resolve(environment),
       desktopEnvironment: desktop,
-      prepareNative: async () => "/test/capture-wayland",
-      sleep: async (ms) => void waits.push(ms),
-      execute: async (_program, args) => (args[0] === "list" ? JSON.stringify([window]) : ""),
+      prepareNative: () => Promise.resolve("/test/capture-wayland"),
+      sleep: (ms) => {
+        waits.push(ms);
+        return Promise.resolve();
+      },
+      execute: (_program, args) =>
+        Promise.resolve(args[0] === "list" ? JSON.stringify([window]) : ""),
       record: (_program, args) => {
         started.push(args);
-        return { stop: async () => void stopped++ };
+        return {
+          stop: () => {
+            stopped++;
+            return Promise.resolve();
+          },
+        };
       },
     });
   const file = await make(isolated).command([

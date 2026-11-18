@@ -20,7 +20,7 @@ import { createServer, isIP } from "node:net";
 import { createSocket } from "node:dgram";
 import { promisify } from "node:util";
 import { Effect, Schema } from "effect";
-import { isRecord, parseJson } from "../guards.ts";
+import { isRecord, parseJson, required } from "../guards.ts";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
@@ -309,7 +309,9 @@ async function launchJava(
       ]);
       const manifest: unknown = JSON.parse(stdout);
       const library =
-        isRecord(manifest) && isRecord(manifest.ICD) ? manifest.ICD.library_path : undefined;
+        isRecord(manifest) && isRecord(manifest["ICD"])
+          ? manifest["ICD"]["library_path"]
+          : undefined;
       if (typeof library !== "string" || !/(?:^|\/)libvulkan_lvp\.so(?:\.\d+)*$/.test(library)) {
         throw new Error("Unexpected software Vulkan driver.");
       }
@@ -335,7 +337,7 @@ async function launchJava(
       javaCleanup.exclude(pid);
     }
   }
-  const sourceName = process.env.STACKANVIL_REPLAY_INSTANCE ?? "StackAnvil Integration 26.3";
+  const sourceName = process.env["STACKANVIL_REPLAY_INSTANCE"] ?? "StackAnvil Integration 26.3";
   const source = join(prismData, "instances", sourceName);
   if (!existsSync(join(source, "instance.cfg")))
     throw new Error("Prepare the integration Prism instance with bun run test:integration first.");
@@ -524,7 +526,7 @@ async function launchNative(
   if (!isolated) throw new Error("Native recording requires the lab's private display.");
   const source = resolve(
     nativeHome ??
-      process.env.STACKANVIL_REPLAY_BEDROCK_HOME ??
+      process.env["STACKANVIL_REPLAY_BEDROCK_HOME"] ??
       join(homedir(), ".local/share/bedrock-on-linux"),
   );
   const runtime = join(privateRoot, "native-client");
@@ -533,7 +535,7 @@ async function launchNative(
     ? await prepareNativeReplayPrefix({
         privateRoot,
         directory,
-        sourcePrefix: process.env.BOL_WINEPREFIX || join(runtime, "compatdata/pfx"),
+        sourcePrefix: process.env["BOL_WINEPREFIX"] || join(runtime, "compatdata/pfx"),
         port: bind,
       })
     : undefined;
@@ -648,7 +650,9 @@ async function stopAll(directory: string, gamePid?: number): Promise<void> {
   if (javaCleanup) {
     const processes = javaCleanup;
     await stopReplayJavaProcesses(processes, gamePid, undefined, () =>
-      requestReplayJavaStop(directory, () => processes.signal(gamePid!, "SIGTERM")),
+      requestReplayJavaStop(directory, () => {
+        if (gamePid !== undefined) processes.signal(gamePid, "SIGTERM");
+      }),
     );
     return;
   }
@@ -677,16 +681,16 @@ async function stopAll(directory: string, gamePid?: number): Promise<void> {
       await Bun.sleep(250);
     }
   }
-  if (alive(gamePid)) process.kill(gamePid!, "SIGTERM");
+  if (gamePid !== undefined && alive(gamePid)) process.kill(gamePid, "SIGTERM");
   for (const child of children.toReversed())
-    if (alive(child.pid)) process.kill(-child.pid!, "SIGTERM");
+    if (child.pid !== undefined && alive(child.pid)) process.kill(-child.pid, "SIGTERM");
   // Native channel cleanup can wait up to 35 seconds for pending pack downloads.
   const until = Date.now() + (nativeClient ? 45_000 : 10_000);
   while (Date.now() < until && (alive(gamePid) || children.some((child) => alive(child.pid))))
     await Bun.sleep(100);
-  if (alive(gamePid)) process.kill(gamePid!, "SIGKILL");
+  if (gamePid !== undefined && alive(gamePid)) process.kill(gamePid, "SIGKILL");
   for (const child of children.toReversed())
-    if (alive(child.pid)) process.kill(-child.pid!, "SIGKILL");
+    if (child.pid !== undefined && alive(child.pid)) process.kill(-child.pid, "SIGKILL");
 }
 async function main(): Promise<void> {
   const [mode, input, ...args] = Bun.argv.slice(2);
@@ -728,7 +732,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       throw new Error("Choose --dry-run or --apply.");
     const known = new Set(["--apply", "--dry-run", "--verbose", "--reviewed-preview"]);
     for (let index = 0; index < args.length; index++) {
-      if (!known.has(args[index])) throw new Error("Unknown form fixture option.");
+      if (!known.has(args[index] ?? "")) throw new Error("Unknown form fixture option.");
       if (args[index] === "--reviewed-preview") index++;
     }
     const reviewedAt = args.indexOf("--reviewed-preview");
@@ -801,7 +805,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       "--target requires record local or public. Named servers use their configured address.",
     );
   if (mode === "record" && input === "local") {
-    target = option("--target")!;
+    target = option("--target");
     if (!/^(?:nethernet:\/\/)?127\.0\.0\.1:\d+$/.test(target ?? ""))
       throw new Error(
         "Local recordings require --target 127.0.0.1:port or nethernet://127.0.0.1:port.",
@@ -844,7 +848,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   if (mode === "record") {
     if (client === "proxy" && (input !== "local" || option("--account"))) {
       const authPath = resolve(
-        option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault,
+        option("--account") ?? process.env["STACKANVIL_BEDROCK_ACCOUNT"] ?? accountDefault,
       );
       const auth = JSON.parse(await readFile(authPath, "utf8"));
       auth.accountType = "net.raphimc.viaproxy.saves.impl.accounts.BedrockAccount";
@@ -855,10 +859,11 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   }
   const ownedDisplay = !(await activeDisplay());
   let gamePid: number | undefined;
-  let stopped = false;
+  // Signal handlers abort this controller between awaits.
+  const stop = new AbortController();
   let unexpectedClientExit = false;
   const abort = () => {
-    stopped = true;
+    stop.abort();
   };
   process.on("SIGINT", abort);
   process.on("SIGTERM", abort);
@@ -946,7 +951,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         mode === "replay" || (input === "local" && !option("--account"))
           ? "offline"
           : resolve(
-              option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault,
+              option("--account") ?? process.env["STACKANVIL_BEDROCK_ACCOUNT"] ?? accountDefault,
             );
       child = service(
         "java",
@@ -971,14 +976,14 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       client === "addon"
         ? (option("--account") ??
           (mode === "record" && input !== "local"
-            ? (process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault)
+            ? (process.env["STACKANVIL_BEDROCK_ACCOUNT"] ?? accountDefault)
             : undefined))
         : undefined;
     const game =
       client === "native"
         ? await launchNative(
             directory,
-            bind!,
+            required(bind, "The native client port"),
             option("--native-home"),
             mode === "replay" || args.includes("--native-manual-connect"),
             nativeOffline,
@@ -999,8 +1004,13 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     let waitingForNativeConnection = client === "native";
     let waitingForJavaSpawn = client !== "native";
     let until = Date.now() + (waitingForNativeConnection ? 300_000 : 1_200_000);
-    // oxlint-disable-next-line eslint/no-unmodified-loop-condition -- callbacks outside the loop update `stopped` and `child` between awaits.
-    while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
+    while (
+      !stop.signal.aborted &&
+      Date.now() < until &&
+      alive(gamePid) &&
+      // oxlint-disable-next-line eslint/no-unmodified-loop-condition -- callbacks outside the loop update `child` between awaits.
+      (!child || alive(child.pid))
+    ) {
       javaCleanup?.captureDescendants();
       if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {
         waitingForNativeConnection = false;
@@ -1034,7 +1044,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       );
     }
     unexpectedClientExit = !alive(gamePid);
-    if (waitingForJavaSpawn && !stopped && !unexpectedClientExit)
+    if (waitingForJavaSpawn && !stop.signal.aborted && !unexpectedClientExit)
       throw new Error(
         "The Java client never reached initialized gameplay; the requested scene timer did not start. Read its private logs and screenshot.",
       );
@@ -1064,12 +1074,13 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
           }
         },
         stopDisplay: async () => {
+          const displayProcesses = javaDisplayCleanup;
           if (ownedDisplay)
             await stopDisplay(
-              javaDisplayCleanup
+              displayProcesses
                 ? {
                     process: (pid) => {
-                      if (!javaDisplayCleanup!.alive(pid))
+                      if (!displayProcesses.alive(pid))
                         throw new Error("Owned display process exited before teardown.");
                     },
                     audioModule: async (id) => {
@@ -1112,7 +1123,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     throw new Error(
       "Native pack reconstruction did not finish before shutdown. The raw recording is preserved; read its private proxy log.",
     );
-  if (unexpectedClientExit || stopped)
+  if (unexpectedClientExit || stop.signal.aborted)
     throw new Error(
       "The client exited or the run was cancelled before normal cleanup. Read its private client log.",
     );
@@ -1279,9 +1290,10 @@ async function removeTemporaryBuilds() {
   // A failed stop must keep dependencies available to any remaining processes.
   if (children.some((child) => alive(child.pid)) || (nativeClient && alive(nativeClient.pid)))
     return;
-  if (javaCleanup) {
-    javaCleanup.captureDescendants();
-    if (javaCleanup.all().some((identity) => javaCleanup!.alive(identity.pid))) return;
+  const processes = javaCleanup;
+  if (processes) {
+    processes.captureDescendants();
+    if (processes.all().some((identity) => processes.alive(identity.pid))) return;
   }
   for (const build of temporaryBuilds) await rm(build, { recursive: true, force: true });
 }

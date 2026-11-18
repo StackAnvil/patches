@@ -16,9 +16,9 @@ import { isOneOf, parseJson } from "../guards.ts";
 import { print, printError } from "../output.ts";
 const privateRoot = join(root, ".stackanvil", "lab");
 const processFile = join(privateRoot, "processes.json");
-const serverHome = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
+const serverHome = resolve(process.env["BEDROCK_SERVER_HOME"] ?? join(homedir(), "bedrock-server"));
 const bedrockHome = resolve(
-  process.env.BEDROCK_ON_LINUX_HOME ?? join(homedir(), ".local", "share", "bedrock-on-linux"),
+  process.env["BEDROCK_ON_LINUX_HOME"] ?? join(homedir(), ".local", "share", "bedrock-on-linux"),
 );
 const prismHome = join(
   homedir(),
@@ -29,7 +29,7 @@ const prismHome = join(
   "PrismLauncher",
   "instances",
 );
-const javaInstance = process.env.STACKANVIL_JAVA_INSTANCE ?? "StackAnvil 26.3";
+const javaInstance = process.env["STACKANVIL_JAVA_INSTANCE"] ?? "StackAnvil 26.3";
 const services = ["server", "viaproxy", "java"] as const;
 type Service = (typeof services)[number];
 type Managed = Partial<
@@ -91,12 +91,14 @@ const matchingProcessesEffect = Effect.fn("Lab.matchingProcesses")(function* (se
         ? /\bViaProxy(?:-[^ ]*)?\.jar\b.*\bcli\b/
         : /^\S*java(?:\s|$).*\borg\.prismlauncher\.EntryPoint\b/;
   return output.stdout.split("\n").flatMap((line) => {
-    const found = /^\s*(\d+)\s+(.+)$/.exec(line);
-    return found && pattern.test(found[2]) ? [Number(found[1])] : [];
+    const [, pid, commandLine] = /^\s*(\d+)\s+(.+)$/.exec(line) ?? [];
+    return pid !== undefined && commandLine !== undefined && pattern.test(commandLine)
+      ? [Number(pid)]
+      : [];
   });
 });
 const viaProxyJarEffect = Effect.fn("Lab.viaProxyJar")(function* () {
-  const configured = process.env.VIAPROXY_JAR;
+  const configured = process.env["VIAPROXY_JAR"];
   return configured ? resolve(configured) : yield* labIO("viaProxyJar", () => artifact("viaproxy"));
 });
 const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
@@ -136,13 +138,13 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
         jar,
         "cli",
         "--bind-address",
-        process.env.STACKANVIL_VIAPROXY_BIND ?? "127.0.0.1:25568",
+        process.env["STACKANVIL_VIAPROXY_BIND"] ?? "127.0.0.1:25568",
         "--target-address",
-        process.env.STACKANVIL_BEDROCK_TARGET ?? "127.0.0.1:19132",
+        process.env["STACKANVIL_BEDROCK_TARGET"] ?? "127.0.0.1:19132",
         "--target-version",
-        process.env.STACKANVIL_BEDROCK_VERSION ?? "Bedrock 1.26.51",
+        process.env["STACKANVIL_BEDROCK_VERSION"] ?? "Bedrock 1.26.51",
         "--auth-method",
-        process.env.STACKANVIL_VIAPROXY_AUTH ?? "NONE",
+        process.env["STACKANVIL_VIAPROXY_AUTH"] ?? "NONE",
         "--log-ips",
         "false",
       ],
@@ -168,7 +170,7 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
       "--launch",
       javaInstance,
       "--server",
-      process.env.STACKANVIL_JAVA_SERVER ?? "127.0.0.1:25568",
+      process.env["STACKANVIL_JAVA_SERVER"] ?? "127.0.0.1:25568",
     ],
     cwd: root,
   };
@@ -194,7 +196,7 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
   if (service === "java") {
     const environment =
       isolated ??
-      (process.env.STACKANVIL_USE_DESKTOP === "1"
+      (process.env["STACKANVIL_USE_DESKTOP"] === "1"
         ? nativeWaylandEnvironment(process.env)
         : undefined);
     if (!environment)
@@ -243,11 +245,10 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
         retained = true;
         print(`Started ${service} (PID ${child.pid}).`);
       }),
-    (child) =>
-      retained || !child.pid
+    ({ pid }) =>
+      retained || !pid
         ? Effect.void
         : Effect.gen(function* () {
-            const pid = child.pid!;
             yield* labValue("stop unrecorded service", () => {
               if (groupAlive(pid)) process.kill(-pid, "SIGINT");
             });
@@ -465,14 +466,15 @@ export const mainEffect = Effect.fn("Lab.main")(function* () {
     return yield* action === "start" ? startEffect(command) : stopEffect(command);
   }
   if (command === "up") {
-    if (process.env.STACKANVIL_USE_DESKTOP !== "1")
+    if (process.env["STACKANVIL_USE_DESKTOP"] !== "1")
       yield* labIO("main", async () => ensureDisplay());
     for (const service of ["server", "viaproxy", "java"] as const) yield* startEffect(service);
     return;
   }
   if (command === "down") {
     for (const service of ["java", "viaproxy", "server"] as const) yield* stopEffect(service);
-    if (process.env.STACKANVIL_USE_DESKTOP !== "1") yield* labIO("main", async () => stopDisplay());
+    if (process.env["STACKANVIL_USE_DESKTOP"] !== "1")
+      yield* labIO("main", async () => stopDisplay());
     return;
   }
   return yield* labError(

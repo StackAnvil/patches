@@ -35,7 +35,7 @@ export function PatchStack() {
     return () => observer.disconnect();
   }, []);
   function inspect(project: string, event: PointerEvent) {
-    const title = event.target instanceof HTMLElement ? event.target.dataset.title : undefined;
+    const title = event.target instanceof HTMLElement ? event.target.dataset["title"] : undefined;
     if (title) setReadout((current) => ({ ...current, [project]: title }));
   }
   return (

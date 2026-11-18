@@ -5,7 +5,7 @@ import { LabError, labIO, labValue } from "../lab/effect-runtime.ts";
 import { errorCode } from "../guards.ts";
 
 export interface OwnedProcess {
-  readonly pid?: number;
+  readonly pid?: number | undefined;
 }
 export interface ProcessControl {
   alive(child: OwnedProcess): boolean;

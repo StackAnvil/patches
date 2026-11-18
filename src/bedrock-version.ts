@@ -35,8 +35,8 @@ export interface BedrockVersionPin {
 
 interface BedrockVersionLookup {
   channel?: BedrockChannel;
-  authorization?: string;
-  versionId?: string;
+  authorization?: string | undefined;
+  versionId?: string | undefined;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -45,9 +45,10 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function windowsPackageVersion(versionId: string): string {
-  const match = /^(\d+\.\d+\.\d+\.\d+)\.(.+)$/.exec(versionId);
-  if (!match || !uuid.test(match[2])) throw new Error("Invalid Xbox version ID");
-  return match[1];
+  const [, packageVersion, suffix] = /^(\d+\.\d+\.\d+\.\d+)\.(.+)$/.exec(versionId) ?? [];
+  if (packageVersion === undefined || suffix === undefined || !uuid.test(suffix))
+    throw new Error("Invalid Xbox version ID");
+  return packageVersion;
 }
 
 /** Accept an Authorization header or the JSON response from Xbox XSTS authorization. */
@@ -56,11 +57,11 @@ export function xboxAuthorization(text: string): string {
   if (header.startsWith("{")) {
     try {
       const response = record(JSON.parse(header));
-      const claims = record(response.DisplayClaims).xui;
+      const claims = record(response["DisplayClaims"])["xui"];
       if (!Array.isArray(claims) || claims.length !== 1) throw new Error();
-      const hash = record(claims[0]).uhs;
-      if (typeof hash !== "string" || typeof response.Token !== "string") throw new Error();
-      header = `XBL3.0 x=${hash};${response.Token}`;
+      const hash = record(claims[0])["uhs"];
+      if (typeof hash !== "string" || typeof response["Token"] !== "string") throw new Error();
+      header = `XBL3.0 x=${hash};${response["Token"]}`;
     } catch {
       throw new Error(
         "The auth file must contain an Xbox Authorization header or an XSTS response with Token and DisplayClaims.xui[0].uhs",
@@ -74,22 +75,23 @@ export function xboxAuthorization(text: string): string {
 }
 
 export function bedrockContentId(metadata: unknown, productId: string): string {
-  const items = record(metadata).Items;
+  const items = record(metadata)["Items"];
   if (!Array.isArray(items)) throw new Error("The Store response contains no products");
   const ids = new Set<string>();
   for (const item of items.map(record)) {
-    if (item.ProductId !== productId) continue;
-    if (!Array.isArray(item.ContentIds))
+    if (item["ProductId"] !== productId) continue;
+    if (!Array.isArray(item["ContentIds"]))
       throw new Error("The Store product contains no content IDs");
-    for (const id of item.ContentIds) {
+    for (const id of item["ContentIds"]) {
       if (typeof id !== "string" || !uuid.test(id))
         throw new Error("The Store product contains an invalid content ID");
       ids.add(id.toLowerCase());
     }
   }
-  if (ids.size !== 1)
+  const [id, ...others] = ids;
+  if (id === undefined || others.length > 0)
     throw new Error("Expected one Windows content ID for the selected Bedrock product");
-  return [...ids][0];
+  return id;
 }
 
 export function bedrockVersionPin(
@@ -98,34 +100,39 @@ export function bedrockVersionPin(
   contentId: string,
 ): BedrockVersionPin {
   const response = record(metadata);
-  if (response.PackageFound !== true)
+  if (response["PackageFound"] !== true)
     throw new Error(
       "Xbox found no package for this lookup. The version can be unavailable, or the account can lack entitlement",
     );
-  if (typeof response.ContentId !== "string" || response.ContentId.toLowerCase() !== contentId) {
+  if (
+    typeof response["ContentId"] !== "string" ||
+    response["ContentId"].toLowerCase() !== contentId
+  ) {
     throw new Error("Xbox returned a different content ID");
   }
-  const versionId = response.VersionId;
+  const versionId = response["VersionId"];
   if (typeof versionId !== "string") throw new Error("Invalid Xbox version ID");
   const packageVersion = windowsPackageVersion(versionId);
-  if (response.Version !== versionId && response.Version !== packageVersion)
+  if (response["Version"] !== versionId && response["Version"] !== packageVersion)
     throw new Error("Xbox package version and version ID differ");
-  if (response.UpdatePredownload !== false)
+  if (response["UpdatePredownload"] !== false)
     throw new Error("Xbox did not confirm that this package is available now");
-  if (!Array.isArray(response.PackageFiles)) throw new Error("Xbox returned no package files");
+  if (!Array.isArray(response["PackageFiles"])) throw new Error("Xbox returned no package files");
   const product = products[channel];
   const fileName = `${product.family}_${packageVersion}_x64__8wekyb3d8bbwe.msixvc`;
-  const files = response.PackageFiles.map(record).filter((file) => file.FileName === fileName);
-  if (files.length !== 1)
+  const files = response["PackageFiles"]
+    .map(record)
+    .filter((file) => file["FileName"] === fileName);
+  const [file, ...otherFiles] = files;
+  if (file === undefined || otherFiles.length > 0)
     throw new Error("Expected one full x64 MSIXVC package for the selected Bedrock version");
-  const file = files[0];
   if (
-    typeof file.ContentId !== "string" ||
-    file.ContentId.toLowerCase() !== contentId ||
-    file.VersionId !== versionId ||
-    typeof file.FileSize !== "number" ||
-    !Number.isSafeInteger(file.FileSize) ||
-    file.FileSize <= 0
+    typeof file["ContentId"] !== "string" ||
+    file["ContentId"].toLowerCase() !== contentId ||
+    file["VersionId"] !== versionId ||
+    typeof file["FileSize"] !== "number" ||
+    !Number.isSafeInteger(file["FileSize"]) ||
+    file["FileSize"] <= 0
   ) {
     throw new Error("The full package has inconsistent identity or size metadata");
   }
@@ -137,7 +144,7 @@ export function bedrockVersionPin(
     versionId,
     packageVersion,
     fileName,
-    fileSize: file.FileSize,
+    fileSize: file["FileSize"],
   };
 }
 
@@ -222,7 +229,7 @@ export const resolveBedrockVersion = Effect.fn("resolveBedrockVersion")(function
       : `https://packagespc.xboxlive.com/GetSpecificBasePackage/${contentId}/${versionId}`,
   );
   const headers: Record<string, string> = { "x-xbl-contract-version": "3" };
-  if (auth) headers.Authorization = auth;
+  if (auth) headers["Authorization"] = auth;
   const metadata = yield* metadataRequest(packageUrl, headers, fetchMetadata);
   return yield* Effect.try({
     try: () => {

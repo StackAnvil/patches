@@ -46,9 +46,9 @@ export function validatePublishArtifact(
   bytes: Uint8Array,
   directory: string,
 ): PublishArtifact {
-  if (manifest.target !== addon || manifest.artifacts.length !== 1)
+  const [artifact] = manifest.artifacts;
+  if (manifest.target !== addon || !artifact || manifest.artifacts.length !== 1)
     throw new Error("Expected one VFP Bedrock add-on artifact");
-  const artifact = manifest.artifacts[0];
   if (
     basename(artifact.file) !== artifact.file ||
     !/^viafabricplus-bedrock-.+-StackAnvil\.jar$/.test(artifact.file)
@@ -58,7 +58,7 @@ export function validatePublishArtifact(
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   if (sha256 !== artifact.sha256)
     throw new Error("VFP Bedrock add-on checksum differs from its build manifest");
-  const version = manifest.coordinates?.startsWith("com.viaversion:viafabricplus-bedrock:")
+  const version = manifest.coordinates.startsWith("com.viaversion:viafabricplus-bedrock:")
     ? manifest.coordinates.slice("com.viaversion:viafabricplus-bedrock:".length)
     : undefined;
   if (
@@ -71,7 +71,7 @@ export function validatePublishArtifact(
   }
   if (
     metadata.environment !== "client" ||
-    !/^\d+\.\d+(?:\.\d+)?$/.test(metadata.depends?.minecraft ?? "") ||
+    !/^\d+\.\d+(?:\.\d+)?$/.test(metadata.depends.minecraft) ||
     metadata.depends.java !== ">=25" ||
     !metadata.depends.viafabricplus
   ) {
@@ -232,7 +232,7 @@ if (import.meta.main) {
       const modrinth = modrinthMetadata(
         artifact,
         tag,
-        process.env.MODRINTH_PROJECT_ID ?? "<new project ID>",
+        process.env["MODRINTH_PROJECT_ID"] ?? "<new project ID>",
         changelog,
       );
       const curseforge = curseForgeMetadata(artifact, tag, changelog);
@@ -254,8 +254,8 @@ if (import.meta.main) {
             artifact,
             tag,
             changelog,
-            process.env.MODRINTH_PROJECT_ID ?? "",
-            process.env.MODRINTH_TOKEN ?? "",
+            process.env["MODRINTH_PROJECT_ID"] ?? "",
+            process.env["MODRINTH_TOKEN"] ?? "",
           ),
         ),
       );
@@ -266,8 +266,8 @@ if (import.meta.main) {
             artifact,
             tag,
             changelog,
-            process.env.CURSEFORGE_PROJECT_ID ?? "",
-            process.env.CURSEFORGE_TOKEN ?? "",
+            process.env["CURSEFORGE_PROJECT_ID"] ?? "",
+            process.env["CURSEFORGE_TOKEN"] ?? "",
           ),
         ),
       );

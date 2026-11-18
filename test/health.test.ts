@@ -87,7 +87,7 @@ test("offline health rejects a prerequisite file that is not in its project's se
     const report = await patchHealth("all", { repository: directory });
     expect(healthFailed(report)).toBe(true);
     expect(report.errors).toHaveLength(1);
-    expect(report.projects[0].patches[0]).toMatchObject({
+    expect(report.projects[0]?.patches[0]).toMatchObject({
       standalone: "not-run",
       upstreamEquivalent: "not-checked",
       prContext: false,
@@ -175,7 +175,7 @@ test("upstream inspection recognizes equivalent patches and rehearses updates wi
     await runGit(["commit", "-m", "fix(test): revert upstream fixture"], upstream);
     const reverted = makeReport();
     await inspectUpstream(reverted, target, directory, upstream);
-    expect(reverted.patches[0].upstreamEquivalent).toBe("absent");
+    expect(reverted.patches[0]?.upstreamEquivalent).toBe("absent");
     expect(reverted.upstreamReplay).toBe("passed");
     expect(reverted.advisories).toHaveLength(1);
     await runGit(["reset", "--hard", first], upstream);

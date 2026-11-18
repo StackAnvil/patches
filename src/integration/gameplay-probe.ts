@@ -259,9 +259,10 @@ export async function waitForJavaWorldHud(
         pixels.every(
           (pixel, index) =>
             pixel.length === 3 &&
-            pixel.every(
-              (channel, channelIndex) => Math.abs(channel - samples[index].rgb[channelIndex]) <= 2,
-            ),
+            pixel.every((channel, channelIndex) => {
+              const expected = samples[index]?.rgb[channelIndex];
+              return expected !== undefined && Math.abs(channel - expected) <= 2;
+            }),
         )
       )
         return;
@@ -488,15 +489,14 @@ async function rejectIneligibleOffhandBlock(ui: Ui): Promise<void> {
       );
     if (
       visible &&
-      pixels
-        .slice(0, 6)
-        .every(
-          (pixel, index) =>
-            pixel.length === 3 &&
-            pixel.every(
-              (channel, component) => Math.abs(channel - baseline[index][component]) <= 2,
-            ),
-        )
+      pixels.slice(0, 6).every(
+        (pixel, index) =>
+          pixel.length === 3 &&
+          pixel.every((channel, component) => {
+            const expected = baseline[index]?.[component];
+            return expected !== undefined && Math.abs(channel - expected) <= 2;
+          }),
+      )
     ) {
       synchronized = true;
       break;
@@ -1296,11 +1296,9 @@ export async function runGameplayCases(
     artifactDir: string;
     negativeControls?: boolean;
     connectionError?: () => Promise<string | undefined>;
-    inspectClient?: (
-      id: GameplayCaseId,
-      log: () => Promise<string>,
-      event: GameplayEvent,
-    ) => Promise<void>;
+    inspectClient?:
+      | ((id: GameplayCaseId, log: () => Promise<string>, event: GameplayEvent) => Promise<void>)
+      | undefined;
   },
 ): Promise<void> {
   const results: {
@@ -1310,7 +1308,7 @@ export async function runGameplayCases(
     error?: string;
     cause?: unknown;
     screenshots: string[];
-    negativeControl?: GameplayEvent;
+    negativeControl?: GameplayEvent | undefined;
   }[] = [];
   const serverAlive = () => {
     if (!options.server.pid) return false;

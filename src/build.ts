@@ -34,7 +34,7 @@ interface Coordinates {
 
 const localRepo = join(root, ".stackanvil", "maven");
 const oreUiShaperDirectory = (repository = root) =>
-  process.env.STACKANVIL_OREUI_SHAPER_RESOURCES ??
+  process.env["STACKANVIL_OREUI_SHAPER_RESOURCES"] ??
   join(repository, ".stackanvil", "tools", "oreui-shaper-resources");
 
 const BedrockAssetsSchema = Schema.Struct({ version: Schema.String });
@@ -81,7 +81,7 @@ async function javaHome(version: string): Promise<string> {
       if (entry.includes(`-${version}-`)) candidates.push(join(gradleJdks, entry));
     }
   }
-  if (version === "25") candidates.push(process.env.JAVA_HOME);
+  if (version === "25") candidates.push(process.env["JAVA_HOME"]);
   const selected = candidates.find((path) => path && existsSync(join(path, "bin", "java")));
   if (!selected)
     throw new Error(`Java ${version} is missing. Set STACKANVIL_JAVA_${version} to a JDK home.`);
@@ -90,7 +90,11 @@ async function javaHome(version: string): Promise<string> {
 
 export async function buildEnvironment(version: string): Promise<NodeJS.ProcessEnv> {
   const jdk = await javaHome(version);
-  return { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` };
+  return {
+    ...process.env,
+    JAVA_HOME: jdk,
+    PATH: `${join(jdk, "bin")}:${process.env["PATH"] ?? ""}`,
+  };
 }
 
 function pomValue(pom: string, tag: string): string {
@@ -121,15 +125,16 @@ export async function readBuildArtifact(
 ) {
   const directory = artifactProjectDirectory(dir, target.artifactProject);
   const artifacts = await listArtifacts(directory);
-  if (artifacts.length !== 1) {
+  const [artifact] = artifacts;
+  if (artifact === undefined || artifacts.length !== 1) {
     throw new Error(`Expected one distributable JAR in ${directory}, found ${artifacts.length}`);
   }
-  const publication = target.publication[0].toLowerCase() + target.publication.slice(1);
+  const publication = target.publication.charAt(0).toLowerCase() + target.publication.slice(1);
   const pom = await readFile(
     join(directory, "build", "publications", publication, "pom-default.xml"),
     "utf8",
   );
-  return { artifact: artifacts[0], pom, coordinate: coordinates(pom) };
+  return { artifact, pom, coordinate: coordinates(pom) };
 }
 
 async function publishLocal(artifact: string, pom: string, coordinate: Coordinates): Promise<void> {

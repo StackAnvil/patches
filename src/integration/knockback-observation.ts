@@ -37,7 +37,8 @@ export function rangedKnockbackPasses(
     )
   )
     return false;
-  const start = ranged.events.find((event) => event.action === "start")!;
+  const start = ranged.events.find((event) => event.action === "start");
+  if (!start) return false;
   const endTick =
     mode === "cancel"
       ? ranged.slots?.find((entry) => entry.slot === 1 && entry.tick > start.tick)?.tick
