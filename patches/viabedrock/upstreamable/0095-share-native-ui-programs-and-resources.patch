@@ -627,6 +627,14 @@ Bound named definitions separately from the per-scene node limit. Native
 1.26.60 declares about 6,500 definitions and CubeCraft's UI pack adds about
 2,000; sharing the 8,192 node cap dropped seven CubeCraft files, including
 its profile chest and HUD.
+
+Expand a slider's slider_step_factory once per step id with a zero
+$step_offset and tag each child with its variant. Native 1.26.60.5
+(REA, function 0x141c44050) creates one control for each interior step
+1..steps-2 at offset (i * width / (steps - 1) - width / 2, 0), using
+slider_step_progress when the step is past the value and slider_step
+otherwise, with hover variants while the slider is hovered. The frontend
+places those copies after layout.
 Expression binding names, such as (not #on_new_death_screen), are accepted
 when every value they reference is known. The client does not report the
 native XP-bar offset, so #exp_bar_and_text_offset_y keeps its rest value 0.
@@ -6162,10 +6170,10 @@ index 0000000000000000000000000000000000000000..5dfbb3f8cb6cc74a7e05d034abf56dec
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..3c5c91d9255ca6523c42c99c683c67f7d5d8a4b4
+index 0000000000000000000000000000000000000000..e7efc05d980491372ceac9e75368903cbfc26d5e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,2352 @@
+@@ -0,0 +1,2381 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7721,6 +7729,8 @@ index 0000000000000000000000000000000000000000..3c5c91d9255ca6523c42c99c683c67f7
 +                if (templateGrid && factory.has("control_name")) {
 +                    node.addProperty("factory_name", UiExpression.text(resolveValue(factory.get("name"), values, 0)));
 +                    this.gridCollection(UiExpression.text(resolveValue(factory.get("control_name"), values, 0)), node, children, values, selectedScope, depth);
++                } else if ("slider".equals(string(node, "type")) && factoryIds.isJsonObject()) {
++                    this.sliderSteps(factoryIds.getAsJsonObject(), node, children, values, selectedScope, depth);
 +                } else {
 +                    this.factory(control, factory, node, children, values, selectedScope, depth);
 +                }
@@ -7910,6 +7920,33 @@ index 0000000000000000000000000000000000000000..3c5c91d9255ca6523c42c99c683c67f7
 +                }
 +            });
 +            return result;
++        }
++
++        /**
++         * Native slider_step_factory creates one control per interior step once the slider has its size and value.
++         * Each step id expands once here with a zero $step_offset; the frontend places a copy at every interior step
++         * and selects the progress and hover variants.
++         */
++        private void sliderSteps(final JsonObject ids, final JsonObject node, final JsonArray children,
++                                 final Map<String, JsonElement> values, final UiBindings.Scope scope, final int depth) {
++            node.addProperty("factory_name", "slider_step_factory");
++            final Map<String, JsonElement> stepValues = new HashMap<>(values);
++            final JsonArray origin = new JsonArray();
++            origin.add(0);
++            origin.add(0);
++            stepValues.put("$step_offset", origin);
++            for (final String variant : List.of("slider_step", "slider_step_hover", "slider_step_progress", "slider_step_progress_hover")) {
++                final JsonElement reference = ids.get(variant);
++                if (reference == null) {
++                    continue;
++                }
++                final JsonObject child = this.expandChild(UiExpression.text(resolveValue(reference, values, 0)), new JsonObject(),
++                        stepValues, scope, null, depth + 1);
++                if (child != null) {
++                    child.addProperty("slider_step_variant", variant);
++                    children.add(child);
++                }
++            }
 +        }
 +
 +        private void factory(final JsonObject owner, final JsonObject factory, final JsonObject node, final JsonArray children,
@@ -19139,10 +19176,10 @@ index 0000000000000000000000000000000000000000..bc575caa2d407c21ea95ddd709236079
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..8f084e292456d970ac54cae4764ff3b8710d0daa
+index 0000000000000000000000000000000000000000..cb059f876c46a8394fd8a6e4c13b661949cff163
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
-@@ -0,0 +1,1137 @@
+@@ -0,0 +1,1157 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -19188,6 +19225,26 @@ index 0000000000000000000000000000000000000000..8f084e292456d970ac54cae4764ff3b8
 +              {"binding_collection_name":"options","binding_name":"#caption","binding_name_override":"#text"},
 +              {"binding_type":"collection_details","binding_collection_name":"first","binding_name":"#total","binding_name_override":"#maximum_grid_items"}]}}
 +            """;
++
++    @Test
++    void sliderStepFactoryExpandsEachStepVariantOnceAtTheSliderCenter() {
++        // CubeCraft's three-option settings sliders show a step mark at the middle of the track natively.
++        final var program = new JsonUiProgram(List.of(Map.of("ui/ui_common.json", """
++                {"namespace":"common",
++                 "slider_step":{"type":"image","texture":"textures/ui/slider_step_background","size":[2,6],"offset":"$step_offset"},
++                 "slider_step_progress@common.slider_step":{"texture":"textures/ui/slider_step_progress"},
++                 "slider":{"type":"slider","size":[100,10],"slider_steps":3,
++                   "factory":{"name":"slider_step_factory","control_ids":{"slider_step":"@common.slider_step",
++                     "slider_step_progress":"@common.slider_step_progress"}}}}
++                """.getBytes(StandardCharsets.UTF_8))));
++        final var children = program.resolve("common.slider", new Bindings()).root().getAsJsonArray("children");
++        assertEquals(2, children.size());
++        assertEquals("slider_step", children.get(0).getAsJsonObject().get("slider_step_variant").getAsString());
++        assertEquals("slider_step_progress", children.get(1).getAsJsonObject().get("slider_step_variant").getAsString());
++        for (final JsonElement child : children) {
++            assertEquals(0, child.getAsJsonObject().getAsJsonArray("offset").get(0).getAsInt());
++        }
++    }
 +
 +    @Test
 +    void acceptedPackLoadsAfterLargeNativeDefinitions() {
