@@ -124,6 +124,12 @@ capture the native identifier, without retaining the translated carrier.
 Head-slot values remain unavailable when a nonliving Java carrier has no
 native equipment transport.
 
+Custom actors also apply their sampled scripts.scale around the native
+origin, on top of the entity scale, as world actors already do. Without
+it Lifeboat's lobby game banners (scale 8) drew as small dashes and its
+game statues (scale 2) at half size; native 1.26.60.5 draws both full
+size.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index bbd97d90cb7de8582deeeb79eb296a6909f7fb00..13947739329f65000d449d2d73586e3cd554fec8 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -257,7 +263,7 @@ index 0000000000000000000000000000000000000000..c7d9e7b838804f9a8f4934e1b8c4b714
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-index 485712bd66ef564f2b2a6e795ed244125413678b..ef225f2805029e1b6b40bf671c9936f6cd814cea 100644
+index 485712bd66ef564f2b2a6e795ed244125413678b..79841a1e669d121c5d0c958d97d883b78d5efcb2 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 @@ -19,6 +19,16 @@
@@ -306,7 +312,7 @@ index 485712bd66ef564f2b2a6e795ed244125413678b..ef225f2805029e1b6b40bf671c9936f6
      private ResourcePackStorage currentPacks;
      private BedrockActorMaterialDefinitions materialDefinitions;
  
-@@ -88,6 +106,10 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -88,6 +106,11 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
          }
          state.models = List.of();
          state.scale = 1F;
@@ -314,10 +320,11 @@ index 485712bd66ef564f2b2a6e795ed244125413678b..ef225f2805029e1b6b40bf671c9936f6
 +        state.playback = null;
 +        state.pose = Map.of();
 +        state.visibility = BedrockActorAnimation.Visibility.UNSPECIFIED;
++        state.scriptScale = UNIT_SCALE;
          final ResourcePackStorage packs = BedrockActorResources.get();
          if (packs == null) {
              this.currentPacks = null;
-@@ -95,24 +117,57 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -95,24 +118,57 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
              this.models.clear();
              this.renderTypes.clear();
              this.resolvedModels.clear();
@@ -376,7 +383,7 @@ index 485712bd66ef564f2b2a6e795ed244125413678b..ef225f2805029e1b6b40bf671c9936f6
          state.yaw = entity.getYRot();
      }
  
-@@ -143,32 +198,123 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -143,32 +199,124 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
                          textures.size() >= value.textureCount() && textures.stream().limit(value.textureCount())
                                  .allMatch(id -> Minecraft.getInstance().getResourceManager().getResource(id).isPresent()));
                  final RenderType type;
@@ -429,6 +436,7 @@ index 485712bd66ef564f2b2a6e795ed244125413678b..ef225f2805029e1b6b40bf671c9936f6
 +                    !Minecraft.getInstance().isPaused(), sounds::add, particles::add);
 +            actor.pose = state.pose;
 +            state.visibility = actor.playback.visibility();
++            state.scriptScale = actor.playback.scale();
 +            final Vec3 origin = new Vec3(state.x, state.y, state.z);
 +            for (final var sound : sounds) sound.play(this.effectPosition(actor, sound.locator(), origin, state.yaw));
 +            final var owner = new WeakReference<>(state.actor);
@@ -453,8 +461,9 @@ index 485712bd66ef564f2b2a6e795ed244125413678b..ef225f2805029e1b6b40bf671c9936f6
 +        }
          for (RenderedModel rendered : state.models) {
              poseStack.pushPose();
-             applyActorTransform(poseStack, state.yaw, state.scale);
+-            applyActorTransform(poseStack, state.yaw, state.scale);
 -            nodes.submitModel(rendered.model, state, poseStack, rendered.renderType, state.lightCoords, OverlayTexture.NO_OVERLAY, state.outlineColor);
++            applyActorTransform(poseStack, state.yaw, state.scale, state.scriptScale);
 +            final RenderType type;
 +            if (rendered.uv != null && state.playback != null) {
 +                final MaterialKey key = rendered.material;
@@ -504,8 +513,24 @@ index 485712bd66ef564f2b2a6e795ed244125413678b..ef225f2805029e1b6b40bf671c9936f6
      static void applyActorTransform(final PoseStack poseStack, final float yaw, final float scale) {
          // Scale around the native actor origin before compensating for the Java model origin.
          poseStack.scale(scale, scale, scale);
-@@ -179,17 +325,39 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -177,19 +325,56 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+         poseStack.translate(0F, -1.5F, 0F);
+     }
  
++    /**
++     * The authored scripts.scale applies around the native actor origin, on top of the entity scale. Lifeboat's lobby
++     * signs use 8 and its game statues 2.
++     */
++    static void applyActorTransform(final PoseStack poseStack, final float yaw, final float scale,
++                                    final BedrockBoneAnimation.Vector scriptScale) {
++        applyActorTransform(poseStack, yaw, scale);
++        poseStack.translate(0F, 1.5F, 0F);
++        poseStack.scale(scriptScale.x(), scriptScale.y(), scriptScale.z());
++        poseStack.translate(0F, -1.5F, 0F);
++    }
++
++    private static final BedrockBoneAnimation.Vector UNIT_SCALE = new BedrockBoneAnimation.Vector(1F, 1F, 1F);
++
      public static final class State extends EntityRenderState {
          private List<RenderedModel> models = List.of();
 +        private Map<String, BedrockBoneAnimation.Transform> pose = Map.of();
@@ -515,6 +540,7 @@ index 485712bd66ef564f2b2a6e795ed244125413678b..ef225f2805029e1b6b40bf671c9936f6
 +        private NativeActorMessage.Snapshot nativeState;
          private float yaw;
          private float scale = 1F;
++        private BedrockBoneAnimation.Vector scriptScale = UNIT_SCALE;
 +        Map<String, BedrockBoneAnimation.Transform> pose() { return this.pose; }
 +        BedrockActorAnimation.Visibility visibility() { return this.visibility; }
 +    }
@@ -1064,6 +1090,28 @@ index 0000000000000000000000000000000000000000..4676741eb60bd1544b2fedf96556bf3b
 +        assertEquals(2F,normal.length(),.00001F);
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
+index aac5efd1fe66c0d0d03b35fb2da64e8ff755391a..b7064176b16b37135b5dee3614debadf088d1abc 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
+@@ -47,4 +47,17 @@ final class BedrockEntityRendererTest {
+         }
+     }
+ 
++    @Test
++    void multipliesAuthoredScriptScaleOntoTheEntityScale() {
++        // Lifeboat's lobby sign is a one-block plane with scripts.scale 8; native draws it eight blocks tall.
++        final PoseStack poses = new PoseStack();
++        BedrockEntityRenderer.applyActorTransform(poses, 180F, 1.5F,
++                new com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation.Vector(8F, 8F, 8F));
++        final Vector3f origin = poses.last().pose().transformPosition(new Vector3f(0F, 1.5F, 0F));
++        assertEquals(0F, origin.y, 0.00001F);
++        // One block above the native origin in Java model space.
++        final Vector3f top = poses.last().pose().transformPosition(new Vector3f(0F, 0.5F, 0F));
++        assertEquals(12F, top.y, 0.00001F);
++    }
++
+ }
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndexTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorIndexTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..dace65672f9b0666aed1b77500cf758fe06a9ec4
