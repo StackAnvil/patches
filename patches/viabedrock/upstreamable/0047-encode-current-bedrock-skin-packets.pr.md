@@ -15,3 +15,10 @@ Regression coverage includes `NativeSkinChangeTest`, `NativeSkinTransportTest`, 
 Direct and proxy controls preserve complete skin records. Actor graphs, equipment, emote assets, and full native appearance require their separate rendering paths.
 
 The [owning patch](0047-encode-current-bedrock-skin-packets.patch) retains implementation rationale and versioned evidence.
+
+## Server number formatting
+
+BDS 1.26.60.6 accepts a live 4D skin change and returns the same skin ID, image, resource patch and geometry.
+It reorders keys and prints each number with 16 significant digits, so normals near 1e-7 differ in their last digit.
+Geometry confirmation now compares numbers within a relative 1e-12 and keeps structure, keys and other values exact.
+`SkinChangeStorageTest` uses the recorded server values and still rejects a changed number.

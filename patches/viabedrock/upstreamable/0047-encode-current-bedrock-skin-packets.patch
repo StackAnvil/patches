@@ -49,6 +49,14 @@ its constructor on the pre-extension API until this patch so the test does
 not depend on later record fields. The completed stack retains the same
 fixture and behavior.
 
+Compare returned geometry numbers within a relative 1e-12 instead of
+exactly. Bedrock Dedicated Server 1.26.60.6 accepted and rebroadcast a
+custom poly_mesh skin with the same image and identity, but printed each
+number with 16 significant digits. Normals near 1e-7 then differed in
+the last digit, so a valid live change was reported as unconfirmed.
+Structure, keys, array lengths and non-numeric values still compare
+exactly.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinAssembler.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinAssembler.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..4c42121b4c22b49ea8d0d746009fbe6d168da992
@@ -704,10 +712,10 @@ index 0000000000000000000000000000000000000000..358166ab190318c6404cd97197f7e953
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorage.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f657ab9dd06a5a8da7d9da17b89f7045ede5673b
+index 0000000000000000000000000000000000000000..f41b818c317c157ade5f96dd07ad0c4c15f98687
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorage.java
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,283 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -859,7 +867,7 @@ index 0000000000000000000000000000000000000000..f657ab9dd06a5a8da7d9da17b89f7045
 +            try {
 +                if (this.current() && this.appearanceHash != null && player.equals(this.player)
 +                        && MessageDigest.isEqual(this.appearanceHash, appearanceHash(skin))
-+                        && this.geometry.equals(geometry(skin.geometryData()))) {
++                        && sameGeometry(this.geometry, geometry(skin.geometryData()))) {
 +                    this.finish(true);
 +                }
 +            } catch (final JsonParseException | IllegalArgumentException invalidGeometry) {
@@ -889,6 +897,47 @@ index 0000000000000000000000000000000000000000..f657ab9dd06a5a8da7d9da17b89f7045
 +        } catch (final NoSuchAlgorithmException impossible) {
 +            throw new AssertionError(impossible);
 +        }
++    }
++
++    /**
++     * Bedrock Dedicated Server 1.26.60.6 reorders object keys and prints every number with 16 significant
++     * digits, so a returned 4D skin differs from the request in the last digit of values near 1e-7.
++     * Compare structure exactly and numbers within a relative 1e-12, far below any visible model change.
++     */
++    static boolean sameGeometry(final JsonElement expected, final JsonElement actual) {
++        if (expected.isJsonObject() && actual.isJsonObject()) {
++            final var left = expected.getAsJsonObject();
++            final var right = actual.getAsJsonObject();
++            if (!left.keySet().equals(right.keySet())) {
++                return false;
++            }
++            for (final String key : left.keySet()) {
++                if (!sameGeometry(left.get(key), right.get(key))) {
++                    return false;
++                }
++            }
++            return true;
++        }
++        if (expected.isJsonArray() && actual.isJsonArray()) {
++            final var left = expected.getAsJsonArray();
++            final var right = actual.getAsJsonArray();
++            if (left.size() != right.size()) {
++                return false;
++            }
++            for (int index = 0; index < left.size(); index++) {
++                if (!sameGeometry(left.get(index), right.get(index))) {
++                    return false;
++                }
++            }
++            return true;
++        }
++        if (expected.isJsonPrimitive() && actual.isJsonPrimitive()
++                && expected.getAsJsonPrimitive().isNumber() && actual.getAsJsonPrimitive().isNumber()) {
++            final double left = expected.getAsDouble();
++            final double right = actual.getAsDouble();
++            return left == right || Math.abs(left - right) <= 1e-12 * Math.max(Math.abs(left), Math.abs(right));
++        }
++        return expected.equals(actual);
 +    }
 +
 +    private static JsonElement geometry(final String data) {
@@ -1595,10 +1644,10 @@ index 0000000000000000000000000000000000000000..66e1792140171019fd9c7100f9b1a16c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorageTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fdcde49addc1f2e1663b24a0bc5a34373c2e7035
+index 0000000000000000000000000000000000000000..6c96a392a1d8410457a49a8db327b86e1e348a92
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/SkinChangeStorageTest.java
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,264 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1672,6 +1721,18 @@ index 0000000000000000000000000000000000000000..fdcde49addc1f2e1663b24a0bc5a3437
 +            fragments(skin("skin", 0, "profile", "False", "[".repeat(129) + "0" + "]".repeat(129))).forEach(fixture.storage::accept);
 +            assertTrue(fixture.skins.isEmpty());
 +            assertFalse(fixture.results.getLast().confirmed());
++        }
++    }
++
++    @Test
++    void confirmsMeshSkinThatTheServerReprintsWithSixteenDigits() {
++        try (Fixture fixture = new Fixture()) {
++            // Values from a Bedrock Dedicated Server 1.26.60.6 echo of a 4D skin's poly_mesh normals.
++            fragments(skin("skin", 0, "profile", "False", "{\"normals\":[[-2.1279686279740417e-07,0.276165]]}")).forEach(fixture.storage::accept);
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0, "profile", "true", "{\"normals\":[[-2.1279686279740417e-06,0.2761650]]}"));
++            assertTrue(fixture.results.isEmpty());
++            fixture.storage.confirm(fixture.nativePlayer, skin("skin", 0, "profile", "true", "{\"normals\":[[-2.127968627974042e-07,0.2761650]]}"));
++            assertTrue(fixture.results.getFirst().confirmed());
 +        }
 +    }
 +

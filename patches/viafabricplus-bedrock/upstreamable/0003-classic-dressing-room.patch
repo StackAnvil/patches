@@ -91,11 +91,20 @@ geometry and live uploads, and return independently decoded assets so
 appearance edits do not modify subsequent players. The regression first
 reproduces a null-pointer failure with unloaded mappings.
 
+Keep every explicitly imported custom skin in a per-account Saved skins
+list. Players who use several pack skins, such as multi-skin "4D" packs,
+previously had to import the pack again to switch back. Each entry is a
+snapshot of the custom skin slot, named by a content hash so repeated
+imports of the same skin share one entry, and it is read back through
+the normal appearance loader. Wearing an entry replaces only the custom
+slot and keeps the separately imported cape. Saving runs after the
+import and only logs a failure, so a full disk cannot undo the import.
+
 diff --git a/README.md b/README.md
-index 96f45ce7ad605eef0e2c5dedd83aedcde2e05c50..1e71dc0848799c7351d7d425e1072a89ecabf730 100644
+index 96f45ce7ad605eef0e2c5dedd83aedcde2e05c50..977e1f781c93ce470c7ac5f750ca15a2c58609d5 100644
 --- a/README.md
 +++ b/README.md
-@@ -11,6 +11,28 @@ Addon for [ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) that adds
+@@ -11,6 +11,29 @@ Addon for [ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) that adds
  
  ## Addresses
  
@@ -108,8 +117,9 @@ index 96f45ce7ad605eef0e2c5dedd83aedcde2e05c50..1e71dc0848799c7351d7d425e1072a89
 +may choose not to show it.
 +
 +Skin PNGs must be square, from 64 × 64 to 1024 × 1024 pixels. Cape PNGs must be twice as wide as they are tall,
-+from 64 × 32 to 1024 × 512 pixels. The Dressing Room keeps one imported skin per account.
-+It saves the appearance separately for each Bedrock account and for offline play.
++from 64 × 32 to 1024 × 512 pixels. Each skin you import, including skins from a skin pack, also goes to
++`Saved skins`. Open it to wear an earlier skin again or remove one.
++The Dressing Room saves appearances and saved skins separately for each Bedrock account and for offline play.
 +
 +Open `Bedrock Friends` to see your Xbox friends and their online status. The `Requests` tab lets you accept, decline,
 +or cancel friend requests. Use `Find players` to search by Gamertag and send a request. Select a player and click
@@ -124,7 +134,7 @@ index 96f45ce7ad605eef0e2c5dedd83aedcde2e05c50..1e71dc0848799c7351d7d425e1072a89
  | Address                                | Signaling                     |
  |----------------------------------------|-------------------------------|
  | `host[:port]`                          | HTTP, default port 19132      |
-@@ -18,6 +40,8 @@ Addon for [ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) that adds
+@@ -18,6 +41,8 @@ Addon for [ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) that adds
  | `nethernet-xbox://network-id`          | Xbox WebSocket, needs account |
  | `nethernet-xbox-json-rpc://network-id` | Xbox JSON-RPC, needs account  |
  
@@ -172,10 +182,10 @@ index bb6ab986866bb7ee304f486b98af119c0cfe6d51..02ea291bf2efb176ecd358647ec9e56b
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ed89d0f022486f59e0cc493db53db7ce6c5f7db
+index 0000000000000000000000000000000000000000..4c50a54c1018d710ac9cfc4432cd8e198969ccae
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
-@@ -0,0 +1,324 @@
+@@ -0,0 +1,464 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -206,10 +216,17 @@ index 0000000000000000000000000000000000000000..5ed89d0f022486f59e0cc493db53db7c
 +import java.nio.file.Files;
 +import java.nio.file.Path;
 +import java.nio.file.StandardCopyOption;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.HexFormat;
 +import java.util.UUID;
 +import java.util.List;
++import java.util.stream.Stream;
 +import net.raphimc.viabedrock.protocol.model.SkinData;
 +import java.util.function.Function;
++import java.util.regex.Pattern;
 +import javax.imageio.ImageIO;
 +import javax.imageio.ImageReader;
 +import javax.imageio.stream.ImageInputStream;
@@ -222,7 +239,12 @@ index 0000000000000000000000000000000000000000..5ed89d0f022486f59e0cc493db53db7c
 +    private static final String CUSTOM_SKIN = "skin.png";
 +    private static final String CLASSIC_APPEARANCE = "classic-model.json";
 +    private static final String CAPE = "cape.png";
++    private static final String SAVED_SKINS = "saved";
++    private static final String SAVED_SKIN = "saved.json";
++    /** Files that make up the custom skin slot. A saved skin keeps a copy of each present file. */
++    private static final List<String> CUSTOM_FILES = List.of(CUSTOM_SKIN, CLASSIC_APPEARANCE);
 +    private static final int MAX_FILE_BYTES = 8 * 1024 * 1024;
++    private static final int MAX_SAVED_NAME = 64;
 +
 +    private final Path root;
 +    private final Function<Selection, BufferedImage> presets;
@@ -245,7 +267,10 @@ index 0000000000000000000000000000000000000000..5ed89d0f022486f59e0cc493db53db7c
 +    }
 +
 +    public synchronized Appearance load(final String accountId) throws IOException {
-+        final Path directory = this.directory(accountId);
++        return this.load(this.directory(accountId));
++    }
++
++    private Appearance load(final Path directory) throws IOException {
 +        Selection selection = Selection.STEVE;
 +        boolean slim = false;
 +        String skinId = "";
@@ -374,6 +399,127 @@ index 0000000000000000000000000000000000000000..5ed89d0f022486f59e0cc493db53db7c
 +        return updated;
 +    }
 +
++    /**
++     * Keeps a copy of the current custom skin so the player can wear it again after importing
++     * another one. Identical skins share one entry because the entry name is a content hash.
++     */
++    public synchronized void saveCustomSkin(final String accountId, final String name) throws IOException {
++        final Path directory = this.directory(accountId);
++        final Appearance current = this.load(accountId);
++        if (current.selection() != Selection.CUSTOM) throw new IOException("Import a custom skin first");
++        final MessageDigest digest;
++        try {
++            digest = MessageDigest.getInstance("SHA-256");
++        } catch (NoSuchAlgorithmException e) {
++            throw new IOException("SHA-256 is unavailable", e);
++        }
++        for (final String file : CUSTOM_FILES) {
++            digest.update(file.getBytes(StandardCharsets.UTF_8));
++            digest.update((byte) 0);
++            if (Files.isRegularFile(directory.resolve(file))) digest.update(Files.readAllBytes(directory.resolve(file)));
++            digest.update((byte) 0);
++        }
++        digest.update((byte) (current.slim() ? 1 : 0));
++        final String id = HexFormat.of().formatHex(digest.digest(), 0, 16);
++        final Path saved = directory.resolve(SAVED_SKINS);
++        if (Files.isDirectory(saved.resolve(id))) return;
++        Files.createDirectories(saved);
++        final Path temporary = Files.createTempDirectory(saved, "saving-");
++        try {
++            for (final String file : CUSTOM_FILES) {
++                if (Files.isRegularFile(directory.resolve(file))) Files.copy(directory.resolve(file), temporary.resolve(file));
++            }
++            final JsonObject metadata = new JsonObject();
++            metadata.addProperty("selection", Selection.CUSTOM.name());
++            metadata.addProperty("slim", current.slim());
++            metadata.addProperty("skinId", "");
++            metadata.addProperty("capeId", "");
++            Files.writeString(temporary.resolve(METADATA), metadata.toString(), StandardCharsets.UTF_8);
++            final JsonObject entry = new JsonObject();
++            entry.addProperty("name", savedName(name));
++            entry.addProperty("savedAt", System.currentTimeMillis());
++            Files.writeString(temporary.resolve(SAVED_SKIN), entry.toString(), StandardCharsets.UTF_8);
++            Files.move(temporary, saved.resolve(id), StandardCopyOption.ATOMIC_MOVE);
++        } finally {
++            deleteDirectory(temporary);
++        }
++    }
++
++    /** Lists saved custom skins, newest first. */
++    public synchronized List<SavedSkin> savedSkins(final String accountId) throws IOException {
++        final Path saved = this.directory(accountId).resolve(SAVED_SKINS);
++        if (!Files.isDirectory(saved)) return List.of();
++        final List<SavedSkin> skins = new ArrayList<>();
++        try (Stream<Path> entries = Files.list(saved)) {
++            for (final Path entry : entries.toList()) {
++                final String id = entry.getFileName().toString();
++                if (!SavedSkin.ID.matcher(id).matches() || !Files.isRegularFile(entry.resolve(SAVED_SKIN))) continue;
++                try {
++                    final JsonObject metadata = JsonParser.parseString(Files.readString(entry.resolve(SAVED_SKIN))).getAsJsonObject();
++                    skins.add(new SavedSkin(id, savedName(metadata.get("name").getAsString()), metadata.get("savedAt").getAsLong()));
++                } catch (RuntimeException e) {
++                    throw new IOException("A saved skin is invalid", e);
++                }
++            }
++        }
++        skins.sort(Comparator.comparingLong(SavedSkin::savedAt).reversed().thenComparing(SavedSkin::id));
++        return List.copyOf(skins);
++    }
++
++    /** Reads a saved skin for a preview without changing the selected appearance. */
++    public synchronized Appearance savedAppearance(final String accountId, final String id) throws IOException {
++        return this.load(this.savedDirectory(accountId, id));
++    }
++
++    public synchronized Appearance wearSavedSkin(final String accountId, final String id) throws IOException {
++        final Path source = this.savedDirectory(accountId, id);
++        final Appearance saved = this.load(source);
++        if (saved.selection() != Selection.CUSTOM) throw new IOException("The saved skin is incomplete");
++        final Appearance current = this.load(accountId);
++        final Path directory = this.directory(accountId);
++        for (final String file : CUSTOM_FILES) {
++            if (!Files.isRegularFile(source.resolve(file))) {
++                Files.deleteIfExists(directory.resolve(file));
++                continue;
++            }
++            final Path temporary = Files.createTempFile(directory, "saved-", ".tmp");
++            try {
++                Files.copy(source.resolve(file), temporary, StandardCopyOption.REPLACE_EXISTING);
++                moveIntoPlace(temporary, directory.resolve(file));
++            } finally {
++                Files.deleteIfExists(temporary);
++            }
++        }
++        this.saveMetadata(accountId, new Appearance(Selection.CUSTOM, saved.slim(), saved.skin(), current.cape(),
++            UUID.randomUUID().toString(), current.capeId(), saved.classicModel(), saved.classicOptions()));
++        return this.load(accountId);
++    }
++
++    public synchronized void removeSavedSkin(final String accountId, final String id) throws IOException {
++        deleteDirectory(this.savedDirectory(accountId, id));
++    }
++
++    private Path savedDirectory(final String accountId, final String id) throws IOException {
++        if (id == null || !SavedSkin.ID.matcher(id).matches()) throw new IOException("Unknown saved skin");
++        final Path directory = this.directory(accountId).resolve(SAVED_SKINS).resolve(id);
++        if (!Files.isRegularFile(directory.resolve(SAVED_SKIN))) throw new IOException("Unknown saved skin");
++        return directory;
++    }
++
++    private static String savedName(final String name) {
++        final String cleaned = name == null ? "" : name.replaceAll("\\p{Cntrl}", "").strip();
++        if (cleaned.isEmpty()) return "Custom skin";
++        return cleaned.length() > MAX_SAVED_NAME ? cleaned.substring(0, MAX_SAVED_NAME) : cleaned;
++    }
++
++    private static void deleteDirectory(final Path directory) throws IOException {
++        if (!Files.isDirectory(directory)) return;
++        try (Stream<Path> files = Files.list(directory)) {
++            for (final Path file : files.toList()) Files.delete(file);
++        }
++        Files.delete(directory);
++    }
++
 +    private Path directory(final String accountId) {
 +        return this.root.resolve(accountId != null && accountId.matches("[0-9]+") ? accountId : "offline");
 +    }
@@ -481,6 +627,10 @@ index 0000000000000000000000000000000000000000..5ed89d0f022486f59e0cc493db53db7c
 +
 +    public enum Selection {
 +        STEVE, ALEX, CUSTOM
++    }
++
++    public record SavedSkin(String id, String name, long savedAt) {
++        static final Pattern ID = Pattern.compile("[0-9a-f]{32}");
 +    }
 +
 +    public record Appearance(Selection selection, boolean slim, BufferedImage skin, BufferedImage cape,
@@ -1766,10 +1916,10 @@ index 0000000000000000000000000000000000000000..9a754b6483e3198a8f6832ae1286137a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..8acdbce83d425268965711fd58c9656547e576c8
+index 0000000000000000000000000000000000000000..e19c4600c082f3de754fa4140d93536570a67365
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,321 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1884,6 +2034,7 @@ index 0000000000000000000000000000000000000000..8acdbce83d425268965711fd58c96565
 +        this.addFooter(
 +            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_skin"), _ -> this.chooseFile(false)).build(),
 +            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_pack"), _ -> this.choosePack()).build(),
++            Button.builder(Component.translatable("bedrock_saved_skins.viafabricplus.title"), _ -> new BedrockSavedSkinsScreen(this).open(this)).build(),
 +            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_cape"), _ -> this.chooseFile(true)).build(),
 +            this.removeCapeButton = Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.remove_cape"), _ -> this.removeCape()).build()
 +        );
@@ -2028,7 +2179,9 @@ index 0000000000000000000000000000000000000000..8acdbce83d425268965711fd58c96565
 +            if (pack) {
 +                new BedrockClassicSkinPackScreen(this, BedrockClassicSkinPack.read(path)).open(this);
 +            } else {
-+                this.showAppearance(cape ? this.store.importCape(this.accountId, path) : this.store.importSkin(this.accountId, path));
++                final Appearance imported = cape ? this.store.importCape(this.accountId, path) : this.store.importSkin(this.accountId, path);
++                if (!cape) this.saveImportedSkin(path.getFileName().toString().replaceFirst("(?i)\\.png$", ""));
++                this.showAppearance(imported);
 +            }
 +        } catch (IOException e) {
 +            this.failed(e);
@@ -2037,9 +2190,28 @@ index 0000000000000000000000000000000000000000..8acdbce83d425268965711fd58c96565
 +
 +    void importSkinPackSkin(final BufferedImage image, final BedrockClassicSkinPack.Skin skin) {
 +        try {
-+            this.showAppearance(this.store.importSkinImage(this.accountId, image, skin.slim(), skin.model(), skin.options()));
++            final Appearance imported = this.store.importSkinImage(this.accountId, image, skin.slim(), skin.model(), skin.options());
++            this.saveImportedSkin(skin.name());
++            this.showAppearance(imported);
 +        } catch (IOException e) {
 +            this.failed(e);
++        }
++    }
++
++    void wearSavedSkin(final String id) {
++        try {
++            this.showAppearance(this.store.wearSavedSkin(this.accountId, id));
++        } catch (IOException e) {
++            this.failed(e);
++        }
++    }
++
++    /** A failed copy must not undo the import the player just made. */
++    private void saveImportedSkin(final String name) {
++        try {
++            this.store.saveCustomSkin(this.accountId, name);
++        } catch (IOException e) {
++            ViaFabricPlusBedrock.impl().logger().warn("Could not add the imported skin to saved skins", e);
 +        }
 +    }
 +
@@ -2069,6 +2241,180 @@ index 0000000000000000000000000000000000000000..8acdbce83d425268965711fd58c96565
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSavedSkinsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSavedSkinsScreen.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5b882548ed034ea830be9900d5ce269ff23bbd94
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSavedSkinsScreen.java
+@@ -0,0 +1,168 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore.SavedSkin;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
++import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import java.io.IOException;
++import java.util.List;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.gui.components.PlayerSkinWidget;
++import net.minecraft.network.chat.Component;
++import net.minecraft.world.entity.player.PlayerSkin;
++import org.jspecify.annotations.NonNull;
++
++/** Browses custom skins imported earlier on this account. */
++public final class BedrockSavedSkinsScreen extends VFPScreen {
++
++    private final BedrockDressingRoomScreen dressingRoom;
++    private final BedrockAppearanceStore store = ViaFabricPlusBedrock.impl().appearances();
++    private final String accountId = BedrockAppearanceStore.accountId(ViaFabricPlusBedrock.impl().account().get());
++    private List<SavedSkin> skins = List.of();
++    private int selected;
++    private Button previous;
++    private Button next;
++    private Button use;
++    private Button remove;
++    private PlayerSkin previewSkin;
++    private BedrockPlayerSkins.Preview preview;
++    private Component error;
++
++    public BedrockSavedSkinsScreen(final BedrockDressingRoomScreen dressingRoom) {
++        super(Component.translatable("bedrock_saved_skins.viafabricplus.title"), true);
++        this.dressingRoom = dressingRoom;
++    }
++
++    @Override
++    protected void init() {
++        super.init();
++        final int left = this.width / 2 - 150;
++        final int top = Math.max(CONTENT_TOP, (this.height - 250) / 2);
++        this.previous = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.previous_skin"),
++            _ -> this.changeSkin(-1)).bounds(left, top, 146, 20).build());
++        this.next = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.next_skin"),
++            _ -> this.changeSkin(1)).bounds(left + 154, top, 146, 20).build());
++        this.use = Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.use_pack_skin"), _ -> this.wear()).build();
++        this.remove = Button.builder(Component.translatable("bedrock_saved_skins.viafabricplus.remove"), _ -> this.removeSelected()).build();
++        this.addFooter(this.use, this.remove);
++        final PlayerSkinWidget preview = new PlayerSkinWidget(145, Math.min(200, Math.max(60, this.height - top - 90)),
++            this.minecraft.getEntityModels(), () -> this.previewSkin);
++        preview.setX(left);
++        preview.setY(top + 30);
++        this.addRenderableWidget(preview);
++        this.reload();
++    }
++
++    @Override
++    public void renderTitle(final GuiGraphicsExtractor graphics) {
++        super.renderTitle(graphics);
++        graphics.centeredText(this.font, this.title, this.width / 2, 32, -1);
++    }
++
++    @Override
++    public void extractRenderState(final @NonNull GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
++        super.extractRenderState(graphics, mouseX, mouseY, delta);
++        final int left = this.width / 2 - 150;
++        final int top = Math.max(CONTENT_TOP, (this.height - 250) / 2) + 30;
++        if (this.skins.isEmpty()) {
++            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_saved_skins.viafabricplus.empty"), left + 157, top + 4, 143, -1);
++        } else {
++            graphics.textWithWordWrap(this.font, Component.literal(this.skins.get(this.selected).name()), left + 157, top + 4, 143, -1);
++            graphics.text(this.font, Component.translatable("bedrock_dressing_room.viafabricplus.pack_skin_number",
++                this.selected + 1, this.skins.size()), left + 157, top + 38, ACCENT_COLOR);
++        }
++        if (this.error != null) {
++            graphics.textWithWordWrap(this.font, this.error, left, top + 110, 300, ACCENT_COLOR);
++        }
++    }
++
++    @Override
++    public void removed() {
++        this.releasePreview();
++        super.removed();
++    }
++
++    private void reload() {
++        try {
++            this.skins = this.store.savedSkins(this.accountId);
++        } catch (IOException e) {
++            this.skins = List.of();
++            this.error = Component.literal(e.getMessage());
++        }
++        this.selected = this.skins.isEmpty() ? 0 : Math.min(this.selected, this.skins.size() - 1);
++        this.showSkin();
++    }
++
++    private void changeSkin(final int offset) {
++        if (this.skins.isEmpty()) return;
++        this.selected = Math.floorMod(this.selected + offset, this.skins.size());
++        this.showSkin();
++    }
++
++    private void showSkin() {
++        this.releasePreview();
++        this.previewSkin = null;
++        if (!this.skins.isEmpty()) {
++            try {
++                this.preview = BedrockPlayerSkins.preview(this.store.savedAppearance(this.accountId, this.skins.get(this.selected).id()).skinData(""));
++                this.previewSkin = this.preview.skin();
++                this.error = null;
++            } catch (IOException e) {
++                this.error = Component.literal(e.getMessage());
++            }
++        }
++        this.previous.active = this.skins.size() > 1;
++        this.next.active = this.skins.size() > 1;
++        this.use.active = this.previewSkin != null && this.currentAccount();
++        this.remove.active = !this.skins.isEmpty() && this.currentAccount();
++    }
++
++    private void wear() {
++        if (this.skins.isEmpty() || !this.currentAccount()) return;
++        final String id = this.skins.get(this.selected).id();
++        this.minecraft.gui.setScreen(this.dressingRoom);
++        this.dressingRoom.wearSavedSkin(id);
++    }
++
++    private void removeSelected() {
++        if (this.skins.isEmpty() || !this.currentAccount()) return;
++        try {
++            this.store.removeSavedSkin(this.accountId, this.skins.get(this.selected).id());
++        } catch (IOException e) {
++            this.error = Component.literal(e.getMessage());
++        }
++        this.reload();
++    }
++
++    private boolean currentAccount() {
++        return this.accountId.equals(BedrockAppearanceStore.accountId(ViaFabricPlusBedrock.impl().account().get()));
++    }
++
++    private void releasePreview() {
++        if (this.preview != null) {
++            this.preview.close();
++            this.preview = null;
++        }
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java
 index 1001738ae14823091a9fec7ca7f85a03417a741f..f2def64a7cea24bd54a78714448b9d5b5ee375d7 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/impl/BedrockSettings.java
@@ -2095,7 +2441,7 @@ index 1001738ae14823091a9fec7ca7f85a03417a741f..f2def64a7cea24bd54a78714448b9d5b
      }
  
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 364ec25fa1bfed0c2ffa2613adb8ff5c819d180f..49f05385e0e5f660714d7eadb3275ac548846cf9 100644
+index 364ec25fa1bfed0c2ffa2613adb8ff5c819d180f..63b828b15a1ec1947c235ddf26f7bdf91a5a2f0a 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -6,6 +6,8 @@
@@ -2107,7 +2453,7 @@ index 364ec25fa1bfed0c2ffa2613adb8ff5c819d180f..49f05385e0e5f660714d7eadb3275ac5
    "bedrock_settings.viafabricplus.replace_default_port": "Replace default port in server list",
    "bedrock_settings.viafabricplus.experimental_features": "Enable experimental features (may be unstable)",
  
-@@ -14,8 +16,29 @@
+@@ -14,8 +16,32 @@
    "screen.viafabricplus.bedrock_realms": "Bedrock Realms",
    "screen.viafabricplus.bedrock_friends": "Bedrock Friends",
    "screen.viafabricplus.bedrock_party": "Bedrock Party",
@@ -2133,6 +2479,9 @@ index 364ec25fa1bfed0c2ffa2613adb8ff5c819d180f..49f05385e0e5f660714d7eadb3275ac5
 +  "bedrock_dressing_room.viafabricplus.reconnect": "Applies when you next join a Bedrock world.",
 +  "bedrock_dressing_room.viafabricplus.load_failed": "Could not load your saved appearance. Check the log.",
 +  "bedrock_dressing_room.viafabricplus.one_file": "Drop one PNG or skin pack at a time.",
++  "bedrock_saved_skins.viafabricplus.title": "Saved skins",
++  "bedrock_saved_skins.viafabricplus.remove": "Remove skin",
++  "bedrock_saved_skins.viafabricplus.empty": "Skins you import appear here so you can switch back to them.",
 +
    "bedrock_realms.viafabricplus.warning": "This feature requires a Bedrock Edition account to be set in the settings!",
    "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
@@ -2151,10 +2500,10 @@ index 2e26771f9b7b19d9e3293f3504dceb6662a592a2..091efd0df64f2bcac43e33ee9eaae7f3
      "features.movement.MixinEntityFluidInteraction",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..47e7f9b0ef6c7a130dd4e4fa9ec624f685dd2d69
+index 0000000000000000000000000000000000000000..5c8f5622d645cfcec43fa91c34c7eab03695f9e8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,258 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2348,6 +2697,54 @@ index 0000000000000000000000000000000000000000..47e7f9b0ef6c7a130dd4e4fa9ec624f6
 +                steve.skin().getRGB(0, 0, 64, 64, null, 0, 64),
 +                alex.skin().getRGB(0, 0, 64, 64, null, 0, 64)));
 +        assertNull(net.raphimc.viabedrock.protocol.BedrockProtocol.MAPPINGS.getBedrockSkinPacks());
++    }
++
++    @Test
++    void wearsAnEarlierImportedSkinWithItsGeometryAfterAnotherImport() throws IOException {
++        final BedrockAppearanceStore store = this.store();
++        final var model = BedrockClassicModel.read("""
++                {"format_version":"1.12.0","minecraft:geometry":[{
++                  "description":{"identifier":"geometry.saved","texture_width":128,"texture_height":128},
++                  "bones":[{"name":"body","cubes":[{"origin":[-4,12,-2],"size":[8,12,4],"uv":[16,16]}]}]}]}
++                """, "geometry.saved");
++        final BufferedImage packTexture = new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB);
++        packTexture.setRGB(3, 5, 0xFF336699);
++        store.importSkinImage("123", packTexture, true, model, BedrockClassicOptions.EMPTY);
++        store.saveCustomSkin("123", "Bluebird");
++        store.importSkin("123", this.image(64, 64));
++        store.saveCustomSkin("123", "plain.png");
++        final var cape = store.importCape("123", this.image(64, 32));
++
++        final var saved = store.savedSkins("123");
++        assertEquals(2, saved.size());
++        final String bluebird = saved.stream().filter(skin -> skin.name().equals("Bluebird")).findFirst().orElseThrow().id();
++        final var worn = this.store().wearSavedSkin("123", bluebird);
++
++        assertEquals(Selection.CUSTOM, worn.selection());
++        assertEquals(model, worn.classicModel());
++        assertTrue(worn.effectiveSlim());
++        assertEquals(0xFF336699, worn.skin().getRGB(3, 5));
++        assertEquals(cape.capeId(), worn.capeId());
++        assertEquals(model, this.store().load("123").classicModel());
++        assertTrue(store.savedSkins("456").isEmpty());
++    }
++
++    @Test
++    void keepsOneSavedEntryPerSkinAndRemovingItKeepsTheWornSkin() throws IOException {
++        final BedrockAppearanceStore store = this.store();
++        store.importSkin("123", this.image(64, 64));
++        store.saveCustomSkin("123", "first\u0000name");
++        store.importSkin("123", this.image(64, 64));
++        store.saveCustomSkin("123", "again");
++
++        final var saved = store.savedSkins("123");
++        assertEquals(1, saved.size());
++        assertEquals("firstname", saved.getFirst().name());
++        store.removeSavedSkin("123", saved.getFirst().id());
++
++        assertTrue(store.savedSkins("123").isEmpty());
++        assertEquals(Selection.CUSTOM, store.load("123").selection());
++        assertThrows(IOException.class, () -> store.wearSavedSkin("123", "../../456"));
 +    }
 +
 +    private BedrockAppearanceStore store() {

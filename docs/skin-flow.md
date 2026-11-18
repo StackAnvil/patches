@@ -12,6 +12,7 @@ Player-list entries supply PlayFab identity in protocol 2225.
 Do not restore the removed identity field to serialized skin data.
 
 A connected skin change uses the same negotiated request on direct and ViaProxy routes.
+Open it from the Bedrock Dressing Room button in the pause menu, which appears once that request is available.
 Core selects the spawned native local actor and waits for a matching server appearance.
 Compare all appearance fields and pixels, excluding the server-owned trust flag.
 Compare geometry as JSON values because the server can change numeric formatting.
@@ -29,6 +30,14 @@ Classic skins, persona pieces, server costumes, equipment, and emotes have separ
 Resolve each against its owner instead of substituting another player's cached resources.
 Preserve animated strip dimensions, UV orientation, frame timing, tint channels, and profile identity.
 A complete wire record does not prove correct frame timing or armor visibility.
+
+## Custom skin packs
+
+Import a `.mcpack` or `.zip` skin pack with the Dressing Room button or by dropping the file on the screen.
+Classic packs may define custom geometry, including "4D" models built only from `poly_mesh` buffers.
+The importer and the renderer use the same normalizer, so skins from packs and from other players render the same meshes.
+Each imported skin also goes to `Saved skins` for later reuse.
+Native Bedrock decides separately whether to show an untrusted custom skin to its own players.
 
 ## Account flows
 

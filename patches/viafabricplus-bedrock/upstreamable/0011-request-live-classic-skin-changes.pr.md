@@ -71,3 +71,13 @@ A controlled ViaProxy peer supplies a native Steve texture without geometry; the
 Local mappings are loaded in that installed profile; the isolated regression verifies the unloaded case.
 The scene's full rendering gate retains the separate missing camera-texture failure.
 Native graphical parity and shader comparisons remain open.
+
+## Pause menu entry
+
+Native Bedrock opens the Dressing Room from its pause menu.
+The Java client reached it only through the ViaFabricPlus settings on the multiplayer screen, so a live change required leaving the world first.
+The pause menu now shows a full-width Bedrock Dressing Room button once the connection accepts live skin requests.
+The condition is the negotiated request channel, so the button appears on direct and ViaProxy connections and not in singleplayer or Java servers.
+
+A direct add-on client on BDS 1.26.60.6 opens the Dressing Room from this button in a live session.
+A dropped 4D skin pack, applied with Use this skin, renders on the player in the world.

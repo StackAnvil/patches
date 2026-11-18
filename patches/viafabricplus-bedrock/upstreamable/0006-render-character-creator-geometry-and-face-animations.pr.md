@@ -98,3 +98,15 @@ They do not identify native LOD selection or compare native Dressing Room assemb
 Modified persona geometry did not establish a visible marker baseline and remains unresolved.
 Native LOD texture bindings, additional clothing categories, and custom persona geometry still need matching controls.
 All licensed assets, skin data, journals, and images remain private.
+
+## Classic poly_mesh skins
+
+Classic skin packs, including popular 4D packs, can build every bone from legacy `poly_mesh` buffers with no cubes.
+CubeConverter reads only cubes, so these players rendered without a body for the wearer and for observers.
+Received classic geometry now goes through the pack importer's normalizer, and the renderer receives the selected model's validated meshes.
+Geometry that the normalizer rejects keeps the cube-only model.
+
+`BedrockClassicMeshTest` covers pixel UV conversion with the bottom mesh origin and the fallback for an out-of-range index.
+A private 4D pack with 2,652 mesh faces on six cube-less limbs imports and builds a player model.
+In a live BDS 1.26.60.6 session, the same skin renders on the player in third person and on the first-person arm.
+The pack remains private.
