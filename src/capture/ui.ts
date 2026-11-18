@@ -1,10 +1,10 @@
 import { waylandToolEnvironment } from "../lab/wayland.ts";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { chmod, link, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Schema } from "effect";
-import { parseJson } from "../guards.ts";
+import { errorCode, parseJson } from "../guards.ts";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
@@ -18,6 +18,7 @@ export interface WindowInfo {
   width: number;
   height: number;
 }
+const bedrockTitle = /^minecraft(?: for windows| bedrock)?$/i;
 const WindowListSchema = Schema.mutable(
   Schema.Array(
     Schema.Struct({
@@ -47,6 +48,29 @@ const executeUi: UiExecutor = async (program, args, cwd, env) => {
   return stdout.trimEnd();
 };
 
+/** Runs a long-lived helper until the caller interrupts it. */
+export type UiRecorder = (
+  program: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+) => { stop: () => Promise<void> };
+
+const spawnRecorder: UiRecorder = (program, args, env) => {
+  const child = spawn(program, args, { cwd: root, env, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-4000)));
+  const exited = new Promise<number | null>((done) => {
+    child.once("exit", (code) => done(code));
+  });
+  return {
+    stop: async () => {
+      child.kill("SIGINT");
+      const code = await exited;
+      if (code !== 0) throw new Error(`The window recorder failed: ${stderr.trim() || code}`);
+    },
+  };
+};
+
 const checkId = (id: string) => {
   if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id))
     throw new Error("Use lowercase letters, digits, and hyphens for a screenshot name.");
@@ -60,8 +84,11 @@ export function createCaptureUi(
     desktopEnvironment?: NodeJS.ProcessEnv;
     execute?: UiExecutor;
     prepareNative?: (env: NodeJS.ProcessEnv) => Promise<string>;
+    sleep?: (ms: number) => Promise<void>;
+    record?: UiRecorder;
   } = {},
 ) {
+  const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
   const desktopEnvironment = options.desktopEnvironment ?? process.env;
   const uiEnvironment = captureUiEnvironment(
     options.environment ?? (() => displayEnv()),
@@ -109,7 +136,7 @@ export function createCaptureUi(
     }
     const matches = available.filter((window) =>
       client === "bedrock"
-        ? /^minecraft(?: for windows| bedrock)?$/i.test(window.title)
+        ? bedrockTitle.test(window.title)
         : /^minecraft\*?\s/i.test(window.title),
     );
     if (matches.length === 1) return matches[0];
@@ -141,11 +168,52 @@ export function createCaptureUi(
       await run("ffmpeg", ["-loglevel", "error", "-n", "-i", ppmPath, converted]);
       await chmod(converted, 0o600);
       // Publish only a complete private image, without replacing an earlier capture.
-      await link(converted, imagePath);
+      try {
+        await link(converted, imagePath);
+      } catch (error) {
+        if (errorCode(error) === "EEXIST")
+          throw new Error(`Screenshot ${name}.png already exists. Choose another name.`, {
+            cause: error,
+          });
+        throw error;
+      }
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
     return imagePath;
+  }
+
+  /** Records one window of the private display for a bounded time, without a capture session. */
+  async function record(
+    name: string,
+    seconds: number,
+    fps = 30,
+    windowId?: string,
+    client?: Client,
+    outputDir?: string,
+  ): Promise<string> {
+    checkId(name);
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 120)
+      throw new Error("Record 1 to 120 seconds.");
+    if (!Number.isInteger(fps) || fps < 1 || fps > 120)
+      throw new Error("Video frame rate must be an integer from 1 to 120.");
+    if (!outputDir) throw new Error("Supply --output-dir for a recording.");
+    const env = await uiEnvironment();
+    if (env.STACKANVIL_UI_ISOLATED !== "1")
+      throw new Error("Recording requires the private display so your desktop is never captured.");
+    const window = await chosenWindow(windowId, client);
+    const directory = resolve(outputDir);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const file = join(directory, `${name}.mp4`);
+    // The helper refuses to replace an existing file.
+    const recorder = (options.record ?? spawnRecorder)(
+      nativeBinary,
+      ["record", window.id, String(fps), file],
+      waylandToolEnvironment(env),
+    );
+    await sleep(seconds * 1000);
+    await recorder.stop();
+    return file;
   }
 
   async function pixel(x: number, y: number, windowId?: string, client?: Client): Promise<string> {
@@ -222,6 +290,19 @@ export function createCaptureUi(
         "Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.",
       );
     if (!isolated) await run(nativeBinary, ["focus", window.id], root, env);
+    if (bedrockTitle.test(window.title) && durationMs === undefined && !doubleClick) {
+      // Bedrock under winewayland ignores a press on a control it has not seen the pointer hover,
+      // and a press shorter than one frame. Hover first, then hold for several frames.
+      await run(nativeBinary, ["move", window.id, String(localX), String(localY)], root, env);
+      await sleep(400);
+      await run(
+        nativeBinary,
+        ["mouse-hold", window.id, String(localX), String(localY), button, "150"],
+        root,
+        env,
+      );
+      return;
+    }
     await run(
       nativeBinary,
       durationMs === undefined
@@ -384,6 +465,18 @@ export function createCaptureUi(
       case "screenshot":
         if (!input[0]) throw new Error("Supply a screenshot name.");
         return screenshot(input[0], windowId, client, outputDir);
+      case "record": {
+        if (!input[0]) throw new Error("Supply a recording name.");
+        const fpsIndex = input.indexOf("--fps");
+        return record(
+          input[0],
+          Number(input[1]),
+          fpsIndex >= 0 ? Number(input[fpsIndex + 1]) : 30,
+          windowId,
+          client,
+          outputDir,
+        );
+      }
       case "pixel":
         return pixel(Number(input[0]), Number(input[1]), windowId, client);
       case "move":
@@ -464,7 +557,7 @@ export function createCaptureUi(
         return "";
     }
     throw new Error(
-      "Usage: bun run capture ui <list|screenshot|pixel|move|look|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
+      "Usage: bun run capture ui <list|screenshot|record|pixel|move|look|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
     );
   }
   return {
@@ -472,6 +565,7 @@ export function createCaptureUi(
     windows,
     chosenWindow,
     screenshot,
+    record,
     pixel,
     click,
     key,

@@ -47,7 +47,7 @@ test("repeated private input stays on one owned display and revalidates its wind
     ),
   ).toBe(true);
   expect(f.calls.filter((call) => call.args[0] === "focus")).toHaveLength(0);
-  const input = f.calls.filter((call) => ["key-hold", "button-hold"].includes(call.args[0]!));
+  const input = f.calls.filter((call) => ["key-hold", "button-hold"].includes(call.args[0]));
   expect(input.map((call) => call.args)).toEqual([
     ["key-hold", window.id, "d", "650"],
     ["button-hold", window.id, "left", "200"],
@@ -109,7 +109,7 @@ test("native desktop clicks retain the selected button and require authorization
     STACKANVIL_USE_DESKTOP: "1",
   });
   await expectRejection(f.ui.click(0.5, 0.5, window.id, "java", false, "right"));
-  expect(f.calls.filter((call) => ["focus", "click"].includes(call.args[0]!))).toHaveLength(0);
+  expect(f.calls.filter((call) => ["focus", "click"].includes(call.args[0]))).toHaveLength(0);
   for (const button of ["left", "right"] as const) {
     await f.ui.click(0.5, 0.5, window.id, "java", true, button);
     expect(f.calls.at(-1)!.args).toEqual(["click", window.id, "426", "239", button]);
@@ -220,17 +220,17 @@ test("invalid drag paths and duration bounds emit no native calls", async () => 
   for (const path of [
     [],
     points.slice(0, 1),
-    Array.from({ length: 65 }, () => points[0]!),
-    [{ x: -0.01, y: 0.5 }, points[1]!],
-    [{ x: 1.01, y: 0.5 }, points[1]!],
-    [{ x: NaN, y: 0.5 }, points[1]!],
-    [{ x: 0.5, y: Infinity }, points[1]!],
+    Array.from({ length: 65 }, () => points[0]),
+    [{ x: -0.01, y: 0.5 }, points[1]],
+    [{ x: 1.01, y: 0.5 }, points[1]],
+    [{ x: NaN, y: 0.5 }, points[1]],
+    [{ x: 0.5, y: Infinity }, points[1]],
   ]) {
     await expectRejection(f.ui.drag(path, "right", 100));
   }
   await expectRejection(
     f.ui.drag(
-      Array.from({ length: 11 }, () => points[0]!),
+      Array.from({ length: 11 }, () => points[0]),
       "left",
       1000,
     ),
@@ -272,11 +272,11 @@ test("drag refuses desktop input without explicit authorization", async () => {
     STACKANVIL_USE_DESKTOP: "1",
   });
   await expectRejection(desktop.ui.drag(points, "right", 100, window.id, "java"));
-  expect(desktop.calls.filter((call) => ["focus", "drag"].includes(call.args[0]!))).toHaveLength(0);
+  expect(desktop.calls.filter((call) => ["focus", "drag"].includes(call.args[0]))).toHaveLength(0);
   await desktop.ui.drag(points, "right", 100, window.id, "java", true);
   expect(
     desktop.calls
-      .filter((call) => ["focus", "drag"].includes(call.args[0]!))
+      .filter((call) => ["focus", "drag"].includes(call.args[0]))
       .map((call) => call.args[0]),
   ).toEqual(["focus", "drag"]);
 });
@@ -291,7 +291,7 @@ test("screenshots publish private images without replacing an earlier capture", 
     prepareNative: async () => "/test/capture-wayland",
     execute: async (program, args) => {
       if (args[0] === "list") return JSON.stringify([window]);
-      if (args[0] === "screenshot") await writeFile(args[2]!, "PPM fixture");
+      if (args[0] === "screenshot") await writeFile(args[2], "PPM fixture");
       if (program === "ffmpeg") await writeFile(args.at(-1)!, "PNG fixture");
       return "";
     },
@@ -304,4 +304,96 @@ test("screenshots publish private images without replacing an earlier capture", 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("bedrock clicks hover first and hold long enough for winewayland to register them", async () => {
+  const calls: string[][] = [];
+  const waits: number[] = [];
+  const bedrock = { ...window, title: "Minecraft" };
+  const ui = createCaptureUi({
+    environment: async () => isolated,
+    prepareNative: async () => "/test/capture-wayland",
+    sleep: async (ms) => void waits.push(ms),
+    execute: async (_program, args) => {
+      calls.push(args);
+      return args[0] === "list" ? JSON.stringify([bedrock, window]) : "";
+    },
+  });
+  await ui.command(["ui", "click", "0.5", "0.25", "--client", "bedrock"]);
+  await ui.command(["ui", "click", "0.5", "0.25", "--client", "java"]);
+  expect(calls.filter((call) => call[0] !== "list")).toEqual([
+    ["move", bedrock.id, "426", "119"],
+    ["mouse-hold", bedrock.id, "426", "119", "left", "150"],
+    ["click", window.id, "426", "119", "left"],
+  ]);
+  expect(waits).toEqual([400]);
+});
+
+test("a repeated screenshot name reports the existing file", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-capture-"));
+  const ui = createCaptureUi({
+    environment: async () => isolated,
+    prepareNative: async () => "/test/capture-wayland",
+    execute: async (program, args) => {
+      if (args[0] === "list") return JSON.stringify([window]);
+      if (args[0] === "screenshot") await writeFile(args[2], "PPM fixture");
+      if (program === "ffmpeg") await writeFile(args.at(-1)!, "PNG fixture");
+      return "";
+    },
+  });
+  try {
+    await ui.screenshot("before", window.id, "java", directory);
+    await expectRejection(ui.screenshot("before", window.id, "java", directory), "already exists");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("recordings run for the requested time on the private display only", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const out = await mkdtemp(join(tmpdir(), "stackanvil-record-"));
+  const started: string[][] = [];
+  let stopped = 0;
+  const waits: number[] = [];
+  const make = (environment: NodeJS.ProcessEnv | undefined, desktop: NodeJS.ProcessEnv = {}) =>
+    createCaptureUi({
+      environment: async () => environment,
+      desktopEnvironment: desktop,
+      prepareNative: async () => "/test/capture-wayland",
+      sleep: async (ms) => void waits.push(ms),
+      execute: async (_program, args) => (args[0] === "list" ? JSON.stringify([window]) : ""),
+      record: (_program, args) => {
+        started.push(args);
+        return { stop: async () => void stopped++ };
+      },
+    });
+  const file = await make(isolated).command([
+    "ui",
+    "record",
+    "clapping",
+    "9",
+    "--fps",
+    "60",
+    "--client",
+    "java",
+    "--output-dir",
+    out,
+  ]);
+  expect(file).toBe(join(out, "clapping.mp4"));
+  expect(started).toEqual([["record", window.id, "60", join(out, "clapping.mp4")]]);
+  expect(waits).toEqual([9000]);
+  expect(stopped).toBe(1);
+  await expectRejection(
+    make(isolated).record("clapping", 121, 30, window.id, "java", out),
+    "1 to 120",
+  );
+  const desktop = make(undefined, { WAYLAND_DISPLAY: "wayland-0", STACKANVIL_USE_DESKTOP: "1" });
+  await expectRejection(desktop.record("clapping", 5, 30, window.id, "java", out), "private");
+  expect(started).toHaveLength(1);
+  await rm(out, { recursive: true, force: true });
 });

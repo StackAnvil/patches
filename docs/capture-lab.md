@@ -88,7 +88,7 @@ bun run capture ui drag right 120 0.40 0.70 0.45 0.70 --client java
 bun run capture ui screenshot java-connected --client java
 ```
 
-Click and pixel coordinates are fractions of the chosen client window, from 0 to 1. `ui pixel` prints the red, green, and blue values at one point without changing focus. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. Use `ui double-key space` to send both creative-flight presses in one native call. `ui key-hold`, `ui mouse-hold`, and `ui button-hold` hold input for 1 to 10000 ms on the private display. `button-hold` leaves the cursor in place. Use `bun run capture ui type "127.0.0.1"` to enter lowercase ASCII text, digits, spaces, periods, or hyphens in a focused field. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `doubleKey`, `keyHold`, `type`, `click`, `mouseHold`, `buttonHold`, `drag`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
+Click and pixel coordinates are fractions of the chosen client window, from 0 to 1. On the Bedrock client, `ui click` moves the pointer over the target, waits 400 ms, then holds the button for 150 ms. Bedrock under winewayland ignores a press on a control it has not seen the pointer hover, and a very short press. Java clicks stay a single press. `ui pixel` prints the red, green, and blue values at one point without changing focus. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. Use `ui double-key space` to send both creative-flight presses in one native call. `ui key-hold`, `ui mouse-hold`, and `ui button-hold` hold input for 1 to 10000 ms on the private display. `button-hold` leaves the cursor in place. Use `bun run capture ui type "127.0.0.1"` to enter lowercase ASCII text, digits, spaces, periods, or hyphens in a focused field. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `doubleKey`, `keyHold`, `type`, `click`, `mouseHold`, `buttonHold`, `drag`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
 
 To turn the camera in a game that has captured the pointer, use `ui look <dx> <dy>`.
 It sends one relative pointer motion of up to 2000 pixels on each axis to the private display.
@@ -187,6 +187,28 @@ Java sessions also save `client-artifacts.json` after staging all client mods an
 These private receipts retain JAR filenames, sizes, and SHA-256 hashes after dependency cleanup, including failed runs.
 Compare their staged JAR hashes with build manifests when attributing a capture to a build.
 Use runtime observations to verify that the expected mods loaded.
+
+### Record one window without a capture session
+
+`ui record` saves a bounded video of one client window on the private display. It does not need `capture start` or the HTTPS proxy.
+
+```bash
+bun run capture ui record clapping-native 12 --fps 30 --client bedrock --output-dir .stackanvil/research/emotes
+```
+
+The command records for 1 to 120 seconds, then stops the recorder. It refuses to replace an existing file and refuses to run on your desktop. Screenshot and recording names use lowercase letters, digits, and hyphens.
+
+## Compare an emote with the official client
+
+Use the same account in both clients, one after the other. Two sessions on one account disconnect each other. The account's active character and emote wheel apply to both clients, so slot `1` plays the same emote.
+
+1. Start the official client on the private display with `bun run capture launch --direct`. It skips the HTTPS proxy, so Xbox Live sign-in and server joins work as in an ordinary installation. After its menu appears, open Play and add a server. For CubeCraft, use `mco.cubecraft.net` with port 19132. `play.cubecraft.net` fails to join from this setup.
+2. After the join, walk well away from spawn, for example with `bun run capture ui key-hold a 6000 --client bedrock`. Other players crowd every lobby spawn and hide the player.
+3. Press `F5` twice for the front view, start `ui record`, then press `b` and `1`.
+4. Close the official client. Join the same server with the add-on through `bun run server-replay record cubecraft --client addon`, repeat steps 2 and 3, and record the add-on window.
+5. Trim each video to the first emote frame and place them side by side with `ffmpeg ... hstack`.
+
+The Java and Bedrock third-person cameras use different distances. Crop and scale each video around the player before comparing poses.
 
 ## Inspect the Java client
 

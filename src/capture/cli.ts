@@ -344,6 +344,44 @@ async function launchGame(): Promise<void> {
   print(`BedrockOnLinux launch started for ${session.id}. Read the private game.log if it stops.`);
 }
 
+/**
+ * Starts the official client on the private display without the HTTPS proxy, for gameplay
+ * comparisons. Xbox Live and server joins then behave as in an ordinary installation.
+ */
+async function launchDirect(): Promise<void> {
+  if (!existsSync(launcher)) throw new Error(`BedrockOnLinux launcher not found: ${launcher}`);
+  const isolated = await displayEnv(true);
+  if (!isolated) throw new Error("A direct launch requires the private display.");
+  await muteBedrockSettings();
+  const appDir = launcher.toLowerCase().endsWith(".appimage") ? await prepareLauncher() : undefined;
+  const directory = join(root, ".stackanvil", "lab");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const log = openSync(join(directory, "bedrock-direct.log"), "a", 0o600);
+  const child = spawn(
+    appDir ? join(appDir, "usr", "python", "bin", "python3.12") : "python3",
+    [
+      join(root, "scripts", "bedrock-wayland.py"),
+      appDir ? join(appDir, "usr", "bin", "bedrock-on-linux") : launcher,
+      "play",
+    ],
+    {
+      cwd: root,
+      detached: true,
+      stdio: ["ignore", log, log],
+      env: {
+        ...nativeWaylandEnvironment(isolated),
+        ...(appDir ? { APPDIR: appDir, APPIMAGE: launcher } : {}),
+      },
+    },
+  );
+  closeSync(log);
+  child.unref();
+  if (!child.pid) throw new Error("Could not launch BedrockOnLinux.");
+  print(
+    `BedrockOnLinux started without the proxy as process group ${child.pid}. Its log is .stackanvil/lab/bedrock-direct.log. Stop it with kill -TERM -${child.pid}.`,
+  );
+}
+
 async function prepareLauncher(): Promise<string> {
   if (!existsSync(launcher)) throw new Error(`BedrockOnLinux launcher not found: ${launcher}`);
   if (!launcher.toLowerCase().endsWith(".appimage")) return launcher;
@@ -758,7 +796,7 @@ async function main(): Promise<void> {
       if (!args[0]) throw new Error("Usage: bun run capture start <name> [--local]");
       return start(args[0], args.includes("--local") ? "local" : "regular");
     case "launch":
-      return launchGame();
+      return args.includes("--direct") ? launchDirect() : launchGame();
     case "game-stop":
       return stopGame();
     case "prepare-launcher":
