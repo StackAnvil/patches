@@ -125,7 +125,9 @@ async function main(): Promise<void> {
   throw new Error(`Unknown command: ${area} ${action}`);
 }
 
-main().catch((error: unknown) => {
+try {
+  await main();
+} catch (error: unknown) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
-});
+}

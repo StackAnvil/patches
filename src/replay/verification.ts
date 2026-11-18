@@ -1,7 +1,7 @@
 /** Only the exact normal transfer notice is expected in a transfer-enabled live session. */
 export function clientSessionFailed(log: string, allowTransfers = false): boolean {
   const observed = allowTransfers
-    ? log.replace(/^.*Client disconnected with reason: Transferred to another server\r?$/gm, "")
+    ? log.replaceAll(/^.*Client disconnected with reason: Transferred to another server\r?$/gm, "")
     : log;
   return (
     /Client disconnected with reason:|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/.test(
@@ -62,8 +62,7 @@ export function verifyRendering(
   if (controller?.required) {
     const audit = controller.audit;
     if (
-      !audit ||
-      audit.schema !== 1 ||
+      audit?.schema !== 1 ||
       typeof audit.transformed !== "boolean" ||
       (expected.customActorIdentifiers.length > 0 && !audit.transformed) ||
       !Array.isArray(audit.failures) ||

@@ -46,6 +46,7 @@ export default defineConfig({
             this.addWatchFile(fileURLToPath(new URL(`${name}/series.json`, root)));
             const patches = (["upstreamable", "deferred"] as const).flatMap((state) =>
               (series[state] ?? []).map((entry) => ({
+                file: typeof entry === "string" ? entry : entry.file,
                 state,
                 title:
                   typeof entry !== "string" && entry.title

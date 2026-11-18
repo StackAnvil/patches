@@ -89,10 +89,11 @@ export async function waitForProbe(
 
 if (import.meta.main) {
   const destination = join(root, "dist", "test-packs", "entity-probe", "behavior_pack");
-  buildEntityProbe(destination)
-    .then(() => console.log(destination))
-    .catch((error: unknown) => {
-      console.error(error);
-      process.exitCode = 1;
-    });
+  try {
+    await buildEntityProbe(destination);
+    console.log(destination);
+  } catch (error: unknown) {
+    console.error(error);
+    process.exitCode = 1;
+  }
 }

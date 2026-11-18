@@ -56,6 +56,7 @@ export function SiteHeader() {
         </nav>
         <div className="header-tools">
           <button
+            type="button"
             className="search-trigger"
             onClick={() => setOpenSearch(true)}
             aria-label="Search documentation"
@@ -65,6 +66,7 @@ export function SiteHeader() {
             <kbd>Ctrl K</kbd>
           </button>
           <button
+            type="button"
             className="icon-button theme-toggle"
             aria-label="Toggle color theme"
             onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
@@ -73,6 +75,7 @@ export function SiteHeader() {
             <Moon className="theme-moon" size={19} aria-hidden="true" />
           </button>
           <button
+            type="button"
             className="icon-button mobile-menu-toggle"
             aria-label={menuOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={menuOpen}

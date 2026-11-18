@@ -111,8 +111,12 @@ export function ForgeScene({ setup, minecraft }: { setup: Setup; minecraft?: str
           <rect x="70" y="84" width="352" height="272" rx="22" />
         </g>
 
-        {lanes.map((lane, index) => (
-          <Packets key={index} lane={lane} hidden={docked && lane.tone === "java"} />
+        {lanes.map((lane) => (
+          <Packets
+            key={`${lane.tone}-${lane.y}`}
+            lane={lane}
+            hidden={docked && lane.tone === "java"}
+          />
         ))}
 
         <g className="client">

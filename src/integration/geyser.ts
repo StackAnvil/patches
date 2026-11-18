@@ -273,18 +273,22 @@ export async function installJavaProbe(home: string, port: number): Promise<stri
 }
 
 if (import.meta.main) {
-  Effect.runPromise(
-    Effect.tryPromise({
-      try: async () => {
-        const destination = resolve(Bun.argv[2] ?? join(root, "dist", "test-packs", "java-probe"));
-        await mkdir(destination, { recursive: true });
-        await installJavaProbe(destination, 19132);
-        console.log(destination);
-      },
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  ).catch((error: unknown) => {
+  try {
+    await Effect.runPromise(
+      Effect.tryPromise({
+        try: async () => {
+          const destination = resolve(
+            Bun.argv[2] ?? join(root, "dist", "test-packs", "java-probe"),
+          );
+          await mkdir(destination, { recursive: true });
+          await installJavaProbe(destination, 19132);
+          console.log(destination);
+        },
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
+    );
+  } catch (error: unknown) {
     console.error(error);
     process.exitCode = 1;
-  });
+  }
 }

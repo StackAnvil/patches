@@ -50,6 +50,7 @@ function values(definition: PropertyDefinition): unknown[] {
         ...new Set([range[0], definition.default, range.at(-1)].filter((value) => value != null)),
       ];
     }
+    case undefined:
     default:
       return [];
   }
@@ -96,23 +97,25 @@ export async function generateCatalog(
 
 if (import.meta.main) {
   const [entities, version] = Bun.argv.slice(2);
-  Effect.runPromise(
-    Effect.tryPromise({
-      try: async () => {
-        if (!entities || !version)
-          throw new Error(
-            "Use: bun run integration:entity-probe:generate <entities-dir> <samples-tag>.",
+  try {
+    await Effect.runPromise(
+      Effect.tryPromise({
+        try: async () => {
+          if (!entities || !version)
+            throw new Error(
+              "Use: bun run integration:entity-probe:generate <entities-dir> <samples-tag>.",
+            );
+          const catalog = await generateCatalog(resolve(entities), version);
+          console.log(
+            `${catalog.length} types, ${catalog.reduce((total, entry) => total + entry.events.length, 0)} events, ` +
+              `${catalog.reduce((total, entry) => total + entry.properties.length, 0)} synced properties`,
           );
-        const catalog = await generateCatalog(resolve(entities), version);
-        console.log(
-          `${catalog.length} types, ${catalog.reduce((total, entry) => total + entry.events.length, 0)} events, ` +
-            `${catalog.reduce((total, entry) => total + entry.properties.length, 0)} synced properties`,
-        );
-      },
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  ).catch((error: unknown) => {
+        },
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
+    );
+  } catch (error: unknown) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
-  });
+  }
 }

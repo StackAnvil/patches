@@ -41,7 +41,7 @@ export function withQmpEffect<A, E, R>(
           );
           socket.on("close", () => fail(new QmpError({ message: "QMP disconnected." })));
           socket.on("data", (data) => {
-            buffer += data;
+            buffer += data.toString();
             if (buffer.length > 1024 * 1024) {
               fail(new QmpError({ message: "QMP reply exceeds the size limit." }));
               return;

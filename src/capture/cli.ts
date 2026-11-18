@@ -173,7 +173,7 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
     if (!old.stoppedAt && alive(old.proxyPid))
       throw new Error(`Capture ${old.id} is active. Stop it first.`);
   }
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*$/, "").toLowerCase();
+  const stamp = new Date().toISOString().replaceAll(/[-:]/g, "").replace(/\..*$/, "").toLowerCase();
   const id = checkId(`${stamp}-${name}`);
   const dir = capturePath(id);
   await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -584,7 +584,7 @@ async function report(id?: string): Promise<string> {
   >();
   for (const event of events) {
     const marker =
-      markers.filter((entry) => entry.time <= event.time).at(-1)?.label ?? "Before first marker";
+      markers.findLast((entry) => entry.time <= event.time)?.label ?? "Before first marker";
     const key = `${marker}\t${event.method} ${event.host}${event.path}`;
     const group = groups.get(key) ?? {
       count: 0,
@@ -761,12 +761,14 @@ async function main(): Promise<void> {
   }
 }
 
-Effect.runPromise(
-  Effect.tryPromise({
-    try: main,
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  }),
-).catch((error: unknown) => {
+try {
+  await Effect.runPromise(
+    Effect.tryPromise({
+      try: main,
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+} catch (error: unknown) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
-});
+}

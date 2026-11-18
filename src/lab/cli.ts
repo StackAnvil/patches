@@ -1,5 +1,6 @@
 import { flatpakWaylandArguments, nativeWaylandEnvironment, waylandTool } from "./wayland.ts";
 import { labExecute, labIO, labValue, labError, runLabCommand } from "../lab/effect-runtime.ts";
+import type { LabError } from "../lab/effect-runtime.ts";
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, lstatSync, openSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -90,7 +91,7 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
     cwd: string;
     env?: NodeJS.ProcessEnv;
   },
-  import("./effect-runtime.ts").LabError
+  LabError
 > {
   if (service === "server") {
     const program = join(serverHome, "bedrock_server");
@@ -467,8 +468,11 @@ export const mainEffect = Effect.fn("Lab.main")(function* () {
     ),
   );
 });
-if (import.meta.main)
-  runLabCommand(mainEffect()).catch((error: unknown) => {
+if (import.meta.main) {
+  try {
+    await runLabCommand(mainEffect());
+  } catch (error: unknown) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
-  });
+  }
+}

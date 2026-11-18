@@ -90,8 +90,7 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
     entries.get("oreui.json")?.().toString("utf8") ?? "null",
   ) as OreUiDescriptor | null;
   if (
-    !descriptor ||
-    descriptor.format !== 1 ||
+    descriptor?.format !== 1 ||
     descriptor.version !== version ||
     !/^hbui\/gameplay-[0-9a-f]+\.css$/.test(descriptor.stylesheet) ||
     !entries.has(descriptor.stylesheet) ||

@@ -550,8 +550,11 @@ export async function reaMain(args: string[]): Promise<void> {
   } else throw new Error(`Unknown REA command: ${action}`);
 }
 
-if (import.meta.main)
-  reaMain(process.argv.slice(2)).catch((cause: unknown) => {
+if (import.meta.main) {
+  try {
+    await reaMain(process.argv.slice(2));
+  } catch (cause: unknown) {
     console.error(error(cause).message);
     process.exitCode = 1;
-  });
+  }
+}

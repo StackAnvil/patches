@@ -73,6 +73,7 @@ export function validationSteps(profile: ValidationProfile, cycles = 3): Validat
         : profile === "build"
           ? buildSteps
           : [...offlineSteps, ...buildSteps];
+  // oxlint-disable-next-line oxc/no-map-spread -- copy so the shared step definitions stay unchanged
   return steps.map((step) => ({ ...step, args: [...step.args], status: "not-run" }));
 }
 
@@ -327,13 +328,12 @@ if (import.meta.main) {
       );
     const cycles = values.cycles === undefined ? 3 : Number(values.cycles);
     validationSteps(profile as ValidationProfile, cycles);
-    validate(profile as ValidationProfile, cycles)
-      .then((report) => {
-        if (report.status !== "passed") process.exitCode = 1;
-      })
-      .catch((error: unknown) => {
-        console.error(error instanceof Error ? error.message : String(error));
-        process.exitCode = 1;
-      });
+    try {
+      const report = await validate(profile as ValidationProfile, cycles);
+      if (report.status !== "passed") process.exitCode = 1;
+    } catch (error: unknown) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
   }
 }

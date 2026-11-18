@@ -115,16 +115,24 @@ function service(
 async function port(udp = false): Promise<number> {
   if (udp) {
     const socket = createSocket("udp4");
-    await new Promise<void>((done) => socket.bind(0, "127.0.0.1", done));
+    await new Promise<void>((done) => {
+      socket.bind(0, "127.0.0.1", done);
+    });
     const value = socket.address().port;
-    await new Promise<void>((done) => socket.close(done));
+    await new Promise<void>((done) => {
+      socket.close(done);
+    });
     return value;
   }
   const server = createServer();
-  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  await new Promise<void>((done) => {
+    server.listen(0, "127.0.0.1", done);
+  });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Could not reserve a port.");
-  await new Promise<void>((done) => server.close(() => done()));
+  await new Promise<void>((done) => {
+    server.close(() => done());
+  });
   return address.port;
 }
 async function ready(child: ChildProcess, file: string, pattern: RegExp): Promise<void> {
@@ -1254,23 +1262,29 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   }
 }
 
-Effect.runPromise(
-  Effect.tryPromise({
-    try: main,
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  }),
-)
-  .finally(async () => {
-    // A failed stop must keep dependencies available to any remaining processes.
-    if (children.some((child) => alive(child.pid)) || (nativeClient && alive(nativeClient.pid)))
-      return;
-    if (javaCleanup) {
-      javaCleanup.captureDescendants();
-      if (javaCleanup.all().some((identity) => javaCleanup!.alive(identity.pid))) return;
-    }
-    for (const build of temporaryBuilds) await rm(build, { recursive: true, force: true });
-  })
-  .catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  });
+async function removeTemporaryBuilds() {
+  // A failed stop must keep dependencies available to any remaining processes.
+  if (children.some((child) => alive(child.pid)) || (nativeClient && alive(nativeClient.pid)))
+    return;
+  if (javaCleanup) {
+    javaCleanup.captureDescendants();
+    if (javaCleanup.all().some((identity) => javaCleanup!.alive(identity.pid))) return;
+  }
+  for (const build of temporaryBuilds) await rm(build, { recursive: true, force: true });
+}
+
+try {
+  try {
+    await Effect.runPromise(
+      Effect.tryPromise({
+        try: main,
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
+    );
+  } finally {
+    await removeTemporaryBuilds();
+  }
+} catch (error: unknown) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+}

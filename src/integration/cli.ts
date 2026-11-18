@@ -597,6 +597,7 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
           for (const group of ["status", "metadata"] as const) {
             const logStart = (yield* textFileEffect(entityProbe.log)).length;
             entityProbe.child.stdin?.write(`scriptevent vbprobe:${group} auto\n`);
+            // oxlint-disable-next-line eslint/no-loop-func -- gamePid is set before this loop and is not reassigned in it
             const result = yield* labIO("javaJoin", async () =>
               waitForProbe(
                 group,
@@ -1044,7 +1045,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     );
   if (!options["reuse-build"])
     yield* commandEffect(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "all"]);
-  const dir = join(privateRoot, "runs", new Date().toISOString().replace(/[:.]/g, "-"));
+  const dir = join(privateRoot, "runs", new Date().toISOString().replaceAll(/[:.]/g, "-"));
   yield* labIO("main", async () => mkdir(dir, { recursive: true, mode: 0o700 }));
   console.log(`Private logs: ${dir}`);
   yield* (yield* IntegrationResources).acquireDisplay(ensureDisplay);
@@ -1233,10 +1234,13 @@ function textFile(path: string) {
 function capture(args: string[], env = process.env) {
   return Effect.runPromise(captureEffect(args, env));
 }
-if (import.meta.main)
-  runLabCommand(
-    Effect.scoped(mainEffect().pipe(Effect.provide(integrationResourcesLayer(stopDisplay)))),
-  ).catch((error: unknown) => {
+if (import.meta.main) {
+  try {
+    await runLabCommand(
+      Effect.scoped(mainEffect().pipe(Effect.provide(integrationResourcesLayer(stopDisplay)))),
+    );
+  } catch (error: unknown) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
-  });
+  }
+}

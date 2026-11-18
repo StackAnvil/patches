@@ -9,7 +9,12 @@ export const tcpPortEffect = Effect.scoped(
     const server = yield* Effect.acquireRelease(
       Effect.sync(() => createServer()),
       (server) =>
-        Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+        Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              server.close(() => resolve());
+            }),
+        ),
     );
     yield* Effect.callback<void, ReturnType<typeof labError>>((resume) => {
       const error = (cause: Error) => resume(Effect.fail(labError("reserve TCP port", cause)));

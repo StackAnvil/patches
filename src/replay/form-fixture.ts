@@ -311,6 +311,7 @@ function validatePlan(value: unknown): FormFixturePlan {
         throw new Error("Invalid fixture form ID.");
       return { id: Number(form.id), source: path(form.source), sha256: digest(form.sha256) };
     }),
+    // oxlint-disable-next-line oxc/no-map-spread -- the spread only adds an optional field to a new object
     packs: plan.packs.map((value) => {
       const pack = object(value);
       if (typeof pack.from !== "string") throw new Error("Invalid source pack identity.");

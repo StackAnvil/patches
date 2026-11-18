@@ -91,15 +91,16 @@ export async function prepareValidatedRelease(
 }
 
 if (import.meta.main) {
-  prepareValidatedRelease(
-    join(root, "artifacts"),
-    join(root, "release"),
-    await Effect.runPromise(git(["rev-parse", "HEAD"], root)),
-    await targetIds(),
-  )
-    .then((files) => console.log(files.join("\n")))
-    .catch((error: unknown) => {
-      console.error(error instanceof Error ? error.message : error);
-      process.exitCode = 1;
-    });
+  try {
+    const files = await prepareValidatedRelease(
+      join(root, "artifacts"),
+      join(root, "release"),
+      await Effect.runPromise(git(["rev-parse", "HEAD"], root)),
+      await targetIds(),
+    );
+    console.log(files.join("\n"));
+  } catch (error: unknown) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
 }

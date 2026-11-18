@@ -356,9 +356,11 @@ if (import.meta.main) {
     console.error("Use bun run integration:modpack:update [--version VERSION].");
     process.exitCode = 1;
   } else {
-    updateModpack(version).catch((error: unknown) => {
+    try {
+      await updateModpack(version);
+    } catch (error: unknown) {
       console.error(error);
       process.exitCode = 1;
-    });
+    }
   }
 }

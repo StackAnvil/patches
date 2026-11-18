@@ -72,8 +72,7 @@ export async function verifyOreUiShaper(
         ? "libstackanvil_oreui_harfbuzz.dylib"
         : "libstackanvil_oreui_harfbuzz.so";
   if (
-    !manifest ||
-    manifest.format !== 1 ||
+    manifest?.format !== 1 ||
     manifest.engine !== "HarfBuzz" ||
     manifest.version !== source.version ||
     manifest.target !== "Bedrock 1.26.60.5 OreUI" ||

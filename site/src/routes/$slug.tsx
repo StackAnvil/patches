@@ -9,6 +9,7 @@ import { site } from "../lib/site";
 export const Route = createFileRoute("/$slug")({
   loader: async ({ params }) => {
     const page = getDocument(params.slug);
+    // oxlint-disable-next-line typescript/only-throw-error -- TanStack Router expects the notFound() object to be thrown
     if (!page) throw notFound();
     await (await import("../lib/document-content")).documentLoader.preload(page.path);
     return { path: page.path, slug: page.slug, title: page.title, description: page.description };

@@ -30,7 +30,7 @@ function diffPaths(section: string): string[] {
 
 // Count delimiters outside ordinary Gradle strings and line comments.
 function delimiterBalance(line: string): number {
-  const code = line.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/.*$/g, "");
+  const code = line.replaceAll(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/.*$/g, "");
   let balance = 0;
   for (const character of code) {
     if ("{([".includes(character)) balance++;

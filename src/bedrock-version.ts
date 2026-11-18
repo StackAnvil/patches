@@ -271,10 +271,12 @@ export async function bedrockVersionMain(args: string[]): Promise<void> {
 }
 
 if (import.meta.main) {
-  bedrockVersionMain(process.argv.slice(2)).catch((error: unknown) => {
+  try {
+    await bedrockVersionMain(process.argv.slice(2));
+  } catch (error: unknown) {
     console.error(
       error instanceof Error ? error.message : "Could not resolve the Bedrock version ID",
     );
     process.exitCode = 1;
-  });
+  }
 }

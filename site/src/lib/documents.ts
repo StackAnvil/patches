@@ -6,6 +6,7 @@ const metadata = import.meta.glob<{ frontmatter: PageMetadata }>("../../content/
   query: "?only=frontmatter",
 });
 
+// oxlint-disable-next-line oxc/no-map-spread -- copy so the imported MDX frontmatter stays unchanged
 export const documents = Object.entries(metadata).map(([path, { frontmatter }]) => ({
   ...frontmatter,
   path,

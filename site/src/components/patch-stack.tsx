@@ -1,5 +1,5 @@
-import projects from "virtual:stackanvil-patches";
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { stacks } from "./patch-stacks";
 
 const names: Record<string, string> = {
   viabedrock: "ViaBedrock",
@@ -13,12 +13,6 @@ function kind(title: string) {
   if (title.startsWith("fix")) return "fix";
   return "other";
 }
-
-const stacks = projects
-  .filter(({ patches }) => patches.length > 0)
-  .toSorted((a, b) => b.patches.length - a.patches.length);
-
-export const patchCount = stacks.reduce((sum, { patches }) => sum + patches.length, 0);
 
 /** One block per patch that StackAnvil carries for an upstream project. */
 export function PatchStack() {
@@ -61,7 +55,7 @@ export function PatchStack() {
           >
             {patches.map((patch, index) => (
               <span
-                key={index}
+                key={patch.file}
                 className="patch-block"
                 data-kind={kind(patch.title)}
                 data-state={patch.state}

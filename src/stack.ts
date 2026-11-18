@@ -456,8 +456,8 @@ export const addPatch = Effect.fn("addPatch")(function* (
   const slug = title
     .toLowerCase()
     .replace(/^[a-z]+(?:\([^)]*\))?:\s*/, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-|-$/g, "")
     .slice(0, 60);
   if (!slug) return yield* Effect.fail(new Error("Patch title needs words for a filename"));
   const number = String(

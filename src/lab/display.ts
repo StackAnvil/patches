@@ -167,11 +167,11 @@ export async function ensureDisplay(): Promise<DisplayState> {
     if (!child.pid) throw new Error("Could not start Sway.");
     state = { backend: "wayland", pid: child.pid, display: "", runtime, socket };
     for (let attempt = 0; attempt < 100 && alive(child.pid); attempt++) {
-      const sockets = (await readdir(runtime, { withFileTypes: true })).filter(
+      const waylandSocket = (await readdir(runtime, { withFileTypes: true })).find(
         (entry) => entry.isSocket() && /^wayland-\d+$/.test(entry.name),
       );
-      if (existsSync(socket) && sockets[0]) {
-        state.display = join(runtime, sockets[0].name);
+      if (existsSync(socket) && waylandSocket) {
+        state.display = join(runtime, waylandSocket.name);
         break;
       }
       await Bun.sleep(100);

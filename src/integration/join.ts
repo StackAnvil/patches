@@ -20,7 +20,7 @@ export function connectionFailure(
   if (disconnect)
     return `Proxy closed the ${route} connection: ${disconnect.slice(disconnect.indexOf("["))}`;
   if (!player) return undefined;
-  const escaped = player.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = player.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const plain = stripVTControlCharacters(server);
   const pattern = javaBackend(route)
     ? `${escaped} lost connection\\b`

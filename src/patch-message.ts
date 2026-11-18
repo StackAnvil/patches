@@ -10,7 +10,7 @@ export function parsePatchMessage(patch: string): PatchMessage {
 
   const subject = headers.match(/^Subject: (.*(?:\n[ \t].*)*)$/m)?.[1];
   const title = subject
-    ?.replace(/\n[ \t]+/g, " ")
+    ?.replaceAll(/\n[ \t]+/g, " ")
     .replace(/^\[PATCH(?: \d+\/\d+)?\] /, "")
     .trim();
   if (!title) throw new Error("Patch has no commit subject");

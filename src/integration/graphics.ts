@@ -142,17 +142,19 @@ export function graphicsFailures(clientLog: string, shaderFilename?: string): st
 }
 
 if (import.meta.main) {
-  Effect.runPromise(
-    Effect.tryPromise({
-      try: async () => {
-        const instance = await installPrism(integrationPrismNames.shaders);
-        await installGraphicsProfile(instance);
-        console.log(`Prepared ${integrationPrismNames.shaders}: ${instance}`);
-      },
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  ).catch((error: unknown) => {
+  try {
+    await Effect.runPromise(
+      Effect.tryPromise({
+        try: async () => {
+          const instance = await installPrism(integrationPrismNames.shaders);
+          await installGraphicsProfile(instance);
+          console.log(`Prepared ${integrationPrismNames.shaders}: ${instance}`);
+        },
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
+    );
+  } catch (error: unknown) {
     console.error(error);
     process.exitCode = 1;
-  });
+  }
 }
