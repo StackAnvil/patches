@@ -42,5 +42,11 @@ The [owning patch](0009-manage-character-creator-accounts-and-wardrobes.patch) r
 
 Bedrock 1.26.60.5 ships the straight mouth, piece `52dd0726`, in its built-in persona pieces as `persona_mouth`.
 It was missing from the type table, so account characters that equip it failed before their model loaded.
-With it added, 513 of 523 owned non-emote Character Creator items assemble and render in local test characters built from an account character.
-The other 10 report conflicting bone parents and remain open.
+
+## Older piece pose chains
+
+Older Marketplace pieces, such as beards, braids, prosthetic arms and wings, pose `body` under `hip`.
+The 1.26.60.5 skeleton places `body` under `waist` and merges first, so it keeps its parent as it already keeps its pivots.
+
+All 523 owned non-emote Character Creator items assemble and render in local test characters built from an account character.
+Three combined outfits with these pieces render on the player after login to BDS 1.26.60.6.
