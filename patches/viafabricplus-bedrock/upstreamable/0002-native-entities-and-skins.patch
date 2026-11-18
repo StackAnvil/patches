@@ -837,6 +837,14 @@ pack download cap for that connection, because the payload has no size
 cap; OPBlocks' packs exceed 250 MiB with the vanilla packs. The cap is
 restored on the next connection.
 
+Actor materials with the Blending state and One/One blend factors draw
+additively, as native does. CubeCraft's lobby logo adds a hub reflection
+map over its bright emissive cube through such a material; the unknown
+blend fields sent it to the translucent fallback, which painted the dark
+reflection over the cube. An additive emissive material adds its own
+radiance and needs no shader-pack emission split. Other blend factors
+keep the fallback.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index 7ba0932506d370b6bf500d2b53cb5ef35c8bb2ec..d5d27f4f2c7b48442908e5e2fd2b5ba8d81479df 100644
 --- a/build.gradle.kts
@@ -3187,10 +3195,10 @@ index 0000000000000000000000000000000000000000..f8df41f541b31150eaa1d1c65a3065f3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176f6b78e00
+index 0000000000000000000000000000000000000000..3d9a6d94346fd0272016e1e61953601337f3d167
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,274 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3335,12 +3343,17 @@ index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176
 +                        effective.defines.contains("GLINT"), depth, false,
 +                        !effective.states.contains("DisableAlphaWrite"), true));
 +            }
++            // Native Blending with One/One adds the fragment to the target. Other blend factors keep the fallback.
++            final boolean additive = effective != null && effective.states.contains("Blending")
++                && "One".equals(effective.blendSource) && "One".equals(effective.blendDestination);
++            final Set<String> states = new HashSet<>(effective == null ? Set.of() : effective.states);
++            if (additive) states.remove("Blending");
 +            if (effective == null || !effective.verifiedFields
 +                || !"shaders/entity.vertex".equals(effective.vertexShader)
 +                || !"shaders/entity.fragment".equals(effective.fragmentShader)
 +                || !shaderDefines.contains("USE_OVERLAY")
 +                || !Set.of("USE_OVERLAY", "ALPHA_TEST", "USE_EMISSIVE", "MASKED_MULTITEXTURE", "GLINT", "USE_COLOR_MASK").containsAll(shaderDefines)
-+                || !Set.of("DisableCulling", "DisableDepthTest", "DisableDepthWrite", "DisableAlphaWrite").containsAll(effective.states)) {
++                || !Set.of("DisableCulling", "DisableDepthTest", "DisableDepthWrite", "DisableAlphaWrite").containsAll(states)) {
 +                return Optional.empty();
 +            }
 +            final var depth = BedrockActorDepth.read(effective.depthFunction, effective.states);
@@ -3353,7 +3366,8 @@ index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176
 +            if (masked && (!effective.defines.contains("ALPHA_TEST") || effective.defines.contains("USE_EMISSIVE"))) {
 +                return Optional.empty();
 +            }
-+            return Optional.of(new Material(effective.defines.contains("ALPHA_TEST"), !effective.states.contains("DisableCulling"), effective.defines.contains("USE_EMISSIVE"), effective.defines.contains("USE_UV_ANIM"), masked, glint, depth.get(), colorMask, !effective.states.contains("DisableAlphaWrite")));
++            if (additive && (masked || glint || colorMask)) return Optional.empty();
++            return Optional.of(new Material(effective.defines.contains("ALPHA_TEST"), !effective.states.contains("DisableCulling"), effective.defines.contains("USE_EMISSIVE"), effective.defines.contains("USE_UV_ANIM"), masked, glint, depth.get(), colorMask, !effective.states.contains("DisableAlphaWrite"), false, additive));
 +        });
 +    }
 +
@@ -3373,7 +3387,7 @@ index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176
 +    private Effective resolve(final String name, final Set<String> ancestors) {
 +        final Definition definition = this.definitions.get(name);
 +        if (definition == null || ancestors.size() >= 128 || !ancestors.add(name)) return null;
-+        final Effective parent = definition.parent == null ? new Effective(null, null, "LessEqual", Set.of(), Set.of(), true)
++        final Effective parent = definition.parent == null ? new Effective(null, null, "LessEqual", Set.of(), Set.of(), null, null, true)
 +            : this.resolve(definition.parent, ancestors);
 +        ancestors.remove(name);
 +        if (parent == null) return null;
@@ -3382,12 +3396,13 @@ index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176
 +            boolean verified = parent.verifiedFields;
 +            for (String key : fields.keySet()) {
 +                if (!Set.of("vertexShader", "fragmentShader", "defines", "+defines", "-defines",
-+                    "states", "+states", "-states", "msaaSupport", "depthFunc").contains(key)) verified = false;
++                    "states", "+states", "-states", "msaaSupport", "depthFunc", "blendSrc", "blendDst").contains(key)) verified = false;
 +            }
 +            return new Effective(string(fields, "vertexShader", parent.vertexShader),
 +                string(fields, "fragmentShader", parent.fragmentShader),
 +                string(fields, "depthFunc", parent.depthFunction),
-+                flags(fields, "defines", parent.defines), flags(fields, "states", parent.states), verified);
++                flags(fields, "defines", parent.defines), flags(fields, "states", parent.states),
++                string(fields, "blendSrc", parent.blendSource), string(fields, "blendDst", parent.blendDestination), verified);
 +        } catch (RuntimeException invalid) {
 +            return null;
 +        }
@@ -3415,7 +3430,7 @@ index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176
 +        return result;
 +    }
 +
-+    public record Material(boolean alphaTest, boolean cull, boolean emissive, boolean uvAnimation, boolean masked, boolean glint, BedrockActorDepth depth, boolean colorMask, boolean alphaWrite, boolean pattern) {
++    public record Material(boolean alphaTest, boolean cull, boolean emissive, boolean uvAnimation, boolean masked, boolean glint, BedrockActorDepth depth, boolean colorMask, boolean alphaWrite, boolean pattern, boolean additive) {
 +        public static final Material CUTOUT = new Material(true, false, false, false, false, false, BedrockActorDepth.DEFAULT);
 +
 +        public Material(final boolean alphaTest, final boolean cull, final boolean emissive, final boolean uvAnimation,
@@ -3434,6 +3449,12 @@ index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176
 +            this(alphaTest, cull, emissive, uvAnimation, masked, glint, depth, colorMask, alphaWrite, false);
 +        }
 +
++        public Material(final boolean alphaTest, final boolean cull, final boolean emissive, final boolean uvAnimation,
++                        final boolean masked, final boolean glint, final BedrockActorDepth depth,
++                        final boolean colorMask, final boolean alphaWrite, final boolean pattern) {
++            this(alphaTest, cull, emissive, uvAnimation, masked, glint, depth, colorMask, alphaWrite, pattern, false);
++        }
++
 +        public Material {
 +            Objects.requireNonNull(depth);
 +            if (pattern && (alphaTest || emissive || masked || colorMask || uvAnimation))
@@ -3442,14 +3463,15 @@ index 0000000000000000000000000000000000000000..da4d551292abf4af353b94f6fefec176
 +            if (emissive && !depth.repeatable()) throw new IllegalArgumentException("Unsupported split-emission depth predicate");
 +            if (glint && (emissive || masked)) throw new IllegalArgumentException("Unsupported native glint material family");
 +            if (masked && (!alphaTest || emissive)) throw new IllegalArgumentException("Unsupported masked material family");
++            if (additive && (pattern || masked || glint || colorMask)) throw new IllegalArgumentException("Unsupported additive material family");
 +        }
 +
 +        public int textureCount() { return this.pattern ? 3 : this.masked || this.glint ? 2 : 1; }
-+        public Material withoutEmission() { return new Material(this.alphaTest, this.cull, false, this.uvAnimation, this.masked, this.glint, this.depth, this.colorMask, this.alphaWrite, this.pattern); }
++        public Material withoutEmission() { return new Material(this.alphaTest, this.cull, false, this.uvAnimation, this.masked, this.glint, this.depth, this.colorMask, this.alphaWrite, this.pattern, this.additive); }
 +    }
 +    private record Definition(String parent, JsonObject fields) {}
 +    private record Effective(String vertexShader, String fragmentShader, String depthFunction, Set<String> defines,
-+                             Set<String> states, boolean verifiedFields) {}
++                             Set<String> states, String blendSource, String blendDestination, boolean verifiedFields) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java
 new file mode 100644
@@ -3562,10 +3584,10 @@ index 0000000000000000000000000000000000000000..4494c3843d6f8f6f47bf3c0a2a91b1d8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..42e2ce0a5536d728717ba4607a15216e51138220
+index 0000000000000000000000000000000000000000..eb7a417f276fbbad05ce3d41ea1bda19b8c13950
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,268 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3574,6 +3596,8 @@ index 0000000000000000000000000000000000000000..42e2ce0a5536d728717ba4607a15216e
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
++import com.mojang.renderpearl.api.pipeline.BlendFactor;
++import com.mojang.renderpearl.api.pipeline.BlendFunction;
 +import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 +import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 +import com.mojang.renderpearl.api.pipeline.UniformType;
@@ -3597,6 +3621,7 @@ index 0000000000000000000000000000000000000000..42e2ce0a5536d728717ba4607a15216e
 +public final class BedrockActorRenderTypes {
 +    private static final java.util.Map<PipelineKey, RenderPipeline> MATERIAL_PIPELINES = pipelines();
 +    public static final List<RenderPipeline> PIPELINES = List.copyOf(MATERIAL_PIPELINES.values());
++    private static final java.util.Map<PipelineKey, RenderPipeline> ADDITIVE_PIPELINES = new java.util.concurrent.ConcurrentHashMap<>();
 +
 +    private static final Map<RenderType, Supplier<RenderType>> PLAYER_TYPES = new WeakHashMap<>();
 +
@@ -3618,6 +3643,15 @@ index 0000000000000000000000000000000000000000..42e2ce0a5536d728717ba4607a15216e
 +    }
 +
 +    private static RenderPipeline pipeline(final PipelineKey key) {
++        return pipeline(key, false);
++    }
++
++    /** Native One/One Blending adds the shaded fragment to the target and keeps the authored depth state. */
++    private static RenderPipeline additivePipeline(final PipelineKey key) {
++        return pipeline(key, true);
++    }
++
++    private static RenderPipeline pipeline(final PipelineKey key, final boolean additive) {
 +        final var builder = RenderPipeline.builder(RenderPipelines.ENTITY_SNIPPET)
 +            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_" + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether + (key.playerFade ? "_player_fade" : "") + (key.pattern ? "_pattern" : "") + (key.masked ? "_masked" : "") + (key.colorMask ? "_tint" : "") + (key.alphaWrite ? "" : "_no_alpha") + (key.glint == GlintLighting.NONE ? "" : key.glint == GlintLighting.LIGHTMAP ? "_glint_lightmap" : "_glint") + (key.depth.equals(BedrockActorDepth.DEFAULT) ? "" : "_depth_" + key.depth.suffix())))
 +            .withVertexShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_actor"))
@@ -3627,6 +3661,11 @@ index 0000000000000000000000000000000000000000..42e2ce0a5536d728717ba4607a15216e
 +                ColorTargetState.DEFAULT.format(), key.alphaWrite ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_COLOR))
 +            .withCull(key.cull)
 +            .withDepthStencilState(key.depth.state());
++        if (additive) builder.withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/actor_additive_"
++                + key.alphaTest + "_" + key.cull + "_" + key.unlit + "_" + key.emissive + "_" + key.nether + (key.playerFade ? "_player_fade" : "")
++                + (key.alphaWrite ? "" : "_no_alpha") + (key.depth.equals(BedrockActorDepth.DEFAULT) ? "" : "_depth_" + key.depth.suffix())))
++            .withColorTargetState(new ColorTargetState(java.util.Optional.of(new BlendFunction(BlendFactor.ONE, BlendFactor.ONE)),
++                ColorTargetState.DEFAULT.format(), key.alphaWrite ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_COLOR));
 +        if (key.pattern) builder.withShaderDefine("PATTERN")
 +            .withBindGroupLayout(BindGroupLayout.builder()
 +                .withUniform("BedrockPatternInfo", UniformType.UNIFORM_BUFFER)
@@ -3645,7 +3684,7 @@ index 0000000000000000000000000000000000000000..42e2ce0a5536d728717ba4607a15216e
 +        if (key.unlit) builder.withShaderDefine("IGNORE_LIGHTING");
 +        if (key.nether) builder.withShaderDefine("NETHER_LIGHTING");
 +        if (key.emissive) builder.withShaderDefine("USE_EMISSIVE");
-+        final var shaderPipeline = key.emissive ? RenderPipelines.EYES
++        final var shaderPipeline = key.emissive || additive ? RenderPipelines.EYES
 +            : !key.alphaTest ? RenderPipelines.ENTITY_SOLID
 +            : key.unlit ? RenderPipelines.ENTITY_CUTOUT_Z_OFFSET
 +            : key.cull ? RenderPipelines.ENTITY_CUTOUT_CULL : RenderPipelines.ENTITY_CUTOUT;
@@ -3735,7 +3774,8 @@ index 0000000000000000000000000000000000000000..42e2ce0a5536d728717ba4607a15216e
 +        ((IBedrockActorRenderType) type).bedrock$glint(glint);
 +        ((IBedrockActorRenderType) type).bedrock$pattern(pattern);
 +        ((IBedrockActorRenderType) type).bedrock$tint(material.colorMask() ? tint : null);
-+        if (material.emissive()) BedrockShaderEmission.register(type, textures.getFirst(), material, ignoreLighting, multiplier, uv, netherLighting, playerFade);
++        // An additive draw adds its own radiance, so it has no separate emission pass.
++        if (material.emissive() && !material.additive()) BedrockShaderEmission.register(type, textures.getFirst(), material, ignoreLighting, multiplier, uv, netherLighting, playerFade);
 +        if (!playerFade) {
 +            final var bindings = List.copyOf(textures);
 +            PLAYER_TYPES.put(type, Suppliers.memoize(() -> create(bindings, material, ignoreLighting,
@@ -3758,8 +3798,10 @@ index 0000000000000000000000000000000000000000..42e2ce0a5536d728717ba4607a15216e
 +    static RenderPipeline selectPipeline(final BedrockActorMaterialDefinitions.Material material,
 +            final boolean ignoreLighting, final boolean netherLighting, final boolean playerFade) {
 +        if (material.glint()) throw new IllegalArgumentException("Native glint requires caller-owned frame inputs");
-+        return MATERIAL_PIPELINES.computeIfAbsent(new PipelineKey(material.alphaTest(), material.cull(), ignoreLighting,
-+                material.emissive(), netherLighting && !ignoreLighting, material.masked(), material.colorMask(), GlintLighting.NONE, material.depth(), material.alphaWrite(), playerFade, material.pattern()), BedrockActorRenderTypes::pipeline);
++        final var key = new PipelineKey(material.alphaTest(), material.cull(), ignoreLighting,
++                material.emissive(), netherLighting && !ignoreLighting, material.masked(), material.colorMask(), GlintLighting.NONE, material.depth(), material.alphaWrite(), playerFade, material.pattern());
++        return material.additive() ? ADDITIVE_PIPELINES.computeIfAbsent(key, BedrockActorRenderTypes::additivePipeline)
++                : MATERIAL_PIPELINES.computeIfAbsent(key, BedrockActorRenderTypes::pipeline);
 +    }
 +
 +    static RenderPipeline selectGlintPipeline(final BedrockActorMaterialDefinitions.Material material,
@@ -7584,10 +7626,10 @@ index 0000000000000000000000000000000000000000..ca3478df47742ba0794265f4ebe998d8
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4f3e5c0dd614fcc50f162a2987f656728e5c3ac
+index 0000000000000000000000000000000000000000..df8b01b5aac98bcb0f533031a733df5154990bd6
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,367 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -7623,6 +7665,24 @@ index 0000000000000000000000000000000000000000..f4f3e5c0dd614fcc50f162a2987f6567
 +        final var flags = BedrockActorRenderTypes.selectGlintPipeline(glint, false, false,
 +                BedrockActorRenderTypes.GlintLighting.LIGHTMAP).getShaderDefines().flags();
 +        assertTrue(flags.containsAll(Set.of("PATTERN", "GLINT", "GLINT_LIGHTMAP")));
++    }
++
++    @Test
++    void drawsOneOneBlendingMaterialsAdditivelyAndKeepsOtherBlendFactorsOnTheFallback() {
++        // CubeCraft's lobby logo adds a reflection map through this material over its emissive cube.
++        final var materials = read("""
++            {"reflection:entity_emissive":{"+defines":["USE_UV_ANIM","ALPHA_TEST"],"+states":["Blending","DisableCulling"],
++               "blendSrc":"One","blendDst":"One"},
++             "faded:entity":{"+states":["Blending"],"blendSrc":"SourceAlpha","blendDst":"OneMinusSrcAlpha"}}
++            """);
++        final var additive = materials.material("reflection").orElseThrow();
++        assertTrue(additive.additive()); assertTrue(additive.emissive()); assertFalse(additive.cull());
++        final var blend = BedrockActorRenderTypes.selectPipeline(additive, true, false)
++                .getColorTargetStates().getFirst().blendFunction().orElseThrow();
++        assertEquals(new com.mojang.renderpearl.api.pipeline.BlendFunction(
++                com.mojang.renderpearl.api.pipeline.BlendFactor.ONE, com.mojang.renderpearl.api.pipeline.BlendFactor.ONE), blend);
++        assertFalse(materials.material("entity_emissive").orElseThrow().additive());
++        assertTrue(materials.material("faded").isEmpty());
 +    }
 +
 +    @Test
