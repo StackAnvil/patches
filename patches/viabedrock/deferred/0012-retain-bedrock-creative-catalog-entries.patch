@@ -582,6 +582,16 @@ Keep category tabs independent of row-grid eligibility in the survival All recip
 
 Use valid registered output and unlock presence for these tab counts, preserving the current Instabuild bypass and actual owner recipe tags. Leave row eligibility, grid-sized previews and request admission intact; creative and craftable-only counts keep their prior policy. A regression retains unlocked 3x3 tabs in a 2x2 opening with enough ingredients while rejecting their rows/previews, keeps a locked category absent, and checks the unchanged craftable-only and ability paths. This changes presentation presence, not crafting authority or the measured native grid policy.
 
+Show recipe category tabs by the native rule. Bedrock 1.26.60.5 binds
+#construction_tab_visible and its siblings (FNV-1a 0xad8afa02, ...) to
+callbacks such as 0x145030b20 and 0x145030d70. Each returns true unless
+the player is not in Creative and the controller's recipesUnlock copy
+(offset 0x13b8, game rule index 4 as registered by 0x14070a550) is set;
+then it tests that category's unlocked bit. Recipe counts and the
+craftable-only filter take no part. CubeCraft leaves recipesUnlock off
+and sends no player recipes, so native shows all four tabs over an empty
+list, while we hid them.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeBundleAction.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeBundleAction.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..e3e2bb013db10c44b3608526316de44eca4ef35a
@@ -4767,10 +4777,10 @@ index a0ccfdae879de3516aa7e6f4f5a699e35af81b1f..338dff987742743897050463a77e1392
          this.cursorItems = null;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..60cf88ff15a49fb8d921ba4a3f791de34f1f0eba
+index 0000000000000000000000000000000000000000..5f430d5018362c5b988a1842181ea4b3f40ebd8d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativePlayerRecipeState.java
-@@ -0,0 +1,722 @@
+@@ -0,0 +1,727 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -5351,14 +5361,18 @@ index 0000000000000000000000000000000000000000..60cf88ff15a49fb8d921ba4a3f791de3
 +        final var resources = this.user().get(ResourcePackStorage.class);
 +        final var catalog = items.creativeCatalog();
 +        final boolean creative = GameTypeRewriter.isCreativeMode(this.inputs.gameType, this.inputs.levelGameType);
-+        final boolean allSurvivalRecipes = !creative && !this.preferences.filtering();
++        // Native 1.26.60.5 tab callbacks (0x145030b20 and siblings) show every recipe category unless the recipesUnlock
++        // game rule (rule 4, read into the controller at 0x13b8) applies to a non-Creative player. Then a tab needs an
++        // unlocked recipe in its category. The craftable-only filter never hides a tab.
++        final var rules = this.user().get(GameRulesStorage.class);
++        final boolean unlockGated = !creative && rules != null && Boolean.TRUE.equals(rules.getGameRule("recipesUnlock"));
 +        final boolean instabuild = this.user().get(EntityTracker.class).getClientPlayer().abilities().getBooleanValue(AbilitiesIndex.Instabuild);
 +        final List<String> tabContexts = this.context.recipeTags(recipes);
 +        final var counts = new ArrayList<Integer>();
 +        for (final var view : List.of(CreativeInventoryModel.View.CONSTRUCTION, CreativeInventoryModel.View.EQUIPMENT,
 +                CreativeInventoryModel.View.ITEMS, CreativeInventoryModel.View.NATURE)) {
 +            this.model.refresh(view, false);
-+            if (allSurvivalRecipes) {
++            if (unlockGated) {
 +                // A tab can contain unlocked workbench recipes even while the personal grid cannot show/craft them.
 +                // Row eligibility and request admission retain their actual grid and source checks.
 +                counts.add(Math.toIntExact(this.model.collections().entries(view).stream()
@@ -5368,7 +5382,8 @@ index 0000000000000000000000000000000000000000..60cf88ff15a49fb8d921ba4a3f791de3
 +                                && recipes.isOutputUnlocked(output, tabContexts))
 +                        .count()));
 +            } else {
-+                counts.add(this.model.collections().collection(view).snapshot().eligibleCount());
++                // An ungated tab is always shown, even when its category is empty.
++                counts.add(Math.max(1, this.model.collections().entries(view).size()));
 +            }
 +        }
 +        final int tab = this.preferences.leftTab();
@@ -7370,10 +7385,10 @@ index 0000000000000000000000000000000000000000..a3451b969c70339a97d8a2b336736687
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..5bcca21c55a7365d823173a7af8dfe1e8cbfb80d
+index 0000000000000000000000000000000000000000..b6fa316a2153b362a7f853c0342b1e22b27e2866
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/PlayerRecipeModelTest.java
-@@ -0,0 +1,775 @@
+@@ -0,0 +1,781 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -7734,9 +7749,15 @@ index 0000000000000000000000000000000000000000..5bcca21c55a7365d823173a7af8dfe1e
 +        assertNull(recipes.playerRecipePreview(new BedrockItem(IDENTIFIER + 1), owner));
 +        assertNotNull(recipes.playerRecipePreview(new BedrockItem(IDENTIFIER + 2), owner));
 +
++        // Native tab visibility ignores the craftable-only filter.
 +        user.get(InventoryOptionsStorage.class).applyInventory(new InventoryOptions(5, 0, true, 2, 2), false);
 +        f.state.tick();
-+        assertEquals(List.of(0, 0, 1, 0), ((PlayerInventoryUi.State) state.invoke(snapshot.invoke(f.state, 0L))).categoryCounts());
++        assertEquals(List.of(1, 1, 1, 0), ((PlayerInventoryUi.State) state.invoke(snapshot.invoke(f.state, 0L))).categoryCounts());
++        // Without recipesUnlock native shows every category tab, including ones without an unlocked recipe.
++        when(user.get(GameRulesStorage.class).getGameRule("recipesUnlock")).thenReturn(false);
++        f.state.tick();
++        assertTrue(((PlayerInventoryUi.State) state.invoke(snapshot.invoke(f.state, 0L))).categoryCounts().stream().allMatch(count -> count > 0));
++        when(user.get(GameRulesStorage.class).getGameRule("recipesUnlock")).thenReturn(true);
 +        user.get(InventoryOptionsStorage.class).applyInventory(new InventoryOptions(5, 0, false, 2, 2), false);
 +        f.context.abilities.getOrCreateLayer(SerializedAbilitiesData_SerializedAbilitiesLayer.Base).setAbility(AbilitiesIndex.Instabuild, true);
 +        f.state.tick();
