@@ -1,3 +1,5 @@
+import { Schema } from "effect";
+
 /** Only the exact normal transfer notice is expected in a transfer-enabled live session. */
 export function clientSessionFailed(log: string, allowTransfers = false): boolean {
   const observed = allowTransfers
@@ -42,6 +44,47 @@ export interface ControllerAudit {
   identifiers: Record<string, number>;
   failures: string[];
 }
+
+const Strings = Schema.mutable(Schema.Array(Schema.String));
+const Counts = Schema.Record(Schema.String, Schema.Finite);
+
+export const SceneFeaturesSchema = Schema.Struct({
+  skinUpdates: Schema.Finite,
+  geometrySkinUpdates: Schema.Finite,
+  localGeometrySkinUpdates: Schema.Finite,
+  skinTextures: Strings,
+  fullSkinRecords: Counts,
+  customActorIdentifiers: Strings,
+  unregisteredActorIdentifiers: Schema.optionalKey(Strings),
+});
+
+/** A malformed audit counts as missing, so verification reports it instead of crashing. */
+export const isRenderAudit = Schema.is(
+  Schema.Struct({
+    installedSkins: Schema.Finite,
+    installedGeometrySkins: Schema.Finite,
+    rejectedSkins: Schema.Finite,
+    nativePlayerRendererSelections: Schema.Finite,
+    nativePlayerRenderFrames: Schema.Finite,
+    nativeOtherPlayerRenderFrames: Schema.Finite,
+    thirdPersonScene: Schema.Boolean,
+    actorIdentifiers: Strings,
+    evaluatedModels: Strings,
+    nativeCustomActorResolvedModels: Schema.Finite,
+    nativeCustomActorRenderFrames: Schema.Finite,
+    skinTextures: Strings,
+    fullSkinRecords: Counts,
+  }),
+);
+
+export const isControllerAudit = Schema.is(
+  Schema.Struct({
+    schema: Schema.Finite,
+    transformed: Schema.Boolean,
+    identifiers: Counts,
+    failures: Strings,
+  }),
+);
 
 export interface ControllerObservation {
   required: boolean;

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { Context, Effect, Layer, Result } from "effect";
 import { LabError, labIO, labValue } from "../lab/effect-runtime.ts";
+import { errorCode } from "../guards.ts";
 
 export interface OwnedProcess {
   readonly pid?: number;
@@ -17,7 +18,7 @@ const processControl: ProcessControl = {
       process.kill(-pid, 0);
       return true;
     } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === "ESRCH") return false;
+      if (errorCode(cause) === "ESRCH") return false;
       throw cause;
     }
   },
@@ -26,7 +27,7 @@ const processControl: ProcessControl = {
     try {
       process.kill(-pid, "SIGINT");
     } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "ESRCH") throw cause;
+      if (errorCode(cause) !== "ESRCH") throw cause;
     }
   },
 };

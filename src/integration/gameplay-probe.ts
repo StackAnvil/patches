@@ -1,12 +1,15 @@
 import type { ChildProcess } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Schema } from "effect";
+import { isOneOf, isRecord, parseJson } from "../guards.ts";
 import { root } from "../model.ts";
 import { geyserCaseIds, geyserNegativeControlIds } from "./geyser.ts";
 import { complexGameplayCaseIds } from "./ranged-observation.ts";
 import type { IncomingProjectileObservation } from "./projectile-observation.ts";
 import { chestViewport, containerPoint, type ContainerWindow } from "./container-viewport.ts";
 import { authoredInventoryCaseIds, isAuthoredInventoryCase } from "./inventory-ui-probe.ts";
+import { print, printError } from "../output.ts";
 
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
@@ -104,16 +107,23 @@ export interface GameplayEvent {
   >;
 }
 
+const isGameplayEventHeader = Schema.is(
+  Schema.Struct({
+    id: Schema.String,
+    run: Schema.String,
+    phase: Schema.Literals(["prepare", "start", "verify", "invalidate"]),
+  }),
+);
+
 export function gameplayEvents(log: string): GameplayEvent[] {
   return log.split("\n").flatMap((line) => {
     const marker = line.indexOf(prefix);
     if (marker < 0) return [];
     try {
-      const value = JSON.parse(line.slice(marker + prefix.length)) as GameplayEvent;
-      return typeof value.id === "string" &&
-        typeof value.run === "string" &&
-        ["prepare", "start", "verify", "invalidate"].includes(value.phase)
-        ? [value]
+      const value: unknown = JSON.parse(line.slice(marker + prefix.length));
+      return isGameplayEventHeader(value)
+        ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the probe mod writes these events; only the header fields that route them are checked here
+          [value as GameplayEvent]
         : [];
     } catch {
       return [];
@@ -122,8 +132,8 @@ export function gameplayEvents(log: string): GameplayEvent[] {
 }
 
 export function minecartDismountHasClearance(observed: unknown): boolean {
-  if (!observed || typeof observed !== "object") return false;
-  const { fromStart, player, dismountPosition } = observed as Record<string, unknown>;
+  if (!isRecord(observed)) return false;
+  const { fromStart, player, dismountPosition } = observed;
   const playerY = player && typeof player === "object" && "y" in player ? player.y : undefined;
   const cartY =
     dismountPosition && typeof dismountPosition === "object" && "y" in dismountPosition
@@ -196,11 +206,12 @@ async function uiMouse(ui: Ui, button: "left" | "right", durationMs = 150): Prom
 }
 
 async function javaWindow(ui: Ui): Promise<{ width: number; height: number }> {
-  const windows = JSON.parse(await ui(["ui", "list"])) as {
-    title: string;
-    width: number;
-    height: number;
-  }[];
+  const windows = parseJson(
+    Schema.Array(
+      Schema.Struct({ title: Schema.String, width: Schema.Finite, height: Schema.Finite }),
+    ),
+    await ui(["ui", "list"]),
+  );
   const window = windows.find((entry) => /^minecraft\*?\s/i.test(entry.title));
   if (!window) throw new Error("Java client window is unavailable.");
   return window;
@@ -1361,10 +1372,7 @@ export async function runGameplayCases(
       }
       await options.inspectClient?.(id, log, event);
       let negativeControl: GameplayEvent | undefined;
-      if (
-        options.negativeControls &&
-        geyserNegativeControlIds.includes(id as (typeof geyserNegativeControlIds)[number])
-      ) {
+      if (options.negativeControls && isOneOf(geyserNegativeControlIds, id)) {
         const controlStart = (await readFile(options.serverLog, "utf8")).length;
         const controlLog = async () =>
           (await readFile(options.serverLog, "utf8")).slice(controlStart);
@@ -1381,10 +1389,10 @@ export async function runGameplayCases(
           250,
           "fail",
         );
-        console.log(`PASS negative control ${id}: verification rejected the corrupted fixture.`);
+        print(`PASS negative control ${id}: verification rejected the corrupted fixture.`);
       }
       results.push({ id, status: "pass", observed: event.observed, screenshots, negativeControl });
-      console.log(`PASS gameplay ${id}: ${JSON.stringify(event.observed)}`);
+      print(`PASS gameplay ${id}: ${JSON.stringify(event.observed)}`);
     } catch (error) {
       const connectionError = await options.connectionError?.();
       const message = connectionError ?? String(error);
@@ -1412,7 +1420,7 @@ export async function runGameplayCases(
         cause: error instanceof Error ? error.cause : undefined,
         screenshots,
       });
-      console.error(
+      printError(
         `FAIL gameplay ${id}: ${message}${screenshots.length ? ` Screenshots: ${screenshots.join(", ")}.` : ""}`,
       );
       stopped = !alive() || Boolean(connectionError);

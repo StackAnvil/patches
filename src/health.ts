@@ -14,6 +14,7 @@ import {
 } from "./model.ts";
 import { git } from "./process.ts";
 import { projectPrPatch } from "./pr-patch.ts";
+import { errorCode } from "./guards.ts";
 
 type Check = "passed" | "failed" | "not-run";
 
@@ -82,7 +83,7 @@ async function hasPrContext(path: string): Promise<boolean> {
   try {
     return Boolean((await readFile(path.replace(/\.patch$/, ".pr.md"), "utf8")).trim());
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if (errorCode(error) === "ENOENT") return false;
     throw error;
   }
 }

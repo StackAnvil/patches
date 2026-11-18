@@ -37,6 +37,13 @@ async function git(args: string[], cwd: string): Promise<string> {
   return (await run("git", args, cwd)).trim();
 }
 
+const payload = (patch: string) =>
+  patch
+    .slice(patch.indexOf("diff --git "))
+    .replace(/\n-- \n[^\n]+\n?$/, "\n")
+    .replaceAll(/^index .+$/gm, "")
+    .trimEnd();
+
 test("an interrupted patch apply can continue or abort without losing the series", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "stackanvil-apply-"));
   fixtures.push(fixture);
@@ -68,11 +75,14 @@ test("an interrupted patch apply can continue or abort without losing the series
     join(project, "targets.json"),
     JSON.stringify({
       fixture: {
+        dependsOn: [],
         upstream: "unused/fixture",
         fork: "unused/fixture",
+        prAssignees: [],
         baseBranch: "main",
         baseSha,
         java: "17",
+        publication: "unused",
         buildTask: "build",
       },
     }),
@@ -180,12 +190,6 @@ test("an interrupted patch apply can continue or abort without losing the series
   expect(rebuilt).toStartWith(`From ${"0".repeat(40)} Mon Sep 17 00:00:00 2001\n`);
   expect(rebuilt).not.toContain("\n---\n");
   expect(rebuilt).not.toContain("\n-- \n");
-  const payload = (patch: string) =>
-    patch
-      .slice(patch.indexOf("diff --git "))
-      .replace(/\n-- \n[^\n]+\n?$/, "\n")
-      .replace(/^index .+$/gm, "")
-      .trimEnd();
   expect(payload(rebuilt)).toBe(payload(originalFirstPatch));
   const changed = await readFile(secondPatch, "utf8");
   expect(changed).not.toBe(conflictingPatch);

@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowDownToLine, Cable, ExternalLink, Package, Puzzle } from "lucide-react";
-import type { CSSProperties } from "react";
 import { releaseLink, setupDownloads, type Release, type Setup } from "../lib/releases";
 import { formatSize, setupGuides, setupOrder } from "../lib/setups";
 import { ForgeScene } from "./forge-scene";
@@ -22,7 +21,7 @@ export function SetupSwitch({
     <fieldset
       className="setup-switch"
       disabled={disabled}
-      style={{ "--index": setupOrder.indexOf(setup) } as CSSProperties}
+      style={{ "--index": setupOrder.indexOf(setup) }}
     >
       <legend className="sr-only">Connection setup</legend>
       <span className="switch-thumb" aria-hidden="true" />
@@ -90,7 +89,7 @@ export function NextSteps({ setup, release }: { setup: Setup; release: Release |
   return (
     <ol className="next-steps" key={setup}>
       {setupGuides[setup].steps(release?.minecraft).map((step, index) => (
-        <li key={step} style={{ "--step": index } as CSSProperties}>
+        <li key={step} style={{ "--step": index }}>
           <span className="step-number" aria-hidden="true">
             {index + 1}
           </span>
@@ -141,7 +140,7 @@ export function SetupStage({
             </p>
           )}
         </div>
-        <div className="stage-downloads">
+        <div>
           <DownloadFiles release={release} setup={setup} />
           <p className="stage-links">
             <Link to="/$slug/" params={{ slug: "getting-started" }} hash={guide.guideHash}>

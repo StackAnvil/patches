@@ -1,8 +1,15 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
+import { stringProperty } from "./guards.ts";
 
 const execFileAsync = promisify(execFile);
+
+/** A child process failed. The message includes its captured output. */
+export class CommandError extends Data.TaggedError("CommandError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
 
 export const command = Effect.fn("command")(function* (
   program: string,
@@ -24,9 +31,12 @@ export const command = Effect.fn("command")(function* (
       return trimOutput ? stdout.trimEnd() : stdout;
     },
     catch: (cause) => {
-      const error = cause as Error & { stdout?: string; stderr?: string };
-      const output = [error.stdout, error.stderr].filter((value) => value?.trim()).join("\n");
-      return new Error(`${program} ${args.join(" ")} failed: ${output || error.message}`, {
+      const output = [stringProperty(cause, "stdout"), stringProperty(cause, "stderr")]
+        .filter((value) => value?.trim())
+        .join("\n");
+      const message = cause instanceof Error ? cause.message : String(cause);
+      return new CommandError({
+        message: `${program} ${args.join(" ")} failed: ${output || message}`,
         cause,
       });
     },

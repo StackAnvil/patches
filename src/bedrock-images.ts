@@ -8,6 +8,13 @@ import { zipEntries } from "./zip.ts";
 export const builtinImagesResource = "assets/viabedrock/builtin_images.zip";
 export const preparedUiImagesResource = "assets/viabedrock/builtin_ui_images.zip";
 
+const tuple = (name: string) =>
+  name === "vanilla"
+    ? [-2, 0, 0]
+    : name === "vanilla_base"
+      ? [-1, 0, 0]
+      : Array.from({ length: 3 }, (_, index) => Number(name.slice(8).split(".")[index] ?? 0));
+
 /** Keep the native image layers and atlases in their original overlay order. */
 export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, version: string) {
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid built-in image version");
@@ -31,12 +38,6 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
     packs.add(match[1]);
     images.set(path, bytes);
   }
-  const tuple = (name: string) =>
-    name === "vanilla"
-      ? [-2, 0, 0]
-      : name === "vanilla_base"
-        ? [-1, 0, 0]
-        : Array.from({ length: 3 }, (_, index) => Number(name.slice(8).split(".")[index] ?? 0));
   const ordered = [...packs].toSorted((a, b) => {
     const left = tuple(a),
       right = tuple(b);
@@ -106,11 +107,12 @@ export async function verifyEmbeddedBuiltinImages(
   verifyPreparedUiImages(prepared, nativeImages);
 }
 
+const sha256Digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest();
+
 /** Bind generated PNGs to the verified native bundle and reject incomplete or damaged packaging. */
 export function verifyPreparedUiImages(catalog: Buffer, source: Buffer) {
   const entries = zipEntries(catalog);
   const index = entries.get("0-index")?.();
-  const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest();
   if (
     !index ||
     index.length < 44 ||
@@ -119,7 +121,7 @@ export function verifyPreparedUiImages(catalog: Buffer, source: Buffer) {
     catalog.subarray(30, 37).toString("utf8") !== "0-index" ||
     index.readUInt32BE(0) !== 0x5549504e ||
     index.readUInt32BE(4) !== 1 ||
-    !index.subarray(8, 40).equals(hash(source))
+    !index.subarray(8, 40).equals(sha256Digest(source))
   )
     throw new Error("Prepared UI image source or format does not match");
   const count = index.readInt32BE(40);
@@ -129,7 +131,7 @@ export function verifyPreparedUiImages(catalog: Buffer, source: Buffer) {
   for (const [path, read] of zipEntries(source))
     if (path.endsWith(".tga")) {
       const bytes = read();
-      sources.set(hash(bytes).toString("hex"), bytes);
+      sources.set(sha256Digest(bytes).toString("hex"), bytes);
     }
   const seen = new Set<string>();
   let total = 0;
@@ -150,7 +152,7 @@ export function verifyPreparedUiImages(catalog: Buffer, source: Buffer) {
       length > 16 * 1024 * 1024 ||
       total > 64 * 1024 * 1024 ||
       png.length !== length ||
-      !hash(png).equals(index.subarray(offset + 32, offset + 64)) ||
+      !sha256Digest(png).equals(index.subarray(offset + 32, offset + 64)) ||
       !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
       png.readUInt32BE(8) !== 13 ||
       png.readUInt32BE(12) !== 0x49484452 ||

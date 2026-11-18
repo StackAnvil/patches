@@ -3,16 +3,20 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import { command } from "./process.ts";
 import { root } from "./model.ts";
 import { artifact } from "./client-artifacts.ts";
+import { print } from "./output.ts";
+
+/** The development machine lacks a required tool. */
+class DevSetupError extends Data.TaggedError("DevSetupError")<{ readonly message: string }> {}
 
 const toolsDir = join(root, ".stackanvil", "tools");
 
 export const devSetup = Effect.fn("devSetup")(function* () {
   if (!Bun.which("git") || !Bun.which("java")) {
-    return yield* Effect.fail(new Error("Install Git and a JDK before running dev setup."));
+    return yield* new DevSetupError({ message: "Install Git and a JDK before running dev setup." });
   }
   yield* Effect.promise(() => mkdir(toolsDir, { recursive: true }));
   const viaProxy = yield* Effect.promise(() =>
@@ -45,14 +49,14 @@ export const devSetup = Effect.fn("devSetup")(function* () {
     if (!waylandTool(tool))
       missing.push(`${tool}: required for the private Wayland lab and silent capture`);
   }
-  console.log(`ViaProxy: ${viaProxy}`);
-  console.log(`mitmproxy: ${mitmdump}`);
-  console.log(
+  print(`ViaProxy: ${viaProxy}`);
+  print(`mitmproxy: ${mitmdump}`);
+  print(
     "HTTPS capture: use bun run capture start and bun run capture launch. Bedrock gameplay uses a separate UDP path.",
   );
   if (missing.length)
-    return yield* Effect.fail(
-      new Error(`Development setup needs:\n${missing.map((item) => `- ${item}`).join("\n")}`),
-    );
-  console.log("Bedrock server and client are configured. Development setup is ready.");
+    return yield* new DevSetupError({
+      message: `Development setup needs:\n${missing.map((item) => `- ${item}`).join("\n")}`,
+    });
+  print("Bedrock server and client are configured. Development setup is ready.");
 });

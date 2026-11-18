@@ -1,5 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { Schema } from "effect";
+import { parseJson } from "./guards.ts";
 import { parsePatchMessage } from "./patch-message.ts";
 
 export const root = join(import.meta.dir, "..");
@@ -45,11 +47,49 @@ export interface Series {
   deferred: DeferredPatch[];
 }
 
+const TargetSchema = Schema.Struct({
+  dependsOn: Schema.mutable(Schema.Array(Schema.String)),
+  upstream: Schema.String,
+  fork: Schema.String,
+  prAssignees: Schema.mutable(Schema.Array(Schema.String)),
+  baseBranch: Schema.String,
+  baseSha: Schema.String,
+  java: Schema.String,
+  publication: Schema.String,
+  buildTask: Schema.String,
+  artifactProject: Schema.optionalKey(Schema.String),
+});
+const TargetsSchema = Schema.Record(Schema.String, TargetSchema);
+
+const SeriesSchema = Schema.Struct({
+  setup: Schema.mutable(Schema.Array(Schema.String)),
+  upstreamable: Schema.mutable(
+    Schema.Array(
+      Schema.Struct({
+        file: Schema.String,
+        title: Schema.String,
+        prerequisites: Schema.optionalKey(
+          Schema.mutable(
+            Schema.Array(
+              Schema.Struct({
+                project: Schema.String,
+                patch: Schema.String,
+                reason: Schema.String,
+                testOnly: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
+          ),
+        ),
+      }),
+    ),
+  ),
+  deferred: Schema.mutable(
+    Schema.Array(Schema.Struct({ file: Schema.String, reason: Schema.String })),
+  ),
+});
+
 export async function getTargets(repository = root): Promise<Record<string, Target>> {
-  return JSON.parse(await readFile(join(repository, "targets.json"), "utf8")) as Record<
-    string,
-    Target
-  >;
+  return parseJson(TargetsSchema, await readFile(join(repository, "targets.json"), "utf8"));
 }
 
 export async function getTarget(id: string): Promise<Target> {
@@ -64,9 +104,10 @@ export async function targetIds(): Promise<string[]> {
 }
 
 export async function getSeries(id: string, repository = root): Promise<Series> {
-  const series = JSON.parse(
+  const series: Series = parseJson(
+    SeriesSchema,
     await readFile(join(repository, "patches", id, "series.json"), "utf8"),
-  ) as Series;
+  );
   const files = [
     ...series.setup.map((file) => join("setup", file)),
     ...series.upstreamable.map(({ file }) => join("upstreamable", file)),

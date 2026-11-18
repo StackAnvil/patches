@@ -19,7 +19,8 @@ import { basename, dirname, join, resolve, delimiter } from "node:path";
 import { createServer, isIP } from "node:net";
 import { createSocket } from "node:dgram";
 import { promisify } from "node:util";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { isRecord, parseJson } from "../guards.ts";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
@@ -56,24 +57,27 @@ import {
 import { hiveTarget, publicTarget, viaProxyTarget } from "./targets.ts";
 import {
   clientSessionFailed,
+  isControllerAudit,
+  isRenderAudit,
+  SceneFeaturesSchema,
   verifyRendering,
-  type SceneFeatures,
-  type RenderAudit,
-  type ControllerAudit,
 } from "./verification.ts";
+import { print, printError } from "../output.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "replay");
-const servers = {
-  // NetherNet HTTP signaling hosts. CubeCraft's certificate names only mco.cubecraft.net, and
-  // geo.hivebedrock.cloud has no signaling listener.
-  cubecraft: "mco.cubecraft.net:19132",
-  hive: "nethernet.playhive.com:19132",
-  lifeboat: "play.lbsg.net:19132",
-  galaxite: "play.galaxite.net:19132",
-  minehut: "bedrock.minehut.com:19132",
-  geyser: "test.geysermc.org:19132",
-};
+const servers = new Map(
+  Object.entries({
+    // NetherNet HTTP signaling hosts. CubeCraft's certificate names only mco.cubecraft.net, and
+    // geo.hivebedrock.cloud has no signaling listener.
+    cubecraft: "mco.cubecraft.net:19132",
+    hive: "nethernet.playhive.com:19132",
+    lifeboat: "play.lbsg.net:19132",
+    galaxite: "play.galaxite.net:19132",
+    minehut: "bedrock.minehut.com:19132",
+    geyser: "test.geysermc.org:19132",
+  }),
+);
 const prismData = join(homedir(), ".var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher");
 const accountDefault = join(
   prismData,
@@ -303,11 +307,10 @@ async function launchJava(
         "org.prismlauncher.PrismLauncher",
         softwareIcd,
       ]);
-      const manifest = JSON.parse(stdout) as { ICD?: { library_path?: unknown } };
-      if (
-        typeof manifest.ICD?.library_path !== "string" ||
-        !/(?:^|\/)libvulkan_lvp\.so(?:\.\d+)*$/.test(manifest.ICD.library_path)
-      ) {
+      const manifest: unknown = JSON.parse(stdout);
+      const library =
+        isRecord(manifest) && isRecord(manifest.ICD) ? manifest.ICD.library_path : undefined;
+      if (typeof library !== "string" || !/(?:^|\/)libvulkan_lvp\.so(?:\.\d+)*$/.test(library)) {
         throw new Error("Unexpected software Vulkan driver.");
       }
     } catch {
@@ -353,9 +356,12 @@ async function launchJava(
   await rebindReplayJavaConfig(cfgPath, prismData, prism);
   if (address.includes("://")) {
     // Prism's host/port launcher option appends a Java port to URI addresses.
-    const pack = JSON.parse(await readFile(join(instance, "mmc-pack.json"), "utf8")) as {
-      components: { uid: string; version: string }[];
-    };
+    const pack = parseJson(
+      Schema.Struct({
+        components: Schema.Array(Schema.Struct({ uid: Schema.String, version: Schema.String })),
+      }),
+      await readFile(join(instance, "mmc-pack.json"), "utf8"),
+    );
     const minecraft = pack.components.find((component) => component.uid === "net.minecraft");
     if (!minecraft) throw new Error("The integration instance has no Minecraft component.");
     const component = JSON.parse(
@@ -494,7 +500,7 @@ async function launchJava(
     const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
     const line = stdout
       .split("\n")
-      .find((line) => line.includes("org.prismlauncher.EntryPoint") && line.includes(name));
+      .find((entry) => entry.includes("org.prismlauncher.EntryPoint") && entry.includes(name));
     javaCleanup?.captureDescendants();
     if (line) {
       const pid = Number(line.trim().split(/\s/)[0]);
@@ -579,10 +585,10 @@ async function launchNative(
   if (offline)
     await requireNativeReplayProcessNamespaces(offline, [
       process.pid,
-      ...children.flatMap((service) => (service.pid ? [service.pid] : [])),
+      ...children.flatMap((owned) => (owned.pid ? [owned.pid] : [])),
     ]);
   if (manualConnect) {
-    console.log(`Native client is waiting for verified manual connection to 127.0.0.1:${bind}.`);
+    print(`Native client is waiting for verified manual connection to 127.0.0.1:${bind}.`);
     return { pid: child.pid, log };
   }
   // Under winewayland, Wine draws the window caption inside the surface, so map positions in the
@@ -592,7 +598,9 @@ async function launchNative(
     [join(root, "src/capture/cli.ts"), "ui", "list", "--client", "bedrock"],
     { cwd: root },
   );
-  const height = (JSON.parse(windows.stdout) as { height: number }[])[0]?.height ?? 0;
+  const height =
+    parseJson(Schema.Array(Schema.Struct({ height: Schema.Finite })), windows.stdout)[0]?.height ??
+    0;
   if (height <= nativeCaptionHeight)
     throw new Error("The native client window has no content area.");
   const contentY = (y: number): string =>
@@ -650,7 +658,7 @@ async function stopAll(directory: string, gamePid?: number): Promise<void> {
       const until = Date.now() + 30_000;
       while (Date.now() < until && alive(nativeClient.pid)) await Bun.sleep(250);
     } catch {
-      console.error(
+      printError(
         "The private Bedrock window could not close normally. Read the native client log before launching it again.",
       );
     }
@@ -683,7 +691,7 @@ async function stopAll(directory: string, gamePid?: number): Promise<void> {
 async function main(): Promise<void> {
   const [mode, input, ...args] = Bun.argv.slice(2);
   if (mode === "--help" || mode === "help" || (mode === "form-fixture" && input === "--help")) {
-    console.log(`Usage: bun run server-replay <record server|replay directory|inspect directory> [--seconds 120]
+    print(`Usage: bun run server-replay <record server|replay directory|inspect directory> [--seconds 120]
        bun run server-replay record public --target host:port [--client addon|native] [--allow-transfers]
        bun run server-replay form-fixture /absolute/plan.json [--dry-run] [--verbose]
        bun run server-replay form-fixture /absolute/plan.json --apply --reviewed-preview <sha256> [--verbose]
@@ -711,7 +719,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         `${classes}${delimiter}${jar}`,
         `net.pistonmaster.stackanvil.replay.${test}`,
       ]);
-      console.log(stdout.trim());
+      print(stdout.trim());
     }
     return;
   }
@@ -737,11 +745,11 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         args.includes("--apply") ? reviewed : undefined,
       ),
     );
-    console.log(JSON.stringify(preview, null, 2));
+    print(JSON.stringify(preview, null, 2));
     return;
   }
   if (mode === "inspect" && input) {
-    console.log(JSON.stringify(await inspectJournal(join(resolve(input), "packets.sbr")), null, 2));
+    print(JSON.stringify(await inspectJournal(join(resolve(input), "packets.sbr")), null, 2));
     return;
   }
   if (!input || (mode !== "record" && mode !== "replay"))
@@ -787,7 +795,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   const maxSeconds = mode === "record" ? 3600 : 300;
   if (!Number.isInteger(seconds) || seconds < 20 || seconds > maxSeconds)
     throw new Error(`--seconds must be between 20 and ${maxSeconds}.`);
-  let target = servers[input as keyof typeof servers];
+  let target = servers.get(input);
   if (mode === "record" && input !== "local" && input !== "public" && option("--target"))
     throw new Error(
       "--target requires record local or public. Named servers use their configured address.",
@@ -803,7 +811,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   } else if (mode === "record" && !target) throw new Error("Unknown server.");
   if (client === "native" && target?.startsWith("nethernet-xbox-json-rpc://"))
     throw new Error("Xbox JSON-RPC recordings require --client addon or --client proxy.");
-  const hive = mode === "record" && hiveTarget(target);
+  const hive = mode === "record" && target !== undefined && hiveTarget(target);
   if (hive && client !== "native" && !args.includes("--allow-hive"))
     throw new Error(
       "ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
@@ -866,7 +874,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
           "net.pistonmaster.stackanvil.replay.SceneFeatures",
           join(recording, "packets.sbr"),
         ]);
-        const features = JSON.parse(stdout) as SceneFeatures;
+        const features = parseJson(SceneFeaturesSchema, stdout);
         if (features.localGeometrySkinUpdates && client === "proxy")
           await writeFile(join(directory, "replay-local-avatar.txt"), "1\n", { mode: 0o600 });
         if (features.localGeometrySkinUpdates && client === "addon")
@@ -898,6 +906,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       await ready(child, log, /StackAnvil replay ready/);
       target = `nethernet://127.0.0.1:${replayPort}`;
     }
+    if (target === undefined) throw new Error("Unknown server.");
     const bind = client === "addon" ? undefined : await port();
     const proxyLog = join(directory, "proxy.log");
     let child: ChildProcess | undefined;
@@ -985,7 +994,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
             softwareRendering,
           );
     gamePid = game.pid;
-    console.log(`Private ${mode} session: ${directory}`);
+    print(`Private ${mode} session: ${directory}`);
     // Keep connection setup separate from the requested gameplay scene.
     let waitingForNativeConnection = client === "native";
     let waitingForJavaSpawn = client !== "native";
@@ -996,12 +1005,12 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {
         waitingForNativeConnection = false;
         until = Date.now() + seconds * 1000;
-        console.log(`Native connection observed; capturing the full ${seconds}-second scene.`);
+        print(`Native connection observed; capturing the full ${seconds}-second scene.`);
       }
       if (waitingForJavaSpawn && existsSync(join(directory, "gameplay-ready"))) {
         waitingForJavaSpawn = false;
         until = Date.now() + seconds * 1000;
-        console.log(`Java gameplay observed; capturing the full ${seconds}-second scene.`);
+        print(`Java gameplay observed; capturing the full ${seconds}-second scene.`);
       }
       const log = await logText(game.log);
       if (
@@ -1143,8 +1152,8 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     `${JSON.stringify({ schema: 1, mode, client, graphics, server: mode === "record" ? input : undefined, target: mode === "record" ? target : undefined, capturedAt: new Date().toISOString(), summary, ...(allowTransfers ? { connections } : {}) }, null, 2)}\n`,
     { mode: 0o600 },
   );
-  console.log(JSON.stringify(summary, null, 2));
-  console.log(`Saved private ${mode} artifacts: ${directory}`);
+  print(JSON.stringify(summary, null, 2));
+  print(`Saved private ${mode} artifacts: ${directory}`);
   if (!summary.reachedStartGame || !summary.reachedSpawn)
     throw new Error(
       "The server did not announce initialization and spawn. Read its private logs and screenshot.",
@@ -1191,7 +1200,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         ),
         { mode: 0o600 },
       );
-      console.log(
+      print(
         "PASS offline official-client transport: complete unchanged scene, native gameplay acknowledgments, and saved reference screenshot.",
       );
       return;
@@ -1206,16 +1215,20 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       "net.pistonmaster.stackanvil.replay.SceneFeatures",
       join(resolve(input), "packets.sbr"),
     ]);
-    const expected = JSON.parse(stdout) as SceneFeatures;
+    const expected = parseJson(SceneFeaturesSchema, stdout);
     const auditFile = join(directory, "render-audit.json");
-    const audit = existsSync(auditFile)
-      ? (JSON.parse(await readFile(auditFile, "utf8")) as RenderAudit)
+    const savedAudit: unknown = existsSync(auditFile)
+      ? JSON.parse(await readFile(auditFile, "utf8"))
       : undefined;
+    const audit = isRenderAudit(savedAudit) ? savedAudit : undefined;
     const controllerFile = join(directory, "controller-audit.json");
-    const controllerAudit =
+    const savedControllerAudit: unknown =
       client === "proxy" && existsSync(controllerFile)
-        ? (JSON.parse(await readFile(controllerFile, "utf8")) as ControllerAudit)
+        ? JSON.parse(await readFile(controllerFile, "utf8"))
         : undefined;
+    const controllerAudit = isControllerAudit(savedControllerAudit)
+      ? savedControllerAudit
+      : undefined;
     const evaluationLog =
       client === "proxy"
         ? `${clientLog}\n${await logText(join(directory, "proxy.log"))}`
@@ -1246,17 +1259,17 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       ),
       { mode: 0o600 },
     );
-    console.log(
+    print(
       "PASS offline scene transport: playable spawn, complete payloads, and Java resource pack load.",
     );
     if (failures.length) {
-      console.log(`Rendering checks: ${failures.join(" ")}`);
+      print(`Rendering checks: ${failures.join(" ")}`);
       if (!transportOnly)
         throw new Error(
           "Rendering verification failed. Read the private verification report and client log.",
         );
     } else
-      console.log(
+      print(
         "PASS native rendering checks: recorded skins installed unchanged, native renderers selected, and no unresolved model or block errors.",
       );
   }
@@ -1275,16 +1288,11 @@ async function removeTemporaryBuilds() {
 
 try {
   try {
-    await Effect.runPromise(
-      Effect.tryPromise({
-        try: main,
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      }),
-    );
+    await main();
   } finally {
     await removeTemporaryBuilds();
   }
 } catch (error: unknown) {
-  console.error(error instanceof Error ? error.message : error);
+  printError(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 }

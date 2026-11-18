@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { Schema } from "effect";
+import { parseJson } from "./guards.ts";
+import { print, printError } from "./output.ts";
 
 const addon = "viafabricplus-bedrock";
 const viaFabricPlusModrinthId = "rIC2XJV4";
@@ -9,18 +12,25 @@ const viaFabricPlusCurseForgeId = 830604;
 const stackAnvilModrinthId = "opL7gK2I";
 const stackAnvilCurseForgeId = "1713307";
 
-interface ArtifactManifest {
-  target: string;
-  coordinates: string;
-  artifacts: { file: string; sha256: string }[];
-}
+const ArtifactManifestSchema = Schema.Struct({
+  target: Schema.String,
+  coordinates: Schema.String,
+  artifacts: Schema.Array(Schema.Struct({ file: Schema.String, sha256: Schema.String })),
+});
+type ArtifactManifest = typeof ArtifactManifestSchema.Type;
+const isArtifactManifest = Schema.is(ArtifactManifestSchema);
 
-interface FabricMetadata {
-  id: string;
-  version: string;
-  environment: string;
-  depends: { minecraft: string; java: string; viafabricplus: string };
-}
+const FabricMetadataSchema = Schema.Struct({
+  id: Schema.String,
+  version: Schema.String,
+  environment: Schema.String,
+  depends: Schema.Struct({
+    minecraft: Schema.String,
+    java: Schema.String,
+    viafabricplus: Schema.String,
+  }),
+});
+type FabricMetadata = typeof FabricMetadataSchema.Type;
 
 export interface PublishArtifact {
   path: string;
@@ -78,19 +88,20 @@ export function validatePublishArtifact(
 
 export async function readPublishArtifact(manifestPath: string): Promise<PublishArtifact> {
   const directory = dirname(manifestPath);
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as ArtifactManifest;
-  if (manifest.target !== addon || manifest.artifacts?.length !== 1)
+  const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (!isArtifactManifest(manifest) || manifest.target !== addon || manifest.artifacts.length !== 1)
     throw new Error("Expected one VFP Bedrock add-on artifact");
   const file = manifest.artifacts[0]?.file;
   if (!file || basename(file) !== file) throw new Error("Invalid VFP Bedrock add-on JAR name");
   const path = join(directory, file);
   const bytes = await readFile(path);
-  const metadata = JSON.parse(
+  const metadata = parseJson(
+    FabricMetadataSchema,
     execFileSync("unzip", ["-p", path, "fabric.mod.json"], {
       encoding: "utf8",
       maxBuffer: 1024 * 1024,
     }),
-  ) as FabricMetadata;
+  );
   return validatePublishArtifact(manifest, metadata, bytes, directory);
 }
 
@@ -208,7 +219,7 @@ if (import.meta.main) {
     !changelogPath ||
     !["prepare", "modrinth", "curseforge"].includes(platform)
   ) {
-    console.error(
+    printError(
       "Usage: bun src/mod-publishing.ts <prepare|modrinth|curseforge> <tag> <manifest.json> <changelog.md>",
     );
     process.exit(2);
@@ -225,7 +236,7 @@ if (import.meta.main) {
         changelog,
       );
       const curseforge = curseForgeMetadata(artifact, tag, changelog);
-      console.log(
+      print(
         JSON.stringify(
           {
             artifact,
@@ -237,7 +248,7 @@ if (import.meta.main) {
         ),
       );
     } else if (platform === "modrinth") {
-      console.log(
+      print(
         JSON.stringify(
           await publishModrinth(
             artifact,
@@ -249,7 +260,7 @@ if (import.meta.main) {
         ),
       );
     } else {
-      console.log(
+      print(
         JSON.stringify(
           await publishCurseForge(
             artifact,
@@ -262,7 +273,7 @@ if (import.meta.main) {
       );
     }
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
+    printError(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   }
 }

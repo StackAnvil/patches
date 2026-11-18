@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import type { Setup } from "../lib/releases";
 import { setupGuides } from "../lib/setups";
 import { bedrockVersion } from "../lib/site";
@@ -51,14 +50,12 @@ function Packets({ lane, hidden }: { lane: Lane; hidden?: boolean }) {
         <g
           key={index}
           className="packet"
-          style={
-            {
-              "--from": `${lane.from}px`,
-              "--to": `${lane.to}px`,
-              "--rest": `${lane.from + ((lane.to - lane.from) * (index + 0.5)) / 3}px`,
-              animationDelay: `${(-index * 2.4) / 3}s`,
-            } as CSSProperties
-          }
+          style={{
+            "--from": `${lane.from}px`,
+            "--to": `${lane.to}px`,
+            "--rest": `${lane.from + ((lane.to - lane.from) * (index + 0.5)) / 3}px`,
+            animationDelay: `${(-index * 2.4) / 3}s`,
+          }}
         >
           <Box x={0} y={lane.y} half={9} height={8} tone={lane.tone} />
         </g>
@@ -119,7 +116,7 @@ export function ForgeScene({ setup, minecraft }: { setup: Setup; minecraft?: str
           />
         ))}
 
-        <g className="client">
+        <g>
           <Box x={CLIENT} y={238} half={64} height={60} tone="java" />
           <Box x={CLIENT} y={178} half={64} height={60} tone="java" />
           <polygon
@@ -132,7 +129,7 @@ export function ForgeScene({ setup, minecraft }: { setup: Setup; minecraft?: str
           />
         </g>
 
-        <g className="server">
+        <g>
           <Box x={SERVER} y={246} half={58} height={50} tone="bedrock" />
           <Box x={SERVER} y={196} half={58} height={50} tone="bedrock" />
           <Box x={SERVER} y={146} half={58} height={50} tone="bedrock" />
@@ -160,7 +157,7 @@ export function ForgeScene({ setup, minecraft }: { setup: Setup; minecraft?: str
           <Box x={0} y={216} half={60} height={16} tone="slab" />
           <Box x={0} y={200} half={68} height={16} tone="slab" />
           <polygon className="molten" points={box(0, 200, 50, 0).top} />
-          <g className="sparks">
+          <g>
             {Array.from({ length: 10 }, (_, index) => (
               <rect
                 key={index}
@@ -169,13 +166,11 @@ export function ForgeScene({ setup, minecraft }: { setup: Setup; minecraft?: str
                 y="192"
                 width="5"
                 height="5"
-                style={
-                  {
-                    "--dx": `${(index % 2 ? 1 : -1) * (18 + ((index * 23) % 60))}px`,
-                    "--dy": `${-60 - ((index * 37) % 70)}px`,
-                    animationDelay: `${index * 0.19}s`,
-                  } as CSSProperties
-                }
+                style={{
+                  "--dx": `${(index % 2 ? 1 : -1) * (18 + ((index * 23) % 60))}px`,
+                  "--dy": `${-60 - ((index * 37) % 70)}px`,
+                  animationDelay: `${index * 0.19}s`,
+                }}
               />
             ))}
           </g>

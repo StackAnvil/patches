@@ -1,6 +1,5 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { Effect } from "effect";
 import { pageUrl, site } from "../src/lib/site";
 
 interface HtmlPage {
@@ -58,7 +57,7 @@ async function inspect(path: string, html: string): Promise<HtmlPage> {
   return page;
 }
 
-const verify = Effect.tryPromise(async () => {
+async function verify(): Promise<void> {
   const root = resolve("dist/client");
   const docs = (await readdir("content/docs")).filter((file) => file.endsWith(".mdx"));
   const paths = ["/", ...docs.map((file) => pageUrl(file.slice(0, -4)))];
@@ -120,9 +119,9 @@ const verify = Effect.tryPromise(async () => {
     throw new Error("Missing static 404 page");
   for (const asset of ["robots.txt", ".nojekyll", "cf70432e5bef85bca3e57ade02b1d219.txt"])
     await stat(join(root, asset));
-  console.info(
-    `Verified ${pages.size} prerendered pages, internal links and anchors, metadata, search, sitemap, and static assets.`,
+  process.stdout.write(
+    `Verified ${pages.size} prerendered pages, internal links and anchors, metadata, search, sitemap, and static assets.\n`,
   );
-});
+}
 
-if (import.meta.main) await Effect.runPromise(verify);
+if (import.meta.main) await verify();

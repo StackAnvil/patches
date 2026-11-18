@@ -1,17 +1,24 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { Schema } from "effect";
+import { parseJson } from "../guards.ts";
+import { printError } from "../output.ts";
 
 const execute = promisify(execFile);
 const identity = Bun.argv[2];
 const sink = "stackanvil_silent";
 
-interface Input {
-  index: number;
-  sink: number;
-  mute: boolean;
-  volume: Record<string, { value_percent: string }>;
-  properties: Record<string, string>;
-}
+const InputsSchema = Schema.Array(
+  Schema.Struct({
+    index: Schema.Finite,
+    sink: Schema.Finite,
+    mute: Schema.Boolean,
+    volume: Schema.optionalKey(
+      Schema.Record(Schema.String, Schema.Struct({ value_percent: Schema.String })),
+    ),
+    properties: Schema.Record(Schema.String, Schema.String),
+  }),
+);
 
 async function pactl(args: string[]): Promise<string> {
   return (await execute("pactl", args)).stdout;
@@ -26,7 +33,7 @@ async function mute(): Promise<void> {
       ?.split("\t")[0],
   );
   if (!Number.isInteger(sinkId)) throw new Error("StackAnvil silent sink is missing.");
-  const inputs = JSON.parse(await pactl(["-f", "json", "list", "sink-inputs"])) as Input[];
+  const inputs = parseJson(InputsSchema, await pactl(["-f", "json", "list", "sink-inputs"]));
   for (const input of inputs) {
     const properties = input.properties;
     if (properties["stackanvil.lab"] !== identity) continue;
@@ -44,7 +51,7 @@ for (;;) {
   try {
     await mute();
   } catch (error) {
-    console.error(error);
+    printError(error);
   }
   await Bun.sleep(500);
 }

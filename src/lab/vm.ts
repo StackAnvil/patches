@@ -21,6 +21,9 @@ import { artifact } from "../client-artifacts.ts";
 import { bundlePrism } from "../prism.ts";
 import { displayEnv } from "./display.ts";
 import { clickPointer, keyEvents, validateHoldMs, withNamedQmp, type QmpCommand } from "./qmp.ts";
+import { Schema } from "effect";
+import { errorCode, parseJson } from "../guards.ts";
+import { print } from "../output.ts";
 
 const execute = promisify(execFile);
 const vmRoot = join(root, ".stackanvil", "lab", "vms");
@@ -35,6 +38,24 @@ export interface VmSpec {
   ramGiB: number;
   diskGiB: number;
 }
+const VmSpecSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  guest: Schema.Literals(["windows", "macos"]),
+  release: Schema.String,
+  name: Schema.String,
+  cores: Schema.Finite,
+  ramGiB: Schema.Finite,
+  diskGiB: Schema.Finite,
+});
+const vmSpecKeys = [
+  "version",
+  "guest",
+  "release",
+  "name",
+  "cores",
+  "ramGiB",
+  "diskGiB",
+] as const satisfies readonly (keyof VmSpec)[];
 const releases = { windows: ["11"], macos: ["monterey", "ventura", "sonoma", "sequoia", "tahoe"] };
 
 function guest(value: string | undefined): Guest {
@@ -134,7 +155,7 @@ async function privateDirectory(path: string): Promise<void> {
 
 async function loadSpec(selected: Guest): Promise<VmSpec> {
   const spec = validateSpec(
-    JSON.parse(await readFile(join(directory(selected), "profile.json"), "utf8")) as VmSpec,
+    parseJson(VmSpecSchema, await readFile(join(directory(selected), "profile.json"), "utf8")),
   );
   if (spec.guest !== selected) throw new Error("VM profile belongs to another guest.");
   return spec;
@@ -151,8 +172,8 @@ export async function prepareVm(
   await privateDirectory(path);
   const profile = join(path, "profile.json");
   if (existsSync(profile)) {
-    const current = validateSpec(JSON.parse(await readFile(profile, "utf8")) as VmSpec);
-    if (Object.keys(spec).some((key) => current[key as keyof VmSpec] !== spec[key as keyof VmSpec]))
+    const current = validateSpec(parseJson(VmSpecSchema, await readFile(profile, "utf8")));
+    if (vmSpecKeys.some((key) => current[key] !== spec[key]))
       throw new Error("This directory already contains a different VM profile.");
   } else {
     if ((await readdir(path)).some((file) => file !== "operation.lock"))
@@ -256,11 +277,11 @@ async function runQuickemu(spec: VmSpec): Promise<void> {
         stdio: ["ignore", log.fd, log.fd],
       },
     );
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((settle, reject) => {
       child.on("error", reject);
       child.on("exit", (code) =>
         code === 0
-          ? resolve()
+          ? settle()
           : reject(new Error(`Quickemu exited with ${code}. Read ${path}/launch.log.`)),
       );
     });
@@ -286,7 +307,7 @@ async function doctor(): Promise<void> {
     ? (await execute("quickemu", ["--version"])).stdout.trim()
     : "missing";
   const disk = await statfs(root);
-  console.log(
+  print(
     JSON.stringify(
       {
         host: `${process.platform}/${process.arch}`,
@@ -337,7 +358,7 @@ async function stageArtifacts(): Promise<void> {
     files.map((file) => `${file.sha256}  ${file.file}\n`).join(""),
     { mode: 0o600 },
   );
-  console.log(`Staged verified build artifacts in ${shareRoot}. Run bun run lab vm serve.`);
+  print(`Staged verified build artifacts in ${shareRoot}. Run bun run lab vm serve.`);
 }
 
 /** Only build exports are reachable. Directory contents and guest credentials are never served. */
@@ -371,7 +392,7 @@ export async function vmMain(args: string[]): Promise<void> {
         return shareResponse(new URL(request.url).pathname, shareRoot);
       },
     });
-    console.log(
+    print(
       `Guest downloads: http://10.0.2.2:${server.port}/ (host loopback only). Stop with Ctrl+C.`,
     );
     return;
@@ -407,7 +428,7 @@ export async function vmMain(args: string[]): Promise<void> {
         ramGiB: 8,
         diskGiB: 128,
       };
-      console.log(
+      print(
         `Preparing ${selected} ${release}. First preparation downloads official installation media. Private log: ${path}/download.log`,
       );
       await prepareVm(path, spec, async (downloadArgs, cwd) => {
@@ -417,11 +438,11 @@ export async function vmMain(args: string[]): Promise<void> {
             cwd,
             stdio: ["inherit", log.fd, log.fd],
           });
-          await new Promise<void>((resolve, reject) => {
+          await new Promise<void>((settle, reject) => {
             child.on("error", reject);
             child.on("exit", (code) =>
               code === 0
-                ? resolve()
+                ? settle()
                 : reject(new Error(`Quickget exited with ${code}. Read the private download log.`)),
             );
           });
@@ -429,19 +450,19 @@ export async function vmMain(args: string[]): Promise<void> {
           await log.close();
         }
       });
-      console.log(
+      print(
         `Prepared ${path}. Run bun run lab vm start ${selected}, then follow docs/platform-testing.md.`,
       );
     });
     return;
   }
   if (action === "status" && !existsSync(join(path, "profile.json"))) {
-    console.log(`${selected}: not prepared`);
+    print(`${selected}: not prepared`);
     return;
   }
   const spec = await loadSpec(selected);
   if (action === "status") {
-    console.log(
+    print(
       JSON.stringify(
         {
           ...spec,
@@ -465,22 +486,21 @@ export async function vmMain(args: string[]): Promise<void> {
       if (existsSync(controlPath(selected))) {
         try {
           await control(spec, (command) => command("query-status"));
-          console.log(`${selected} is already running.`);
+          print(`${selected} is already running.`);
           return;
         } catch (error) {
-          if (!["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? ""))
-            throw error;
+          if (!["ENOENT", "ECONNREFUSED"].includes(errorCode(error) ?? "")) throw error;
         }
       }
       if (await running(spec)) {
         await control(spec, (command) => command("query-status"));
-        console.log(`${selected} is already running.`);
+        print(`${selected} is already running.`);
         return;
       }
       await rm(controlPath(selected), { force: true });
       await runQuickemu(spec);
       await control(spec, (command) => command("query-status"));
-      console.log(
+      print(
         `Started ${selected} without a desktop viewer. Use vm screenshot/key/click or vm view ${selected} --allow-focus.`,
       );
     });
@@ -496,7 +516,7 @@ export async function vmMain(args: string[]): Promise<void> {
         throw new Error(
           "Guest shutdown is still pending. Complete shutdown in the guest. No process was killed.",
         );
-      console.log(`Stopped ${selected}.`);
+      print(`Stopped ${selected}.`);
     });
     return;
   }
@@ -514,12 +534,12 @@ export async function vmMain(args: string[]): Promise<void> {
       ["--uri", uri, "--title", spec.name, "--spice-disable-audio", "--spice-disable-usbredir"],
       { env, stdio: "ignore", detached: true },
     );
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((settle, reject) => {
       child.on("error", reject);
-      child.on("spawn", resolve);
+      child.on("spawn", settle);
     });
     child.unref();
-    console.log(
+    print(
       `Opened silent ${selected} viewer on ${rest.includes("--allow-focus") ? "your desktop" : "the private lab display"}.`,
     );
     return;
@@ -534,7 +554,7 @@ export async function vmMain(args: string[]): Promise<void> {
     if (existsSync(file)) throw new Error("Screenshot already exists. Choose another name.");
     await control(spec, (command) => command("screendump", { filename: file }));
     await chmod(file, 0o600);
-    console.log(file);
+    print(file);
     return;
   }
   if (action === "key") {

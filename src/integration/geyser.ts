@@ -3,9 +3,10 @@ import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { delimiter, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { Effect } from "effect";
+import { isRecord } from "../guards.ts";
 import { root } from "../model.ts";
 import pins from "../../integration/geyser.json";
+import { print, printError } from "../output.ts";
 
 const execute = promisify(execFile);
 const source = join(root, "test-packs", "java-probe");
@@ -22,8 +23,8 @@ export const geyserCaseIds = [
 export const geyserNegativeControlIds = ["chest-transfer", ...geyserCaseIds] as const;
 
 export function geyserEntityUpdatesMatch(id: string, observed: unknown, log: string): boolean {
-  if (!observed || typeof observed !== "object") return false;
-  const value = observed as Record<string, unknown>;
+  if (!isRecord(observed)) return false;
+  const value = observed;
   const updates = [
     ...log.matchAll(
       /\[StackAnvil Geyser Probe\] entity=([0-9a-f-]{36}) phase=(\d+) health=([\d.]+)/g,
@@ -44,13 +45,12 @@ export function geyserEntityUpdatesMatch(id: string, observed: unknown, log: str
   }
   if (typeof value.uuid !== "string") return false;
   if (id === "custom-entity-attack") {
+    const { health } = value;
     return (
-      typeof value.health === "number" &&
-      value.health < 20 &&
+      typeof health === "number" &&
+      health < 20 &&
       updates.some(
-        (update) =>
-          update.uuid === value.uuid &&
-          Math.abs(update.health * 20 - (value.health as number)) < 0.001,
+        (update) => update.uuid === value.uuid && Math.abs(update.health * 20 - health) < 0.001,
       )
     );
   }
@@ -274,21 +274,12 @@ export async function installJavaProbe(home: string, port: number): Promise<stri
 
 if (import.meta.main) {
   try {
-    await Effect.runPromise(
-      Effect.tryPromise({
-        try: async () => {
-          const destination = resolve(
-            Bun.argv[2] ?? join(root, "dist", "test-packs", "java-probe"),
-          );
-          await mkdir(destination, { recursive: true });
-          await installJavaProbe(destination, 19132);
-          console.log(destination);
-        },
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      }),
-    );
+    const destination = resolve(Bun.argv[2] ?? join(root, "dist", "test-packs", "java-probe"));
+    await mkdir(destination, { recursive: true });
+    await installJavaProbe(destination, 19132);
+    print(destination);
   } catch (error: unknown) {
-    console.error(error);
+    printError(error);
     process.exitCode = 1;
   }
 }

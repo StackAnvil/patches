@@ -24,14 +24,14 @@ function contactTime(target: Bounds, projectile: Bounds, velocity: Vector): numb
     const extent = target.extent[axis] + projectile.extent[axis];
     const speed = velocity[axis];
     if (speed === 0) {
-      if (Math.abs(distance) > extent) return;
+      if (Math.abs(distance) > extent) return undefined;
       continue;
     }
     const first = (-extent - distance) / speed;
     const last = (extent - distance) / speed;
     enter = Math.max(enter, Math.min(first, last));
     exit = Math.min(exit, Math.max(first, last));
-    if (enter > exit) return;
+    if (enter > exit) return undefined;
   }
   return Number.isFinite(enter) && Number.isFinite(exit) && exit > 0 ? enter : undefined;
 }

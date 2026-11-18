@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { root } from "../model.ts";
 import { nativeWaylandEnvironment, waylandTool, waylandToolEnvironment } from "./wayland.ts";
+import { Schema } from "effect";
+import { errorCode, parseJson } from "../guards.ts";
+import { print } from "../output.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "lab");
@@ -25,6 +28,23 @@ interface DisplayState {
   audioPid?: number;
   audioModuleId?: number;
 }
+
+const DisplayStateSchema = Schema.Struct({
+  backend: Schema.Literal("wayland"),
+  pid: Schema.Finite,
+  display: Schema.String,
+  runtime: Schema.String,
+  socket: Schema.String,
+  inputPid: Schema.optionalKey(Schema.Finite),
+  audioPid: Schema.optionalKey(Schema.Finite),
+  audioModuleId: Schema.optionalKey(Schema.Finite),
+});
+// Older labs saved other display backends. Only their process ID still matters.
+const SavedDisplaySchema = Schema.Union([
+  DisplayStateSchema,
+  Schema.Struct({ backend: Schema.String, pid: Schema.Finite }),
+]);
+const OutputsSchema = Schema.Array(Schema.Struct({ name: Schema.String, active: Schema.Boolean }));
 
 function alive(pid: number): boolean {
   try {
@@ -45,7 +65,7 @@ async function stopProcess(
   try {
     process.kill(pid, "SIGINT");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    if (errorCode(error) !== "ESRCH") throw error;
   }
   for (let attempt = 0; attempt < 50 && alive(pid); attempt++) await Bun.sleep(100);
   if (alive(pid)) throw new Error(`${name} ${pid} did not stop. Its resources were retained.`);
@@ -53,8 +73,8 @@ async function stopProcess(
 
 async function savedDisplay(): Promise<DisplayState | undefined> {
   if (!existsSync(stateFile)) return undefined;
-  const state = JSON.parse(await readFile(stateFile, "utf8")) as DisplayState;
-  if (state.backend !== "wayland") {
+  const state = parseJson(SavedDisplaySchema, await readFile(stateFile, "utf8"));
+  if (!Schema.is(DisplayStateSchema)(state)) {
     if (alive(state.pid))
       throw new Error(
         "A legacy lab display is still running. Stop it before starting the native Wayland lab.",
@@ -181,13 +201,14 @@ export async function ensureDisplay(): Promise<DisplayState> {
       throw new Error("Sway stopped during startup. Read .stackanvil/lab/display.log.");
     // Socket creation precedes compositor readiness. Query IPC before publishing
     // the display so clients never race the output configuration.
-    const outputs = JSON.parse(
+    const outputs = parseJson(
+      OutputsSchema,
       (
         await execute(swaymsg, ["-s", socket, "-r", "-t", "get_outputs"], {
           env: waylandToolEnvironment(process.env),
         })
       ).stdout,
-    ) as { name: string; active: boolean }[];
+    );
     if (!outputs.some((output) => output.name === "HEADLESS-1" && output.active))
       throw new Error("The private Wayland output did not become ready.");
     await startInput(state);
@@ -293,7 +314,7 @@ export async function stopDisplay(guard?: {
 }): Promise<void> {
   const state = await savedDisplay();
   if (!state) {
-    console.log("Private Wayland display is stopped.");
+    print("Private Wayland display is stopped.");
     return;
   }
   if (state.inputPid) await stopProcess(state.inputPid, "Wayland input service", guard?.process);
@@ -305,5 +326,5 @@ export async function stopDisplay(guard?: {
   }
   await rm(state.runtime, { recursive: true, force: true });
   await rm(stateFile, { force: true });
-  console.log(`Stopped private Wayland display ${state.display}.`);
+  print(`Stopped private Wayland display ${state.display}.`);
 }

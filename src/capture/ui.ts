@@ -3,6 +3,8 @@ import { execFile } from "node:child_process";
 import { chmod, link, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { Schema } from "effect";
+import { parseJson } from "../guards.ts";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
@@ -16,6 +18,18 @@ export interface WindowInfo {
   width: number;
   height: number;
 }
+const WindowListSchema = Schema.mutable(
+  Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      title: Schema.String,
+      x: Schema.Finite,
+      y: Schema.Finite,
+      width: Schema.Finite,
+      height: Schema.Finite,
+    }),
+  ),
+);
 export type Client = "bedrock" | "java";
 export interface DragPoint {
   x: number;
@@ -31,6 +45,11 @@ const execute = promisify(execFile);
 const executeUi: UiExecutor = async (program, args, cwd, env) => {
   const { stdout } = await execute(program, args, { cwd, env, maxBuffer: 16 * 1024 * 1024 });
   return stdout.trimEnd();
+};
+
+const checkId = (id: string) => {
+  if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id))
+    throw new Error("Use lowercase letters, digits, and hyphens for a screenshot name.");
 };
 
 /** One UI session binds its display once and emits input without starting another Bun process. */
@@ -66,10 +85,6 @@ export function createCaptureUi(
       await run("cargo", args, cwd, env);
     });
   let nativeBinary: string;
-  const checkId = (id: string) => {
-    if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id))
-      throw new Error("Use lowercase letters, digits, and hyphens for a screenshot name.");
-  };
 
   async function compileUi(): Promise<void> {
     if (!(await uiEnvironment()).WAYLAND_DISPLAY)
@@ -79,9 +94,10 @@ export function createCaptureUi(
 
   async function windows(): Promise<WindowInfo[]> {
     await compileUi();
-    return JSON.parse(
+    return parseJson(
+      WindowListSchema,
       await run(nativeBinary, ["list"], root, await uiEnvironment()),
-    ) as WindowInfo[];
+    );
   }
 
   async function chosenWindow(id?: string, client: Client = "bedrock"): Promise<WindowInfo> {

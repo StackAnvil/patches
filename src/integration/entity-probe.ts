@@ -1,16 +1,14 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "../model.ts";
-import { registerWorldPack } from "./world-packs.ts";
+import { parseJson } from "../guards.ts";
+import { PackManifestSchema, registerWorldPack } from "./world-packs.ts";
+import { print, printError } from "../output.ts";
 
 const packRoot = join(root, "test-packs", "entity-probe");
 const packSource = join(packRoot, "behavior_pack");
 const packName = "stackanvil-entity-probe";
 const prefix = "[ViaBedrock Entity Probe]";
-
-interface PackManifest {
-  header: { uuid: string; version: number[] };
-}
 
 export async function buildEntityProbe(destination: string): Promise<void> {
   const result = await Bun.build({
@@ -29,9 +27,10 @@ export async function buildEntityProbe(destination: string): Promise<void> {
 }
 
 export async function installEntityProbe(serverHome: string, worldName: string): Promise<void> {
-  const manifest = JSON.parse(
+  const manifest = parseJson(
+    PackManifestSchema,
     await readFile(join(packSource, "manifest.json"), "utf8"),
-  ) as PackManifest;
+  );
   if (!manifest.header.uuid || manifest.header.version.length !== 3) {
     throw new Error("Entity probe pack has an invalid manifest.");
   }
@@ -91,9 +90,9 @@ if (import.meta.main) {
   const destination = join(root, "dist", "test-packs", "entity-probe", "behavior_pack");
   try {
     await buildEntityProbe(destination);
-    console.log(destination);
+    print(destination);
   } catch (error: unknown) {
-    console.error(error);
+    printError(error);
     process.exitCode = 1;
   }
 }

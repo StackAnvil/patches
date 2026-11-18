@@ -13,10 +13,12 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseArgs, promisify } from "node:util";
-import { Data, Effect } from "effect";
+import { Data, Effect, Schema } from "effect";
 import { runLabCommand } from "./lab/effect-runtime.ts";
 import { root } from "./model.ts";
 import { command } from "./process.ts";
+import { errorCode, parseJson, stringProperty } from "./guards.ts";
+import { print, printError } from "./output.ts";
 
 const execute = promisify(execFile);
 const reader = join(root, "native", "rea-controls", "pe.py");
@@ -29,19 +31,56 @@ const controlsPython = join(
 const reaVersion = "6.7.0";
 const shaPattern = /^[a-f0-9]{64}$/i;
 
-interface Target {
-  schemaVersion: 1;
-  artifact: { path: string; sha256: string; name: string; version: string; protocol?: number };
-}
+const TargetSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  artifact: Schema.Struct({
+    path: Schema.String,
+    sha256: Schema.String,
+    name: Schema.String,
+    version: Schema.String,
+    protocol: Schema.optionalKey(Schema.Finite),
+  }),
+});
+type Target = typeof TargetSchema.Type;
+const isTarget = Schema.is(TargetSchema);
 
-interface Slice {
-  sourceSha256: string;
-  procedureAddress: string;
-  endExclusive: string;
-  derivedPath: string;
-  derivedSha256: string;
-  scope: string;
-}
+const SliceSchema = Schema.Struct({
+  sourceSha256: Schema.String,
+  procedureAddress: Schema.String,
+  endExclusive: Schema.String,
+  derivedPath: Schema.String,
+  derivedSha256: Schema.String,
+  scope: Schema.String,
+});
+type Slice = typeof SliceSchema.Type;
+
+const isReaEvidence = Schema.is(
+  Schema.Struct({
+    evidence_id: Schema.String,
+    subject: Schema.Struct({ digest: Schema.Struct({ sha256: Schema.String }) }),
+    analysis_profile: Schema.Struct({ digest: Schema.String }),
+    operation: Schema.Literal("analyze_function"),
+    predicate_type: Schema.Literal("rea.analysis"),
+    normalized_result: Schema.Struct({
+      procedure: Schema.Struct({ address: Schema.String }),
+    }),
+  }),
+);
+
+const isReaCapture = Schema.is(
+  Schema.Struct({
+    evidence_id: Schema.String,
+    operation: Schema.Literal("capture_process_scenario"),
+    predicate_type: Schema.Literal("rea.process-capture"),
+    normalized_result: Schema.Struct({
+      exit: Schema.Struct({
+        code: Schema.NullOr(Schema.Finite),
+        signal: Schema.optional(Schema.NullOr(Schema.Finite)),
+      }),
+      cleanup: Schema.Struct({ owned_process_group: Schema.Literal("verified") }),
+    }),
+  }),
+);
 
 class ReaError extends Data.TaggedError("ReaError")<{
   readonly message: string;
@@ -108,7 +147,7 @@ export const importReaArtifact = Effect.fn("importReaArtifact")(function* (optio
         await copyFile(source, path, constants.COPYFILE_EXCL);
         await chmod(path, 0o400);
       } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+        if (errorCode(cause) !== "EEXIST") throw cause;
       }
       const artifact = await independentPath(path);
       if ((await artifactSha256(artifact)) !== sha256)
@@ -136,12 +175,8 @@ export const importReaArtifact = Effect.fn("importReaArtifact")(function* (optio
 
 async function targetFrom(path = join(privateRoot, "current.json")): Promise<Target> {
   const manifest = await independentPath(path);
-  const target = JSON.parse(await readFile(manifest, "utf8")) as Target;
-  if (
-    target.schemaVersion !== 1 ||
-    typeof target.artifact?.path !== "string" ||
-    !shaPattern.test(target.artifact.sha256)
-  )
+  const target: unknown = JSON.parse(await readFile(manifest, "utf8"));
+  if (!isTarget(target) || !shaPattern.test(target.artifact.sha256))
     throw new Error("Invalid REA target manifest. Import a checksum-pinned artifact first");
   const artifact = await independentPath(target.artifact.path);
   if ((await artifactSha256(artifact)) !== target.artifact.sha256.toLowerCase())
@@ -217,25 +252,13 @@ export const setupReaControls = Effect.fn("setupReaControls")(function* () {
 });
 
 export function validateReaEvidence(value: unknown, slice: Slice): { id: string; profile: string } {
-  const evidence = value as {
-    evidence_id?: unknown;
-    subject?: { digest?: { sha256?: unknown } };
-    analysis_profile?: { digest?: unknown };
-    operation?: unknown;
-    predicate_type?: unknown;
-    normalized_result?: { procedure?: { address?: unknown } };
-  } | null;
   if (
-    !evidence ||
-    typeof evidence.evidence_id !== "string" ||
-    typeof evidence.analysis_profile?.digest !== "string" ||
-    evidence.subject?.digest?.sha256 !== slice.derivedSha256 ||
-    evidence.operation !== "analyze_function" ||
-    evidence.predicate_type !== "rea.analysis" ||
-    evidence.normalized_result?.procedure?.address !== slice.procedureAddress
+    !isReaEvidence(value) ||
+    value.subject.digest.sha256 !== slice.derivedSha256 ||
+    value.normalized_result.procedure.address !== slice.procedureAddress
   )
     throw new Error("REA Evidence does not bind to the extracted bytes");
-  return { id: evidence.evidence_id, profile: evidence.analysis_profile.digest };
+  return { id: value.evidence_id, profile: value.analysis_profile.digest };
 }
 
 async function invokeRea(args: string[], run: string, signal: AbortSignal): Promise<unknown> {
@@ -253,9 +276,14 @@ async function invokeRea(args: string[], run: string, signal: AbortSignal): Prom
       maxBuffer: 64 * 1024 * 1024,
     });
   } catch (cause) {
-    const failure = cause as Error & { stdout?: string; stderr?: string };
-    await writeFile(join(run, "evidence.json"), failure.stdout ?? "", { mode: 0o600 });
-    await writeFile(join(run, "rea.stderr"), failure.stderr ?? failure.message, { mode: 0o600 });
+    await writeFile(join(run, "evidence.json"), stringProperty(cause, "stdout") ?? "", {
+      mode: 0o600,
+    });
+    await writeFile(
+      join(run, "rea.stderr"),
+      stringProperty(cause, "stderr") ?? stringProperty(cause, "message") ?? "",
+      { mode: 0o600 },
+    );
     throw new Error(`REA failed. Preserved its output in ${run}`, { cause });
   }
   await writeFile(join(run, "evidence.json"), result.stdout, { mode: 0o600 });
@@ -288,7 +316,7 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
   const input = join(run, "function.bin");
   const args = ["extract", "--va", options.address, "--output", input];
   if (options.end !== undefined) args.push("--end", options.end);
-  const slice = JSON.parse(yield* readReaPe(args, options.target)) as Slice;
+  const slice = parseJson(SliceSchema, yield* readReaPe(args, options.target));
   // Bind this run to the target read before extraction, even if selection changes concurrently.
   if (slice.sourceSha256 !== target.artifact.sha256)
     return yield* error("The selected REA target changed during extraction");
@@ -341,33 +369,18 @@ export function validateReaCapture(value: unknown): {
   exitCode: number | null;
   signal: number | null;
 } {
-  const capture = value as {
-    evidence_id?: unknown;
-    operation?: unknown;
-    predicate_type?: unknown;
-    normalized_result?: {
-      exit?: { code?: unknown; signal?: unknown };
-      cleanup?: { owned_process_group?: unknown };
-    };
-  } | null;
-  const code = capture?.normalized_result?.exit?.code;
-  const signal = capture?.normalized_result?.exit?.signal ?? null;
+  const incomplete = "REA did not return a complete process capture with verified owned cleanup";
+  if (!isReaCapture(value)) throw new Error(incomplete);
+  const { code } = value.normalized_result.exit;
+  const signal = value.normalized_result.exit.signal ?? null;
   if (
-    !capture ||
-    typeof capture.evidence_id !== "string" ||
-    capture.operation !== "capture_process_scenario" ||
-    capture.predicate_type !== "rea.process-capture" ||
-    capture.normalized_result?.cleanup?.owned_process_group !== "verified" ||
-    !(code === null || (typeof code === "number" && Number.isSafeInteger(code) && code >= 0)) ||
-    !(
-      signal === null ||
-      (typeof signal === "number" && Number.isSafeInteger(signal) && signal >= 0)
-    )
+    !(code === null || (Number.isSafeInteger(code) && code >= 0)) ||
+    !(signal === null || (Number.isSafeInteger(signal) && signal >= 0))
   )
-    throw new Error("REA did not return a complete process capture with verified owned cleanup");
+    throw new Error(incomplete);
   // REA can report code 0 together with a terminating signal. That is not a normal exit.
   return {
-    id: capture.evidence_id,
+    id: value.evidence_id,
     exitCode: signal !== null && signal !== 0 ? null : code,
     signal,
   };
@@ -472,7 +485,7 @@ It does not configure REA, install Ghidra or launch a game.
 export async function reaMain(args: string[]): Promise<void> {
   const [action, ...rest] = args;
   if (!action || action === "--help" || action === "help") {
-    console.log(help);
+    print(help);
     return;
   }
   const { values, positionals } = parseArgs({
@@ -502,7 +515,7 @@ export async function reaMain(args: string[]): Promise<void> {
   if (action === "import") {
     if (!values.artifact || !values.sha256 || !values.version)
       throw new Error("import requires --artifact, --sha256 and --version");
-    console.log(
+    print(
       JSON.stringify(
         await runLabCommand(
           importReaArtifact({
@@ -517,10 +530,10 @@ export async function reaMain(args: string[]): Promise<void> {
       ),
     );
   } else if (action === "setup-controls") {
-    console.log(JSON.stringify(await runLabCommand(setupReaControls()), null, 2));
+    print(JSON.stringify(await runLabCommand(setupReaControls()), null, 2));
   } else if (action === "analyze") {
     if (!values.va) throw new Error("analyze requires --va");
-    console.log(
+    print(
       JSON.stringify(
         await runLabCommand(
           analyzeReaFunction({ address: values.va, end: values.end, target: values.target }),
@@ -539,14 +552,14 @@ export async function reaMain(args: string[]): Promise<void> {
         timeoutMs: values["timeout-ms"] === undefined ? undefined : Number(values["timeout-ms"]),
       }),
     );
-    console.log(JSON.stringify(report, null, 2));
+    print(JSON.stringify(report, null, 2));
     if (report.exitCode !== 0) process.exitCode = 1;
   } else if (["inspect", "function", "extract", "read", "imports", "refs"].includes(action)) {
     const peArgs = [action];
     for (const name of ["va", "end", "length", "limit", "output"] as const) {
       if (values[name] !== undefined) peArgs.push(`--${name}`, values[name]);
     }
-    console.log(await runLabCommand(readReaPe(peArgs, values.target)));
+    print(await runLabCommand(readReaPe(peArgs, values.target)));
   } else throw new Error(`Unknown REA command: ${action}`);
 }
 
@@ -554,7 +567,7 @@ if (import.meta.main) {
   try {
     await reaMain(process.argv.slice(2));
   } catch (cause: unknown) {
-    console.error(error(cause).message);
+    printError(error(cause).message);
     process.exitCode = 1;
   }
 }

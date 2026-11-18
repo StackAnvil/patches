@@ -1,12 +1,24 @@
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
+import { isRecord } from "./guards.ts";
+import { printError } from "./output.ts";
 
 const products = {
   release: { id: "9NBLGGH2JHXJ", family: "Microsoft.MinecraftUWP" },
   preview: { id: "9P5X4QVLC2XR", family: "Microsoft.MinecraftWindowsBeta" },
 } as const;
 export type BedrockChannel = keyof typeof products;
+/** Store or Xbox metadata did not resolve to a valid Bedrock package. */
+export class BedrockVersionError extends Data.TaggedError("BedrockVersionError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+function versionError(fallback: string) {
+  return (cause: unknown) =>
+    new BedrockVersionError({ message: cause instanceof Error ? cause.message : fallback, cause });
+}
 type FetchMetadata = (url: URL, init: RequestInit) => Promise<Response>;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const metadataLimit = 2 * 1024 * 1024;
@@ -28,9 +40,8 @@ interface BedrockVersionLookup {
 }
 
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Unexpected package metadata structure");
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) throw new Error("Unexpected package metadata structure");
+  return value;
 }
 
 function windowsPackageVersion(versionId: string): string {
@@ -172,7 +183,7 @@ function metadataRequest(url: URL, headers: Record<string, string>, fetchMetadat
         reader.releaseLock();
       }
     },
-    catch: (cause) => (cause instanceof Error ? cause : new Error("Metadata request failed")),
+    catch: versionError("Metadata request failed"),
   });
 }
 
@@ -183,15 +194,14 @@ export const resolveBedrockVersion = Effect.fn("resolveBedrockVersion")(function
   if (versionId !== undefined)
     yield* Effect.try({
       try: () => windowsPackageVersion(versionId),
-      catch: (cause) => (cause instanceof Error ? cause : new Error("Invalid Xbox version ID")),
+      catch: versionError("Invalid Xbox version ID"),
     });
   const auth =
     authorization === undefined
       ? undefined
       : yield* Effect.try({
           try: () => xboxAuthorization(authorization),
-          catch: (cause) =>
-            cause instanceof Error ? cause : new Error("Invalid Xbox authorization"),
+          catch: versionError("Invalid Xbox authorization"),
         });
   const catalog = new URL("https://storesdk.dsx.mp.microsoft.com/v8.0/Sdk/products/contentId");
   catalog.search = new URLSearchParams({
@@ -204,7 +214,7 @@ export const resolveBedrockVersion = Effect.fn("resolveBedrockVersion")(function
   const catalogMetadata = yield* metadataRequest(catalog, {}, fetchMetadata);
   const contentId = yield* Effect.try({
     try: () => bedrockContentId(catalogMetadata, products[channel].id),
-    catch: (cause) => (cause instanceof Error ? cause : new Error("Invalid Store content ID")),
+    catch: versionError("Invalid Store content ID"),
   });
   const packageUrl = new URL(
     versionId === undefined
@@ -222,7 +232,7 @@ export const resolveBedrockVersion = Effect.fn("resolveBedrockVersion")(function
       }
       return pin;
     },
-    catch: (cause) => (cause instanceof Error ? cause : new Error("Invalid Xbox package metadata")),
+    catch: versionError("Invalid Xbox package metadata"),
   });
 });
 
@@ -274,9 +284,7 @@ if (import.meta.main) {
   try {
     await bedrockVersionMain(process.argv.slice(2));
   } catch (error: unknown) {
-    console.error(
-      error instanceof Error ? error.message : "Could not resolve the Bedrock version ID",
-    );
+    printError(error instanceof Error ? error.message : "Could not resolve the Bedrock version ID");
     process.exitCode = 1;
   }
 }

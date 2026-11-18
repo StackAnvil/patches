@@ -91,7 +91,7 @@ export function FeatureHotbar() {
   }
   return (
     <div className="hotbar-wrap">
-      <div className="hotbar" role="tablist" aria-label="Translated features" onKeyDown={onKeyDown}>
+      <div className="hotbar" role="tablist" aria-label="Translated features">
         {features.map((item, index) => {
           const SlotIcon = item.icon;
           return (
@@ -108,6 +108,7 @@ export function FeatureHotbar() {
               tabIndex={selected === index ? 0 : -1}
               className="slot"
               onClick={() => setSelected(index)}
+              onKeyDown={onKeyDown}
             >
               <SlotIcon size={26} strokeWidth={1.8} aria-hidden="true" />
               <span className="slot-key" aria-hidden="true">

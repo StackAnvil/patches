@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { stacks } from "./patch-stacks";
 
 const names: Record<string, string> = {
@@ -21,7 +21,7 @@ export function PatchStack() {
   const [readout, setReadout] = useState<Record<string, string>>({});
   useEffect(() => {
     const node = root.current;
-    if (!node) return;
+    if (!node) return undefined;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry?.isIntersecting) {
@@ -35,7 +35,7 @@ export function PatchStack() {
     return () => observer.disconnect();
   }, []);
   function inspect(project: string, event: PointerEvent) {
-    const title = (event.target as HTMLElement).dataset.title;
+    const title = event.target instanceof HTMLElement ? event.target.dataset.title : undefined;
     if (title) setReadout((current) => ({ ...current, [project]: title }));
   }
   return (
@@ -60,7 +60,7 @@ export function PatchStack() {
                 data-kind={kind(patch.title)}
                 data-state={patch.state}
                 data-title={patch.title}
-                style={{ "--i": Math.min(index, 60) } as CSSProperties}
+                style={{ "--i": Math.min(index, 60) }}
               />
             ))}
           </div>

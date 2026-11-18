@@ -1,16 +1,21 @@
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Schema } from "effect";
 import { root } from "../model.ts";
-import { registerWorldPack } from "./world-packs.ts";
+import { parseJson } from "../guards.ts";
+import { PackManifestSchema, registerWorldPack } from "./world-packs.ts";
 
 const source = join(root, "test-packs", "resource-probe");
 const packSource = join(source, "resource_pack");
 const texturePath = "assets/viabedrock/textures/item/item_textures/items/resource_probe.png";
 const blockstatePath = "assets/minecraft/blockstates/note_block.json";
 
-interface PackManifest {
-  header: { uuid: string; version: number[] };
-}
+const BlockstateSchema = Schema.Struct({
+  variants: Schema.Record(Schema.String, Schema.Struct({ model: Schema.String })),
+});
+const ModelSchema = Schema.Struct({
+  textures: Schema.optionalKey(Schema.Struct({ all: Schema.optionalKey(Schema.String) })),
+});
 
 export async function installResourceProbe(
   serverHome: string,
@@ -18,9 +23,10 @@ export async function installResourceProbe(
   variant: "a" | "b",
   run: string,
 ): Promise<void> {
-  const manifest = JSON.parse(
+  const manifest = parseJson(
+    PackManifestSchema,
     await readFile(join(packSource, "manifest.json"), "utf8"),
-  ) as PackManifest;
+  );
   if (!manifest.header.uuid || manifest.header.version.length !== 3)
     throw new Error("Resource probe pack has an invalid manifest.");
   if (variant === "b") manifest.header.version[2]++;
@@ -55,9 +61,10 @@ export async function installResourceProbe(
   });
 
   const behaviorSource = join(source, "behavior_pack");
-  const behaviorManifest = JSON.parse(
+  const behaviorManifest = parseJson(
+    PackManifestSchema,
     await readFile(join(behaviorSource, "manifest.json"), "utf8"),
-  ) as PackManifest;
+  );
   const behavior = join(serverHome, "behavior_packs", "stackanvil-resource-probe");
   await cp(behaviorSource, behavior, { recursive: true });
   await registerWorldPack(join(world, "world_behavior_packs.json"), {
@@ -84,9 +91,7 @@ export async function convertedTextureMatches(
 
     const blockstateData = await zipEntry(zip, blockstatePath);
     if (!blockstateData) continue;
-    const blockstate = JSON.parse(blockstateData.toString()) as {
-      variants: Record<string, { model: string }>;
-    };
+    const blockstate = parseJson(BlockstateSchema, blockstateData.toString());
     const modelName = Object.values(blockstate.variants)
       .map((entry) => entry.model)
       .find((name) => name.startsWith("viabedrock:block/custom/slot_"));
@@ -94,7 +99,7 @@ export async function convertedTextureMatches(
     const modelPath = `assets/viabedrock/models/${modelName.slice("viabedrock:".length)}.json`;
     const modelData = await zipEntry(zip, modelPath);
     if (!modelData) continue;
-    const model = JSON.parse(modelData.toString()) as { textures?: { all?: string } };
+    const model = parseJson(ModelSchema, modelData.toString());
     if (model.textures?.all !== modelName) continue;
     const blockTexture = await zipEntry(
       zip,

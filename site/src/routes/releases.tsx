@@ -30,7 +30,7 @@ function Downloads() {
   // hydration, then apply the setup from a shared download link.
   const setup = hydrated ? (search.setup ?? "proxy") : "proxy";
   const navigate = Route.useNavigate();
-  const Content = documentLoader.getComponent(page.path);
+  const details = documentLoader.useContent(page.path, { slug: "releases", details: true });
   return (
     <main id="main-content" className="downloads">
       <div className="page-heading shell-width">
@@ -81,9 +81,7 @@ function Downloads() {
         <NextSteps setup={setup} release={release} />
       </section>
       <section className="download-details shell-width" aria-label="Download and library details">
-        <Suspense>
-          <Content slug="releases" details />
-        </Suspense>
+        <Suspense>{details}</Suspense>
       </section>
     </main>
   );

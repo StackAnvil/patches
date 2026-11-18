@@ -3,23 +3,28 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
+import { Schema } from "effect";
+import { parseJson } from "./guards.ts";
 import { root } from "./model.ts";
 import { verifyPinnedManifest, type ViaFabricPlusPin } from "./viafabricplus.ts";
 
 const execute = promisify(execFile);
 const fabricLoader = "0.19.5";
 
-interface ArtifactManifest {
-  baseSha?: string;
-  jenkinsBuild?: number;
-  apiSha256?: string;
-  artifacts: { file: string; sha256: string }[];
-}
-interface FabricMod {
-  id: string;
-  depends: { minecraft: string };
-  jars?: { file: string }[];
-}
+const ArtifactManifestSchema = Schema.Struct({
+  baseSha: Schema.optionalKey(Schema.String),
+  jenkinsBuild: Schema.optionalKey(Schema.Finite),
+  apiSha256: Schema.optionalKey(Schema.String),
+  artifacts: Schema.mutable(
+    Schema.Array(Schema.Struct({ file: Schema.String, sha256: Schema.String })),
+  ),
+});
+const FabricModSchema = Schema.Struct({
+  id: Schema.String,
+  depends: Schema.Struct({ minecraft: Schema.String }),
+  jars: Schema.optionalKey(Schema.Array(Schema.Struct({ file: Schema.String }))),
+});
+type FabricMod = typeof FabricModSchema.Type;
 
 export async function artifact(
   project: string,
@@ -27,9 +32,10 @@ export async function artifact(
   pin?: ViaFabricPlusPin,
 ): Promise<string> {
   const dir = join(artifactsDir, project);
-  const manifest = JSON.parse(
+  const manifest = parseJson(
+    ArtifactManifestSchema,
     await readFile(join(dir, "manifest.json"), "utf8"),
-  ) as ArtifactManifest;
+  );
   if (manifest.artifacts.length !== 1) throw new Error(`Expected one ${project} release JAR`);
   if (project === "viafabricplus") await verifyPinnedManifest(manifest, pin);
   const entry = manifest.artifacts[0];
@@ -47,7 +53,7 @@ async function mod(file: string): Promise<FabricMod> {
   const { stdout } = await execute("unzip", ["-p", file, "fabric.mod.json"], {
     maxBuffer: 1024 * 1024,
   });
-  return JSON.parse(stdout) as FabricMod;
+  return parseJson(FabricModSchema, stdout);
 }
 
 export async function clientArtifacts(artifactsDir = join(root, "dist"), pin?: ViaFabricPlusPin) {

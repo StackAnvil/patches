@@ -8,6 +8,7 @@ import { prBody, syncPr, updatePrParticipants } from "./pr.ts";
 import { devSetup } from "./dev.ts";
 import { healthFailed, healthMarkdown, patchHealth } from "./health.ts";
 import { writeReport } from "./validation.ts";
+import { print, printError } from "./output.ts";
 
 const [area, action, id, extra, ...rest] = process.argv.slice(2);
 const argumentsAfterProject = extra ? [extra, ...rest] : rest;
@@ -31,8 +32,8 @@ async function main(): Promise<void> {
     const report = await patchHealth(positionals[0] ?? "all", { upstream: values.upstream });
     if (values.output) {
       await writeReport(resolve(values.output), report, healthMarkdown(report));
-      console.log(`Patch health: ${values.output}`);
-    } else console.log(JSON.stringify(report, null, 2));
+      print(`Patch health: ${values.output}`);
+    } else print(JSON.stringify(report, null, 2));
     if (healthFailed(report)) process.exitCode = 1;
     return;
   }
@@ -46,42 +47,38 @@ async function main(): Promise<void> {
   if (area === "stack") {
     switch (action) {
       case "sync":
-        console.log(await Effect.runPromise(sync(id)));
+        print(await Effect.runPromise(sync(id)));
         return;
       case "continue":
-        console.log(
+        print(
           await Effect.runPromise(continueApply(id, extra === "--pr" ? "pr" : "full", patchFile)),
         );
         return;
       case "abort":
-        console.log(
-          await Effect.runPromise(abortApply(id, extra === "--pr" ? "pr" : "full", patchFile)),
-        );
+        print(await Effect.runPromise(abortApply(id, extra === "--pr" ? "pr" : "full", patchFile)));
         return;
       case "edit":
         if (!extra) throw new Error("Supply a .patch filename to edit");
-        console.log(`Edit ${workdir(id)}, stage changes, then run: bun run stack rebuild ${id}`);
-        console.log(await Effect.runPromise(edit(id, extra)));
+        print(`Edit ${workdir(id)}, stage changes, then run: bun run stack rebuild ${id}`);
+        print(await Effect.runPromise(edit(id, extra)));
         return;
       case "rebuild":
-        console.log(`Rebuilt ${await Effect.runPromise(rebuild(id))} patches`);
+        print(`Rebuilt ${await Effect.runPromise(rebuild(id))} patches`);
         return;
       case "build":
-        console.log(await Effect.runPromise(build(id)));
+        print(await Effect.runPromise(build(id)));
         return;
       case "add": {
         if (extra !== "upstreamable" && extra !== "deferred")
           throw new Error("Choose upstreamable or deferred");
         const expectedTitle = rest[0]?.startsWith("--") ? undefined : rest[0];
-        console.log(
-          await Effect.runPromise(addPatch(id, extra, expectedTitle, option("--reason"))),
-        );
+        print(await Effect.runPromise(addPatch(id, extra, expectedTitle, option("--reason"))));
         return;
       }
       case "status": {
         const target = await getTarget(id);
         const series = await getSeries(id);
-        console.log(
+        print(
           JSON.stringify(
             {
               target,
@@ -100,16 +97,16 @@ async function main(): Promise<void> {
   if (area === "pr") {
     switch (action) {
       case "check":
-        console.log(await Effect.runPromise(sync(id, "pr", patchFile)));
+        print(await Effect.runPromise(sync(id, "pr", patchFile)));
         return;
       case "body":
-        console.log(await Effect.runPromise(prBody(id, artifact, patchFile)));
+        print(await Effect.runPromise(prBody(id, artifact, patchFile)));
         return;
       case "build":
-        console.log(await Effect.runPromise(buildPr(id, patchFile)));
+        print(await Effect.runPromise(buildPr(id, patchFile)));
         return;
       case "assign":
-        console.log(
+        print(
           JSON.stringify(
             await Effect.runPromise(updatePrParticipants(id, undefined, patchFile)),
             null,
@@ -118,7 +115,7 @@ async function main(): Promise<void> {
         );
         return;
       case "sync":
-        console.log(await Effect.runPromise(syncPr(id, artifact, patchFile)));
+        print(await Effect.runPromise(syncPr(id, artifact, patchFile)));
         return;
     }
   }
@@ -128,6 +125,6 @@ async function main(): Promise<void> {
 try {
   await main();
 } catch (error: unknown) {
-  console.error(error instanceof Error ? error.message : error);
+  printError(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 }

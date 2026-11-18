@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { requirePrivateCopySpace } from "../copy-space.ts";
+import { errorCode } from "../guards.ts";
 
 function inside(directory: string, path: string): boolean {
   const name = relative(directory, path);
@@ -41,17 +42,18 @@ async function validateTree(directory: string, path = directory): Promise<number
   return state.isFile() ? state.size : 0;
 }
 
+async function validateProfileInput(path: string): Promise<void> {
+  const state = await lstat(path);
+  if (state.isSymbolicLink())
+    throw new Error("Replay profile inputs cannot contain write-through symlinks.");
+  if (state.isDirectory()) {
+    for (const name of await readdir(path)) await validateProfileInput(join(path, name));
+  } else if (!state.isFile()) throw new Error("Unsupported replay profile input.");
+}
+
 export async function validateReplayProfile(source: string): Promise<void> {
   if ((await realpath(source)) !== source)
     throw new Error("Replay profile source cannot be a symlink.");
-  async function validate(path: string): Promise<void> {
-    const state = await lstat(path);
-    if (state.isSymbolicLink())
-      throw new Error("Replay profile inputs cannot contain write-through symlinks.");
-    if (state.isDirectory()) {
-      for (const name of await readdir(path)) await validate(join(path, name));
-    } else if (!state.isFile()) throw new Error("Unsupported replay profile input.");
-  }
   for (const path of [
     "instance.cfg",
     "mmc-pack.json",
@@ -59,13 +61,9 @@ export async function validateReplayProfile(source: string): Promise<void> {
     "minecraft/config",
   ]) {
     try {
-      await validate(join(source, path));
+      await validateProfileInput(join(source, path));
     } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
-        path === "instance.cfg" ||
-        path === "mmc-pack.json"
-      )
+      if (errorCode(error) !== "ENOENT" || path === "instance.cfg" || path === "mmc-pack.json")
         throw error;
     }
   }
@@ -145,7 +143,7 @@ export async function prepareReplayInstanceCleanup(
         throw new Error("Replay download cache is not a real directory.");
       entries = await readdir(downloads);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (errorCode(error) !== "ENOENT") throw error;
     }
     for (const entry of entries) {
       if (entry !== "log.json") await rm(join(downloads, entry), { recursive: true, force: true });
@@ -164,7 +162,7 @@ export async function prepareReplayInstanceCleanup(
             throw new Error("Replay server pack cache must use real private directories.");
           }
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          if (errorCode(error) !== "ENOENT") throw error;
           present = false;
           break;
         }
@@ -206,7 +204,7 @@ export async function prepareReplayPrismData(
     try {
       await lstat(join(target, entry.name));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      if (errorCode(error) === "ENOENT") continue;
       throw error;
     }
     throw new Error("Replay Prism destination already contains source data.");

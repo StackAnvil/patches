@@ -2,7 +2,8 @@ import { Clock, Effect } from "effect";
 import { labIO, LabError } from "../lab/effect-runtime.ts";
 import { stripVTControlCharacters } from "node:util";
 
-export type JoinRoute = "java-java" | "java-bedrock" | "bedrock-bedrock" | "java-geyser";
+export const joinRoutes = ["java-java", "java-bedrock", "bedrock-bedrock", "java-geyser"] as const;
+export type JoinRoute = (typeof joinRoutes)[number];
 
 function javaBackend(route: JoinRoute): boolean {
   return route === "java-java" || route === "java-geyser";

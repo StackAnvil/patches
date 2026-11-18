@@ -4,7 +4,19 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
 import { fumadocsMdx } from "fumadocs-mdx/vite";
+import { Schema } from "effect";
 import { defineConfig } from "vite";
+
+// Each series lists patch files, or entries with a file and an optional title.
+const SeriesSchema = Schema.Record(
+  Schema.String,
+  Schema.Array(
+    Schema.Union([
+      Schema.String,
+      Schema.Struct({ file: Schema.String, title: Schema.optionalKey(Schema.String) }),
+    ]),
+  ),
+);
 
 const docs = readdirSync(new URL("./content/docs", import.meta.url))
   .filter((file) => file.endsWith(".mdx"))
@@ -16,14 +28,14 @@ export default defineConfig({
     {
       name: "stackanvil-release",
       resolveId(id) {
-        if (id === "virtual:stackanvil-release") return `\0${id}`;
+        return id === "virtual:stackanvil-release" ? `\0${id}` : null;
       },
       load(id) {
-        if (id !== "\0virtual:stackanvil-release") return;
+        if (id !== "\0virtual:stackanvil-release") return null;
         try {
           return `export default ${readFileSync(new URL("./.generated/release.json", import.meta.url), "utf8")};`;
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
           return "export default null;";
         }
       },
@@ -32,17 +44,17 @@ export default defineConfig({
       // Upstream-bound patch titles, read from the repository's patch series.
       name: "stackanvil-patches",
       resolveId(id) {
-        if (id === "virtual:stackanvil-patches") return `\0${id}`;
+        return id === "virtual:stackanvil-patches" ? `\0${id}` : null;
       },
       load(id) {
-        if (id !== "\0virtual:stackanvil-patches") return;
+        if (id !== "\0virtual:stackanvil-patches") return null;
         const root = new URL("../patches/", import.meta.url);
         const projects = readdirSync(root, { withFileTypes: true })
           .filter((entry) => entry.isDirectory())
           .map(({ name }) => {
-            const series = JSON.parse(
-              readFileSync(new URL(`${name}/series.json`, root), "utf8"),
-            ) as Record<string, (string | { file: string; title?: string })[]>;
+            const series = Schema.decodeUnknownSync(SeriesSchema)(
+              JSON.parse(readFileSync(new URL(`${name}/series.json`, root), "utf8")),
+            );
             this.addWatchFile(fileURLToPath(new URL(`${name}/series.json`, root)));
             const patches = (["upstreamable", "deferred"] as const).flatMap((state) =>
               (series[state] ?? []).map((entry) => ({

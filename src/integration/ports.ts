@@ -8,11 +8,11 @@ export const tcpPortEffect = Effect.scoped(
   Effect.gen(function* () {
     const server = yield* Effect.acquireRelease(
       Effect.sync(() => createServer()),
-      (server) =>
+      (opened) =>
         Effect.promise(
           () =>
             new Promise<void>((resolve) => {
-              server.close(() => resolve());
+              opened.close(() => resolve());
             }),
         ),
     );
@@ -35,12 +35,12 @@ export const udpPortEffect = Effect.scoped(
   Effect.gen(function* () {
     const socket = yield* Effect.acquireRelease(
       Effect.sync(() => createSocket("udp4")),
-      (socket) =>
+      (opened) =>
         Effect.promise(
           () =>
             new Promise<void>((resolve) => {
               try {
-                socket.close(() => resolve());
+                opened.close(() => resolve());
               } catch {
                 resolve();
               }

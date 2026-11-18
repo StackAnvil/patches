@@ -8,7 +8,7 @@ import { site } from "../lib/site";
 export function Brand() {
   return (
     <span className="brand">
-      <svg className="brand-mark" viewBox="0 0 64 64" width="28" height="28" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="28" height="28" aria-hidden="true">
         <path className="mark-slab" d="M7 9h50v10H7z" />
         <path className="mark-slab" d="M12 23h45v10H12z" />
         <path className="mark-slab" d="M17 37h40v10H17z" />
@@ -24,14 +24,16 @@ const navigation = [
   { label: "Developers", slug: "build-from-source" },
 ] as const;
 
-function NavLinks() {
+function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <>
-      <Link to="/$slug/" params={{ slug: navigation[0].slug }}>
+      <Link to="/$slug/" params={{ slug: navigation[0].slug }} onClick={onNavigate}>
         {navigation[0].label}
       </Link>
-      <Link to="/releases/">Downloads</Link>
-      <Link to="/$slug/" params={{ slug: navigation[1].slug }}>
+      <Link to="/releases/" onClick={onNavigate}>
+        Downloads
+      </Link>
+      <Link to="/$slug/" params={{ slug: navigation[1].slug }} onClick={onNavigate}>
         {navigation[1].label}
       </Link>
     </>
@@ -95,15 +97,14 @@ export function SiteHeader() {
         </div>
       </div>
       {menuOpen && (
-        <nav
-          id="mobile-navigation"
-          className="mobile-nav"
-          aria-label="Mobile navigation"
-          onClick={() => setMenuOpen(false)}
-        >
-          <NavLinks />
-          <a href={site.discord}>Discord</a>
-          <a href={site.github}>GitHub</a>
+        <nav id="mobile-navigation" className="mobile-nav" aria-label="Mobile navigation">
+          <NavLinks onNavigate={() => setMenuOpen(false)} />
+          <a href={site.discord} onClick={() => setMenuOpen(false)}>
+            Discord
+          </a>
+          <a href={site.github} onClick={() => setMenuOpen(false)}>
+            GitHub
+          </a>
         </nav>
       )}
     </header>

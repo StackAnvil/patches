@@ -33,4 +33,4 @@ const server = Bun.serve({
     });
   },
 });
-console.info(`Static site preview: ${server.url}`);
+process.stdout.write(`Static site preview: ${server.url}\n`);

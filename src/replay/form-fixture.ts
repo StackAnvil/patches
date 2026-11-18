@@ -4,8 +4,9 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import { journalMagic, maxJournalBytes, summarizeJournal } from "./journal.ts";
+import { errorCode, isRecord } from "../guards.ts";
 
 const execute = promisify(execFile);
 const protocol = 2193;
@@ -265,9 +266,8 @@ export function buildFormFixtureJournal(
 }
 
 function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid fixture plan object.");
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) throw new Error("Invalid fixture plan object.");
+  return value;
 }
 function path(value: unknown): string {
   if (typeof value !== "string" || value.length > 4096 || resolve(value) !== value)
@@ -305,15 +305,15 @@ function validatePlan(value: unknown): FormFixturePlan {
     output: path(plan.output),
     bootstrapSeconds: Number(plan.bootstrapSeconds),
     intervalSeconds: Number(plan.intervalSeconds),
-    forms: plan.forms.map((value) => {
-      const form = object(value);
+    forms: plan.forms.map((entry) => {
+      const form = object(entry);
       if (!Number.isInteger(form.id) || Number(form.id) < 0 || Number(form.id) > 0xffffffff)
         throw new Error("Invalid fixture form ID.");
       return { id: Number(form.id), source: path(form.source), sha256: digest(form.sha256) };
     }),
     // oxlint-disable-next-line oxc/no-map-spread -- the spread only adds an optional field to a new object
-    packs: plan.packs.map((value) => {
-      const pack = object(value);
+    packs: plan.packs.map((entry) => {
+      const pack = object(entry);
       if (typeof pack.from !== "string") throw new Error("Invalid source pack identity.");
       identity(pack.from);
       if (pack.decrypted !== true)
@@ -377,7 +377,7 @@ async function freshOutput(output: string, privateRoot: string): Promise<void> {
   try {
     await lstat(output);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if (errorCode(error) === "ENOENT") return;
     throw error;
   }
   throw new Error("Fixture output already exists.");
@@ -405,7 +405,7 @@ export async function writePrivateFixture(
   const owner = await lstat(output);
   try {
     await mkdir(join(output, "packs"), { mode: 0o700 });
-    for (const file of files.filter((file) => file.name !== "fixture.json")) {
+    for (const file of files.filter((entry) => entry.name !== "fixture.json")) {
       await writeFile(join(output, file.name), file.bytes, { flag: "wx", mode: 0o600 });
     }
     await verifyInputs();
@@ -423,6 +423,12 @@ export async function writePrivateFixture(
     throw error;
   }
 }
+
+/** The form fixture plan or one of its inputs is invalid. */
+export class FormFixtureError extends Data.TaggedError("FormFixtureError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
 
 export const prepareFormFixture = (
   planPath: string,
@@ -488,12 +494,12 @@ export const prepareFormFixture = (
         const archivePaths = listing.trimEnd().split("\n");
         if (
           archivePaths.length > 8192 ||
-          archivePaths.some((name) => name.startsWith("/") || name.split("/").includes(".."))
+          archivePaths.some((entry) => entry.startsWith("/") || entry.split("/").includes(".."))
         ) {
           throw new Error("Unsafe fixture archive paths.");
         }
         const uiFiles = archivePaths.filter(
-          (name) => name.startsWith("ui/") && name.endsWith(".json"),
+          (entry) => entry.startsWith("ui/") && entry.endsWith(".json"),
         ).length;
         if (replacement?.uiFiles !== undefined && replacement.uiFiles !== uiFiles)
           throw new Error("Fixture UI definition count changed.");
@@ -582,5 +588,9 @@ export const prepareFormFixture = (
       }
       return { ...preview, previewSha256 };
     },
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    catch: (cause) =>
+      new FormFixtureError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
   });

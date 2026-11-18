@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { parseJson } from "./guards.ts";
 import { bundleModpack } from "./modpack.ts";
 import { root, targetIds } from "./model.ts";
 import { verifyPinnedManifest, type ViaFabricPlusPin } from "./viafabricplus.ts";
@@ -10,16 +11,20 @@ import {
   requireReleaseEvidence,
   validationMarkdown,
   type ValidationReport,
+  ValidationReportSchema,
 } from "./validation.ts";
 import { git } from "./process.ts";
+import { print, printError } from "./output.ts";
 
-interface ArtifactManifest {
-  target: string;
-  baseSha?: string;
-  jenkinsBuild?: number;
-  apiSha256?: string;
-  artifacts: { file: string; sha256: string }[];
-}
+const ArtifactManifestSchema = Schema.Struct({
+  target: Schema.String,
+  baseSha: Schema.optionalKey(Schema.String),
+  jenkinsBuild: Schema.optionalKey(Schema.Finite),
+  apiSha256: Schema.optionalKey(Schema.String),
+  artifacts: Schema.mutable(
+    Schema.Array(Schema.Struct({ file: Schema.String, sha256: Schema.String })),
+  ),
+});
 
 export async function prepareReleaseAssets(
   artifactsDir: string,
@@ -33,9 +38,10 @@ export async function prepareReleaseAssets(
 
   for (const project of [...projects, "viafabricplus"]) {
     const projectDir = join(artifactsDir, project);
-    const manifest = JSON.parse(
+    const manifest = parseJson(
+      ArtifactManifestSchema,
       await readFile(join(projectDir, "manifest.json"), "utf8"),
-    ) as ArtifactManifest;
+    );
     if (manifest.target !== project || manifest.artifacts.length !== 1) {
       throw new Error(`Expected one ${project} release JAR in its build manifest`);
     }
@@ -76,9 +82,10 @@ export async function prepareValidatedRelease(
   projects: readonly string[],
   pin?: ViaFabricPlusPin,
 ): Promise<string[]> {
-  const report = JSON.parse(
+  const report: ValidationReport = parseJson(
+    ValidationReportSchema,
     await readFile(join(artifactsDir, "validation", "release.json"), "utf8"),
-  ) as ValidationReport;
+  );
   requireReleaseEvidence(
     report,
     revision,
@@ -98,9 +105,9 @@ if (import.meta.main) {
       await Effect.runPromise(git(["rev-parse", "HEAD"], root)),
       await targetIds(),
     );
-    console.log(files.join("\n"));
+    print(files.join("\n"));
   } catch (error: unknown) {
-    console.error(error instanceof Error ? error.message : error);
+    printError(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   }
 }

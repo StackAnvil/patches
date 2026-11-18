@@ -1,7 +1,9 @@
+import { Schema } from "effect";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "./model.ts";
+import { parseJson } from "./guards.ts";
 
 const jenkins = "https://ci.viaversion.com/job/ViaFabricPlus";
 const maven = "https://repo.viaversion.com/com/viaversion/viafabricplus";
@@ -19,12 +21,29 @@ export interface ViaFabricPlusPin {
   apiPomSha256: string;
 }
 
-interface JenkinsBuild {
-  number: number;
-  result: string;
-  artifacts: { relativePath: string }[];
-  actions: { lastBuiltRevision?: { SHA1: string }; remoteUrls?: string[] }[];
-}
+const ViaFabricPlusPinSchema = Schema.Struct({
+  build: Schema.Finite,
+  commit: Schema.String,
+  version: Schema.String,
+  mavenVersion: Schema.String,
+  sha256: Schema.String,
+  pomSha256: Schema.String,
+  apiSha256: Schema.String,
+  apiPomSha256: Schema.String,
+});
+
+const JenkinsBuildSchema = Schema.Struct({
+  number: Schema.Finite,
+  result: Schema.String,
+  artifacts: Schema.Array(Schema.Struct({ relativePath: Schema.String })),
+  actions: Schema.Array(
+    Schema.Struct({
+      lastBuiltRevision: Schema.optionalKey(Schema.Struct({ SHA1: Schema.String })),
+      remoteUrls: Schema.optionalKey(Schema.Array(Schema.String)),
+    }),
+  ),
+});
+type JenkinsBuild = typeof JenkinsBuildSchema.Type;
 
 interface PinnedManifest {
   baseSha?: string;
@@ -34,7 +53,10 @@ interface PinnedManifest {
 }
 
 export async function readViaFabricPlusPin(): Promise<ViaFabricPlusPin> {
-  return JSON.parse(await readFile(join(root, "viafabricplus.json"), "utf8")) as ViaFabricPlusPin;
+  return parseJson(
+    ViaFabricPlusPinSchema,
+    await readFile(join(root, "viafabricplus.json"), "utf8"),
+  );
 }
 
 export async function verifyPinnedManifest(
@@ -93,7 +115,7 @@ export async function prepareViaFabricPlus(): Promise<{ output: string; pin: Via
     throw new Error(
       `Could not read ViaFabricPlus Jenkins build ${pin.build}: HTTP ${metadataResponse.status}`,
     );
-  verifyBuild((await metadataResponse.json()) as JenkinsBuild, pin, artifactPath);
+  verifyBuild(parseJson(JenkinsBuildSchema, await metadataResponse.text()), pin, artifactPath);
 
   const [jar, pom, apiJar, apiPom] = await Promise.all([
     download(`${jenkins}/${pin.build}/artifact/${artifactPath}`, pin.sha256),

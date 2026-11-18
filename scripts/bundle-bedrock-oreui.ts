@@ -9,6 +9,7 @@ import {
   verifyBuiltinOreUiContents,
   type OreUiDescriptor,
 } from "../src/bedrock-oreui.ts";
+import { print } from "../src/output.ts";
 
 /** Acquire original Gameface resources; do not execute or translate the shipped JavaScript. */
 export async function planBedrockOreUi(game: string, version: string, output: string) {
@@ -44,7 +45,7 @@ export async function planBedrockOreUi(game: string, version: string, output: st
   const hbui = join(game, "data", "gui", "dist", "hbui");
   const styles = (await readdir(hbui)).filter((name) => /^gameplay-[0-9a-f]+\.css$/.test(name));
   if (styles.length !== 1) throw new Error("Expected one active OreUI gameplay stylesheet");
-  const stylesheet = `hbui/${styles[0]!}`;
+  const stylesheet = `hbui/${styles[0]}`;
   const css = await read(join(hbui, styles[0]));
   add(stylesheet, css);
   const fonts = oreUiFonts(css.toString("utf8"));
@@ -119,6 +120,6 @@ if (import.meta.main) {
       "Usage: bun scripts/bundle-bedrock-oreui.ts <game-directory> <version> <fresh-output.zip> [--dry-run]",
     );
   const plan = await planBedrockOreUi(game, version, output);
-  console.log(JSON.stringify(plan.preview));
+  print(JSON.stringify(plan.preview));
   if (!flags.includes("--dry-run")) await applyBedrockUi(plan);
 }

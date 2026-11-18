@@ -1,5 +1,14 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import { Schema } from "effect";
+
+/** The header of a Bedrock pack `manifest.json`. */
+export const PackManifestSchema = Schema.Struct({
+  header: Schema.Struct({
+    uuid: Schema.String,
+    version: Schema.mutable(Schema.Array(Schema.Finite)),
+  }),
+});
 
 export interface WorldPackDeclaration {
   pack_id: string;

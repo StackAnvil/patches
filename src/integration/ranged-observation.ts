@@ -319,5 +319,7 @@ export function rangedObservationPasses(
       return chargePasses(released) && ammunitionPasses && projectilesAfter(released.tick);
     case "throw":
       return !!used && ammunitionPasses && projectilesAfter(used.tick);
+    default:
+      return mode satisfies never;
   }
 }

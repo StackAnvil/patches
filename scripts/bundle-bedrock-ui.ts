@@ -3,6 +3,7 @@ import { mkdir, readFile, link, unlink, stat, writeFile, readdir } from "node:fs
 import { dirname, join } from "node:path";
 import { builtinUiManifest, verifyBuiltinUiContents } from "../src/bedrock-ui.ts";
 import { assetZip, readBedrockArchive } from "./bundle-bedrock-assets.ts";
+import { print } from "../src/output.ts";
 
 /** Build-time inputs come from an acquired package. Runtime consumers use the resulting JAR resource. */
 export async function planBedrockUi(game: string, version: string, output: string) {
@@ -187,6 +188,6 @@ if (import.meta.main) {
     );
   }
   const plan = await planBedrockUi(game, version, output);
-  console.log(JSON.stringify(plan.preview, null, flags.includes("--verbose") ? 2 : 0));
+  print(JSON.stringify(plan.preview, null, flags.includes("--verbose") ? 2 : 0));
   if (!flags.includes("--dry-run")) await applyBedrockUi(plan);
 }

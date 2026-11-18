@@ -4,7 +4,10 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { Schema } from "effect";
+import { isRecord, parseJson } from "../guards.ts";
 import { root } from "../model.ts";
+import { print, printError } from "../output.ts";
 
 const execute = promisify(execFile);
 const project = "fabulously-optimized";
@@ -14,16 +17,23 @@ const lockFile = join(packDirectory, `${project}.json`);
 const cacheDirectory = join(root, ".stackanvil", "integration", "cache", "modpack");
 const userAgent = "StackAnvil/integration-tests (https://github.com/StackAnvil/patches)";
 
-interface PackLock {
-  project: string;
-  versionId: string;
-  versionNumber: string;
-  minecraft: string;
-  fabricLoader: string;
-  sha512: string;
-  source: string;
-}
+const PackLockSchema = Schema.Struct({
+  project: Schema.String,
+  versionId: Schema.String,
+  versionNumber: Schema.String,
+  minecraft: Schema.String,
+  fabricLoader: Schema.String,
+  sha512: Schema.String,
+  source: Schema.String,
+});
+type PackLock = typeof PackLockSchema.Type;
 
+export const PackFileSchema = Schema.Struct({
+  path: Schema.String,
+  downloads: Schema.mutable(Schema.Array(Schema.String)),
+  hashes: Schema.Struct({ sha512: Schema.String }),
+  env: Schema.optionalKey(Schema.Struct({ client: Schema.optionalKey(Schema.String) })),
+});
 export interface PackFile {
   path: string;
   downloads: string[];
@@ -31,6 +41,13 @@ export interface PackFile {
   env?: { client?: string };
 }
 
+const PackIndexSchema = Schema.Struct({
+  formatVersion: Schema.Finite,
+  game: Schema.String,
+  versionId: Schema.String,
+  dependencies: Schema.Record(Schema.String, Schema.String),
+  files: Schema.mutable(Schema.Array(PackFileSchema)),
+});
 interface PackIndex {
   formatVersion: number;
   game: string;
@@ -39,9 +56,20 @@ interface PackIndex {
   files: PackFile[];
 }
 
-interface InstalledPack {
-  sha512: string;
-  files: string[];
+const InstalledFilesSchema = Schema.Struct({ files: Schema.Array(Schema.String) });
+const MinecraftComponentsSchema = Schema.Struct({
+  components: Schema.mutable(
+    Schema.Array(
+      Schema.Struct({
+        uid: Schema.String,
+        version: Schema.String,
+        cachedVersion: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+});
+interface MinecraftComponents {
+  components: { uid: string; version: string; cachedVersion?: string }[];
 }
 
 function safePath(path: string): boolean {
@@ -75,30 +103,34 @@ export function validatePackIndex(
   value: unknown,
   lock: Pick<PackLock, "minecraft" | "fabricLoader">,
 ): PackIndex {
-  if (!value || typeof value !== "object") throw new Error("The modpack index is missing.");
-  const index = value as PackIndex;
-  if (index.formatVersion !== 1 || index.game !== "minecraft")
+  if (!isRecord(value)) throw new Error("The modpack index is missing.");
+  if (value.formatVersion !== 1 || value.game !== "minecraft")
     throw new Error("Unsupported Modrinth modpack format.");
+  const dependencies = isRecord(value.dependencies) ? value.dependencies : {};
   if (
-    index.dependencies?.minecraft !== lock.minecraft ||
-    index.dependencies?.["fabric-loader"] !== lock.fabricLoader
+    dependencies.minecraft !== lock.minecraft ||
+    dependencies["fabric-loader"] !== lock.fabricLoader
   ) {
     throw new Error(
       `The modpack must target Minecraft ${lock.minecraft} with Fabric ${lock.fabricLoader}.`,
     );
   }
-  if (!Array.isArray(index.files) || !index.files.length)
-    throw new Error("The modpack contains no files.");
+  const files: unknown = value.files;
+  if (!Array.isArray(files) || !files.length) throw new Error("The modpack contains no files.");
+  const entries: readonly unknown[] = files;
   const paths = new Set<string>();
-  for (const file of index.files) {
-    if (!safePath(file.path) || paths.has(file.path))
-      throw new Error(`Invalid or repeated modpack path: ${file.path}`);
-    paths.add(file.path);
-    if (!/^[a-f0-9]{128}$/i.test(file.hashes?.sha512 ?? ""))
-      throw new Error(`Missing SHA-512 for ${file.path}.`);
+  for (const file of entries) {
+    const path = isRecord(file) ? file.path : undefined;
+    if (typeof path !== "string" || !safePath(path) || paths.has(path))
+      throw new Error(`Invalid or repeated modpack path: ${String(path)}`);
+    paths.add(path);
+    const hash = isRecord(file) && isRecord(file.hashes) ? file.hashes.sha512 : undefined;
+    if (typeof hash !== "string" || !/^[a-f0-9]{128}$/i.test(hash))
+      throw new Error(`Missing SHA-512 for ${path}.`);
+    const downloads: unknown = isRecord(file) ? file.downloads : undefined;
     if (
-      !Array.isArray(file.downloads) ||
-      !file.downloads.some((url) => {
+      !Array.isArray(downloads) ||
+      !downloads.some((url) => {
         try {
           return new URL(url).protocol === "https:";
         } catch {
@@ -106,9 +138,10 @@ export function validatePackIndex(
         }
       })
     )
-      throw new Error(`No HTTPS download for ${file.path}.`);
+      throw new Error(`No HTTPS download for ${path}.`);
   }
-  return index;
+  if (!Schema.is(PackIndexSchema)(value)) throw new Error("The modpack index is malformed.");
+  return value;
 }
 
 export async function verifiedDownload(
@@ -137,7 +170,7 @@ export async function verifiedDownload(
 }
 
 async function readPack(): Promise<{ lock: PackLock; index: PackIndex; entries: string[] }> {
-  const lock = JSON.parse(await readFile(lockFile, "utf8")) as PackLock;
+  const lock = parseJson(PackLockSchema, await readFile(lockFile, "utf8"));
   if (lock.project !== project || !/^[a-f0-9]{128}$/i.test(lock.sha512))
     throw new Error("Invalid Fabulously Optimized lock file.");
   const bytes = new Uint8Array(await readFile(packFile));
@@ -184,14 +217,13 @@ async function packOverrides(entries: string[]): Promise<Map<string, Uint8Array>
 
 async function assertNoPatchedModCollision(file: string, path: string): Promise<void> {
   if (!path.startsWith("mods/") || !path.endsWith(".jar")) return;
-  let metadata: { id?: string };
+  let metadata: unknown;
   try {
-    metadata = JSON.parse(
-      Buffer.from(await zipEntry(file, "fabric.mod.json")).toString("utf8"),
-    ) as { id?: string };
+    metadata = JSON.parse(Buffer.from(await zipEntry(file, "fabric.mod.json")).toString("utf8"));
   } catch {
     return;
   }
+  if (!isRecord(metadata)) return;
   if (metadata.id === "viafabricplus" || metadata.id === "viafabricplus-bedrock") {
     throw new Error(
       `Fabulously Optimized includes ${metadata.id}. Remove that mod from the pack before overlaying StackAnvil builds.`,
@@ -222,9 +254,10 @@ export async function installModpack(
 ): Promise<string> {
   const { lock, index, entries } = await readPack();
   const packMetadata = join(instance, "mmc-pack.json");
-  const component = JSON.parse(await readFile(packMetadata, "utf8")) as {
-    components: { uid: string; version: string; cachedVersion?: string }[];
-  };
+  const component: MinecraftComponents = parseJson(
+    MinecraftComponentsSchema,
+    await readFile(packMetadata, "utf8"),
+  );
   if (
     component.components.find((part) => part.uid === "net.minecraft")?.version !== lock.minecraft
   ) {
@@ -239,7 +272,7 @@ export async function installModpack(
   const minecraft = join(instance, "minecraft");
   const marker = join(instance, ".stackanvil-modpack.json");
   const previous = existsSync(marker)
-    ? (JSON.parse(await readFile(marker, "utf8")) as InstalledPack)
+    ? parseJson(InstalledFilesSchema, await readFile(marker, "utf8"))
     : { files: [] };
   const files = replacePackFiles(index, replacements).files.filter(
     (file) => file.env?.client !== "unsupported",
@@ -254,9 +287,10 @@ export async function installModpack(
     incoming.set(file.path, cached);
   }
   for (const [path, bytes] of overrides) incoming.set(path, bytes);
-  const patched = JSON.parse(await readFile(join(instance, ".stackanvil-managed"), "utf8")) as {
-    files: string[];
-  };
+  const patched = parseJson(
+    InstalledFilesSchema,
+    await readFile(join(instance, ".stackanvil-managed"), "utf8"),
+  );
   for (const file of patched.files) {
     if (incoming.has(`mods/${file}`))
       throw new Error(`The modpack would replace patched StackAnvil mod ${file}.`);
@@ -287,14 +321,23 @@ export async function installModpack(
   return lock.versionNumber;
 }
 
-interface ModrinthVersion {
-  id: string;
-  version_number: string;
-  files: { filename: string; url: string; primary: boolean; hashes: { sha512: string } }[];
-}
+const ModrinthVersionsSchema = Schema.Array(
+  Schema.Struct({
+    id: Schema.String,
+    version_number: Schema.String,
+    files: Schema.Array(
+      Schema.Struct({
+        filename: Schema.String,
+        url: Schema.String,
+        primary: Schema.Boolean,
+        hashes: Schema.Struct({ sha512: Schema.String }),
+      }),
+    ),
+  }),
+);
 
 export async function updateModpack(versionNumber?: string): Promise<void> {
-  const current = JSON.parse(await readFile(lockFile, "utf8")) as PackLock;
+  const current = parseJson(PackLockSchema, await readFile(lockFile, "utf8"));
   const params = new URLSearchParams({
     game_versions: JSON.stringify([current.minecraft]),
     loaders: JSON.stringify(["fabric"]),
@@ -304,7 +347,7 @@ export async function updateModpack(versionNumber?: string): Promise<void> {
     headers: { "User-Agent": userAgent },
   });
   if (!response.ok) throw new Error(`Modrinth lookup failed: HTTP ${response.status}`);
-  const versions = (await response.json()) as ModrinthVersion[];
+  const versions = parseJson(ModrinthVersionsSchema, await response.text());
   const version = versionNumber
     ? versions.find((entry) => entry.version_number === versionNumber)
     : versions[0];
@@ -315,11 +358,13 @@ export async function updateModpack(versionNumber?: string): Promise<void> {
     );
   const temporary = join(packDirectory, `${project}.mrpack.tmp`);
   await verifiedDownload([file.url], temporary, file.hashes.sha512);
-  const raw = JSON.parse(
+  const raw: unknown = JSON.parse(
     Buffer.from(await zipEntry(temporary, "modrinth.index.json")).toString("utf8"),
-  ) as PackIndex;
-  const fabricLoader = raw.dependencies?.["fabric-loader"];
-  if (!fabricLoader) throw new Error("The modpack does not specify a Fabric loader.");
+  );
+  const fabricLoader =
+    isRecord(raw) && isRecord(raw.dependencies) ? raw.dependencies["fabric-loader"] : undefined;
+  if (typeof fabricLoader !== "string" || !fabricLoader)
+    throw new Error("The modpack does not specify a Fabric loader.");
   const index = validatePackIndex(raw, { minecraft: current.minecraft, fabricLoader });
   if (index.versionId !== version.version_number)
     throw new Error("Modrinth version and modpack index disagree.");
@@ -345,7 +390,7 @@ export async function updateModpack(versionNumber?: string): Promise<void> {
       2,
     )}\n`,
   );
-  console.log(
+  print(
     `Pinned Fabulously Optimized ${version.version_number} for Minecraft ${current.minecraft}.`,
   );
 }
@@ -353,13 +398,13 @@ export async function updateModpack(versionNumber?: string): Promise<void> {
 if (import.meta.main) {
   const [action, flag, version] = Bun.argv.slice(2);
   if (action !== "update" || (flag && flag !== "--version") || (flag && !version)) {
-    console.error("Use bun run integration:modpack:update [--version VERSION].");
+    printError("Use bun run integration:modpack:update [--version VERSION].");
     process.exitCode = 1;
   } else {
     try {
       await updateModpack(version);
     } catch (error: unknown) {
-      console.error(error);
+      printError(error);
       process.exitCode = 1;
     }
   }

@@ -6,12 +6,14 @@ import { closeSync, existsSync, lstatSync, openSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { installPrism } from "../prism.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "./display.ts";
 import { vmMain } from "./vm.ts";
+import { isOneOf, parseJson } from "../guards.ts";
+import { print, printError } from "../output.ts";
 const privateRoot = join(root, ".stackanvil", "lab");
 const processFile = join(privateRoot, "processes.json");
 const serverHome = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
@@ -28,7 +30,8 @@ const prismHome = join(
   "instances",
 );
 const javaInstance = process.env.STACKANVIL_JAVA_INSTANCE ?? "StackAnvil 26.3";
-type Service = "server" | "viaproxy" | "java";
+const services = ["server", "viaproxy", "java"] as const;
+type Service = (typeof services)[number];
 type Managed = Partial<
   Record<
     Service,
@@ -55,9 +58,23 @@ function groupAlive(pid: number): boolean {
     return false;
   }
 }
+const ManagedProcessSchema = Schema.Struct({
+  pid: Schema.Finite,
+  startedAt: Schema.String,
+  command: Schema.String,
+});
+const ManagedSchema = Schema.Struct({
+  server: Schema.optionalKey(ManagedProcessSchema),
+  viaproxy: Schema.optionalKey(ManagedProcessSchema),
+  java: Schema.optionalKey(ManagedProcessSchema),
+});
 const managedEffect = Effect.fn("Lab.managed")(function* () {
   if (!existsSync(processFile)) return {};
-  return JSON.parse(yield* labIO("managed", async () => readFile(processFile, "utf8"))) as Managed;
+  const managed: Managed = parseJson(
+    ManagedSchema,
+    yield* labIO("managed", async () => readFile(processFile, "utf8")),
+  );
+  return managed;
 });
 const saveEffect = Effect.fn("Lab.save")(function* (entries: Managed) {
   yield* labIO("save", async () => mkdir(privateRoot, { recursive: true, mode: 0o700 }));
@@ -159,18 +176,18 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
 const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
   const entries = yield* managedEffect();
   if (entries[service] && groupAlive(entries[service].pid)) {
-    console.log(`${service} is already running under this lab (PID ${entries[service].pid}).`);
+    print(`${service} is already running under this lab (PID ${entries[service].pid}).`);
     return;
   }
   const external = yield* matchingProcessesEffect(service);
   if (external.length) {
-    console.log(
+    print(
       `${service} is already running outside this lab (PID ${external.join(", ")}). It will not be restarted or stopped by the lab.`,
     );
     return;
   }
   if (service === "java")
-    console.log(`Prepared Prism instance: ${yield* labIO("start", async () => installPrism())}`);
+    print(`Prepared Prism instance: ${yield* labIO("start", async () => installPrism())}`);
   const command = yield* serviceCommandEffect(service);
   const isolated =
     service === "java" ? yield* labIO("start", async () => displayEnv(true)) : undefined;
@@ -224,7 +241,7 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
         };
         yield* saveEffect(entries);
         retained = true;
-        console.log(`Started ${service} (PID ${child.pid}).`);
+        print(`Started ${service} (PID ${child.pid}).`);
       }),
     (child) =>
       retained || !child.pid
@@ -248,7 +265,7 @@ const stopEffect = Effect.fn("Lab.stop")(function* (service: Service) {
   const entries = yield* managedEffect();
   const entry = entries[service];
   if (!entry || !groupAlive(entry.pid)) {
-    console.log(`${service} is not running under this lab.`);
+    print(`${service} is not running under this lab.`);
     delete entries[service];
     yield* saveEffect(entries);
     return;
@@ -262,18 +279,16 @@ const stopEffect = Effect.fn("Lab.stop")(function* (service: Service) {
     );
   delete entries[service];
   yield* saveEffect(entries);
-  console.log(`Stopped ${service}.`);
+  print(`Stopped ${service}.`);
 }, Effect.uninterruptible);
 const statusEffect = Effect.fn("Lab.status")(function* () {
   const display = yield* labIO("status", async () => activeDisplay());
-  console.log(
-    `display: ${display ? `isolated ${display.display} (PID ${display.pid})` : "stopped"}`,
-  );
+  print(`display: ${display ? `isolated ${display.display} (PID ${display.pid})` : "stopped"}`);
   const entries = yield* managedEffect();
   for (const service of ["server", "viaproxy", "java"] as const) {
     const entry = entries[service];
     const external = yield* matchingProcessesEffect(service);
-    console.log(
+    print(
       `${service}: ${entry && groupAlive(entry.pid) ? `managed process group ${entry.pid}` : external.length ? `external PID ${external.join(", ")}` : "stopped"}`,
     );
   }
@@ -312,7 +327,7 @@ const snapshotCredentialsEffect = Effect.fn("Lab.snapshotCredentials")(function*
       "snapshotCredentials",
       new Error(`No known BedrockOnLinux credential files found under ${bedrockHome}.`),
     );
-  console.log(
+  print(
     `Copied ${copied.length} credential files to ignored private directory ${destination}. File contents were not displayed.`,
   );
 });
@@ -320,7 +335,7 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
   const [action, pidText, third] = args;
   if (action === "list") {
     const { stdout } = yield* labExecute("jcmd", ["-l"]);
-    console.log(stdout.trimEnd());
+    print(stdout.trimEnd());
     return;
   }
   const pid = Number(pidText);
@@ -374,7 +389,7 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
         String(pid),
         resolve(third),
       ]);
-      console.log(`Attached Java agent to PID ${pid}.`);
+      print(`Attached Java agent to PID ${pid}.`);
       return;
     case "native-agent":
       if (!third || !existsSync(resolve(third)))
@@ -396,12 +411,12 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
   if (action === "properties" || action === "threads") {
     const file = join(privateRoot, `${action}-${pid}-${Date.now()}.txt`);
     yield* labIO("jvm", async () => writeFile(file, stdout + stderr, { mode: 0o600 }));
-    console.log(`Private JVM diagnostic: ${file}`);
-  } else console.log((stdout + stderr).trimEnd());
+    print(`Private JVM diagnostic: ${file}`);
+  } else print((stdout + stderr).trimEnd());
 });
 const doctorEffect = Effect.fn("Lab.doctor")(function* () {
   const viaProxy = yield* Effect.orElseSucceed(viaProxyJarEffect(), () => "missing");
-  console.log(
+  print(
     JSON.stringify(
       {
         server: existsSync(join(serverHome, "bedrock_server")) ? serverHome : "missing",
@@ -431,24 +446,23 @@ export const mainEffect = Effect.fn("Lab.main")(function* () {
   if (command === "doctor") return yield* doctorEffect();
   if (command === "status") return yield* statusEffect();
   if (command === "display" && action === "start") {
-    console.log(yield* labIO("main", async () => ensureDisplay()));
+    print(yield* labIO("main", async () => ensureDisplay()));
     return;
   }
   if (command === "display" && action === "stop")
     return yield* labIO("main", async () => stopDisplay());
   if (command === "credentials" && action === "snapshot") return yield* snapshotCredentialsEffect();
   if (command === "java" && action === "prepare") {
-    console.log(yield* labIO("main", async () => installPrism()));
+    print(yield* labIO("main", async () => installPrism()));
     return;
   }
   if (command === "jvm" && action) return yield* jvmEffect([action, ...rest]);
   if (
-    ["server", "viaproxy", "java"].includes(command ?? "") &&
+    command !== undefined &&
+    isOneOf(services, command) &&
     (action === "start" || action === "stop")
   ) {
-    return yield* action === "start"
-      ? startEffect(command as Service)
-      : stopEffect(command as Service);
+    return yield* action === "start" ? startEffect(command) : stopEffect(command);
   }
   if (command === "up") {
     if (process.env.STACKANVIL_USE_DESKTOP !== "1")
@@ -472,7 +486,7 @@ if (import.meta.main) {
   try {
     await runLabCommand(mainEffect());
   } catch (error: unknown) {
-    console.error(error instanceof Error ? error.message : error);
+    printError(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   }
 }

@@ -1,6 +1,7 @@
 import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { promisify } from "node:util";
-import { Data, Effect } from "effect";
+import { Data, Effect, type Schema } from "effect";
+import { parseJson } from "../guards.ts";
 
 export class LabError extends Data.TaggedError("LabError")<{
   readonly operation: string;
@@ -54,23 +55,23 @@ export function labRequestBytes(url: string, maximumBytes = 512 * 1024 * 1024) {
           reader: undefined as ReadableStreamDefaultReader<Uint8Array> | undefined,
           response: undefined as Response | undefined,
         })),
-        (owner) =>
+        (held) =>
           Effect.promise(async () => {
-            owner.controller.abort();
-            if (owner.reader) {
-              await owner.reader.cancel().catch(() => {});
-              owner.reader.releaseLock();
-            } else await owner.response?.body?.cancel().catch(() => {});
+            held.controller.abort();
+            if (held.reader) {
+              await held.reader.cancel().catch(() => {});
+              held.reader.releaseLock();
+            } else await held.response?.body?.cancel().catch(() => {});
           }),
       );
       const response = yield* labIO("request headers", async () => {
-        const response = await fetch(url, { signal: owner.controller.signal });
+        const fetched = await fetch(url, { signal: owner.controller.signal });
         if (owner.controller.signal.aborted) {
-          await response.body?.cancel().catch(() => {});
+          await fetched.body?.cancel().catch(() => {});
           owner.controller.signal.throwIfAborted();
         }
-        owner.response = response;
-        return response;
+        owner.response = fetched;
+        return fetched;
       });
       if (!response.ok)
         return yield* new LabError({
@@ -111,10 +112,10 @@ export function labRequestBytes(url: string, maximumBytes = 512 * 1024 * 1024) {
   );
 }
 
-export function labRequestJson(url: string) {
+export function labRequestJson<S extends Schema.Decoder<unknown>>(url: string, schema: S) {
   return labRequestBytes(url, 2 * 1024 * 1024).pipe(
     Effect.flatMap((bytes) =>
-      labValue("decode response", () => JSON.parse(new TextDecoder().decode(bytes)) as unknown),
+      labValue("decode response", () => parseJson(schema, new TextDecoder().decode(bytes))),
     ),
   );
 }

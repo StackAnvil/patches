@@ -1,23 +1,42 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { parseJson } from "./guards.ts";
 import { getSeries, getTarget, root, type Target, type UpstreamablePatch } from "./model.ts";
 import { parsePatchMessage } from "./patch-message.ts";
 import { gh, git } from "./process.ts";
-import { assertPrProductionChanges, prMode, sync } from "./stack.ts";
+import { assertPrProductionChanges, prMode, StackError, sync } from "./stack.ts";
+import { printError } from "./output.ts";
 
 export interface ArtifactReference {
   runId?: string;
   artifactId?: string;
 }
 
-interface PrParticipants {
-  author: { login: string };
-  assignees: { login: string }[];
-  isDraft: boolean;
-  reviewRequests: { __typename: string; login?: string }[];
-  reviews: { author: { login: string } | null }[];
-}
+const Login = Schema.Struct({ login: Schema.String });
+const PrParticipantsSchema = Schema.Struct({
+  author: Login,
+  assignees: Schema.Array(Login),
+  isDraft: Schema.Boolean,
+  reviewRequests: Schema.Array(
+    Schema.Struct({ __typename: Schema.String, login: Schema.optionalKey(Schema.String) }),
+  ),
+  reviews: Schema.Array(Schema.Struct({ author: Schema.NullOr(Login) })),
+});
+type PrParticipants = typeof PrParticipantsSchema.Type;
+const OpenPrsSchema = Schema.Array(
+  Schema.Struct({ number: Schema.Finite, html_url: Schema.String }),
+);
+const RepositorySchema = Schema.Struct({
+  permissions: Schema.optionalKey(
+    Schema.Struct({
+      admin: Schema.optionalKey(Schema.Boolean),
+      maintain: Schema.optionalKey(Schema.Boolean),
+      push: Schema.optionalKey(Schema.Boolean),
+      triage: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+});
 
 export function missingPrParticipants(desired: string[], pr: PrParticipants) {
   const assignees = new Set(pr.assignees.map(({ login }) => login.toLowerCase()));
@@ -66,11 +85,14 @@ const openPrForHead = Effect.fn("openPrForHead")(function* (target: Target, head
     ],
     root,
   );
-  const prs = (JSON.parse(existing) as { number: number; html_url: string }[]).map(
-    ({ number, html_url }) => ({ number, url: html_url }),
-  );
+  const prs = parseJson(OpenPrsSchema, existing).map(({ number, html_url }) => ({
+    number,
+    url: html_url,
+  }));
   if (prs.length > 1)
-    return yield* Effect.fail(new Error(`Multiple open PRs for ${target.upstream} from ${head}`));
+    return yield* new StackError({
+      message: `Multiple open PRs for ${target.upstream} from ${head}`,
+    });
   return prs[0];
 });
 
@@ -81,13 +103,15 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
 ) {
   const target = yield* Effect.promise(() => getTarget(id));
   const url = prUrl ?? (yield* openPrForHead(target, prHead(patchFile)))?.url;
-  if (!url) return yield* Effect.fail(new Error(`No open PR for ${id} from ${prHead(patchFile)}`));
+  if (!url)
+    return yield* new StackError({ message: `No open PR for ${id} from ${prHead(patchFile)}` });
   const desired = [...new Set(target.prAssignees)];
   if (!desired.length) return { url, desired, added: [], requested: [] };
 
-  const repository = JSON.parse(yield* gh(["api", `repos/${target.upstream}`], root)) as {
-    permissions?: { admin?: boolean; maintain?: boolean; push?: boolean; triage?: boolean };
-  };
+  const repository = parseJson(
+    RepositorySchema,
+    yield* gh(["api", `repos/${target.upstream}`], root),
+  );
   const permissions = repository.permissions;
   const canAssign = Boolean(
     permissions &&
@@ -96,7 +120,8 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
   const canRequestReviews = Boolean(
     permissions && [permissions.admin, permissions.maintain, permissions.push].some(Boolean),
   );
-  const pr = JSON.parse(
+  const pr = parseJson(
+    PrParticipantsSchema,
     yield* gh(
       [
         "pr",
@@ -109,7 +134,7 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
       ],
       root,
     ),
-  ) as PrParticipants;
+  );
   const missing = missingPrParticipants(desired, pr);
   const skipped: string[] = [];
   if (missing.assignees.length && canAssign) {
@@ -206,8 +231,11 @@ export const prBody = Effect.fn("prBody")(function* (
   const extraBodyFile = join(upstreamableDir, upstreamable.file.replace(/\.patch$/, ".pr.md"));
   const extraBody = yield* Effect.tryPromise({
     try: () => readFile(extraBodyFile, "utf8"),
-    catch: () =>
-      new Error(`Add a PR extra body at ${extraBodyFile} before creating or updating the PR`),
+    catch: (cause) =>
+      new StackError({
+        message: `Add a PR extra body at ${extraBodyFile} before creating or updating the PR`,
+        cause,
+      }),
   });
   return renderPrBody(id, message.description, extraBody, artifact, patchFile);
 });
@@ -227,7 +255,7 @@ export const syncPr = Effect.fn("syncPr")(function* (
   const dir = yield* sync(id, "pr", patchFile);
   const count = yield* git(["rev-list", "--count", `${target.baseSha}..HEAD`], dir);
   if (count !== "1")
-    return yield* Effect.fail(new Error(`Expected exactly one PR commit, found ${count}`));
+    return yield* new StackError({ message: `Expected exactly one PR commit, found ${count}` });
   yield* assertPrProductionChanges(dir, target.baseSha, false, id);
   const remote = `https://github.com/${target.fork}.git`;
   const head = prHead(patchFile);
@@ -259,7 +287,7 @@ export const syncPr = Effect.fn("syncPr")(function* (
       root,
     );
     const assignment = yield* updatePrParticipants(id, existing.url);
-    if (assignment.skippedReason) console.warn(assignment.skippedReason);
+    if (assignment.skippedReason) printError(assignment.skippedReason);
     return existing.url;
   }
   const url = yield* gh(
@@ -281,6 +309,6 @@ export const syncPr = Effect.fn("syncPr")(function* (
     root,
   );
   const assignment = yield* updatePrParticipants(id, url);
-  if (assignment.skippedReason) console.warn(assignment.skippedReason);
+  if (assignment.skippedReason) printError(assignment.skippedReason);
   return url;
 });

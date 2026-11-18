@@ -6,6 +6,17 @@ import { root } from "../model.ts";
 
 type NativeBuild = (args: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<void>;
 
+async function rustSources(path: string): Promise<string[]> {
+  const files = await Promise.all(
+    (await readdir(path, { withFileTypes: true })).map(async (entry) => {
+      const selected = join(path, entry.name);
+      if (entry.isDirectory()) return rustSources(selected);
+      return entry.isFile() && entry.name.endsWith(".rs") ? [selected] : [];
+    }),
+  );
+  return files.flat();
+}
+
 /** Cargo outputs and build receipts stay outside the source tree. */
 export function createCaptureWaylandBuilder(build: NativeBuild, directory = root) {
   const source = join(directory, "native", "capture-wayland");
@@ -16,16 +27,6 @@ export function createCaptureWaylandBuilder(build: NativeBuild, directory = root
   let preparing: Promise<string> | undefined;
 
   async function sourceDigest(): Promise<string> {
-    async function rustSources(path: string): Promise<string[]> {
-      const files = await Promise.all(
-        (await readdir(path, { withFileTypes: true })).map(async (entry) => {
-          const selected = join(path, entry.name);
-          if (entry.isDirectory()) return rustSources(selected);
-          return entry.isFile() && entry.name.endsWith(".rs") ? [selected] : [];
-        }),
-      );
-      return files.flat();
-    }
     const files = [
       join(source, "Cargo.toml"),
       join(source, "Cargo.lock"),

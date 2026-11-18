@@ -7,11 +7,13 @@ import { appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/pro
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { Effect } from "effect";
+import { Schema } from "effect";
+import { parseJson } from "../guards.ts";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
-import { createCaptureUi, type Client, type DragPoint } from "./ui.ts";
+import { createCaptureUi, type Client } from "./ui.ts";
+import { print, printError } from "../output.ts";
 
 const execute = promisify(execFile);
 const uiEnvironment = captureUiEnvironment(() => displayEnv(), process.env);
@@ -84,21 +86,69 @@ interface Session {
   stoppedAt?: string;
 }
 
-type Step =
-  | { action: "mark"; label: string }
-  | { action: "wait"; ms: number }
-  | { action: "screenshot"; name: string }
-  | { action: "click"; x: number; y: number; button?: "left" | "right" }
-  | { action: "doubleClick"; x: number; y: number; button?: "left" | "right" }
-  | { action: "mouseHold"; x: number; y: number; button: "left" | "right"; ms: number }
-  | { action: "buttonHold"; button: "left" | "right"; ms: number }
-  | { action: "drag"; points: DragPoint[]; button: "left" | "right"; ms: number }
-  | { action: "type"; text: string }
-  | { action: "key"; key: string }
-  | { action: "doubleKey"; key: string }
-  | { action: "keyHold"; key: string; ms: number }
-  | { action: "videoStart"; name: string; fps?: number }
-  | { action: "videoStop" };
+const MouseButton = Schema.Literals(["left", "right"]);
+const isStep = Schema.is(
+  Schema.Union([
+    Schema.Struct({ action: Schema.Literal("mark"), label: Schema.String }),
+    Schema.Struct({ action: Schema.Literal("wait"), ms: Schema.Finite }),
+    Schema.Struct({ action: Schema.Literal("screenshot"), name: Schema.String }),
+    Schema.Struct({
+      action: Schema.Literals(["click", "doubleClick"]),
+      x: Schema.Finite,
+      y: Schema.Finite,
+      button: Schema.optionalKey(MouseButton),
+    }),
+    Schema.Struct({
+      action: Schema.Literal("mouseHold"),
+      x: Schema.Finite,
+      y: Schema.Finite,
+      button: MouseButton,
+      ms: Schema.Finite,
+    }),
+    Schema.Struct({ action: Schema.Literal("buttonHold"), button: MouseButton, ms: Schema.Finite }),
+    Schema.Struct({
+      action: Schema.Literal("drag"),
+      points: Schema.Array(Schema.Struct({ x: Schema.Finite, y: Schema.Finite })),
+      button: MouseButton,
+      ms: Schema.Finite,
+    }),
+    Schema.Struct({ action: Schema.Literal("type"), text: Schema.String }),
+    Schema.Struct({ action: Schema.Literals(["key", "doubleKey"]), key: Schema.String }),
+    Schema.Struct({ action: Schema.Literal("keyHold"), key: Schema.String, ms: Schema.Finite }),
+    Schema.Struct({
+      action: Schema.Literal("videoStart"),
+      name: Schema.String,
+      fps: Schema.optionalKey(Schema.Finite),
+    }),
+    Schema.Struct({ action: Schema.Literal("videoStop") }),
+  ]),
+);
+const RecipeSchema = Schema.Struct({ name: Schema.String, steps: Schema.Array(Schema.Unknown) });
+const CurrentSessionSchema = Schema.Struct({ id: Schema.String });
+const VideoSchema = Schema.Struct({
+  pid: Schema.Finite,
+  name: Schema.String,
+  file: Schema.String,
+  startedAt: Schema.String,
+  fps: Schema.optionalKey(Schema.Finite),
+  stoppedAt: Schema.optionalKey(Schema.String),
+});
+const SessionSchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  startedAt: Schema.String,
+  proxyPid: Schema.Finite,
+  port: Schema.Finite,
+  mode: Schema.Literals(["regular", "local"]),
+  gamePid: Schema.optionalKey(Schema.Finite),
+  videos: Schema.optionalKey(
+    Schema.Struct({
+      bedrock: Schema.optionalKey(VideoSchema),
+      java: Schema.optionalKey(VideoSchema),
+    }),
+  ),
+  stoppedAt: Schema.optionalKey(Schema.String),
+});
 
 const capturePath = (id: string) => join(captureRoot, id);
 const sessionFile = (id: string) => join(capturePath(id), "session.json");
@@ -116,8 +166,8 @@ async function save(session: Session): Promise<void> {
 }
 
 async function load(id?: string): Promise<Session> {
-  const selected = id ?? (JSON.parse(await readFile(currentPath, "utf8")) as { id: string }).id;
-  return JSON.parse(await readFile(sessionFile(checkId(selected)), "utf8")) as Session;
+  const selected = id ?? parseJson(CurrentSessionSchema, await readFile(currentPath, "utf8")).id;
+  return parseJson(SessionSchema, await readFile(sessionFile(checkId(selected)), "utf8"));
 }
 
 function alive(pid: number): boolean {
@@ -228,8 +278,8 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
   };
   await save(session);
   await writeFile(currentPath, `${JSON.stringify({ id })}\n`, { mode: 0o600 });
-  console.log(`Capture ${id} started. Private files: ${dir}`);
-  if (mode === "regular") console.log(`Proxy: http://127.0.0.1:${port}`);
+  print(`Capture ${id} started. Private files: ${dir}`);
+  if (mode === "regular") print(`Proxy: http://127.0.0.1:${port}`);
 }
 
 async function launchGame(): Promise<void> {
@@ -291,9 +341,7 @@ async function launchGame(): Promise<void> {
   if (!child.pid) throw new Error("Could not launch BedrockOnLinux.");
   session.gamePid = child.pid;
   await save(session);
-  console.log(
-    `BedrockOnLinux launch started for ${session.id}. Read the private game.log if it stops.`,
-  );
+  print(`BedrockOnLinux launch started for ${session.id}. Read the private game.log if it stops.`);
 }
 
 async function prepareLauncher(): Promise<string> {
@@ -339,7 +387,7 @@ async function mark(label: string): Promise<void> {
     `${JSON.stringify({ time: Date.now() / 1000, label })}\n`,
     { mode: 0o600 },
   );
-  console.log(`Marked: ${label}`);
+  print(`Marked: ${label}`);
 }
 
 async function stop(): Promise<void> {
@@ -349,7 +397,7 @@ async function stop(): Promise<void> {
   }
   const session = await load();
   if (session.stoppedAt) {
-    console.log(`Capture ${session.id} is already stopped.`);
+    print(`Capture ${session.id} is already stopped.`);
     return;
   }
   if (alive(session.proxyPid)) {
@@ -358,7 +406,7 @@ async function stop(): Promise<void> {
   }
   session.stoppedAt = new Date().toISOString();
   await save(session);
-  console.log(
+  print(
     `Capture ${session.id} stopped.${session.gamePid && alive(session.gamePid) ? " The game remains open." : ""}`,
   );
 }
@@ -406,14 +454,14 @@ async function startVideo(
   session.videos ??= {};
   session.videos[client] = { pid: child.pid, name, file, startedAt, fps };
   await save(session);
-  console.log(`Recording ${client}: ${file}`);
+  print(`Recording ${client}: ${file}`);
 }
 
 async function stopVideo(client: Client): Promise<void> {
   const session = await load();
   const video = session.videos?.[client];
   if (!video || video.stoppedAt) {
-    console.log(`No active ${client} video.`);
+    print(`No active ${client} video.`);
     return;
   }
   if (alive(video.pid)) process.kill(video.pid, "SIGINT");
@@ -430,7 +478,7 @@ async function stopVideo(client: Client): Promise<void> {
       ]);
       video.stoppedAt = new Date().toISOString();
       await save(session);
-      console.log(`Video saved: ${video.file}`);
+      print(`Video saved: ${video.file}`);
       return;
     } catch {
       await Bun.sleep(250);
@@ -473,13 +521,13 @@ async function compareVideo(before: string, after: string, client: Client): Prom
     "yuv420p",
     output,
   ]);
-  console.log(`Before on the left, after on the right: ${output}`);
+  print(`Before on the left, after on the right: ${output}`);
 }
 
 async function stopGame(): Promise<void> {
   const session = await load();
   if (!session.gamePid || !alive(session.gamePid)) {
-    console.log("The captured Bedrock client is stopped.");
+    print("The captured Bedrock client is stopped.");
     return;
   }
   if (!(await displayEnv()))
@@ -490,7 +538,7 @@ async function stopGame(): Promise<void> {
   for (let attempt = 0; attempt < 40 && alive(session.gamePid); attempt++) await Bun.sleep(250);
   if (alive(session.gamePid))
     throw new Error("Bedrock did not exit after Alt+F4. Check the private game.log.");
-  console.log("Stopped the captured Bedrock client.");
+  print("Stopped the captured Bedrock client.");
 }
 
 async function scenario(
@@ -500,10 +548,11 @@ async function scenario(
   allowFocus = false,
 ): Promise<void> {
   const path = resolve(root, file);
-  const recipe = JSON.parse(await readFile(path, "utf8")) as { name: string; steps: Step[] };
-  if (!Array.isArray(recipe.steps)) throw new Error("Scenario needs a steps array.");
-  console.log(`Running ${recipe.name}`);
+  const recipe: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (!Schema.is(RecipeSchema)(recipe)) throw new Error("Scenario needs a name and a steps array.");
+  print(`Running ${recipe.name}`);
   for (const step of recipe.steps) {
+    if (!isStep(step)) throw new Error("Unknown scenario action.");
     switch (step.action) {
       case "mark":
         await mark(step.label);
@@ -514,7 +563,7 @@ async function scenario(
         await Bun.sleep(step.ms);
         break;
       case "screenshot":
-        console.log(await screenshot(step.name, windowId, client));
+        print(await screenshot(step.name, windowId, client));
         break;
       case "click":
         await click(step.x, step.y, windowId, client, allowFocus, step.button);
@@ -555,29 +604,36 @@ async function scenario(
   }
 }
 
-interface EventSummary {
-  time: number;
-  host: string;
-  method: string;
-  path: string;
-  status: number;
-  request_body: unknown;
-  response_body: unknown;
-}
+const EventSummarySchema = Schema.Struct({
+  time: Schema.Finite,
+  host: Schema.String,
+  method: Schema.String,
+  path: Schema.String,
+  status: Schema.Finite,
+  request_body: Schema.Unknown,
+  response_body: Schema.Unknown,
+});
+type EventSummary = typeof EventSummarySchema.Type;
 
-async function records<T>(path: string): Promise<T[]> {
+async function records<S extends Schema.Decoder<unknown>>(
+  path: string,
+  schema: S,
+): Promise<S["Type"][]> {
   if (!existsSync(path)) return [];
   return (await readFile(path, "utf8"))
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as T);
+    .map((line) => parseJson(schema, line));
 }
 
 async function report(id?: string): Promise<string> {
   const session = await load(id);
   const dir = capturePath(session.id);
-  const events = await records<EventSummary>(join(dir, "events.jsonl"));
-  const markers = await records<{ time: number; label: string }>(join(dir, "markers.jsonl"));
+  const events = await records(join(dir, "events.jsonl"), EventSummarySchema);
+  const markers = await records(
+    join(dir, "markers.jsonl"),
+    Schema.Struct({ time: Schema.Finite, label: Schema.String }),
+  );
   const groups = new Map<
     string,
     { count: number; statuses: Set<number>; request: unknown; response: unknown; marker: string }
@@ -585,8 +641,8 @@ async function report(id?: string): Promise<string> {
   for (const event of events) {
     const marker =
       markers.findLast((entry) => entry.time <= event.time)?.label ?? "Before first marker";
-    const key = `${marker}\t${event.method} ${event.host}${event.path}`;
-    const group = groups.get(key) ?? {
+    const groupKey = `${marker}\t${event.method} ${event.host}${event.path}`;
+    const group = groups.get(groupKey) ?? {
       count: 0,
       statuses: new Set<number>(),
       request: event.request_body,
@@ -595,7 +651,7 @@ async function report(id?: string): Promise<string> {
     };
     group.count++;
     group.statuses.add(event.status);
-    groups.set(key, group);
+    groups.set(groupKey, group);
   }
   const lines = [
     `# Capture: ${session.name}`,
@@ -606,8 +662,8 @@ async function report(id?: string): Promise<string> {
     `Redacted HTTP responses: ${events.length}`,
     "",
   ];
-  for (const [key, group] of groups) {
-    const endpoint = key.split("\t")[1];
+  for (const [groupKey, group] of groups) {
+    const endpoint = groupKey.split("\t")[1];
     lines.push(
       `## ${group.marker}: ${endpoint}`,
       "",
@@ -632,23 +688,30 @@ async function report(id?: string): Promise<string> {
     );
   const output = join(dir, "report.md");
   await writeFile(output, `${lines.join("\n")}\n`, { mode: 0o600 });
-  console.log(`Redacted report: ${output}`);
+  print(`Redacted report: ${output}`);
   return output;
 }
 
+const endpoints = (events: readonly EventSummary[]) =>
+  new Set(events.map(({ method, host, path }) => `${method} ${host}${path}`));
+
 async function compare(firstId: string, secondId: string): Promise<void> {
-  const first = await records<EventSummary>(join(capturePath(checkId(firstId)), "events.jsonl"));
-  const second = await records<EventSummary>(join(capturePath(checkId(secondId)), "events.jsonl"));
-  const endpoints = (events: EventSummary[]) =>
-    new Set(events.map(({ method, host, path }) => `${method} ${host}${path}`));
+  const first = await records(
+    join(capturePath(checkId(firstId)), "events.jsonl"),
+    EventSummarySchema,
+  );
+  const second = await records(
+    join(capturePath(checkId(secondId)), "events.jsonl"),
+    EventSummarySchema,
+  );
   const before = endpoints(first);
   const after = endpoints(second);
-  console.log(`Only in ${firstId}:`);
+  print(`Only in ${firstId}:`);
   for (const endpoint of [...before].filter((value) => !after.has(value)).toSorted())
-    console.log(`  ${endpoint}`);
-  console.log(`Only in ${secondId}:`);
+    print(`  ${endpoint}`);
+  print(`Only in ${secondId}:`);
   for (const endpoint of [...after].filter((value) => !before.has(value)).toSorted())
-    console.log(`  ${endpoint}`);
+    print(`  ${endpoint}`);
 }
 
 async function doctor(): Promise<void> {
@@ -664,15 +727,15 @@ async function doctor(): Promise<void> {
       ? "generated"
       : "not generated yet",
   };
-  console.log(JSON.stringify(checks, null, 2));
+  print(JSON.stringify(checks, null, 2));
   if (checks.display !== "missing" && checks.compiler !== "missing")
-    console.log(`Visible native Wayland windows: ${(await windows()).length}`);
+    print(`Visible native Wayland windows: ${(await windows()).length}`);
 }
 
 async function status(): Promise<void> {
   const session = await load();
-  const events = await records<EventSummary>(join(capturePath(session.id), "events.jsonl"));
-  console.log(
+  const events = await records(join(capturePath(session.id), "events.jsonl"), EventSummarySchema);
+  print(
     JSON.stringify(
       {
         ...session,
@@ -699,7 +762,7 @@ async function main(): Promise<void> {
     case "game-stop":
       return stopGame();
     case "prepare-launcher":
-      console.log(await prepareLauncher());
+      print(await prepareLauncher());
       return;
     case "mark":
       return mark(args.join(" "));
@@ -751,7 +814,7 @@ async function main(): Promise<void> {
         return scenario(args[1], windowId, client, args.includes("--allow-focus"));
       }
       const result = await ui.command(["ui", ...args]);
-      if (result) console.log(result);
+      if (result) print(result);
       return;
     }
     default:
@@ -762,13 +825,8 @@ async function main(): Promise<void> {
 }
 
 try {
-  await Effect.runPromise(
-    Effect.tryPromise({
-      try: main,
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+  await main();
 } catch (error: unknown) {
-  console.error(error instanceof Error ? error.message : error);
+  printError(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 }

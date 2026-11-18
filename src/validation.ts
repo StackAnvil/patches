@@ -3,13 +3,16 @@ import { closeSync, openSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { parseArgs } from "node:util";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { artifact } from "./client-artifacts.ts";
 import { root, targetIds } from "./model.ts";
 import { git } from "./process.ts";
 import type { ViaFabricPlusPin } from "./viafabricplus.ts";
+import { isOneOf } from "./guards.ts";
+import { print, printError } from "./output.ts";
 
-export type ValidationProfile = "offline" | "build" | "release" | "lifecycle";
+const validationProfiles = ["offline", "build", "release", "lifecycle"] as const;
+export type ValidationProfile = (typeof validationProfiles)[number];
 export interface ValidationStep {
   id: string;
   args: string[];
@@ -21,6 +24,33 @@ export interface ArtifactEvidence {
   file: string;
   sha256: string;
 }
+export const ValidationReportSchema = Schema.Struct({
+  schema: Schema.Literal(1),
+  runId: Schema.String,
+  revision: Schema.String,
+  dirty: Schema.Boolean,
+  profile: Schema.Literals(validationProfiles),
+  startedAt: Schema.String,
+  finishedAt: Schema.optionalKey(Schema.String),
+  status: Schema.Literals(["running", "passed", "failed"]),
+  environment: Schema.Struct({ platform: Schema.String, arch: Schema.String, bun: Schema.String }),
+  steps: Schema.mutable(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        args: Schema.mutable(Schema.Array(Schema.String)),
+        status: Schema.Literals(["not-run", "running", "passed", "failed"]),
+        durationMs: Schema.optionalKey(Schema.Finite),
+        exitCode: Schema.optionalKey(Schema.Finite),
+      }),
+    ),
+  ),
+  artifacts: Schema.mutable(
+    Schema.Array(Schema.Struct({ file: Schema.String, sha256: Schema.String })),
+  ),
+  limitations: Schema.mutable(Schema.Array(Schema.String)),
+  failure: Schema.optionalKey(Schema.String),
+});
 export interface ValidationReport {
   schema: 1;
   runId: string;
@@ -257,7 +287,7 @@ async function validate(profile: ValidationProfile, cycles: number): Promise<Val
     const checksPassed = await runValidationSteps(
       report,
       async (step) => {
-        console.log(`Running ${step.id}`);
+        print(`Running ${step.id}`);
         const log = join(logs, `${step.id}.log`);
         const descriptor = openSync(log, "wx", 0o600);
         try {
@@ -270,7 +300,7 @@ async function validate(profile: ValidationProfile, cycles: number): Promise<Val
           const code = await child.exited;
           // Build/test diagnostics were already public in CI. Account-based lifecycle logs stay private.
           if (profile !== "lifecycle") process.stdout.write(await readFile(log, "utf8"));
-          console.log(`${step.id}: ${code === 0 ? "passed" : "failed"}`);
+          print(`${step.id}: ${code === 0 ? "passed" : "failed"}`);
           return code;
         } finally {
           closeSync(descriptor);
@@ -297,12 +327,12 @@ async function validate(profile: ValidationProfile, cycles: number): Promise<Val
   } catch (error) {
     report.status = "failed";
     report.failure = failureContext;
-    console.error(error instanceof Error ? error.message : String(error));
+    printError(error instanceof Error ? error.message : String(error));
   } finally {
     report.finishedAt = new Date().toISOString();
     await persist();
   }
-  console.log(`Evidence: ${output}\nPrivate command logs: ${logs}`);
+  print(`Evidence: ${output}\nPrivate command logs: ${logs}`);
   return report;
 }
 
@@ -313,26 +343,27 @@ if (import.meta.main) {
     options: { cycles: { type: "string" }, help: { type: "boolean", short: "h" } },
   });
   if (values.help) {
-    console.log(
+    print(
       "Usage: bun run validate <offline|build|release|lifecycle> [--cycles 1..10]\nLifecycle uses prepared local builds and private game profiles.",
     );
   } else {
     const profile = positionals[0];
     if (
       positionals.length !== 1 ||
-      !["offline", "build", "release", "lifecycle"].includes(profile ?? "") ||
+      profile === undefined ||
+      !isOneOf(validationProfiles, profile) ||
       (values.cycles !== undefined && profile !== "lifecycle")
     )
       throw new Error(
         "Choose offline, build, release, or lifecycle. Only lifecycle accepts --cycles.",
       );
     const cycles = values.cycles === undefined ? 3 : Number(values.cycles);
-    validationSteps(profile as ValidationProfile, cycles);
+    validationSteps(profile, cycles);
     try {
-      const report = await validate(profile as ValidationProfile, cycles);
+      const report = await validate(profile, cycles);
       if (report.status !== "passed") process.exitCode = 1;
     } catch (error: unknown) {
-      console.error(error instanceof Error ? error.message : String(error));
+      printError(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     }
   }

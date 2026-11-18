@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { errorCode } from "../guards.ts";
 
 export interface ProcessIdentity {
   pid: number;
@@ -20,11 +21,7 @@ function entry(pid: number): ProcessEntry | undefined {
     if (fields[0] === "Z") return undefined;
     return { pid, parent: Number(fields[1]), startTicks: fields[19] };
   } catch (error) {
-    if (
-      (error as NodeJS.ErrnoException).code === "ENOENT" ||
-      (error as NodeJS.ErrnoException).code === "ESRCH"
-    )
-      return undefined;
+    if (errorCode(error) === "ENOENT" || errorCode(error) === "ESRCH") return undefined;
     throw error;
   }
 }

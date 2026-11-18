@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useHydrated } from "@tanstack/react-router";
 import { ArrowDownToLine, GitPullRequestArrow, Server, Sparkles } from "lucide-react";
 import release from "virtual:stackanvil-release";
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import { NextSteps, SetupStage } from "../components/downloads";
 import { Faq } from "../components/faq";
 import { FeatureHotbar } from "../components/hotbar";
@@ -62,7 +62,7 @@ function Home() {
       <section className="hero">
         <div className="hero-intro shell-width">
           <h1 id="stackanvil">Play Bedrock servers from Java Edition</h1>
-          <div className="hero-aside">
+          <div>
             <p className="lead">
               StackAnvil translates between the two editions on your computer. Keep your Java client
               and join Bedrock servers, Realms, and friends' worlds.
@@ -109,7 +109,7 @@ function Home() {
       </section>
 
       <section className="works-section" aria-labelledby="what-works">
-        <div className="shell-width works-grid">
+        <div className="shell-width">
           <div className="section-heading">
             <h2 id="what-works">What already works</h2>
             <p>
@@ -176,7 +176,7 @@ function Home() {
       <section className="finale" aria-labelledby="latest-build">
         <div className="finale-sparks" aria-hidden="true">
           {Array.from({ length: 16 }, (_, index) => (
-            <span key={index} style={{ "--n": index } as CSSProperties} />
+            <span key={index} style={{ "--n": index }} />
           ))}
         </div>
         <div className="shell-width finale-inner">

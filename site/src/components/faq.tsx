@@ -21,17 +21,16 @@ export function Faq({ items }: { items: { question: string; answer: string }[] }
                 <Plus className="faq-icon" size={20} aria-hidden="true" />
               </button>
             </h3>
-            <div
+            <section
               className="faq-answer"
               id={`faq-${index}`}
-              role="region"
               aria-labelledby={`faq-q-${index}`}
               inert={!expanded}
             >
               <div>
                 <p>{answer}</p>
               </div>
-            </div>
+            </section>
           </div>
         );
       })}

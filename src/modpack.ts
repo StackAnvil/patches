@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import { clientArtifacts } from "./client-artifacts.ts";
 import { root } from "./model.ts";
 import type { ViaFabricPlusPin } from "./viafabricplus.ts";
@@ -12,6 +12,12 @@ const execute = promisify(execFile);
 
 // Client overrides keep the verified Jenkins and StackAnvil JARs in the pack.
 // Importing does not require a modpack project or URLs for unpublished builds.
+/** The client modpack could not be bundled. */
+export class ModpackError extends Data.TaggedError("ModpackError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
 export const bundleModpack = Effect.fn("bundleModpack")(function* (
   artifactsDir = join(root, "dist"),
   outputDir = join(root, "dist", "modpack"),
@@ -70,6 +76,10 @@ export const bundleModpack = Effect.fn("bundleModpack")(function* (
         await rm(staging, { recursive: true, force: true });
       }
     },
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    catch: (cause) =>
+      new ModpackError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
   });
 });

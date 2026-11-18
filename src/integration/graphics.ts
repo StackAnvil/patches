@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { Effect } from "effect";
 import { root } from "../model.ts";
 import { installPrism } from "../prism.ts";
-import { installModpack, verifiedDownload, type PackFile } from "./modpack.ts";
+import { Schema } from "effect";
+import { parseJson } from "../guards.ts";
+import { installModpack, PackFileSchema, verifiedDownload, type PackFile } from "./modpack.ts";
+import { print, printError } from "../output.ts";
 
 export type GraphicsProfile = "plain" | "optimized" | "shaders";
 export const integrationPrismNames: Record<GraphicsProfile, string> = {
@@ -13,6 +15,16 @@ export const integrationPrismNames: Record<GraphicsProfile, string> = {
   shaders: "Fabulously Optimized Shaders StackAnvil Integration 26.3",
 };
 
+const GraphicsLockSchema = Schema.Struct({
+  minecraft: Schema.String,
+  replacements: Schema.Record(Schema.String, PackFileSchema),
+  shader: Schema.Struct({
+    filename: Schema.String,
+    downloads: Schema.mutable(Schema.Array(Schema.String)),
+    sha512: Schema.String,
+    options: Schema.Record(Schema.String, Schema.String),
+  }),
+});
 interface GraphicsLock {
   minecraft: string;
   replacements: Record<string, PackFile>;
@@ -23,11 +35,15 @@ interface GraphicsLock {
     options: Record<string, string>;
   };
 }
+const MinecraftComponentsSchema = Schema.Struct({
+  components: Schema.Array(Schema.Struct({ uid: Schema.String, version: Schema.String })),
+});
 
 export async function readGraphicsLock(): Promise<GraphicsLock> {
-  const lock = JSON.parse(
+  const lock: GraphicsLock = parseJson(
+    GraphicsLockSchema,
     await readFile(join(root, "integration/modpacks/bedrock-shaders.json"), "utf8"),
-  ) as GraphicsLock;
+  );
   if (
     !/^[A-Za-z0-9_.+-]+\.zip$/.test(lock.shader.filename) ||
     !/^[a-f0-9]{128}$/.test(lock.shader.sha512)
@@ -95,9 +111,10 @@ export async function configureShaders(
 
 export async function installGraphicsProfile(instance: string): Promise<void> {
   const lock = await readGraphicsLock();
-  const pack = JSON.parse(await readFile(join(instance, "mmc-pack.json"), "utf8")) as {
-    components: { uid: string; version: string }[];
-  };
+  const pack = parseJson(
+    MinecraftComponentsSchema,
+    await readFile(join(instance, "mmc-pack.json"), "utf8"),
+  );
   if (
     pack.components.find((component) => component.uid === "net.minecraft")?.version !==
     lock.minecraft
@@ -143,18 +160,11 @@ export function graphicsFailures(clientLog: string, shaderFilename?: string): st
 
 if (import.meta.main) {
   try {
-    await Effect.runPromise(
-      Effect.tryPromise({
-        try: async () => {
-          const instance = await installPrism(integrationPrismNames.shaders);
-          await installGraphicsProfile(instance);
-          console.log(`Prepared ${integrationPrismNames.shaders}: ${instance}`);
-        },
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      }),
-    );
+    const instance = await installPrism(integrationPrismNames.shaders);
+    await installGraphicsProfile(instance);
+    print(`Prepared ${integrationPrismNames.shaders}: ${instance}`);
   } catch (error: unknown) {
-    console.error(error);
+    printError(error);
     process.exitCode = 1;
   }
 }

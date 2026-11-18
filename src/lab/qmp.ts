@@ -1,10 +1,19 @@
 import { createConnection } from "node:net";
-import { Data, Deferred, Effect } from "effect";
+import { Data, Deferred, Effect, Schema } from "effect";
 
 export class QmpError extends Data.TaggedError("QmpError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+const isQmpMessage = Schema.is(
+  Schema.Struct({
+    QMP: Schema.optionalKey(Schema.Unknown),
+    id: Schema.optionalKey(Schema.Finite),
+    return: Schema.optionalKey(Schema.Unknown),
+    error: Schema.optionalKey(Schema.Struct({ desc: Schema.optionalKey(Schema.String) })),
+  }),
+);
 
 export type QmpEffectCommand = (
   execute: string,
@@ -52,14 +61,8 @@ export function withQmpEffect<A, E, R>(
               buffer = buffer.slice(newline + 1);
               if (!line) continue;
               try {
-                const message = JSON.parse(line) as {
-                  QMP?: unknown;
-                  id?: number;
-                  return?: unknown;
-                  error?: { desc?: string };
-                };
-                if (!message || typeof message !== "object")
-                  throw new Error("Expected a QMP message");
+                const message: unknown = JSON.parse(line);
+                if (!isQmpMessage(message)) throw new Error("Expected a QMP message");
                 if (message.QMP) Deferred.doneUnsafe(greeting, Effect.void);
                 if (message.id === undefined) continue;
                 const reply = pending.get(message.id);
@@ -113,7 +116,7 @@ export function withQmpEffect<A, E, R>(
             close: () => fail(new QmpError({ message: "QMP scope closed." })),
           };
         }),
-        (session) => Effect.sync(session.close),
+        (opened) => Effect.sync(opened.close),
       );
       yield* Deferred.await(session.greeting);
       yield* session.command("qmp_capabilities");

@@ -1,4 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
+import { Schema } from "effect";
 import { builtinUiManifest } from "./bedrock-ui.ts";
 import { zipEntries } from "./zip.ts";
 
@@ -21,6 +22,25 @@ export interface OreUiDescriptor {
   languages: string[];
   images?: string[];
 }
+
+const isOreUiDescriptor = Schema.is(
+  Schema.Struct({
+    format: Schema.Finite,
+    version: Schema.String,
+    stylesheet: Schema.String,
+    fonts: Schema.Array(
+      Schema.Struct({
+        family: Schema.String,
+        file: Schema.String,
+        weight: Schema.Finite,
+        style: Schema.String,
+        sdf: Schema.Literals(["default", "off"]),
+      }),
+    ),
+    languages: Schema.Array(Schema.String),
+    images: Schema.optionalKey(Schema.Array(Schema.String)),
+  }),
+);
 
 /** Read the declarations used by the acquired gameplay stylesheet, including Gameface's SDF opt-out. */
 export function oreUiFonts(css: string): OreUiFont[] {
@@ -86,9 +106,8 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
     )
       throw new Error("Invalid bundled OreUI image");
   }
-  const descriptor = JSON.parse(
-    entries.get("oreui.json")?.().toString("utf8") ?? "null",
-  ) as OreUiDescriptor | null;
+  const parsed: unknown = JSON.parse(entries.get("oreui.json")?.().toString("utf8") ?? "null");
+  const descriptor = isOreUiDescriptor(parsed) ? parsed : undefined;
   if (
     descriptor?.format !== 1 ||
     descriptor.version !== version ||

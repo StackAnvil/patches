@@ -3,6 +3,8 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zipEntries } from "./zip.ts";
+import { isOneOf } from "./guards.ts";
+import { print } from "./output.ts";
 
 export const oreUiShaperResource = "assets/viafabricplus-bedrock/oreui-shaper";
 export const oreUiShaperPlatforms = [
@@ -141,9 +143,13 @@ export async function verifyEmbeddedOreUiShaper(
 
 if (import.meta.main) {
   const [directory, requested] = process.argv.slice(2);
-  if (!directory || (requested && !oreUiShaperPlatforms.includes(requested as OreUiShaperPlatform)))
+  const targets = !requested
+    ? oreUiShaperPlatforms
+    : isOneOf(oreUiShaperPlatforms, requested)
+      ? [requested]
+      : [];
+  if (!directory || targets.length === 0)
     throw new Error("Usage: bun src/oreui-shaper.ts <installed-resources> [platform-architecture]");
-  for (const target of requested ? [requested as OreUiShaperPlatform] : oreUiShaperPlatforms)
-    await verifyOreUiShaper(directory, target);
-  console.log("OreUI shaper resources verified");
+  for (const target of targets) await verifyOreUiShaper(directory, target);
+  print("OreUI shaper resources verified");
 }

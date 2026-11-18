@@ -1,7 +1,8 @@
 import { cp, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "../model.ts";
-import { registerWorldPack } from "./world-packs.ts";
+import { parseJson } from "../guards.ts";
+import { PackManifestSchema, registerWorldPack } from "./world-packs.ts";
 
 export const authoredInventoryCaseIds = [
   "chest-authored-one-empty",
@@ -17,9 +18,10 @@ export async function installInventoryUiProbe(
   worldName: string,
 ): Promise<void> {
   const source = join(root, "test-packs", "inventory-ui-probe", "resource_pack");
-  const manifest = JSON.parse(await readFile(join(source, "manifest.json"), "utf8")) as {
-    header: { uuid: string; version: number[] };
-  };
+  const manifest = parseJson(
+    PackManifestSchema,
+    await readFile(join(source, "manifest.json"), "utf8"),
+  );
   const pack = join(serverHome, "resource_packs", "stackanvil-inventory-ui-probe");
   await cp(source, pack, { recursive: true });
   const world = join(serverHome, "worlds", worldName);

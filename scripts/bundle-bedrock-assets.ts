@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { deflateRawSync } from "node:zlib";
-import { Effect } from "effect";
 import JSON5 from "json5";
+import { print } from "../src/output.ts";
 
 const archiveLimit = 48 * 1024 * 1024;
 const fileLimit = 32 * 1024 * 1024;
@@ -45,7 +45,7 @@ export function readBedrockArchive(data: Uint8Array): Map<string, Buffer> {
   let expanded = 0;
   for (let index = 0; index < count; index++) {
     const record = 16 + index * 256;
-    const length = bytes[record]!;
+    const length = bytes[record];
     if (length === 0 || length > 247) throw new Error("Invalid Bedrock archive name");
     const name = new TextDecoder("utf-8", { fatal: true }).decode(
       bytes.subarray(record + 1, record + 1 + length),
@@ -129,6 +129,11 @@ async function* walk(root: string): AsyncGenerator<string> {
   }
 }
 
+function attachableIdentifier(bytes: Buffer): string | undefined {
+  const description = JSON5.parse(bytes.toString("utf8"))["minecraft:attachable"]?.description;
+  return typeof description?.identifier === "string" ? description.identifier : undefined;
+}
+
 export async function bundleBedrockAssets(game: string, version: string, destination: string) {
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(version))
     throw new Error("Expected a four-part Bedrock version");
@@ -191,10 +196,6 @@ export async function bundleBedrockAssets(game: string, version: string, destina
   // Native attachables outside resource packs form the lowest-priority vanilla layer.
   // A resource-pack definition for the same identifier must retain precedence.
   const attachableIdentifiers = new Set<string>();
-  function attachableIdentifier(bytes: Buffer): string | undefined {
-    const description = JSON5.parse(bytes.toString("utf8"))["minecraft:attachable"]?.description;
-    return typeof description?.identifier === "string" ? description.identifier : undefined;
-  }
   for (const [path, bytes] of files) {
     if (path.startsWith("library/") && path.includes("/attachables/") && path.endsWith(".json")) {
       const identifier = attachableIdentifier(bytes);
@@ -276,9 +277,5 @@ if (import.meta.main) {
     "viafabricplus-bedrock",
     "builtin",
   );
-  console.log(
-    await Effect.runPromise(
-      Effect.tryPromise(() => bundleBedrockAssets(game, version, destination)),
-    ),
-  );
+  print(await bundleBedrockAssets(game, version, destination));
 }

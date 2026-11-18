@@ -17,6 +17,7 @@ import {
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { requirePrivateCopySpace } from "../copy-space.ts";
+import { errorCode, isRecord } from "../guards.ts";
 
 const execute = promisify(execFile);
 const ownerFile = ".stackanvil-source";
@@ -64,7 +65,7 @@ async function requireAbsent(path: string): Promise<void> {
   try {
     await lstat(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if (errorCode(error) === "ENOENT") return;
     throw error;
   }
   throw new Error("The native profile migration destination already exists.");
@@ -79,10 +80,7 @@ export async function requireNativeProfileIdle(profile: string): Promise<void> {
     try {
       environment = await readFile(`/proc/${name}/environ`);
     } catch (error) {
-      if (
-        ["ENOENT", "ESRCH", "EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")
-      )
-        continue;
+      if (["ENOENT", "ESRCH", "EACCES", "EPERM"].includes(errorCode(error) ?? "")) continue;
       throw error;
     }
     if (environment.toString().split("\0").includes(expected))
@@ -115,7 +113,7 @@ async function requireOwnedContent(runtime: string, validate: () => Promise<void
     if (!(await lstat(join(runtime, "content"))).isSymbolicLink())
       throw new Error("The native profile content path is not an owned symbolic link.");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (errorCode(error) !== "ENOENT") throw error;
   }
 }
 
@@ -144,7 +142,7 @@ async function sharedGames(
   const games = join(runtime, "games");
   await validate();
   const metadata = await lstat(games).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (errorCode(error) !== "ENOENT") throw error;
     return undefined;
   });
   if (metadata?.isSymbolicLink()) {
@@ -163,7 +161,7 @@ async function sharedGames(
         "The cached native profile has an unresolved GPU launch marker. Resolve it with the launcher's doctor before migrating the profile.",
       );
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (errorCode(error) !== "ENOENT") throw error;
     }
     await requireAbsent(join(runtime, ".stackanvil-games"));
     await rename(games, join(runtime, ".stackanvil-games"));
@@ -223,11 +221,12 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
     throw new Error("The native profile requires a separate owned installation directory.");
   }
   await plainFile(join(source, "settings.json"));
-  const original = JSON.parse(await readFile(join(source, "settings.json"), "utf8")) as Record<
-    string,
-    unknown
-  >;
-  if (typeof original.mc_version !== "string" || !/^1\.26\.60(?:\.|$)/.test(original.mc_version)) {
+  const original: unknown = JSON.parse(await readFile(join(source, "settings.json"), "utf8"));
+  if (
+    !isRecord(original) ||
+    typeof original.mc_version !== "string" ||
+    !/^1\.26\.60(?:\.|$)/.test(original.mc_version)
+  ) {
     throw new Error("Native recording requires the official Bedrock 1.26.60 client.");
   }
   const sourcePaths: Record<string, string> = {};
@@ -257,7 +256,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
       if ((await readFile(join(runtime, ownerFile), "utf8")) !== source)
         throw new Error("The native profile belongs to a different source installation.");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (errorCode(error) !== "ENOENT") throw error;
       // An existing partial copy must never be merged with a second preparation.
       await requireAbsent(runtime);
       const entries = (await readdir(source)).filter((entry) => !sharedState.has(entry));
@@ -286,7 +285,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
       try {
         await plainFile(marker);
       } catch (markerError) {
-        if ((markerError as NodeJS.ErrnoException).code !== "ENOENT") throw markerError;
+        if (errorCode(markerError) !== "ENOENT") throw markerError;
       }
       await writeFile(marker, source, { mode: 0o600 });
       await chmod(marker, 0o600);
@@ -302,10 +301,18 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
     await validate();
     await sharedGames(runtime, sourceGames, validate);
     await plainFile(join(runtime, "settings.json"));
-    const settings = JSON.parse(
+    const runtimeSettings: unknown = JSON.parse(
       await readFile(join(runtime, "settings.json"), "utf8"),
-    ) as NativeProfile["settings"];
-    settings.mc_version = original.mc_version;
+    );
+    if (!isRecord(runtimeSettings))
+      throw new Error("The copied native profile settings are not an object.");
+    const settings: NativeProfile["settings"] = {
+      ...runtimeSettings,
+      mc_version: original.mc_version,
+      // The loop below maps both installation paths into the private profile.
+      game_dir: "",
+      proton: "",
+    };
     settings.input_backend = "wayland";
     settings.gamescope = "0";
     for (const key of ["game_dir", "proton"] as const) {
@@ -324,7 +331,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
                 return join(runtime, ".stackanvil-game");
               },
               (error) => {
-                if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+                if (errorCode(error) !== "ENOENT") throw error;
                 return join(runtime, ".stackanvil-games", relative(sourceGames, sourcePaths[key]));
               },
             )

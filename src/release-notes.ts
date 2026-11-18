@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { getSeries, getTarget, root, targetIds } from "./model.ts";
 import { parsePatchMessage } from "./patch-message.ts";
 import { releaseDownloadSection } from "./release-downloads.ts";
+import { readViaFabricPlusPin } from "./viafabricplus.ts";
 
 const repository = process.env.GITHUB_REPOSITORY ?? "StackAnvil/patches";
 const commit =
@@ -64,11 +65,7 @@ const lines = [
   "The CubeConverter and ViaBedrock JARs are also available for projects that use those libraries. The [StackAnvil Maven repository](https://github.com/StackAnvil/maven) publishes the four StackAnvil builds under the matching release version.",
   "",
 ];
-const viaFabricPlusPin = JSON.parse(await readFile(join(root, "viafabricplus.json"), "utf8")) as {
-  build: number;
-  commit: string;
-  version: string;
-};
+const viaFabricPlusPin = await readViaFabricPlusPin();
 lines.push(
   "## ViaFabricPlus",
   "",

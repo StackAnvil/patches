@@ -3,11 +3,12 @@ import { basename, join } from "node:path";
 import { createHash } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { parseJson } from "./guards.ts";
 import { buildOrder } from "./dependencies.ts";
 import { getTarget, getTargets, listArtifacts, root, type Target } from "./model.ts";
 import { command } from "./process.ts";
-import { sync } from "./stack.ts";
+import { StackError, sync } from "./stack.ts";
 import { prepareViaFabricPlus } from "./viafabricplus.ts";
 import { verifyBuiltinUi, verifyEmbeddedBuiltinUi, builtinUiResource } from "./bedrock-ui.ts";
 import {
@@ -23,6 +24,7 @@ import {
 
 import { prepareBuiltinImages, verifyEmbeddedBuiltinImages } from "./bedrock-images.ts";
 import { oreUiShaperArguments, verifyEmbeddedOreUiShaper } from "./oreui-shaper.ts";
+import { print } from "./output.ts";
 
 interface Coordinates {
   group: string;
@@ -35,11 +37,14 @@ const oreUiShaperDirectory = (repository = root) =>
   process.env.STACKANVIL_OREUI_SHAPER_RESOURCES ??
   join(repository, ".stackanvil", "tools", "oreui-shaper-resources");
 
+const BedrockAssetsSchema = Schema.Struct({ version: Schema.String });
+
 export async function builtinAssetArguments(id: string, repository = root): Promise<string[]> {
   if (id !== "viafabricplus-bedrock" && id !== "viabedrock") return [];
-  const { version } = JSON.parse(
+  const { version } = parseJson(
+    BedrockAssetsSchema,
     await readFile(join(repository, "bedrock-assets.json"), "utf8"),
-  ) as { version: string };
+  );
   if (!/^\d+\.\d+\.\d+\.\d+$/.test(version))
     throw new Error("Invalid bundled Bedrock asset version");
   const directory = join(repository, "assets", "bedrock", version);
@@ -149,9 +154,9 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   const viaFabricPlusVersion =
     id === "viafabricplus-bedrock" ? built.get("viafabricplus")?.version : undefined;
   if (id === "viafabricplus-bedrock" && !viaFabricPlusVersion) {
-    return yield* Effect.fail(
-      new Error("The Bedrock add-on needs a pinned ViaFabricPlus artifact"),
-    );
+    return yield* new StackError({
+      message: "The Bedrock add-on needs a pinned ViaFabricPlus artifact",
+    });
   }
   yield* command(
     "bash",
@@ -171,9 +176,10 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   );
   const { artifact, pom, coordinate } = yield* Effect.promise(() => readBuildArtifact(dir, target));
   if (["viabedrock", "viafabricplus-bedrock", "viaproxy"].includes(id)) {
-    const { version } = JSON.parse(
+    const { version } = parseJson(
+      BedrockAssetsSchema,
       yield* Effect.promise(() => readFile(join(root, "bedrock-assets.json"), "utf8")),
-    ) as { version: string };
+    );
     yield* Effect.promise(() =>
       verifyEmbeddedBuiltinUi(
         artifact,
@@ -209,9 +215,9 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   }
   const name = basename(artifact);
   if (!name.endsWith("-StackAnvil.jar")) {
-    return yield* Effect.fail(
-      new Error(`Branding patch did not suffix ${name} with -StackAnvil.jar`),
-    );
+    return yield* new StackError({
+      message: `Branding patch did not suffix ${name} with -StackAnvil.jar`,
+    });
   }
   const output = join(root, "dist", id);
   yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
@@ -248,7 +254,7 @@ export const build = Effect.fn("build")(function* (id: string) {
   const built = new Map<string, Coordinates>();
   const includeViaFabricPlus = id === "viafabricplus" || order.includes("viafabricplus-bedrock");
   if (includeViaFabricPlus) {
-    console.log("Fetching pinned ViaFabricPlus Jenkins build");
+    print("Fetching pinned ViaFabricPlus Jenkins build");
     const { pin } = yield* Effect.promise(() => prepareViaFabricPlus());
     built.set("viafabricplus", {
       group: "com.viaversion",
@@ -257,7 +263,7 @@ export const build = Effect.fn("build")(function* (id: string) {
     });
   }
   for (const [index, target] of order.entries()) {
-    console.log(`Building ${target} (${index + 1}/${order.length})`);
+    print(`Building ${target} (${index + 1}/${order.length})`);
     yield* buildOne(target, built);
   }
   return [...(includeViaFabricPlus ? ["viafabricplus"] : []), ...order]
@@ -280,7 +286,7 @@ export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: s
     listArtifacts(artifactProjectDirectory(dir, target.artifactProject)),
   );
   if (!artifacts.length)
-    return yield* Effect.fail(new Error(`No PR JAR artifacts found for ${id}`));
+    return yield* new StackError({ message: `No PR JAR artifacts found for ${id}` });
   const output = patchFile
     ? join(root, "dist", "pr", id, patchFile.replace(/\.patch$/, ""))
     : join(root, "dist", "pr", id);

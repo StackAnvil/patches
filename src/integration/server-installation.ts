@@ -5,6 +5,7 @@ import { lstat, mkdir, readdir, realpath, rm, statfs } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { requirePrivateCopySpace } from "../copy-space.ts";
+import { errorCode } from "../guards.ts";
 
 const execute = promisify(execFile);
 const dependencyEntries = ["bedrock_server", "definitions"];
@@ -50,7 +51,7 @@ async function copyBytes(path: string): Promise<number> {
   return state.size;
 }
 
-async function treeDigest(path: string): Promise<string> {
+async function treeDigest(tree: string): Promise<string> {
   const digest = createHash("sha256");
   async function visit(path: string): Promise<void> {
     const state = await lstat(path);
@@ -67,7 +68,7 @@ async function treeDigest(path: string): Promise<string> {
       for await (const chunk of createReadStream(path)) digest.update(chunk);
     } else throw new Error("Server dependency cleanup refuses unsupported inputs.");
   }
-  await visit(path);
+  await visit(tree);
   return digest.digest("hex");
 }
 
@@ -81,7 +82,7 @@ async function prepareDependencyCleanup(destination: string): Promise<() => Prom
       paths.push(...(await readdir(directory)).map((entry) => join(directory, entry)));
       parents.push(directory);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (errorCode(error) !== "ENOENT") throw error;
     }
   }
   const owners = await Promise.all(
@@ -92,7 +93,7 @@ async function prepareDependencyCleanup(destination: string): Promise<() => Prom
     try {
       dependencies.push({ path, identity: await lstat(path), digest: await treeDigest(path) });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (errorCode(error) !== "ENOENT") throw error;
     }
   }
   async function validateOwners(): Promise<void> {
@@ -116,7 +117,7 @@ async function prepareDependencyCleanup(destination: string): Promise<() => Prom
       try {
         current = await lstat(path);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        if (errorCode(error) === "ENOENT") continue;
         throw error;
       }
       if (
@@ -157,8 +158,7 @@ export async function copyBedrockServerInstallation(
     try {
       await lstat(path);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT" && entry !== "bedrock_server")
-        continue;
+      if (errorCode(error) === "ENOENT" && entry !== "bedrock_server") continue;
       throw error;
     }
     requiredBytes += await copyBytes(path);

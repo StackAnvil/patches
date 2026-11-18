@@ -4,7 +4,11 @@ import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promi
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
+import { Schema } from "effect";
+import { parseJson } from "./guards.ts";
 import { root } from "./model.ts";
+
+const InstalledModsSchema = Schema.Struct({ files: Schema.Array(Schema.String) });
 import { clientArtifacts } from "./client-artifacts.ts";
 
 const execute = promisify(execFile);
@@ -110,7 +114,7 @@ export async function installPrism(instanceName = prismInstance): Promise<string
   const mods = join(destination, "minecraft", "mods");
   await mkdir(mods, { recursive: true });
   const previous = existsSync(marker)
-    ? (JSON.parse(await readFile(marker, "utf8")) as { files: string[] })
+    ? parseJson(InstalledModsSchema, await readFile(marker, "utf8"))
     : { files: [] };
   for (const file of previous.files) {
     if (/^[A-Za-z0-9.+-]+\.jar$/.test(file)) await rm(join(mods, file), { force: true });

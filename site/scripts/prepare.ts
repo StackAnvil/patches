@@ -1,5 +1,5 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import { parseRelease } from "../src/lib/releases";
 import { pageUrl, site } from "../src/lib/site";
 
@@ -17,27 +17,42 @@ async function fetchRelease() {
       },
     );
     if (!response.ok) {
-      console.warn(
-        `Release snapshot unavailable (HTTP ${response.status}); using GitHub release links.`,
+      process.stderr.write(
+        `Release snapshot unavailable (HTTP ${response.status}); using GitHub release links.\n`,
       );
       return null;
     }
     const release = parseRelease(await response.json());
-    if (!release) console.warn("Release metadata is invalid; using GitHub release links.");
+    if (!release)
+      process.stderr.write("Release metadata is invalid; using GitHub release links.\n");
     return release;
   } catch {
-    console.warn("Release snapshot unavailable; using GitHub release links.");
+    process.stderr.write("Release snapshot unavailable; using GitHub release links.\n");
     return null;
   }
 }
 
+/** Preparing the release snapshot, sitemap, or page list failed. */
+class PrepareError extends Data.TaggedError("PrepareError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+function prepareStep<A>(step: () => Promise<A>) {
+  return Effect.tryPromise({
+    try: step,
+    catch: (cause) =>
+      new PrepareError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+  });
+}
+
 const prepare = Effect.gen(function* () {
-  const release = yield* Effect.tryPromise(fetchRelease);
-  yield* Effect.tryPromise(() => mkdir(".generated", { recursive: true }));
-  yield* Effect.tryPromise(() =>
+  const release = yield* prepareStep(fetchRelease);
+  yield* prepareStep(() => mkdir(".generated", { recursive: true }));
+  yield* prepareStep(() =>
     writeFile(".generated/release.json", `${JSON.stringify(release, null, 2)}\n`),
   );
-  const files = yield* Effect.tryPromise(() => readdir("content/docs"));
+  const files = yield* prepareStep(() => readdir("content/docs"));
   const paths = [
     "/",
     ...files.filter((file) => file.endsWith(".mdx")).map((file) => pageUrl(file.slice(0, -4))),
@@ -46,9 +61,9 @@ const prepare = Effect.gen(function* () {
     .toSorted()
     .map((path) => `  <url><loc>${new URL(path, site.url).href}</loc></url>`)
     .join("\n")}\n</urlset>\n`;
-  yield* Effect.tryPromise(() => writeFile("public/sitemap.xml", sitemap));
-  console.info(
-    `Prepared ${paths.length} public pages${release ? ` with release ${release.tag}` : " with release-link fallbacks"}.`,
+  yield* prepareStep(() => writeFile("public/sitemap.xml", sitemap));
+  process.stdout.write(
+    `Prepared ${paths.length} public pages${release ? ` with release ${release.tag}` : " with release-link fallbacks"}.\n`,
   );
 });
 

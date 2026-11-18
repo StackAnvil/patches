@@ -20,7 +20,8 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { isOneOf, parseJson } from "../guards.ts";
 import { createCaptureUi } from "../capture/ui.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
@@ -48,7 +49,7 @@ import {
   convertedTextureMatches,
   installResourceProbe,
 } from "./resource-probe.ts";
-import { connectionFailure, waitForJoinEffect, type JoinRoute } from "./join.ts";
+import { connectionFailure, joinRoutes, waitForJoinEffect, type JoinRoute } from "./join.ts";
 import { complexGameplayCaseIds } from "./ranged-observation.ts";
 import { integrationHelp, integrationOptions } from "./options.ts";
 import { installModpack } from "./modpack.ts";
@@ -61,18 +62,21 @@ import {
   integrationPrismNames,
   type GraphicsProfile,
 } from "./graphics.ts";
+import { print, printError } from "../output.ts";
 const privateRoot = join(root, ".stackanvil", "integration");
 const captureCli = join(root, "src", "capture", "cli.ts");
 const captureUi = createCaptureUi({
   captureDirectory: async () => {
     const captures = join(root, ".stackanvil", "captures");
-    const { id } = JSON.parse(await readFile(join(captures, "current.json"), "utf8")) as {
-      id: string;
-    };
+    const { id } = parseJson(
+      CaptureIdSchema,
+      await readFile(join(captures, "current.json"), "utf8"),
+    );
     if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id)) throw new Error("Invalid capture session ID.");
     return join(captures, id);
   },
 });
+const CaptureIdSchema = Schema.Struct({ id: Schema.String });
 const prismData = join(
   homedir(),
   ".var",
@@ -88,6 +92,14 @@ const textFileEffect = Effect.fn("Integration.textFile")(function* (path: string
     ? labIO("textFile", async () => readFile(path, "utf8"))
     : Effect.succeed("");
 });
+/** Sends SIGINT to a process or, for a negative ID, its process group. It may already be gone. */
+function interrupt(pid: number): void {
+  try {
+    process.kill(pid, "SIGINT");
+  } catch {
+    /* Already stopped. */
+  }
+}
 function alive(pid?: number): boolean {
   if (!pid) return false;
   try {
@@ -147,28 +159,26 @@ const downloadEffect = Effect.fn("Integration.download")(function* (
 const vanillaServerEffect = Effect.fn("Integration.vanillaServer")(function* () {
   if (process.env.STACKANVIL_JAVA_SERVER_JAR)
     return resolve(process.env.STACKANVIL_JAVA_SERVER_JAR);
-  const manifest = (yield* labRequestJson(
+  const manifest = yield* labRequestJson(
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
-  )) as {
-    versions: {
-      id: string;
-      url: string;
-    }[];
-  };
+    Schema.Struct({
+      versions: Schema.Array(Schema.Struct({ id: Schema.String, url: Schema.String })),
+    }),
+  );
   const version = manifest.versions.find((entry) => entry.id === "26.3");
   if (!version)
     return yield* labError(
       "vanillaServer",
       new Error("Minecraft 26.3 is missing from Mojang's version manifest."),
     );
-  const metadata = (yield* labRequestJson(version.url)) as {
-    downloads: {
-      server: {
-        url: string;
-        sha1: string;
-      };
-    };
-  };
+  const metadata = yield* labRequestJson(
+    version.url,
+    Schema.Struct({
+      downloads: Schema.Struct({
+        server: Schema.Struct({ url: Schema.String, sha1: Schema.String }),
+      }),
+    }),
+  );
   const file = join(privateRoot, "cache", "minecraft-server-26.3.jar");
   yield* downloadEffect(
     metadata.downloads.server.url,
@@ -237,6 +247,11 @@ const javaServerEffect = Effect.fn("Integration.javaServer")(function* (
   }
   return { child, log, port, bedrockPort };
 });
+const setServerProperty = (value: string, key: string, replacement: string) =>
+  new RegExp(`^${key}=.*$`, "m").test(value)
+    ? value.replace(new RegExp(`^${key}=.*$`, "m"), `${key}=${replacement}`)
+    : `${value}\n${key}=${replacement}\n`;
+
 const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
   dir: string,
   source: string,
@@ -256,10 +271,6 @@ const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
   yield* retainServerDependencies(() => copyBedrockServerInstallation(source, home));
   const port = yield* udpPort;
   const properties = yield* textFileEffect(join(source, "server.properties"));
-  const set = (value: string, key: string, replacement: string) =>
-    new RegExp(`^${key}=.*$`, "m").test(value)
-      ? value.replace(new RegExp(`^${key}=.*$`, "m"), `${key}=${replacement}`)
-      : `${value}\n${key}=${replacement}\n`;
   let changed = properties;
   for (const [key, value] of Object.entries({
     "server-name": "StackAnvil Integration",
@@ -273,26 +284,26 @@ const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
     "enable-lan-visibility": "false",
     "server-authoritative-movement-strict": "true",
   })) {
-    changed = set(changed, key, value);
+    changed = setServerProperty(changed, key, value);
   }
   if (entityProbe) {
-    changed = set(changed, "content-log-console-output-enabled", "true");
-    changed = set(changed, "content-log-level", "info");
+    changed = setServerProperty(changed, "content-log-console-output-enabled", "true");
+    changed = setServerProperty(changed, "content-log-level", "info");
     yield* labIO("bedrockServer", async () => installEntityProbe(home, "integration-world"));
   }
   if (inventoryUiProbe) {
-    changed = set(changed, "texturepack-required", "true");
+    changed = setServerProperty(changed, "texturepack-required", "true");
     yield* labIO("bedrockServer", () => installInventoryUiProbe(home, "integration-world"));
   }
   if (resourceProbe) {
-    changed = set(changed, "texturepack-required", "true");
+    changed = setServerProperty(changed, "texturepack-required", "true");
     yield* labIO("bedrockServer", async () =>
       installResourceProbe(home, "integration-world", resourceProbe.variant, resourceProbe.run),
     );
   }
   if (entityProbe || resourceProbe) {
-    changed = set(changed, "force-gamemode", "false");
-    changed = set(changed, "gamemode", "survival");
+    changed = setServerProperty(changed, "force-gamemode", "false");
+    changed = setServerProperty(changed, "gamemode", "survival");
   }
   yield* labIO("bedrockServer", async () =>
     writeFile(join(home, "server.properties"), changed, { mode: 0o600 }),
@@ -386,11 +397,11 @@ const preparePrismEffect = Effect.fn("Integration.preparePrism")(function* (
   const instance = yield* labIO("preparePrism", async () => installPrism(name));
   if (profile === "shaders") {
     yield* labIO("preparePrism", async () => installGraphicsProfile(instance));
-    console.log("Testing Fabulously Optimized with the pinned Bedrock shader profile.");
+    print("Testing Fabulously Optimized with the pinned Bedrock shader profile.");
   } else if (profile === "optimized") {
     const version = yield* labIO("preparePrism", async () => installModpack(instance));
     yield* labIO("preparePrism", async () => configureShaders(instance));
-    console.log(`Testing Fabulously Optimized ${version} with StackAnvil.`);
+    print(`Testing Fabulously Optimized ${version} with StackAnvil.`);
   } else {
     const mods = join(instance, "minecraft", "mods");
     for (const file of yield* labIO("preparePrism", async () => readdir(mods))) {
@@ -505,200 +516,177 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
   );
   let gamePid: number | undefined;
   return yield* Effect.ensuring(
-    Effect.catch(
-      Effect.gen(function* () {
-        gamePid = yield* waitForGameProcessEffect(child, log, name);
-        if (route === "java-bedrock" || route === "java-geyser") {
-          yield* waitForLogEffect(
-            clientLog,
-            /Connecting to 127\.0\.0\.1/,
-            () => alive(gamePid),
-            120000,
-          );
-          if (route === "java-geyser" && target.proxyLog) {
-            const log = async () => (await textFile(target.proxyLog!)).slice(connectionLogStart);
-            const deadline = Date.now() + 120000;
-            while (
-              !/All resource packs have been loaded/.test(
-                yield* labIO("javaJoin", async () => log()),
-              )
-            ) {
-              if (!alive(gamePid))
-                return yield* labError(
-                  "javaJoin",
-                  new Error("The Java client stopped before resource packs were ready."),
-                );
-              if (Date.now() > deadline)
-                return yield* labError(
-                  "javaJoin",
-                  new Error(`Resource packs did not become ready. Read ${target.proxyLog}.`),
-                );
-              yield* Effect.sleep(250);
-            }
-          }
-          yield* Effect.sleep(3500);
-          yield* captureEffect(["ui", "click", "0.32", "0.69", "--client", "java"]);
-        }
-        const player = yield* waitForJoinEffect({
-          route,
-          serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
-          clientLog: () => textFile(clientLog),
-          connectionLog: target.proxyLog
-            ? async () => (await textFile(target.proxyLog!)).slice(connectionLogStart)
-            : undefined,
-          clientAlive: () => alive(gamePid),
-          timeoutMs: 150000,
-          dwellMs: 20000,
-          onJoin:
-            route === "java-java"
-              ? (name) => {
-                  target.child.stdin?.write(
-                    `execute at ${name} run summon minecraft:interaction ~ ~ ~\n`,
-                  );
-                }
-              : undefined,
-        });
-        const renderingFailures = graphicsFailures(
-          yield* textFileEffect(clientLog),
-          profile === "shaders"
-            ? (yield* labIO("javaJoin", async () => readGraphicsLock())).shader.filename
-            : undefined,
+    Effect.gen(function* () {
+      gamePid = yield* waitForGameProcessEffect(child, log, name);
+      if (route === "java-bedrock" || route === "java-geyser") {
+        yield* waitForLogEffect(
+          clientLog,
+          /Connecting to 127\.0\.0\.1/,
+          () => alive(gamePid),
+          120000,
         );
-        if (renderingFailures.length)
-          return yield* labError("javaJoin", new Error(renderingFailures.join(" ")));
-        console.log(
-          `PASS ${route}${profile === "shaders" ? "+fabulously-optimized-shaders" : profile === "optimized" ? "+fabulously-optimized" : ""}: ${player} joined and remained connected for 20s.`,
-        );
-        if (resource) {
-          const log = yield* textFileEffect(clientLog);
-          if (!/Reloading ResourceManager:.*server\//.test(log)) {
-            return yield* labError(
-              "javaJoin",
-              new Error(`Resource probe ${resource.label} did not load the converted Java pack.`),
-            );
-          }
-          if (
-            !(yield* labIO("javaJoin", async () =>
-              convertedTextureMatches(join(dir, "viaproxy"), resource.variant),
-            ))
+        if (route === "java-geyser" && target.proxyLog) {
+          const proxyLogText = async () =>
+            (await textFile(target.proxyLog!)).slice(connectionLogStart);
+          const deadline = Date.now() + 120000;
+          while (
+            !/All resource packs have been loaded/.test(
+              yield* labIO("javaJoin", async () => proxyLogText()),
+            )
           ) {
-            return yield* labError(
-              "javaJoin",
-              new Error(
-                `Resource probe ${resource.label} did not preserve the ${resource.variant} texture in its converted pack.`,
-              ),
-            );
-          }
-          console.log(
-            `PASS resource pack ${resource.label}: converted texture matched and Java loaded the pack.`,
-          );
-        }
-        if (entityProbe && runEntityProbe) {
-          for (const group of ["status", "metadata"] as const) {
-            const logStart = (yield* textFileEffect(entityProbe.log)).length;
-            entityProbe.child.stdin?.write(`scriptevent vbprobe:${group} auto\n`);
-            // oxlint-disable-next-line eslint/no-loop-func -- gamePid is set before this loop and is not reassigned in it
-            const result = yield* labIO("javaJoin", async () =>
-              waitForProbe(
-                group,
-                async () => (await textFile(entityProbe.log)).slice(logStart),
-                () => alive(gamePid) && alive(entityProbe.child.pid),
-              ),
-            );
-            console.log(`PASS ${group} entity probe: ${result.passed} script actions accepted.`);
-          }
-        }
-        if (gameplayCases.length && entityProbe) {
-          yield* Effect.catch(
-            Effect.gen(function* () {
-              yield* labIO("javaJoin", async () =>
-                runGameplayCases(gameplayCases, {
-                  server: entityProbe.child,
-                  serverLog: entityProbe.log,
-                  clientAlive: () => alive(gamePid),
-                  ui: (args) => capture(args),
-                  artifactDir: dir,
-                  negativeControls,
-                  connectionError: async () =>
-                    connectionFailure(
-                      route,
-                      player,
-                      (await textFile(target.log)).slice(serverLogStart),
-                      target.proxyLog
-                        ? (await textFile(target.proxyLog)).slice(connectionLogStart)
-                        : "",
-                    ),
-                  inspectClient:
-                    route === "java-geyser"
-                      ? async (id, serverLog, event) => {
-                          if (geyserCaseIds.includes(id as (typeof geyserCaseIds)[number])) {
-                            if (
-                              !/Reloading ResourceManager:.*server\//.test(
-                                await textFile(clientLog),
-                              )
-                            ) {
-                              throw new Error(
-                                "The Java client did not load the converted Geyser resource pack.",
-                              );
-                            }
-                            if (
-                              !(await convertedGeyserTexturesMatch(join(dir, "viaproxy-geyser")))
-                            ) {
-                              throw new Error(
-                                "The converted Geyser pack is missing the custom entity model or fixture textures.",
-                              );
-                            }
-                            if (id.startsWith("custom-entity") || id === "complex-world") {
-                              const deadline = Date.now() + 5000;
-                              while (
-                                !geyserEntityUpdatesMatch(id, event.observed, await serverLog())
-                              ) {
-                                if (Date.now() > deadline)
-                                  throw new Error(
-                                    "Geyser did not submit the expected custom entity property updates.",
-                                  );
-                                await Bun.sleep(100);
-                              }
-                            }
-                          }
-                        }
-                      : undefined,
-                }),
+            if (!alive(gamePid))
+              return yield* labError(
+                "javaJoin",
+                new Error("The Java client stopped before resource packs were ready."),
               );
-            }),
-            (error) =>
-              Effect.gen(function* () {
-                if (!probeFailures) return yield* labError("javaJoin", error);
-                probeFailures.push(String(error));
-              }),
+            if (Date.now() > deadline)
+              return yield* labError(
+                "javaJoin",
+                new Error(`Resource packs did not become ready. Read ${target.proxyLog}.`),
+              );
+            yield* Effect.sleep(250);
+          }
+        }
+        yield* Effect.sleep(3500);
+        yield* captureEffect(["ui", "click", "0.32", "0.69", "--client", "java"]);
+      }
+      const player = yield* waitForJoinEffect({
+        route,
+        serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
+        clientLog: () => textFile(clientLog),
+        connectionLog: target.proxyLog
+          ? async () => (await textFile(target.proxyLog!)).slice(connectionLogStart)
+          : undefined,
+        clientAlive: () => alive(gamePid),
+        timeoutMs: 150000,
+        dwellMs: 20000,
+        onJoin:
+          route === "java-java"
+            ? (joined) => {
+                target.child.stdin?.write(
+                  `execute at ${joined} run summon minecraft:interaction ~ ~ ~\n`,
+                );
+              }
+            : undefined,
+      });
+      const renderingFailures = graphicsFailures(
+        yield* textFileEffect(clientLog),
+        profile === "shaders"
+          ? (yield* labIO("javaJoin", async () => readGraphicsLock())).shader.filename
+          : undefined,
+      );
+      if (renderingFailures.length)
+        return yield* labError("javaJoin", new Error(renderingFailures.join(" ")));
+      print(
+        `PASS ${route}${profile === "shaders" ? "+fabulously-optimized-shaders" : profile === "optimized" ? "+fabulously-optimized" : ""}: ${player} joined and remained connected for 20s.`,
+      );
+      if (resource) {
+        const resourceLog = yield* textFileEffect(clientLog);
+        if (!/Reloading ResourceManager:.*server\//.test(resourceLog)) {
+          return yield* labError(
+            "javaJoin",
+            new Error(`Resource probe ${resource.label} did not load the converted Java pack.`),
           );
         }
-        return yield* textFileEffect(clientLog);
-      }),
-      (error) =>
+        if (
+          !(yield* labIO("javaJoin", async () =>
+            convertedTextureMatches(join(dir, "viaproxy"), resource.variant),
+          ))
+        ) {
+          return yield* labError(
+            "javaJoin",
+            new Error(
+              `Resource probe ${resource.label} did not preserve the ${resource.variant} texture in its converted pack.`,
+            ),
+          );
+        }
+        print(
+          `PASS resource pack ${resource.label}: converted texture matched and Java loaded the pack.`,
+        );
+      }
+      if (entityProbe && runEntityProbe) {
+        for (const group of ["status", "metadata"] as const) {
+          const logStart = (yield* textFileEffect(entityProbe.log)).length;
+          entityProbe.child.stdin?.write(`scriptevent vbprobe:${group} auto\n`);
+          // oxlint-disable-next-line eslint/no-loop-func -- gamePid is set before this loop and is not reassigned in it
+          const result = yield* labIO("javaJoin", async () =>
+            waitForProbe(
+              group,
+              async () => (await textFile(entityProbe.log)).slice(logStart),
+              () => alive(gamePid) && alive(entityProbe.child.pid),
+            ),
+          );
+          print(`PASS ${group} entity probe: ${result.passed} script actions accepted.`);
+        }
+      }
+      if (gameplayCases.length && entityProbe) {
+        yield* labIO("javaJoin", async () =>
+          runGameplayCases(gameplayCases, {
+            server: entityProbe.child,
+            serverLog: entityProbe.log,
+            clientAlive: () => alive(gamePid),
+            ui: (args) => capture(args),
+            artifactDir: dir,
+            negativeControls,
+            connectionError: async () =>
+              connectionFailure(
+                route,
+                player,
+                (await textFile(target.log)).slice(serverLogStart),
+                target.proxyLog ? (await textFile(target.proxyLog)).slice(connectionLogStart) : "",
+              ),
+            inspectClient:
+              route === "java-geyser"
+                ? async (id, serverLog, event) => {
+                    if (isOneOf(geyserCaseIds, id)) {
+                      if (!/Reloading ResourceManager:.*server\//.test(await textFile(clientLog))) {
+                        throw new Error(
+                          "The Java client did not load the converted Geyser resource pack.",
+                        );
+                      }
+                      if (!(await convertedGeyserTexturesMatch(join(dir, "viaproxy-geyser")))) {
+                        throw new Error(
+                          "The converted Geyser pack is missing the custom entity model or fixture textures.",
+                        );
+                      }
+                      if (id.startsWith("custom-entity") || id === "complex-world") {
+                        const deadline = Date.now() + 5000;
+                        while (!geyserEntityUpdatesMatch(id, event.observed, await serverLog())) {
+                          if (Date.now() > deadline)
+                            throw new Error(
+                              "Geyser did not submit the expected custom entity property updates.",
+                            );
+                          await Bun.sleep(100);
+                        }
+                      }
+                    }
+                  }
+                : undefined,
+          }),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              if (!probeFailures) return yield* labError("javaJoin", error);
+              probeFailures.push(String(error));
+            }),
+          ),
+        );
+      }
+      return yield* textFileEffect(clientLog);
+    }).pipe(
+      Effect.catch((error) =>
         labError(
           "javaJoin",
           new Error(
             `${String(error)} Read ${clientLog}, ${log}${target.proxyLog ? `, and ${target.proxyLog}` : ""}.`,
           ),
         ),
+      ),
     ),
     Effect.orDie(
       Effect.gen(function* () {
-        if (alive(gamePid)) {
-          try {
-            process.kill(gamePid!, "SIGINT");
-          } catch {
-            /* Already stopped. */
-          }
-        }
-        if (alive(child.pid)) {
-          try {
-            process.kill(-child.pid!, "SIGINT");
-          } catch {
-            /* Already stopped. */
-          }
-        }
+        if (alive(gamePid)) interrupt(gamePid!);
+        if (alive(child.pid)) interrupt(-child.pid!);
         for (let attempt = 0; attempt < 40 && alive(gamePid); attempt++) yield* Effect.sleep(250);
         if (existsSync(clientLog))
           yield* labIO("javaJoin", async () =>
@@ -732,19 +720,16 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
   const serverLogStart = (yield* textFileEffect(target.log)).length;
   const current = join(root, ".stackanvil", "captures", "current.json");
   if (existsSync(current)) {
-    const { id } = JSON.parse(
+    const { id } = parseJson(
+      CaptureIdSchema,
       yield* labIO("bedrockJoin", async () => readFile(current, "utf8")),
-    ) as {
-      id: string;
-    };
-    const existing = JSON.parse(
+    );
+    const existing = parseJson(
+      Schema.Struct({ stoppedAt: Schema.optionalKey(Schema.String), proxyPid: Schema.Finite }),
       yield* labIO("bedrockJoin", async () =>
         readFile(join(root, ".stackanvil", "captures", id, "session.json"), "utf8"),
       ),
-    ) as {
-      stoppedAt?: string;
-      proxyPid: number;
-    };
+    );
     if (!existing.stoppedAt && alive(existing.proxyPid))
       return yield* labError(
         "bedrockJoin",
@@ -755,108 +740,102 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
   const env = { ...process.env, STACKANVIL_PROXY_PORT: String(yield* tcpPort) };
   let session: string | undefined;
   return yield* Effect.ensuring(
-    Effect.catch(
-      Effect.gen(function* () {
-        yield* captureEffect(["start", "native-join"], env);
-        session = (
-          JSON.parse(yield* labIO("bedrockJoin", async () => readFile(current, "utf8"))) as {
-            id: string;
-          }
-        ).id;
-        yield* captureEffect(["launch"]);
-        const sessionPath = join(root, ".stackanvil", "captures", session, "session.json");
-        const gamePid = (
-          JSON.parse(yield* labIO("bedrockJoin", async () => readFile(sessionPath, "utf8"))) as {
-            gamePid?: number;
-          }
-        ).gamePid;
-        for (let attempt = 0; attempt < 90; attempt++) {
-          const listing = yield* captureEffect(["ui", "list"]);
-          if (listing.includes('"title": "Minecraft"')) break;
-          if (!alive(gamePid))
-            return yield* labError(
-              "bedrockJoin",
-              new Error(
-                `Bedrock client exited. Read ${join(root, ".stackanvil", "captures", session, "game.log")}.`,
-              ),
-            );
-          yield* Effect.sleep(1000);
-        }
-        yield* Effect.sleep(20000);
-        yield* captureEffect(["ui", "screenshot", "native-menu"]);
-        yield* captureEffect(["ui", "key", "Return"]);
-        yield* Effect.sleep(2500);
-        yield* captureEffect(["ui", "screenshot", "native-play-menu"]);
-        yield* captureEffect(["ui", "click", "0.82", "0.11"]);
-        yield* Effect.sleep(2500);
-        yield* captureEffect(["ui", "screenshot", "native-server-list"]);
-        yield* captureEffect(["ui", "click", "0.17", "0.22"]);
-        yield* Effect.sleep(2000);
-        yield* captureEffect(["ui", "screenshot", "native-add-form"]);
-        yield* captureEffect(["ui", "click", "0.25", "0.17"]);
-        yield* captureEffect(["ui", "type", label]);
-        yield* captureEffect(["ui", "click", "0.25", "0.31"]);
-        yield* captureEffect(["ui", "type", "127.0.0.1"]);
-        yield* captureEffect(["ui", "click", "0.25", "0.46"]);
-        yield* captureEffect(["ui", "key", "Control+a"]);
-        yield* captureEffect(["ui", "type", String(target.port)]);
-        yield* captureEffect(["ui", "click", "0.69", "0.57"]);
-        yield* Effect.sleep(4000);
-        yield* captureEffect(["ui", "screenshot", "native-before-trust"]);
-        const trustPanelPixel = (yield* captureEffect(["ui", "pixel", "0.36", "0.28"]))
-          .split(/\s+/)
-          .map(Number);
-        if (
-          trustPanelPixel.length !== 3 ||
-          trustPanelPixel.some((value) => !Number.isFinite(value))
-        ) {
+    Effect.gen(function* () {
+      yield* captureEffect(["start", "native-join"], env);
+      session = parseJson(
+        CaptureIdSchema,
+        yield* labIO("bedrockJoin", async () => readFile(current, "utf8")),
+      ).id;
+      yield* captureEffect(["launch"]);
+      const sessionPath = join(root, ".stackanvil", "captures", session, "session.json");
+      const gamePid = parseJson(
+        Schema.Struct({ gamePid: Schema.optionalKey(Schema.Finite) }),
+        yield* labIO("bedrockJoin", async () => readFile(sessionPath, "utf8")),
+      ).gamePid;
+      for (let attempt = 0; attempt < 90; attempt++) {
+        const listing = yield* captureEffect(["ui", "list"]);
+        if (listing.includes('"title": "Minecraft"')) break;
+        if (!alive(gamePid))
           return yield* labError(
             "bedrockJoin",
-            new Error("Could not read the Bedrock trust dialog state."),
+            new Error(
+              `Bedrock client exited. Read ${join(root, ".stackanvil", "captures", session, "game.log")}.`,
+            ),
           );
-        }
-        if (trustPanelPixel.every((value) => value > 150)) {
-          yield* captureEffect(["ui", "click", "0.5", "0.59"]);
-        }
-        const player = yield* waitForJoinEffect({
-          route: "bedrock-bedrock",
-          serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
-          clientLog: () => textFile(join(root, ".stackanvil", "captures", session!, "game.log")),
-          clientAlive: () => alive(gamePid),
-          timeoutMs: 90000,
-          dwellMs: 20000,
-        });
-        yield* captureEffect(["ui", "screenshot", "native-joined"]);
-        console.log(`PASS bedrock-bedrock: ${player} joined and remained connected for 20s.`);
-      }),
-      (error) =>
+        yield* Effect.sleep(1000);
+      }
+      yield* Effect.sleep(20000);
+      yield* captureEffect(["ui", "screenshot", "native-menu"]);
+      yield* captureEffect(["ui", "key", "Return"]);
+      yield* Effect.sleep(2500);
+      yield* captureEffect(["ui", "screenshot", "native-play-menu"]);
+      yield* captureEffect(["ui", "click", "0.82", "0.11"]);
+      yield* Effect.sleep(2500);
+      yield* captureEffect(["ui", "screenshot", "native-server-list"]);
+      yield* captureEffect(["ui", "click", "0.17", "0.22"]);
+      yield* Effect.sleep(2000);
+      yield* captureEffect(["ui", "screenshot", "native-add-form"]);
+      yield* captureEffect(["ui", "click", "0.25", "0.17"]);
+      yield* captureEffect(["ui", "type", label]);
+      yield* captureEffect(["ui", "click", "0.25", "0.31"]);
+      yield* captureEffect(["ui", "type", "127.0.0.1"]);
+      yield* captureEffect(["ui", "click", "0.25", "0.46"]);
+      yield* captureEffect(["ui", "key", "Control+a"]);
+      yield* captureEffect(["ui", "type", String(target.port)]);
+      yield* captureEffect(["ui", "click", "0.69", "0.57"]);
+      yield* Effect.sleep(4000);
+      yield* captureEffect(["ui", "screenshot", "native-before-trust"]);
+      const trustPanelPixel = (yield* captureEffect(["ui", "pixel", "0.36", "0.28"]))
+        .split(/\s+/)
+        .map(Number);
+      if (
+        trustPanelPixel.length !== 3 ||
+        trustPanelPixel.some((value) => !Number.isFinite(value))
+      ) {
+        return yield* labError(
+          "bedrockJoin",
+          new Error("Could not read the Bedrock trust dialog state."),
+        );
+      }
+      if (trustPanelPixel.every((value) => value > 150)) {
+        yield* captureEffect(["ui", "click", "0.5", "0.59"]);
+      }
+      const player = yield* waitForJoinEffect({
+        route: "bedrock-bedrock",
+        serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
+        clientLog: () => textFile(join(root, ".stackanvil", "captures", session!, "game.log")),
+        clientAlive: () => alive(gamePid),
+        timeoutMs: 90000,
+        dwellMs: 20000,
+      });
+      yield* captureEffect(["ui", "screenshot", "native-joined"]);
+      print(`PASS bedrock-bedrock: ${player} joined and remained connected for 20s.`);
+    }).pipe(
+      Effect.catch((error) =>
         labError(
           "bedrockJoin",
           new Error(
             `${String(error)} Private native capture: ${session ? join(root, ".stackanvil", "captures", session) : dir}.`,
           ),
         ),
+      ),
     ),
     Effect.orDie(
       Effect.gen(function* () {
         if (session) {
-          yield* Effect.catch(
-            Effect.gen(function* () {
-              yield* captureEffect(["game-stop"]);
-            }),
-            () =>
+          yield* captureEffect(["game-stop"]).pipe(
+            Effect.catch(() =>
               Effect.sync(() => {
                 /* The client may already have exited. */
               }),
+            ),
           );
-          yield* Effect.catch(
-            Effect.gen(function* () {
-              yield* captureEffect(["stop"]);
-            }),
-            () =>
+          yield* captureEffect(["stop"]).pipe(
+            Effect.catch(() =>
               Effect.sync(() => {
                 /* Preserve the original failure. */
               }),
+            ),
           );
         }
         yield* removeTemporaryServerEffect(label, target.port);
@@ -897,7 +876,7 @@ const removeTemporaryServerEffect = Effect.fn("Integration.removeTemporaryServer
 export const mainEffect = Effect.fn("Integration.main")(function* () {
   const options = integrationOptions(Bun.argv.slice(2));
   if (options.help) {
-    console.log(integrationHelp);
+    print(integrationHelp);
     return;
   }
   const plainOnly = options["plain-only"];
@@ -924,21 +903,18 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
       new Error("--gameplay-cases needs a comma-separated case list."),
     );
   }
-  const routes: JoinRoute[] =
-    options.route !== undefined
-      ? [options.route as JoinRoute]
-      : ["java-java", "java-bedrock", "bedrock-bedrock"];
-  if (
-    routes.some(
-      (route) => !["java-java", "java-bedrock", "bedrock-bedrock", "java-geyser"].includes(route),
-    )
-  ) {
+  const requestedRoute = options.route;
+  if (requestedRoute !== undefined && !isOneOf(joinRoutes, requestedRoute)) {
     return yield* labError(
       "main",
       new Error("Use --route java-java, java-bedrock, bedrock-bedrock, or java-geyser."),
     );
   }
-  if (shaders && !routes.some((route) => route.startsWith("java-")))
+  const routes: JoinRoute[] =
+    requestedRoute !== undefined
+      ? [requestedRoute]
+      : ["java-java", "java-bedrock", "bedrock-bedrock"];
+  if (shaders && !routes.some((candidate) => candidate.startsWith("java-")))
     return yield* labError("main", new Error("--shaders requires a Java client route."));
   const geyserRoute = routes.includes("java-geyser");
   if (geyserRoute)
@@ -948,29 +924,26 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
         "The pinned Geyser fixture does not provide NetherNet. Use the java-bedrock route.",
       ),
     );
+  const requestedInput = gameplayInput?.split(",") ?? [];
+  const requestedCases = requestedInput.filter((id) => isOneOf(allGameplayCaseIds, id));
   const gameplayCases: GameplayCaseId[] = [
     ...new Set([
       ...(complexGameplay ? complexGameplayCaseIds : []),
       ...(geyserProbe ? geyserCaseIds : []),
       ...(gameplayInput
-        ? (gameplayInput.split(",") as GameplayCaseId[])
+        ? requestedCases
         : gameplayProbe
           ? gameplayCasesForBackend(geyserRoute)
           : []),
       ...(negativeControls ? ["chest-transfer" as const] : []),
     ]),
   ];
-  if (gameplayCases.some((id) => !allGameplayCaseIds.includes(id)))
+  if (requestedCases.length !== requestedInput.length)
     return yield* labError(
       "main",
       new Error(`Unknown gameplay case. Use: ${allGameplayCaseIds.join(", ")}.`),
     );
-  if (
-    geyserRoute &&
-    gameplayCases.some((id) =>
-      complexGameplayCaseIds.includes(id as (typeof complexGameplayCaseIds)[number]),
-    )
-  ) {
+  if (geyserRoute && gameplayCases.some((id) => isOneOf(complexGameplayCaseIds, id))) {
     return yield* labError(
       "main",
       new Error(
@@ -995,9 +968,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     );
   }
   if (
-    (geyserProbe ||
-      negativeControls ||
-      gameplayCases.some((id) => geyserCaseIds.includes(id as (typeof geyserCaseIds)[number]))) &&
+    (geyserProbe || negativeControls || gameplayCases.some((id) => isOneOf(geyserCaseIds, id))) &&
     !geyserRoute
   ) {
     return yield* labError(
@@ -1047,7 +1018,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     yield* commandEffect(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "all"]);
   const dir = join(privateRoot, "runs", new Date().toISOString().replaceAll(/[:.]/g, "-"));
   yield* labIO("main", async () => mkdir(dir, { recursive: true, mode: 0o700 }));
-  console.log(`Private logs: ${dir}`);
+  print(`Private logs: ${dir}`);
   yield* (yield* IntegrationResources).acquireDisplay(ensureDisplay);
   return yield* Effect.gen(function* () {
     const probeFailures: string[] = [];
@@ -1093,7 +1064,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
           );
         if (gameplayCases.length) {
           yield* javaJoinEffect(route, "plain", dir, target);
-          console.log("PASS Geyser reconnect: the Java client rejoined the same Paper world.");
+          print("PASS Geyser reconnect: the Java client rejoined the same Paper world.");
         }
         if (!plainOnly)
           yield* javaJoinEffect(route, shaders ? "shaders" : "optimized", dir, target);
@@ -1153,7 +1124,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
               "main",
               new Error("Resource probe A converted the same content again."),
             );
-          console.log("PASS resource pack cache: unchanged content reused the conversion.");
+          print("PASS resource pack cache: unchanged content reused the conversion.");
           if (alive(proxy.child.pid)) process.kill(-proxy.child.pid!, "SIGINT");
           for (let attempt = 0; attempt < 40 && alive(proxy.child.pid); attempt++)
             yield* Effect.sleep(250);
@@ -1203,7 +1174,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
               "main",
               new Error("Resource probe B did not convert changed content."),
             );
-          console.log("PASS resource pack cache: changed content produced a new conversion.");
+          print("PASS resource pack cache: changed content produced a new conversion.");
           modpackProxy = changedProxy;
           modpackBedrock = changedServer;
         } else if (gameplayCases.length) {
@@ -1212,7 +1183,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
             log: proxyBedrock.log,
             proxyLog: proxy.log,
           });
-          console.log("PASS gameplay reconnect: the Java client rejoined the same Bedrock world.");
+          print("PASS gameplay reconnect: the Java client rejoined the same Bedrock world.");
         }
         if (!plainOnly)
           yield* javaJoinEffect(route, shaders ? "shaders" : "optimized", dir, {
@@ -1240,7 +1211,7 @@ if (import.meta.main) {
       Effect.scoped(mainEffect().pipe(Effect.provide(integrationResourcesLayer(stopDisplay)))),
     );
   } catch (error: unknown) {
-    console.error(error instanceof Error ? error.message : error);
+    printError(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   }
 }

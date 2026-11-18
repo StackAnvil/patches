@@ -20,7 +20,7 @@ export const Route = createFileRoute("/$slug")({
 
 function DocumentPage() {
   const page = Route.useLoaderData();
-  const Content = documentLoader.getComponent(page.path);
+  const content = documentLoader.useContent(page.path, { slug: page.slug });
   return (
     <div id="main-content" className="docs-shell" tabIndex={-1}>
       <DocsLayout
@@ -38,9 +38,7 @@ function DocumentPage() {
           ),
         }}
       >
-        <Suspense fallback={<p className="content-width">Loading guide…</p>}>
-          <Content slug={page.slug} />
-        </Suspense>
+        <Suspense fallback={<p>Loading guide…</p>}>{content}</Suspense>
       </DocsLayout>
     </div>
   );

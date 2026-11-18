@@ -2,8 +2,9 @@ import { Effect } from "effect";
 import { root } from "../src/model.ts";
 import { command } from "../src/process.ts";
 import { waylandToolEnvironment } from "../src/lab/wayland.ts";
+import { print } from "../src/output.ts";
 
-console.log(
+print(
   await Effect.runPromise(
     command(
       "cargo",

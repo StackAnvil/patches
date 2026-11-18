@@ -13,6 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
+import { errorCode, isRecord } from "../guards.ts";
 
 const ownerFile = ".stackanvil-replay-prefix.json";
 const dataPatterns = [
@@ -82,8 +83,9 @@ export async function validateNativeReplayPrefix(
   const marker = join(actual, ownerFile);
   if ((await lstat(marker)).isSymbolicLink())
     throw new Error("The native replay prefix marker is a symbolic link.");
-  const owner = JSON.parse(await readFile(marker, "utf8")) as PrefixOwner;
+  const owner: unknown = JSON.parse(await readFile(marker, "utf8"));
   if (
+    !isRecord(owner) ||
     owner.schema !== expected.schema ||
     owner.source !== expected.source ||
     owner.device !== expected.device ||
@@ -103,10 +105,7 @@ export async function requireNativePrefixIdle(prefix: string): Promise<void> {
     try {
       environment = await readFile(`/proc/${name}/environ`);
     } catch (error) {
-      if (
-        ["ENOENT", "ESRCH", "EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")
-      )
-        continue;
+      if (["ENOENT", "ESRCH", "EACCES", "EPERM"].includes(errorCode(error) ?? "")) continue;
       throw error;
     }
     if (environment.toString().split("\0").includes(expected)) {
@@ -173,7 +172,7 @@ export async function prepareNativeReplayPrefix(options: NativePrefixOptions): P
         throw new Error("The native server list is a symbolic link.");
       previous = await readFile(target);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (errorCode(error) !== "ENOENT") throw error;
     }
     if (previous)
       await writeFile(join(backup, `${index}.original`), previous, { mode: 0o600, flag: "wx" });

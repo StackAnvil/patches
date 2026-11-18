@@ -3,23 +3,43 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { healthFailed, inspectUpstream, patchHealth, prerequisiteCycles, type ProjectHealth } from "../src/health.ts";
+import {
+  healthFailed,
+  inspectUpstream,
+  patchHealth,
+  prerequisiteCycles,
+  type ProjectHealth,
+} from "../src/health.ts";
 import type { Series, Target } from "../src/model.ts";
 import { git } from "../src/process.ts";
 
 const runGit = (args: string[], directory: string) => Effect.runPromise(git(args, directory));
 
+const stack = (file: string, project: string, dependency: string): Series => ({
+  setup: [],
+  deferred: [],
+  upstreamable: [
+    {
+      file,
+      title: "feat(test): add fixture",
+      prerequisites: [{ project, patch: dependency, reason: "Requires the shared API." }],
+    },
+  ],
+});
+
 test("reports cycles across projects and preserves independent prerequisites", () => {
-  const stack = (file: string, project: string, dependency: string): Series => ({
-    setup: [], deferred: [], upstreamable: [{ file, title: "feat(test): add fixture",
-      prerequisites: [{ project, patch: dependency, reason: "Requires the shared API." }] }],
-  });
-  expect(prerequisiteCycles({ core: stack("core.patch", "addon", "addon.patch"),
-    addon: stack("addon.patch", "core", "core.patch") })).toEqual([
-    ["core/core.patch", "addon/addon.patch", "core/core.patch"],
-  ]);
-  expect(prerequisiteCycles({ core: { setup: [], deferred: [], upstreamable: [] },
-    addon: stack("addon.patch", "core", "core.patch") })).toEqual([]);
+  expect(
+    prerequisiteCycles({
+      core: stack("core.patch", "addon", "addon.patch"),
+      addon: stack("addon.patch", "core", "core.patch"),
+    }),
+  ).toEqual([["core/core.patch", "addon/addon.patch", "core/core.patch"]]);
+  expect(
+    prerequisiteCycles({
+      core: { setup: [], deferred: [], upstreamable: [] },
+      addon: stack("addon.patch", "core", "core.patch"),
+    }),
+  ).toEqual([]);
 });
 
 test("offline health rejects a prerequisite file that is not in its project's series", async () => {
@@ -27,18 +47,50 @@ test("offline health rejects a prerequisite file that is not in its project's se
   try {
     const patches = join(directory, "patches", "fixture", "upstreamable");
     await mkdir(patches, { recursive: true });
-    await writeFile(join(directory, "targets.json"), JSON.stringify({ fixture: { dependsOn: [], baseSha: "base" } }));
+    await writeFile(
+      join(directory, "targets.json"),
+      JSON.stringify({
+        fixture: {
+          dependsOn: [],
+          upstream: "unused/fixture",
+          fork: "unused/fixture",
+          prAssignees: [],
+          baseBranch: "main",
+          baseSha: "base",
+          java: "17",
+          publication: "unused",
+          buildTask: "build",
+        },
+      }),
+    );
     await writeFile(join(patches, "orphan.patch"), "unlisted prerequisite");
-    await writeFile(join(patches, "feature.patch"), "From: Fixture <fixture@example.invalid>\nSubject: feat(test): add fixture\n\nRequires the shared API.\n\n---\n");
-    await writeFile(join(directory, "patches", "fixture", "series.json"), JSON.stringify({
-      setup: [], deferred: [], upstreamable: [{ file: "feature.patch", title: "feat(test): add fixture",
-        prerequisites: [{ project: "fixture", patch: "orphan.patch", reason: "Requires the shared API." }] }],
-    }));
+    await writeFile(
+      join(patches, "feature.patch"),
+      "From: Fixture <fixture@example.invalid>\nSubject: feat(test): add fixture\n\nRequires the shared API.\n\n---\n",
+    );
+    await writeFile(
+      join(directory, "patches", "fixture", "series.json"),
+      JSON.stringify({
+        setup: [],
+        deferred: [],
+        upstreamable: [
+          {
+            file: "feature.patch",
+            title: "feat(test): add fixture",
+            prerequisites: [
+              { project: "fixture", patch: "orphan.patch", reason: "Requires the shared API." },
+            ],
+          },
+        ],
+      }),
+    );
     const report = await patchHealth("all", { repository: directory });
     expect(healthFailed(report)).toBe(true);
     expect(report.errors).toHaveLength(1);
-    expect(report.projects[0]!.patches[0]).toMatchObject({
-      standalone: "not-run", upstreamEquivalent: "not-checked", prContext: false,
+    expect(report.projects[0].patches[0]).toMatchObject({
+      standalone: "not-run",
+      upstreamEquivalent: "not-checked",
+      prContext: false,
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -56,7 +108,16 @@ test("upstream inspection recognizes equivalent patches and rehearses updates wi
     const commit = async (content: string) => {
       await writeFile(join(upstream, "note.txt"), content);
       await runGit(["add", "note.txt"], upstream);
-      await runGit(["commit", "-m", "fix(test): update fixture", "-m", "Exercise patch health without network access."], upstream);
+      await runGit(
+        [
+          "commit",
+          "-m",
+          "fix(test): update fixture",
+          "-m",
+          "Exercise patch health without network access.",
+        ],
+        upstream,
+      );
       return runGit(["rev-parse", "HEAD"], upstream);
     };
     const baseSha = await commit("base\n");
@@ -66,18 +127,40 @@ test("upstream inspection recognizes equivalent patches and rehearses updates wi
     const firstPatch = await runGit(["format-patch", "-1", "--stdout"], upstream);
     await writeFile(join(patchDir, "first.patch"), firstPatch);
     await commit("second\n");
-    await writeFile(join(patchDir, "second.patch"), await runGit(["format-patch", "-1", "--stdout"], upstream));
+    await writeFile(
+      join(patchDir, "second.patch"),
+      await runGit(["format-patch", "-1", "--stdout"], upstream),
+    );
     await runGit(["reset", "--hard", first], upstream);
     const editing = join(directory, ".worktrees", "fixture");
     await mkdir(editing, { recursive: true });
     await writeFile(join(editing, "note.txt"), "unexported work\n");
-    const target: Target = { dependsOn: [], upstream: "unused/fixture", fork: "unused/fixture",
-      prAssignees: [], baseBranch: "main", baseSha, java: "17", publication: "Maven", buildTask: "build" };
+    const target: Target = {
+      dependsOn: [],
+      upstream: "unused/fixture",
+      fork: "unused/fixture",
+      prAssignees: [],
+      baseBranch: "main",
+      baseSha,
+      java: "17",
+      publication: "Maven",
+      buildTask: "build",
+    };
     const makeReport = (): ProjectHealth => ({
-      project: "fixture", baseSha, pinnedReplay: "not-run", upstreamReplay: "not-run", errors: [], advisories: [],
+      project: "fixture",
+      baseSha,
+      pinnedReplay: "not-run",
+      upstreamReplay: "not-run",
+      errors: [],
+      advisories: [],
       patches: ["first.patch", "second.patch"].map((file) => ({
-        file, group: "upstreamable", prerequisites: file === "second.patch" ? ["fixture/first.patch"] : [],
-        prContext: true, standalone: "not-run", upstreamStandalone: "not-run", upstreamEquivalent: "not-checked",
+        file,
+        group: "upstreamable",
+        prerequisites: file === "second.patch" ? ["fixture/first.patch"] : [],
+        prContext: true,
+        standalone: "not-run",
+        upstreamStandalone: "not-run",
+        upstreamEquivalent: "not-checked",
       })),
     });
     const report = makeReport();
@@ -92,7 +175,7 @@ test("upstream inspection recognizes equivalent patches and rehearses updates wi
     await runGit(["commit", "-m", "fix(test): revert upstream fixture"], upstream);
     const reverted = makeReport();
     await inspectUpstream(reverted, target, directory, upstream);
-    expect(reverted.patches[0]!.upstreamEquivalent).toBe("absent");
+    expect(reverted.patches[0].upstreamEquivalent).toBe("absent");
     expect(reverted.upstreamReplay).toBe("passed");
     expect(reverted.advisories).toHaveLength(1);
     await runGit(["reset", "--hard", first], upstream);

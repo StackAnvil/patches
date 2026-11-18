@@ -1,8 +1,8 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { Effect } from "effect";
 import JSON5 from "json5";
 import { root } from "../model.ts";
+import { print, printError } from "../output.ts";
 
 const catalogPath = join(root, "test-packs", "entity-probe", "src", "catalog.ts");
 
@@ -98,24 +98,17 @@ export async function generateCatalog(
 if (import.meta.main) {
   const [entities, version] = Bun.argv.slice(2);
   try {
-    await Effect.runPromise(
-      Effect.tryPromise({
-        try: async () => {
-          if (!entities || !version)
-            throw new Error(
-              "Use: bun run integration:entity-probe:generate <entities-dir> <samples-tag>.",
-            );
-          const catalog = await generateCatalog(resolve(entities), version);
-          console.log(
-            `${catalog.length} types, ${catalog.reduce((total, entry) => total + entry.events.length, 0)} events, ` +
-              `${catalog.reduce((total, entry) => total + entry.properties.length, 0)} synced properties`,
-          );
-        },
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      }),
+    if (!entities || !version)
+      throw new Error(
+        "Use: bun run integration:entity-probe:generate <entities-dir> <samples-tag>.",
+      );
+    const catalog = await generateCatalog(resolve(entities), version);
+    print(
+      `${catalog.length} types, ${catalog.reduce((total, entry) => total + entry.events.length, 0)} events, ` +
+        `${catalog.reduce((total, entry) => total + entry.properties.length, 0)} synced properties`,
     );
   } catch (error: unknown) {
-    console.error(error instanceof Error ? error.message : error);
+    printError(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   }
 }
