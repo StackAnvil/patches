@@ -845,6 +845,13 @@ reflection over the cube. An additive emissive material adds its own
 radiance and needs no shader-pack emission split. Other blend factors
 keep the fallback.
 
+A multi-line server name draws one background behind all its rows, as
+wide as the widest line, as native 1.26.60.5 does for CubeCraft's
+"Discord / Click to join." NPC. Java sizes each line's box to that line.
+The lines are submitted once to measure their background passes, the
+shared box is submitted in the same phase, and the lines are submitted
+again without their own boxes.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index 7ba0932506d370b6bf500d2b53cb5ef35c8bb2ec..d5d27f4f2c7b48442908e5e2fd2b5ba8d81479df 100644
 --- a/build.gradle.kts
@@ -2473,10 +2480,10 @@ index 0000000000000000000000000000000000000000..4b616d473ca3835a9d46478bb4af529f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..1dae6e44bf006374aff4c177d05e4de2e49273a2
+index 0000000000000000000000000000000000000000..abaf0bba010cb1f98dc62e83fe96c100d1957308
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,114 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2484,6 +2491,11 @@ index 0000000000000000000000000000000000000000..1dae6e44bf006374aff4c177d05e4de2
 + */
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
 +
++import java.util.List;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.renderer.feature.phase.TranslucentFeatureRenderPhase;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Shadow;
 +import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -2507,6 +2519,13 @@ index 0000000000000000000000000000000000000000..1dae6e44bf006374aff4c177d05e4de2
 +
 +@Mixin(SubmitNodeCollection.class)
 +public abstract class MixinBedrockNameTags {
++    @Shadow @Final private TranslucentFeatureRenderPhase seeThrough;
++
++    @Shadow
++    private void submitNameTagPart(final TextFeatureRenderer.Submit submit) {
++        throw new AssertionError();
++    }
++
 +    @WrapOperation(method = "submitNameTag", at = @At(value = "INVOKE",
 +            target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;nameTag(Lorg/joml/Matrix4f;FFLnet/minecraft/util/FormattedCharSequence;IIILnet/minecraft/client/gui/Font$DisplayMode;)Lnet/minecraft/client/renderer/feature/TextFeatureRenderer$Submit;"))
 +    private TextFeatureRenderer.Submit submitNativeNamePart(final Matrix4f pose, final float x, final float y,
@@ -2517,8 +2536,16 @@ index 0000000000000000000000000000000000000000..1dae6e44bf006374aff4c177d05e4de2
 +                                                           @Local(argsOnly = true) final boolean seeThrough) {
 +        final boolean nativeContext = BedrockNameTagAnchors.enabled(
 +                ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST));
-+        return original.call(pose, nativeContext ? BedrockNameTags.centerX(x) : x, y, name, light,
-+                BedrockNameTags.foregroundColor(nativeContext, seeThrough, mode, color), background, mode);
++        final float left = nativeContext ? BedrockNameTags.centerX(x) : x;
++        if (BedrockNameTags.capturing()) {
++            // The first pass only measures; it submits nothing visible.
++            if (background != 0) BedrockNameTags.capture(new BedrockNameTags.Part(new Matrix4f(pose), left, y,
++                    Minecraft.getInstance().font.width(name), background, mode, light));
++            return original.call(pose, left, y, FormattedCharSequence.EMPTY, light, 0, 0, mode);
++        }
++        return original.call(pose, left, y, name, light,
++                BedrockNameTags.foregroundColor(nativeContext, seeThrough, mode, color),
++                BedrockNameTags.suppressing() ? 0 : background, mode);
 +    }
 +
 +    @WrapOperation(method = "submitNameTag", at = @At(value = "INVOKE",
@@ -2544,8 +2571,30 @@ index 0000000000000000000000000000000000000000..1dae6e44bf006374aff4c177d05e4de2
 +        final var lines = BedrockNameTags.layout(name, offset);
 +        final Vec3 lifted = attachment == null || lines.size() <= 1 ? attachment
 +                : attachment.add(0, BedrockNameTags.rowLift(lines.size()), 0);
-+        for (final var line : lines) {
-+            original.call(poses, lifted, line.baseline(), line.text(), seeThrough, light, camera);
++        if (lines.size() <= 1) {
++            for (final var line : lines) original.call(poses, lifted, line.baseline(), line.text(), seeThrough, light, camera);
++            return;
++        }
++        final List<BedrockNameTags.Part> parts = BedrockNameTags.beginCapture();
++        try {
++            for (final var line : lines) original.call(poses, lifted, line.baseline(), line.text(), seeThrough, light, camera);
++        } finally {
++            BedrockNameTags.endCapture();
++        }
++        if (!parts.isEmpty()) {
++            final var box = BedrockNameTags.sharedBackground(parts);
++            final var first = parts.getFirst();
++            final var submit = new TextFeatureRenderer.Submit(first.pose(), first.mode(), first.light(),
++                    new TextFeatureRenderer.Content.StandaloneBackground(box.x0(), box.y0(), box.x1(), box.y1(), first.color()));
++            // Submit the shared box before the text, in the phase that carried each line's own background.
++            if (first.mode() == Font.DisplayMode.SEE_THROUGH) this.seeThrough.submit(submit);
++            else this.submitNameTagPart(submit);
++        }
++        BedrockNameTags.suppress(true);
++        try {
++            for (final var line : lines) original.call(poses, lifted, line.baseline(), line.text(), seeThrough, light, camera);
++        } finally {
++            BedrockNameTags.suppress(false);
 +        }
 +    }
 +}
@@ -4560,16 +4609,18 @@ index 0000000000000000000000000000000000000000..02572ba7410a0e235c249add721367e6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..44d5b98c5ebf6cfc2e5fbc757b2c7ab4127ae5fc
+index 0000000000000000000000000000000000000000..0c81ed25ea67d17f1450eea32cdab153208ba116
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,120 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
 + * SPDX-License-Identifier: GPL-3.0-or-later
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
++
++import org.joml.Matrix4f;
 +
 +import java.util.ArrayList;
 +import java.util.List;
@@ -4639,6 +4690,48 @@ index 0000000000000000000000000000000000000000..44d5b98c5ebf6cfc2e5fbc757b2c7ab4
 +
 +    public record Line(Component text, int baseline) {
 +    }
++
++    /** One line's background-bearing name tag pass: its transformed pose, left edge, baseline and text width. */
++    public record Part(Matrix4f pose, float x, float y, int width, int color, Font.DisplayMode mode, int light) {
++    }
++
++    /** The background rectangle a pass shares across lines: Java's per-line box, widened to the widest line. */
++    public record Box(float x0, float y0, float x1, float y1) {
++    }
++
++    /**
++     * Native draws one background behind every line of a multi-line name, as wide as the widest line, with
++     * the rows abutting. Java sizes each line's box from x - 1 to x + width and y - 1 to y + 9.
++     */
++    public static Box sharedBackground(final List<Part> parts) {
++        float x0 = Float.MAX_VALUE, y0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, y1 = -Float.MAX_VALUE;
++        for (final Part part : parts) {
++            x0 = Math.min(x0, part.x() - 1);
++            x1 = Math.max(x1, part.x() + part.width());
++            y0 = Math.min(y0, part.y() - 1);
++            y1 = Math.max(y1, part.y() + 9);
++        }
++        return new Box(x0, y0, x1, y1);
++    }
++
++    private static boolean capturing;
++    private static boolean suppressing;
++    private static final List<Part> CAPTURED = new ArrayList<>();
++
++    /** Render-thread state for the two submission passes of one multi-line name. */
++    public static boolean capturing() { return capturing; }
++    public static boolean suppressing() { return suppressing; }
++    public static void capture(final Part part) { CAPTURED.add(part); }
++
++    public static List<Part> beginCapture() {
++        CAPTURED.clear();
++        capturing = true;
++        return CAPTURED;
++    }
++
++    public static void endCapture() { capturing = false; }
++
++    public static void suppress(final boolean value) { suppressing = value; }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNativeResourceTransport.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNativeResourceTransport.java
 new file mode 100644
@@ -9084,10 +9177,10 @@ index 0000000000000000000000000000000000000000..012ca094b772aed011e672478cba189b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..7ca90b8e83d784d04552a25cdade51f4d3c897bb
+index 0000000000000000000000000000000000000000..068525a03771c03ab5ac62879cbf8b864dd10207
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,137 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9213,6 +9306,16 @@ index 0000000000000000000000000000000000000000..7ca90b8e83d784d04552a25cdade51f4
 +            return true;
 +        });
 +        return styles;
++    }
++
++    @Test
++    void multiLineNamesShareOneBackgroundAsWideAsTheWidestLine() {
++        // CubeCraft's Discord NPC: "Discord" over the wider "Click to join.", one native box behind both rows.
++        final var pose = new org.joml.Matrix4f();
++        final var box = BedrockNameTags.sharedBackground(List.of(
++                new BedrockNameTags.Part(pose, -21, 0, 42, 0x40000000, Font.DisplayMode.NORMAL, 0),
++                new BedrockNameTags.Part(pose, -35, 10, 70, 0x40000000, Font.DisplayMode.NORMAL, 0)));
++        assertEquals(new BedrockNameTags.Box(-36, -1, 35, 19), box);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerFadeGpuTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerFadeGpuTest.java
