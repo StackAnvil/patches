@@ -34,6 +34,12 @@ Bedrock 1.26.60.5 glyph batching at 140e6d97f..140e6da30 multiplies float channe
 
 Read the full effective palette from the UI program’s merged globals separately from server-only protocol-text overrides. The native default red [1,.333,.333] differs from the Java legacy default even without a server override. Keep each palette immutable and preserve pack priority; do not apply UI-only default colors to protocol text.
 
+Hide sidebar numbers only when a server pack defines scoreboard_sidebar.
+Native vanilla sidebars show each score in red, as Minehut's lobby
+sidebar does natively (15, 14, 13), and CubeCraft's own sidebar shows
+none. A shown ascending objective sends each score with a fixed red
+number format of its real value, because Java sorts by the negated score.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
 index 989b81407ebe02c45bc9c11d9be433902662740d..82b9eb73172a776e14ebcafc82866d8263ee7dcd 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
@@ -48,10 +54,10 @@ index 989b81407ebe02c45bc9c11d9be433902662740d..82b9eb73172a776e14ebcafc82866d82
          setPlayerTeam.write(Types.VAR_INT, TeamVisibility.ALWAYS.ordinal()); // name tag visibility
          setPlayerTeam.write(Types.VAR_INT, TeamCollisionRule.NEVER.ordinal()); // collision rule
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java b/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java
-index 34b0825b505ef7b8e48d278e99356c8c78283f8e..cd527ea399a7bd844b72103231b61a05bf77a261 100644
+index 34b0825b505ef7b8e48d278e99356c8c78283f8e..67cfba38596f89b8e7854522f978b4beaf0483f4 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java
-@@ -23,14 +23,18 @@ import com.viaversion.viaversion.api.type.Types;
+@@ -23,14 +23,19 @@ import com.viaversion.viaversion.api.type.Types;
  import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectMap;
  import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectOpenHashMap;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
@@ -67,13 +73,27 @@ index 34b0825b505ef7b8e48d278e99356c8c78283f8e..cd527ea399a7bd844b72103231b61a05
      private final String name;
      private final ObjectiveSortOrder sortOrder;
 +    private Map<Character, Integer> formattingColors = Map.of();
++    private boolean numbersShown;
      private final Long2ObjectMap<ScoreboardEntry> entries = new Long2ObjectOpenHashMap<>();
  
      public ScoreboardObjective(final String name, final ObjectiveSortOrder sortOrder) {
-@@ -38,6 +42,16 @@ public class ScoreboardObjective {
+@@ -38,6 +43,29 @@ public class ScoreboardObjective {
          this.sortOrder = sortOrder;
      }
  
++    /** Shown ascending scores need their real value, because Java sorts by the negated score this objective sends. */
++    public void setNumbersShown(final UserConnection user, final boolean shown) {
++        if (this.numbersShown == shown) {
++            return;
++        }
++        this.numbersShown = shown;
++        if (this.sortOrder == ObjectiveSortOrder.Ascending) {
++            for (final ScoreboardEntry entry : this.entries.values()) {
++                this.updateEntry0(user, entry);
++            }
++        }
++    }
++
 +    public void setFormattingColors(final UserConnection user, final Map<Character, Integer> colors) {
 +        if (this.formattingColors.equals(colors)) {
 +            return;
@@ -87,7 +107,7 @@ index 34b0825b505ef7b8e48d278e99356c8c78283f8e..cd527ea399a7bd844b72103231b61a05
      public ScoreboardEntry getEntry(final long scoreboardId) {
          return this.entries.get(scoreboardId);
      }
-@@ -84,12 +98,16 @@ public class ScoreboardObjective {
+@@ -84,12 +112,21 @@ public class ScoreboardObjective {
  
      private void updateEntry0(final UserConnection user, final ScoreboardEntry entry) {
          final PacketWrapper setScore = PacketWrapper.create(ClientboundPackets26_3.SET_SCORE, user);
@@ -100,18 +120,24 @@ index 34b0825b505ef7b8e48d278e99356c8c78283f8e..cd527ea399a7bd844b72103231b61a05
          setScore.write(Types.STRING, this.name); // objective name
          setScore.write(Types.VAR_INT, this.sortOrder == ObjectiveSortOrder.Ascending ? -entry.score() : entry.score()); // score
 -        setScore.write(Types.OPTIONAL_TAG, null); // display name
-+        setScore.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(entry.javaName(), this.formattingColors)); // display name
-         setScore.write(Types.BOOLEAN, false); // has number format
+-        setScore.write(Types.BOOLEAN, false); // has number format
 -        setScore.send(BedrockProtocol.class);
++        setScore.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(entry.javaName(), this.formattingColors)); // display name
++        final boolean fixed = this.numbersShown && this.sortOrder == ObjectiveSortOrder.Ascending;
++        setScore.write(Types.BOOLEAN, fixed); // has number format
++        if (fixed) {
++            setScore.write(Types.VAR_INT, 2); // fixed number format
++            setScore.write(Types.TAG, TextUtil.stringToNbt("§c" + entry.score())); // the native sidebar's red score
++        }
      }
  
      private void removeEntry0(final UserConnection user, final ScoreboardEntry entry) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..acd07aa23ecf5418322bb49e07016e4da43f53a4
+index 0000000000000000000000000000000000000000..298cb4ea2980f90b7e7588d8e60b03fcf3acfb1d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,441 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -156,6 +182,8 @@ index 0000000000000000000000000000000000000000..acd07aa23ecf5418322bb49e07016e4d
 +    private final Map<String, SidebarImage> images;
 +    private final Map<Character, Integer> formattingColors;
 +
++    private final boolean authoredSidebar;
++
 +    public ScoreboardUiDefinitions(final ResourcePackStorage storage) {
 +        final Map<String, SidebarImage> found = new LinkedHashMap<>();
 +        final JsonObject file = effectiveFile(storage);
@@ -170,6 +198,15 @@ index 0000000000000000000000000000000000000000..acd07aa23ecf5418322bb49e07016e4d
 +        }
 +        this.images = Collections.unmodifiableMap(found);
 +        this.formattingColors = storage.getTextFormatting().colors();
++        this.authoredSidebar = file != null;
++    }
++
++    /**
++     * Native vanilla sidebars show each score in red. A server pack that defines scoreboard_sidebar decides its own
++     * rows, and CubeCraft's shows no numbers, so the translated sidebar shows numbers only without such a pack.
++     */
++    public boolean showsNumbers() {
++        return !this.authoredSidebar;
 +    }
 +
 +    public Collection<SidebarImage> images() {
@@ -838,7 +875,7 @@ index 129790fdc3750276eaa7f00e7ba4c9d37689fc54..8f4de41964a91d0e167b17f054453a72
                              out.append(style.asString());
                          }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
-index ae020452df6b2c77c070968b015e203a53ef7df7..35ab3921b04cdad549f47feb3b30a32001717bc5 100644
+index ae020452df6b2c77c070968b015e203a53ef7df7..a94ae7d2b1eab040893be69375c47f626ceeb215 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 @@ -17,6 +17,7 @@
@@ -875,7 +912,7 @@ index ae020452df6b2c77c070968b015e203a53ef7df7..35ab3921b04cdad549f47feb3b30a320
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_LIST, null, wrapper -> {
              final PlayerListStorage playerListStorage = wrapper.user().get(PlayerListStorage.class);
-@@ -250,17 +264,23 @@ public final class HudPackets {
+@@ -250,17 +264,25 @@ public final class HudPackets {
                  return;
              }
  
@@ -901,9 +938,11 @@ index ae020452df6b2c77c070968b015e203a53ef7df7..35ab3921b04cdad549f47feb3b30a320
 +                    ? resourcePacks.getScoreboardUi().titleComponent(displayName, translatedTitle)
 +                    : TextUtil.stringToNbt(translatedTitle);
 +            final PacketWrapper scoreboardObjective = PacketWrapper.create(ClientboundPackets26_3.SET_OBJECTIVE, wrapper.user());
++            final boolean hideNumbers = displaySlot.equals("sidebar") && !resourcePacks.getScoreboardUi().showsNumbers();
++            scoreboardTracker.getObjective(objectiveName).setNumbersShown(wrapper.user(), !hideNumbers);
 +            writeObjectivePresentation(scoreboardObjective, objectiveName,
 +                    newObjective ? ObjectiveAction.ADD : ObjectiveAction.CHANGE,
-+                    title, displaySlot.equals("sidebar"));
++                    title, hideNumbers);
 +            scoreboardObjective.send(BedrockProtocol.class);
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_SCORE, null, wrapper -> {
@@ -1099,10 +1138,10 @@ index 9cb427a7fbf382594cae6f4309bac4a8568045cf..f22539619b658a40d1d40847e86f6c80
      }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java b/src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..9d0d60d14b91e8b808620f41ac9032cfde3ac11e
+index 0000000000000000000000000000000000000000..40b0d1586a4612aee2282e12918567e65c416afe
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,98 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1153,6 +1192,32 @@ index 0000000000000000000000000000000000000000..9d0d60d14b91e8b808620f41ac9032cf
 +            } finally {
 +                buffer.release();
 +            }
++        }
++    }
++
++    @Test
++    void shownAscendingScoresDisplayTheirRealValue() throws Exception {
++        // Java sorts ascending objectives by the negated score, so a visible sidebar shows the Bedrock value explicitly.
++        final var entry = new ScoreboardEntry(15, IdentityDefinition_Type.FakePlayer, null, "Players: 3349");
++        entry.updateJavaName(null);
++        final var objective = new ScoreboardObjective("sidebar", ObjectiveSortOrder.Ascending);
++        objective.setNumbersShown(null, true);
++        final var packet = new PacketWrapperImpl(ClientboundPackets26_3.SET_SCORE, null, null);
++        objective.writeJavaScore(packet, entry);
++        final var buffer = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(buffer);
++            Types.VAR_INT.read(buffer);
++            Types.STRING.read(buffer);
++            Types.STRING.read(buffer);
++            assertEquals(-15, Types.VAR_INT.read(buffer));
++            Types.OPTIONAL_TAG.read(buffer);
++            assertTrue(Types.BOOLEAN.read(buffer));
++            assertEquals(2, Types.VAR_INT.read(buffer));
++            assertEquals(TextUtil.stringToNbt("§c15"), Types.TAG.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
 +        }
 +    }
 +
