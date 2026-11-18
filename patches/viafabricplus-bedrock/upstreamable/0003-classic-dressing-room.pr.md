@@ -26,3 +26,7 @@ Wearing an entry replaces the custom slot and keeps the separately imported cape
 
 A Wayland file drag of a 4D `.mcpack` onto the Dressing Room opens the pack screen in a live session.
 The lab drop uses a GTK4 drag source on the private display, so it exercises the client's real drop handling.
+
+The pack reader ignores a UTF-8 byte order mark at the start of `en_US.lang`.
+Marketplace packs such as Archer's Strike begin with one, which hid the translated pack title.
+Across 66 owned Marketplace skin packs, all 877 skins import and build renderer geometry.

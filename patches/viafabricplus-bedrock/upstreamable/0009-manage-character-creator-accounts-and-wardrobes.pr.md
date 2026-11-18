@@ -37,3 +37,10 @@ Three settled images per phase compare six colored markers. Median centroids dif
 Controlled account and emote references cover specific operations. Purchases, missing receipt keys, unavailable emotes, profile/LOD behavior, armor masking, and native multiplayer timing remain open.
 
 The [owning patch](0009-manage-character-creator-accounts-and-wardrobes.patch) retains implementation rationale and versioned evidence.
+
+## Built-in straight mouth
+
+Bedrock 1.26.60.5 ships the straight mouth, piece `52dd0726`, in its built-in persona pieces as `persona_mouth`.
+It was missing from the type table, so account characters that equip it failed before their model loaded.
+With it added, 513 of 523 owned non-emote Character Creator items assemble and render in local test characters built from an account character.
+The other 10 report conflicting bone parents and remain open.
