@@ -193,6 +193,9 @@ async function buildPlugin(
   ]);
   return { classes, plugin, build, observer };
 }
+/** Pixel height of the caption that Wine draws inside the Bedrock window on the Wayland lab. */
+const nativeCaptionHeight = 26;
+
 async function ui(args: string[], directory: string, client = "java"): Promise<void> {
   await execute(
     "bun",
@@ -570,35 +573,62 @@ async function launchNative(
     console.log(`Native client is waiting for verified manual connection to 127.0.0.1:${bind}.`);
     return { pid: child.pid, log };
   }
-  await ui(["key", "Return"], directory, "bedrock");
+  // Under winewayland, Wine draws the window caption inside the surface, so map positions in the
+  // game's content area below it. The title screen has no keyboard focus, so click Play.
+  const windows = await execute(
+    "bun",
+    [join(root, "src/capture/cli.ts"), "ui", "list", "--client", "bedrock"],
+    { cwd: root },
+  );
+  const height = (JSON.parse(windows.stdout) as { height: number }[])[0]?.height ?? 0;
+  if (height <= nativeCaptionHeight)
+    throw new Error("The native client window has no content area.");
+  const contentY = (y: number): string =>
+    String((nativeCaptionHeight + y * (height - nativeCaptionHeight)) / height);
+  // Bedrock under winewayland ignores a press on a tab it has not seen the pointer hover first.
+  const click = async (x: number, y: number) => {
+    await ui(["move", String(x), contentY(y)], directory, "bedrock");
+    await Bun.sleep(400);
+    await ui(["mouse-hold", String(x), contentY(y), "left", "150"], directory, "bedrock");
+  };
+  await click(0.5, 0.5);
+  // The Play screen opens several seconds later and ignores input while it animates in.
+  await Bun.sleep(12_000);
+  await click(0.82, 0.11);
   await Bun.sleep(2500);
-  await ui(["click", "0.82", "0.11"], directory, "bedrock");
-  await Bun.sleep(2500);
-  await ui(["click", "0.17", "0.22"], directory, "bedrock");
+  await click(0.17, 0.22);
   await Bun.sleep(2000);
   for (const [row, value] of [
-    ["0.17", "stackanvil-native-recording"],
-    ["0.31", "127.0.0.1"],
-    ["0.46", String(bind)],
+    [0.17, "stackanvil-native-recording"],
+    [0.31, "127.0.0.1"],
+    [0.46, String(bind)],
   ] as const) {
-    await ui(["click", "0.25", row], directory, "bedrock");
+    await click(0.25, row);
     await Bun.sleep(250);
     await ui(["key", "Control+a"], directory, "bedrock");
     await Bun.sleep(250);
     await ui(["type", value], directory, "bedrock");
     await Bun.sleep(250);
   }
-  await ui(["click", "0.69", "0.57"], directory, "bedrock");
+  await click(0.69, 0.57);
   await Bun.sleep(4000);
   await ui(["screenshot", "native-before-trust"], directory, "bedrock");
+  // A first connection asks to trust the server. Sample its light header right of the title text.
   const pixel = await execute(
     "bun",
-    [join(root, "src/capture/cli.ts"), "ui", "pixel", "0.36", "0.28", "--client", "bedrock"],
+    [
+      join(root, "src/capture/cli.ts"),
+      "ui",
+      "pixel",
+      "0.66",
+      contentY(0.28),
+      "--client",
+      "bedrock",
+    ],
     { cwd: root },
   );
   const rgb = pixel.stdout.trim().split(/\s+/).map(Number);
-  if (rgb.length === 3 && rgb.every((value) => value > 150))
-    await ui(["click", "0.5", "0.59"], directory, "bedrock");
+  if (rgb.length === 3 && rgb.every((value) => value > 150)) await click(0.5, 0.59);
   return { pid: child.pid, log };
 }
 
