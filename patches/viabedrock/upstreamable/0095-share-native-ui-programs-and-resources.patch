@@ -616,7 +616,12 @@ boss_bars collection. Each row carries #bossName and #bar_visible, and
 the HUD controller supplies #boss_grid_dimension, #on_new_death_screen and
 the #interact_visible binding. The client draws native boss bars itself, so an
 unchanged native collection grid stays out of the decoration root. An
-accepted grid over boss_bars expands with its authored item template.
+accepted grid over boss_bars expands with its authored item template. A
+native grid also counts as authored when the pack changes its item
+template or a template that the item's controls reference. Mystrick
+redefines hud.boss_health_panel with its own cyan bar textures and keeps
+the native grid; native draws that cyan bar, while the Java bar showed
+the packet's purple color.
 Expression binding names, such as (not #on_new_death_screen), are accepted
 when every value they reference is known. The client does not report the
 native XP-bar offset, so #exp_bar_and_text_offset_y keeps its rest value 0.
@@ -6152,10 +6157,10 @@ index 0000000000000000000000000000000000000000..5dfbb3f8cb6cc74a7e05d034abf56dec
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..4b59e9c4b77329c86c80b311c1300c8501cf161a
+index 0000000000000000000000000000000000000000..f523c1b39ecfa432737cfb14521eab159aca9483
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,2299 @@
+@@ -0,0 +1,2347 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6474,8 +6479,11 @@ index 0000000000000000000000000000000000000000..4b59e9c4b77329c86c80b311c1300c85
 +                dataControls.add(control);
 +                return control;
 +            }
-+            // The client presents native boss bars itself; only an accepted change to a collection grid is a decoration.
-+            if (!collectionGrid && !type.equals("label") && !type.equals("image") || control.equals(original)) {
++            // The client presents native boss bars itself; only an accepted change to a collection grid or to the
++            // cells it instantiates is a decoration.
++            if (!collectionGrid && !type.equals("label") && !type.equals("image")
++                    || control.equals(original) && !(collectionGrid && this.authoredTemplate(
++                        UiExpression.text(resolveValue(control.get("grid_item_template"), values, 0)), new HashSet<>()))) {
 +                return null;
 +            }
 +        }
@@ -6534,6 +6542,51 @@ index 0000000000000000000000000000000000000000..4b59e9c4b77329c86c80b311c1300c85
 +            referenced = true;
 +        }
 +        return referenced && expression.startsWith("(");
++    }
++
++    /**
++     * Reports whether an accepted pack changes a template or any template its controls reference. Packs often
++     * restyle native boss bars by redefining {@code hud.boss_health_panel} or a texture control inside it while
++     * keeping the native grid that instantiates it.
++     */
++    private boolean authoredTemplate(final String name, final Set<String> visited) {
++        if (!visited.add(name) || visited.size() > 64) {
++            return false;
++        }
++        final JsonObject accepted = this.template(name, null);
++        if (accepted == null) {
++            return false;
++        }
++        if (!accepted.equals(this.nativeTemplate(name))) {
++            return true;
++        }
++        final String namespace = name.contains(".") ? name.substring(0, name.indexOf('.')) : "";
++        return this.authoredReferences(accepted, namespace, visited);
++    }
++
++    private boolean authoredReferences(final JsonObject control, final String namespace, final Set<String> visited) {
++        final JsonElement controls = control.get("controls");
++        if (controls == null || !controls.isJsonArray()) {
++            return false;
++        }
++        for (final JsonElement child : controls.getAsJsonArray()) {
++            if (!child.isJsonObject()) {
++                continue;
++            }
++            for (final var entry : child.getAsJsonObject().entrySet()) {
++                final int at = entry.getKey().indexOf('@');
++                if (at >= 0) {
++                    final String reference = entry.getKey().substring(at + 1);
++                    if (this.authoredTemplate(reference.contains(".") ? reference : namespace + "." + reference, visited)) {
++                        return true;
++                    }
++                }
++                if (entry.getValue().isJsonObject() && this.authoredReferences(entry.getValue().getAsJsonObject(), namespace, visited)) {
++                    return true;
++                }
++            }
++        }
++        return false;
 +    }
 +
 +    private JsonObject nativeTemplate(final String name) {
@@ -18767,10 +18820,10 @@ index 0000000000000000000000000000000000000000..12da73546d3ae1e6b898a3146f4553ed
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudRootUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudRootUiTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..392d5c6a0bf950124eb28b10b5d4ef6edbf83e59
+index 0000000000000000000000000000000000000000..f0690c29d9b922fede36afe4b6227a4c950e2546
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudRootUiTest.java
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,264 @@
 +package net.raphimc.viabedrock.api.resourcepack.ui;
 +
 +import com.viaversion.viaversion.libs.gson.JsonObject;
@@ -18872,7 +18925,8 @@ index 0000000000000000000000000000000000000000..392d5c6a0bf950124eb28b10b5d4ef6e
 +        final var names = List.of("tip*100Go!", "Ender Dragon");
 +        final var program = new JsonUiProgram(nativeFiles, List.of(accepted));
 +
-+        assertEquals(List.of(false, true), HudRootUi.bossBarVisibility(program, names));
++        // The accepted panel owns every cell: it hides prefixed bars and draws the others itself.
++        assertEquals(List.of(false, false), HudRootUi.bossBarVisibility(program, names));
 +        assertEquals(List.of(true, true), HudRootUi.bossBarVisibility(new JsonUiProgram(nativeFiles, List.of()), names));
 +
 +        final var root = new HudRootUi(names).resolve(program);
@@ -18880,7 +18934,7 @@ index 0000000000000000000000000000000000000000..392d5c6a0bf950124eb28b10b5d4ef6e
 +        final var labels = visuals(root.getAsJsonObject("root")).stream()
 +                .filter(node -> node.get("type").getAsString().equals("label") && node.get("visible").getAsBoolean())
 +                .map(node -> node.get("text").getAsString()).toList();
-+        assertEquals(List.of("Go!"), labels);
++        assertEquals(List.of("Ender Dragon", "Go!"), labels);
 +        assertNotNull(new HudRootUi().resolve(program), "Authored decorations remain without boss bars");
 +    }
 +
@@ -18912,6 +18966,35 @@ index 0000000000000000000000000000000000000000..392d5c6a0bf950124eb28b10b5d4ef6e
 +                .filter(node -> node.get("type").getAsString().equals("label"))
 +                .map(node -> node.get("text").getAsString()).toList());
 +        assertEquals(List.of(false), HudRootUi.bossBarVisibility(program, names));
++    }
++
++    @Test
++    void aRestyledBarInsideTheNativeBossPanelReplacesTheJavaBar() {
++        final var nativeFiles = Map.of("ui/hud_screen.json", bytes("""
++                {"namespace":"hud","root_panel":{"type":"panel","controls":[{"boss_health_grid@hud.boss_health_grid":{}}]},
++                 "boss_health_grid":{"type":"grid","grid_dimension_binding":"#boss_grid_dimension",
++                   "grid_item_template":"hud.boss_health_panel","collection_name":"boss_bars"},
++                 "boss_health_panel":{"type":"panel","controls":[{"bar@hud.filled_bar":{}}]},
++                 "filled_bar":{"type":"image","texture":"textures/ui/pink_progress","clip_direction":"left","bindings":[
++                   {"binding_type":"collection","binding_collection_name":"boss_bars","binding_name":"#progress_percentage",
++                     "binding_name_override":"#clip_ratio"}]}}
++                """));
++        final var accepted = Map.of("ui/hud_screen.json", bytes("""
++                {"namespace":"hud","filled_bar":{"texture":"textures/ui/server/cyan_progress"}}
++                """));
++        final var names = List.of("Lobby");
++        assertEquals(List.of(true), HudRootUi.bossBarVisibility(new JsonUiProgram(nativeFiles, List.of()), names));
++        assertNull(new HudRootUi(names).resolve(new JsonUiProgram(nativeFiles, List.of())));
++
++        final var program = new JsonUiProgram(nativeFiles, List.of(accepted));
++        assertEquals(List.of(false), HudRootUi.bossBarVisibility(program, names));
++        final var root = new HudRootUi(names, List.of(0.5F)).resolve(program);
++        assertNotNull(root);
++        final var bars = visuals(root.getAsJsonObject("root")).stream()
++                .filter(node -> node.get("type").getAsString().equals("image")).toList();
++        assertEquals(1, bars.size());
++        assertEquals(JsonUiProgram.textureId("textures/ui/server/cyan_progress"), bars.getFirst().get("texture").getAsString());
++        assertEquals(0.5F, bars.getFirst().get("clip_ratio").getAsFloat());
 +    }
 +
 +    @Test
