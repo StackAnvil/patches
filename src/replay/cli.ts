@@ -380,6 +380,8 @@ async function launchJava(
       ["guiScale", String(guiScale)],
       ["soundCategory_master", "0"],
       ["fullscreen", "false"],
+      // Java's movement tutorial toast covers the top-right HUD that native comparisons inspect.
+      ["tutorialStep", "none"],
     ]) {
       const line = new RegExp(`^${key}:.*$`, "m");
       options = line.test(options)
