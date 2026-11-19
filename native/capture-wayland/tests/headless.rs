@@ -27,7 +27,15 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 struct Process(Child);
 impl Drop for Process {
     fn drop(&mut self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The fixture process may have already exited during cleanup"
+        )]
         let _ = self.0.kill();
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Fixture cleanup must not panic if waiting fails"
+        )]
         let _ = self.0.wait();
     }
 }
@@ -710,6 +718,10 @@ fn fixture_client() {
         ),
     };
     surface.commit();
+    #[expect(
+        clippy::infinite_loop,
+        reason = "The parent test ends this fixture process after it finishes sending input"
+    )]
     loop {
         queue.blocking_dispatch(&mut app).unwrap();
     }

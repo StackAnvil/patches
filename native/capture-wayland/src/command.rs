@@ -308,8 +308,10 @@ mod tests {
                 point: Point { x: 639, y: 258 },
             }
         );
-        assert!(parse(&["move", "0x123", "-1", "258"]).is_err());
-        assert!(parse(&["move", "0x123", "639", "258", "left"]).is_err());
+        parse(&["move", "0x123", "-1", "258"])
+            .expect_err("parser accepted negative pointer coordinates");
+        parse(&["move", "0x123", "639", "258", "left"])
+            .expect_err("parser accepted a button argument on move");
     }
 
     #[test]
@@ -322,18 +324,23 @@ mod tests {
                 dy: 15,
             }
         );
-        assert!(parse(&["look", "0x123", "2001", "0"]).is_err());
-        assert!(parse(&["look", "0x123", "+5", "0"]).is_err());
-        assert!(parse(&["look", "0x123", "--5", "0"]).is_err());
+        parse(&["look", "0x123", "2001", "0"])
+            .expect_err("parser accepted a look delta above 2000");
+        parse(&["look", "0x123", "+5", "0"])
+            .expect_err("parser accepted an explicit plus sign on a look delta");
+        parse(&["look", "0x123", "--5", "0"])
+            .expect_err("parser accepted repeated signs on a look delta");
     }
 
     #[test]
     fn validates_entire_drag_path_and_hold_budget() {
         for dwell in ["0", "1001", "-1", "1.5", "99999999999999999999999999999"] {
-            assert!(parse(&["drag", "0x123", "left", dwell, "0", "0", "10", "10"]).is_err());
+            parse(&["drag", "0x123", "left", dwell, "0", "0", "10", "10"])
+                .expect_err("parser accepted an invalid drag dwell");
         }
         for coordinate in ["-1", "1.5", "65536", "10junk"] {
-            assert!(parse(&["drag", "0x123", "left", "10", "0", "0", coordinate, "10"]).is_err());
+            parse(&["drag", "0x123", "left", "10", "0", "0", coordinate, "10"])
+                .expect_err("parser accepted an invalid drag coordinate");
         }
         for (count, dwell, valid) in [
             (1, 1, false),
@@ -349,23 +356,30 @@ mod tests {
                 dwell.to_string(),
             ];
             args.extend(std::iter::repeat_n("0".to_string(), count * 2));
-            assert_eq!(Command::parse(&args).is_ok(), valid);
+            let result = Command::parse(&args);
+            assert_eq!(
+                result.is_ok(),
+                valid,
+                "drag with {count} points and dwell {dwell}: {result:?}"
+            );
         }
     }
 
     #[test]
     fn rejects_malformed_input_before_emitting_anything() {
         for id in ["0", "-1", "0x", "0x123junk", "18446744073709551616"] {
-            assert!(parse(&["focus", id]).is_err());
+            parse(&["focus", id]).expect_err("parser accepted an invalid window ID");
         }
         for sequence in ["", "+a", "a+", "Control++a", "a+b+c+d+e+f+g+h+i"] {
-            assert!(parse(&["key", "12", sequence]).is_err());
+            parse(&["key", "12", sequence]).expect_err("parser accepted an invalid key sequence");
         }
         for text in ["validthenINVALID", "valid\n", "é"] {
-            assert!(parse(&["type", "12", text]).is_err());
+            parse(&["type", "12", text]).expect_err("parser accepted invalid text");
         }
-        assert!(parse(&["button-hold", "12", "middle", "100"]).is_err());
-        assert!(parse(&["resize", "12", "640", "360", "1"]).is_err());
+        parse(&["button-hold", "12", "middle", "100"])
+            .expect_err("parser accepted a middle button hold");
+        parse(&["resize", "12", "640", "360", "1"])
+            .expect_err("parser accepted an incomplete resize position");
         assert_eq!(
             parse(&["focus", "0x123"]).unwrap(),
             Command::Focus { window: 291 }
