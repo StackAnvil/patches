@@ -4,13 +4,14 @@ This is a byte reader, not a decompiler. Analysis runs through REA. Every load
 requires a SHA-256 pin, either explicitly or from StackAnvil's private target.
 Addresses are linked virtual addresses, not offsets in a relocated process.
 """
+
 import argparse
 import bisect
 import hashlib
 import json
 import os
-from pathlib import Path
 import struct
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -28,14 +29,20 @@ def independent_path(path):
 class PE:
     def __init__(self, path=None, sha256=None):
         if path is None:
-            manifest = independent_path(os.environ.get(
-                "STACKANVIL_REA_TARGET", ROOT / ".stackanvil/rea/current.json"))
+            manifest = independent_path(
+                os.environ.get(
+                    "STACKANVIL_REA_TARGET", ROOT / ".stackanvil/rea/current.json"
+                )
+            )
             target = json.loads(manifest.read_text())
             if target.get("schemaVersion") != 1:
                 raise ValueError("Unsupported REA target manifest")
             path, sha256 = target["artifact"]["path"], target["artifact"]["sha256"]
-        if not isinstance(sha256, str) or len(sha256) != 64 or any(
-                c not in "0123456789abcdefABCDEF" for c in sha256):
+        if (
+            not isinstance(sha256, str)
+            or len(sha256) != 64
+            or any(c not in "0123456789abcdefABCDEF" for c in sha256)
+        ):
             raise ValueError("An explicit SHA-256 pin is required")
         self.path = independent_path(path)
         self.b = self.path.read_bytes()
@@ -44,14 +51,14 @@ class PE:
             raise ValueError(f"Artifact SHA-256 differs from the pin: {self.sha256}")
         if self._bytes(0, 2) != b"MZ":
             raise ValueError("Not a DOS/PE image")
-        nt = self._unpack("<I", 0x3c)[0]
+        nt = self._unpack("<I", 0x3C)[0]
         if self._bytes(nt, 4) != b"PE\0\0":
             raise ValueError("Not a PE image")
         self.machine, count = self._unpack("<HH", nt + 4)
         optional_size = self._unpack("<H", nt + 20)[0]
         optional = nt + 24
         self._bytes(optional, optional_size)
-        if optional_size < 112 or self._unpack("<H", optional)[0] != 0x20b:
+        if optional_size < 112 or self._unpack("<H", optional)[0] != 0x20B:
             raise ValueError("Only PE32+ images are supported by this control reader")
         self.image_base = self._unpack("<Q", optional + 24)[0]
         self.dir_count = self._unpack("<I", optional + 108)[0]
@@ -66,13 +73,15 @@ class PE:
             name = self._bytes(offset, 8).rstrip(b"\0").decode("ascii", "replace")
             virtual_size, rva, raw_size, raw = self._unpack("<IIII", offset + 8)
             self._bytes(raw, raw_size)
-            self.sections.append((name, rva, max(virtual_size, raw_size), raw, raw_size))
+            self.sections.append(
+                (name, rva, max(virtual_size, raw_size), raw, raw_size)
+            )
         self._functions = None
 
     def _bytes(self, offset, length):
         if offset < 0 or length < 0 or offset + length > len(self.b):
             raise ValueError("Range exceeds artifact file bytes")
-        return self.b[offset:offset + length]
+        return self.b[offset : offset + length]
 
     def _unpack(self, fmt, offset):
         return struct.unpack(fmt, self._bytes(offset, struct.calcsize(fmt)))
@@ -131,7 +140,9 @@ class PE:
         return self.image_base + next(s[1] for s in self.sections if s[0] == name)
 
     def end(self, name):
-        return self.image_base + next(s[1] + s[2] for s in self.sections if s[0] == name)
+        return self.image_base + next(
+            s[1] + s[2] for s in self.sections if s[0] == name
+        )
 
     def functions(self):
         if self.machine != 0x8664:
@@ -156,25 +167,46 @@ class PE:
         if index < 0 or not rows[index][0] <= va < rows[index][1]:
             return None
         begin, end, unwind = rows[index]
-        return dict(procedureAddress=hex(begin), endExclusive=hex(end), unwindInfoRva=hex(unwind))
+        return dict(
+            procedureAddress=hex(begin),
+            endExclusive=hex(end),
+            unwindInfoRva=hex(unwind),
+        )
 
     def extract(self, va, end=None):
         declared = self.function(va)
         if end is None:
             if declared is None:
-                raise ValueError("No RUNTIME_FUNCTION covers this address; provide an explicit end for a manual range")
-            begin, stop = int(declared["procedureAddress"], 16), int(declared["endExclusive"], 16)
-            scope = "One contiguous AMD64 RUNTIME_FUNCTION span; excludes other chunks, callees and external data"
+                raise ValueError(
+                    "No RUNTIME_FUNCTION covers this address; "
+                    "provide an explicit end for a manual range"
+                )
+            begin, stop = (
+                int(declared["procedureAddress"], 16),
+                int(declared["endExclusive"], 16),
+            )
+            scope = (
+                "One contiguous AMD64 RUNTIME_FUNCTION span; "
+                "excludes other chunks, callees and external data"
+            )
         else:
             begin, stop = va, end
             if stop <= begin:
                 raise ValueError("The end must be greater than the start")
             scope = "Caller-supplied raw range; no function-boundary claim"
         raw = self.read(begin, stop - begin)
-        record = dict(sourceSha256=self.sha256, sourcePath=str(self.path), imageBase=hex(self.image_base),
-                      requestedAddress=hex(va), procedureAddress=hex(begin), endExclusive=hex(stop),
-                      sourceFileOffset=self.rva_to_off(begin - self.image_base), length=len(raw),
-                      derivedSha256=hashlib.sha256(raw).hexdigest(), scope=scope)
+        record = dict(
+            sourceSha256=self.sha256,
+            sourcePath=str(self.path),
+            imageBase=hex(self.image_base),
+            requestedAddress=hex(va),
+            procedureAddress=hex(begin),
+            endExclusive=hex(stop),
+            sourceFileOffset=self.rva_to_off(begin - self.image_base),
+            length=len(raw),
+            derivedSha256=hashlib.sha256(raw).hexdigest(),
+            scope=scope,
+        )
         if end is None:
             record["unwindInfoRva"] = declared["unwindInfoRva"]
         return record, raw
@@ -185,7 +217,9 @@ class PE:
             return []
         rows = []
         for index in range(size // 20):
-            oft, timestamp, forwarder, name_rva, first = struct.unpack("<IIIII", self.read(self.image_base + rva + index * 20, 20))
+            oft, timestamp, forwarder, name_rva, first = struct.unpack(
+                "<IIIII", self.read(self.image_base + rva + index * 20, 20)
+            )
             if not any((oft, timestamp, forwarder, name_rva, first)):
                 return rows
             dll = self.cstr(self.image_base + name_rva)
@@ -194,10 +228,20 @@ class PE:
                 value = self.u64(thunk + slot * 8)
                 if not value:
                     break
-                symbol = f"ordinal#{value & 0xffff}" if value >> 63 else self.cstr(self.image_base + value + 2)
+                symbol = (
+                    f"ordinal#{value & 0xFFFF}"
+                    if value >> 63
+                    else self.cstr(self.image_base + value + 2)
+                )
                 if dll is None or symbol is None:
                     raise ValueError("Unterminated import name")
-                rows.append(dict(address=hex(self.image_base + first + slot * 8), dll=dll, symbol=symbol))
+                rows.append(
+                    dict(
+                        address=hex(self.image_base + first + slot * 8),
+                        dll=dll,
+                        symbol=symbol,
+                    )
+                )
             else:
                 raise ValueError("Unterminated import thunk table")
         raise ValueError("Unterminated import descriptor table")
@@ -211,35 +255,55 @@ def references(pe, target, limit=200):
     """
     rows = []
     count = 0
+
     def add(kind, address, **fields):
         nonlocal count
         count += 1
         if len(rows) < limit:
             rows.append(dict(kind=kind, address=hex(address), **fields))
-    for name, rva, span, raw, size in pe.sections:
-        blob = pe.b[raw:raw + size]
+
+    for name, rva, _span, raw, size in pe.sections:
+        blob = pe.b[raw : raw + size]
         start = pe.image_base + rva
         if name == ".text":
             for opcode, kind in [(b"\xe8", "call-rel32"), (b"\xe9", "jump-rel32")]:
                 offset = blob.find(opcode)
                 while offset >= 0 and offset + 5 <= size:
-                    if start + offset + 5 + struct.unpack_from("<i", blob, offset + 1)[0] == target:
+                    if (
+                        start
+                        + offset
+                        + 5
+                        + struct.unpack_from("<i", blob, offset + 1)[0]
+                        == target
+                    ):
                         add(kind, start + offset)
                     offset = blob.find(opcode, offset + 1)
             try:
                 import numpy as np
-            except ImportError:
+            except ImportError as error:
                 if size > 4 * 1024 * 1024:
-                    raise ValueError("Run bun run rea setup-controls for accelerated reference scans")
+                    raise ValueError(
+                        "Run bun run rea setup-controls for accelerated reference scans"
+                    ) from error
                 for offset in range(size - 3):
-                    if start + offset + 4 + struct.unpack_from("<i", blob, offset)[0] == target:
+                    if (
+                        start + offset + 4 + struct.unpack_from("<i", blob, offset)[0]
+                        == target
+                    ):
                         add("possible-rip-disp32", start + offset + 4)
             else:
                 step = 4 * 1024 * 1024
                 for offset in range(0, size - 3, step):
-                    chunk = np.frombuffer(blob[offset:offset + step + 3], dtype=np.uint8)
+                    chunk = np.frombuffer(
+                        blob[offset : offset + step + 3], dtype=np.uint8
+                    )
                     windows = np.lib.stride_tricks.sliding_window_view(chunk, 4)
-                    disp = windows[:, 0].astype(np.int64) | windows[:, 1].astype(np.int64) << 8 | windows[:, 2].astype(np.int64) << 16 | windows[:, 3].astype(np.int64) << 24
+                    disp = (
+                        windows[:, 0].astype(np.int64)
+                        | windows[:, 1].astype(np.int64) << 8
+                        | windows[:, 2].astype(np.int64) << 16
+                        | windows[:, 3].astype(np.int64) << 24
+                    )
                     disp = np.where(disp >= 1 << 31, disp - (1 << 32), disp)
                     ends = start + offset + np.arange(len(disp), dtype=np.int64) + 4
                     for index in np.flatnonzero(ends + disp == target):
@@ -249,13 +313,21 @@ def references(pe, target, limit=200):
             while offset >= 0:
                 add("absolute-u64", start + offset)
                 offset = blob.find(struct.pack("<Q", target), offset + 1)
-    return dict(target=hex(target), candidates=rows, totalCandidates=count, truncated=count > len(rows),
-                scope="Byte-pattern candidates, not validated instructions or semantic ownership")
+    return dict(
+        target=hex(target),
+        candidates=rows,
+        totalCandidates=count,
+        truncated=count > len(rows),
+        scope="Byte-pattern candidates, "
+        "not validated instructions or semantic ownership",
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["inspect", "function", "extract", "read", "imports", "refs"])
+    parser.add_argument(
+        "action", choices=["inspect", "function", "extract", "read", "imports", "refs"]
+    )
     parser.add_argument("--artifact")
     parser.add_argument("--sha256")
     parser.add_argument("--va", type=lambda s: int(s, 16))
@@ -270,9 +342,18 @@ def main():
         parser.error("Invalid result limit or read length")
     pe = PE(args.artifact, args.sha256)
     if args.action == "inspect":
-        result = dict(sha256=pe.sha256, imageBase=hex(pe.image_base), machine=hex(pe.machine),
-                      sections=[dict(name=s[0], rva=hex(s[1]), span=s[2], fileOffset=s[3], fileBytes=s[4]) for s in pe.sections],
-                      scope="PE32+ file layout; no runtime, symbols or function analysis")
+        result = dict(
+            sha256=pe.sha256,
+            imageBase=hex(pe.image_base),
+            machine=hex(pe.machine),
+            sections=[
+                dict(
+                    name=s[0], rva=hex(s[1]), span=s[2], fileOffset=s[3], fileBytes=s[4]
+                )
+                for s in pe.sections
+            ],
+            scope="PE32+ file layout; no runtime, symbols or function analysis",
+        )
     elif args.action == "function":
         result = pe.function(args.va)
     elif args.action == "extract":
@@ -286,10 +367,18 @@ def main():
             stream.write(raw)
         result["derivedPath"] = str(out)
     elif args.action == "read":
-        result = dict(address=hex(args.va), length=args.length, bytes=pe.read(args.va, args.length).hex())
+        result = dict(
+            address=hex(args.va),
+            length=args.length,
+            bytes=pe.read(args.va, args.length).hex(),
+        )
     elif args.action == "imports":
         rows = pe.imports()
-        result = rows if args.va is None else next((r for r in rows if int(r["address"], 16) == args.va), None)
+        result = (
+            rows
+            if args.va is None
+            else next((r for r in rows if int(r["address"], 16) == args.va), None)
+        )
     else:
         result = references(pe, args.va, args.limit)
     print(json.dumps(result, indent=2))

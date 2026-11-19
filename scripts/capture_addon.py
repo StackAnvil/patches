@@ -25,10 +25,14 @@ def response(flow: http.HTTPFlow) -> None:
         "path": redact_path(request.path),
         "protocol": request.http_version,
         "request_headers": redact_headers(request.headers),
-        "request_body": redact_body(request.content or b"", request.headers.get("content-type", "")),
+        "request_body": redact_body(
+            request.content or b"", request.headers.get("content-type", "")
+        ),
         "status": reply.status_code,
         "response_headers": redact_headers(reply.headers),
-        "response_body": redact_body(reply.content or b"", reply.headers.get("content-type", "")),
+        "response_body": redact_body(
+            reply.content or b"", reply.headers.get("content-type", "")
+        ),
     }
     descriptor = os.open(EVENTS, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     with os.fdopen(descriptor, "a", encoding="utf8") as file:
