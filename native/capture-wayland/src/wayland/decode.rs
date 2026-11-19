@@ -172,6 +172,58 @@ pub(super) fn windows(tree: &Value) -> Result<Vec<WindowInfo>> {
     Ok(result)
 }
 
+/// Public wrappers for the fuzz targets in `fuzz/`. See `src/lib.rs`.
+#[cfg(fuzzing)]
+pub mod fuzzing {
+    use std::io::Read;
+
+    use serde_json::Value;
+
+    use crate::Result;
+    pub use crate::command::{Button, Command, Point};
+
+    /// A Sway window with the fields that `windows` reads from the tree.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Window {
+        pub id: String,
+        pub title: String,
+        pub x: i32,
+        pub y: i32,
+        pub width: u16,
+        pub height: u16,
+        pub focused: bool,
+        pub output: String,
+    }
+
+    pub fn sway_reply(connection: &mut impl Read, kind: u32) -> Result<Value> {
+        super::sway_reply(connection, kind)
+    }
+
+    pub fn windows(tree: &Value) -> Result<Vec<Window>> {
+        Ok(super::windows(tree)?
+            .into_iter()
+            .map(|window| Window {
+                id: window.id,
+                title: window.title,
+                x: window.x,
+                y: window.y,
+                width: window.width,
+                height: window.height,
+                focused: window.focused,
+                output: window.output,
+            })
+            .collect())
+    }
+
+    pub fn input_request(stream: impl Read) -> Result<Command> {
+        super::input_request(stream)
+    }
+
+    pub fn pixel(bytes: &[u8], point: Point) -> Result<[u8; 3]> {
+        super::pixel(bytes, point)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

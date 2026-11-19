@@ -29,6 +29,8 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 use xkbcommon::xkb;
 
 mod decode;
+#[cfg(fuzzing)]
+pub use decode::fuzzing;
 
 use crate::{
     ContextError, Result,

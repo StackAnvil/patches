@@ -54,3 +54,19 @@ Run `bun run pre-commit` to run the commit checks manually.
 The hooks use the existing project tools. Before pushing, they run the relevant project checks for changed files.
 Install cargo-deny 0.20.2 for the pre-push check when `Cargo.toml`, `Cargo.lock`, or `deny.toml` changes.
 To check Rust dependencies from the repository root, run `cargo deny --manifest-path native/capture-wayland/Cargo.toml --config deny.toml --locked check`.
+
+## Fuzzing
+
+The `native/capture-wayland/fuzz` crate fuzzes the capture helper's parsers: the PPM pixel reader, Sway IPC replies and window trees, and input service requests.
+It needs the pinned nightly toolchain and cargo-fuzz 0.13.2. It is not part of the normal Cargo checks.
+The [Fuzz workflow](.github/workflows/fuzz.yml) runs each target for 60 seconds when the helper changes and for 10 minutes every week.
+
+From `native/capture-wayland`, list the targets, run one, and reproduce a failure:
+
+```bash
+cargo +nightly-2026-11-01 fuzz list
+cargo +nightly-2026-11-01 fuzz run ppm_pixel fuzz/corpus/ppm_pixel fuzz/seeds/ppm_pixel -- -max_total_time=300
+cargo +nightly-2026-11-01 fuzz run ppm_pixel fuzz/artifacts/ppm_pixel/<crash-file>
+```
+
+The first corpus directory collects new inputs and is not committed. Keep `fuzz/seeds` small.
