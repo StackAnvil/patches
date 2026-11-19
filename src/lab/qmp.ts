@@ -51,15 +51,15 @@ export function withQmpEffect<A, E, R>(
             socket.destroy();
           };
           socket.on("error", (cause) => {
-            fail(new QmpError({ message: "QMP connection failed.", cause }));
+            fail(QmpError.make({ message: "QMP connection failed.", cause }));
           });
           socket.on("close", () => {
-            fail(new QmpError({ message: "QMP disconnected." }));
+            fail(QmpError.make({ message: "QMP disconnected." }));
           });
           socket.on("data", (data) => {
             buffer += data.toString();
             if (buffer.length > 1024 * 1024) {
-              fail(new QmpError({ message: "QMP reply exceeds the size limit." }));
+              fail(QmpError.make({ message: "QMP reply exceeds the size limit." }));
               return;
             }
             let newline: number;
@@ -79,14 +79,14 @@ export function withQmpEffect<A, E, R>(
                   reply,
                   message.error
                     ? Effect.fail(
-                        new QmpError({
+                        QmpError.make({
                           message: message.error.desc ?? "QMP rejected the command.",
                         }),
                       )
                     : Effect.succeed(message.return),
                 );
               } catch (cause) {
-                fail(new QmpError({ message: "Invalid QMP reply.", cause }));
+                fail(QmpError.make({ message: "Invalid QMP reply.", cause }));
                 return;
               }
             }
@@ -106,7 +106,7 @@ export function withQmpEffect<A, E, R>(
                     yield* Effect.try({
                       try: () => socket.write(`${encodeJson({ execute, arguments: args, id })}\n`),
                       catch: (cause) =>
-                        new QmpError({ message: "Could not write QMP command.", cause }),
+                        QmpError.make({ message: "Could not write QMP command.", cause }),
                     });
                     return yield* Deferred.await(reply);
                   }),
@@ -120,7 +120,7 @@ export function withQmpEffect<A, E, R>(
             greeting,
             command,
             close: () => {
-              fail(new QmpError({ message: "QMP scope closed." }));
+              fail(QmpError.make({ message: "QMP scope closed." }));
             },
           };
         }),
@@ -135,7 +135,7 @@ export function withQmpEffect<A, E, R>(
       duration: timeoutMs,
       orElse: () =>
         Effect.fail(
-          new QmpError({ message: "QMP operation timed out. The guest was left running." }),
+          QmpError.make({ message: "QMP operation timed out. The guest was left running." }),
         ),
     }),
   );
@@ -155,7 +155,7 @@ export function withNamedQmpEffect<A, E, R>(
         !("name" in identity) ||
         identity.name !== name
       )
-        return yield* new QmpError({
+        return yield* QmpError.make({
           message: "QMP VM identity does not match this lab profile. No guest action was sent.",
         });
       return yield* operation(command);
@@ -170,7 +170,7 @@ function legacyOperation<A>(operation: (command: QmpCommand) => Promise<A>) {
       catch: (cause) =>
         cause instanceof QmpError
           ? cause
-          : new QmpError({
+          : QmpError.make({
               message: cause instanceof Error ? cause.message : String(cause),
               cause,
             }),
@@ -227,7 +227,7 @@ export const clickPointerEffect = Effect.fn("Qmp.clickPointer")(function* (
       return pointerEvents(x, y, button);
     },
     catch: (cause) =>
-      new QmpError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+      QmpError.make({ message: cause instanceof Error ? cause.message : String(cause), cause }),
   });
   yield* command("input-send-event", { events: events.slice(0, 2) });
   yield* Effect.sleep(100);
@@ -246,7 +246,7 @@ export const clickPointerEffect = Effect.fn("Qmp.clickPointer")(function* (
           duration: 1000,
           orElse: () =>
             Effect.fail(
-              new QmpError({
+              QmpError.make({
                 message: "QMP pointer release timed out. The guest was left running.",
               }),
             ),
@@ -269,7 +269,7 @@ export function clickPointer(
         Effect.tryPromise({
           try: () => command(execute, args),
           catch: (cause) =>
-            new QmpError({
+            QmpError.make({
               message: cause instanceof Error ? cause.message : String(cause),
               cause,
             }),

@@ -109,7 +109,7 @@ function validatePaths(path: string, spec: VmSpec): void {
 }
 
 /** Override only the lab policy. Quickget retains ownership of boot media and firmware configuration. */
-export function vmConfig(spec: VmSpec): string {
+function vmConfig(spec: VmSpec): string {
   validateSpec(spec);
   return `source './${configName(spec)}.conf'\narch="x86_64"\ncpu_cores="${spec.cores}"\nram="${spec.ramGiB}G"\ndisk_size="${spec.diskGiB}G"\ndisplay="spice"\nviewer="none"\ngl="off"\nsound_card="none"\npublic_dir="none"\nnetwork=""\nport_forwards=()\nssh_port="0"\nextra_args="-qmp unix:control.socket,server=on,wait=off"\n`;
 }

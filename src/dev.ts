@@ -23,7 +23,9 @@ const toolsDir = join(root, ".stackanvil", "tools");
 
 export const devSetup = Effect.fn("devSetup")(function* () {
   if (!Bun.which("git") || !Bun.which("java")) {
-    return yield* new DevSetupError({ message: "Install Git and a JDK before running dev setup." });
+    return yield* DevSetupError.make({
+      message: "Install Git and a JDK before running dev setup.",
+    });
   }
   yield* Effect.promise(() => mkdir(toolsDir, { recursive: true }));
   const viaProxy = yield* Effect.promise(() =>
@@ -63,7 +65,7 @@ export const devSetup = Effect.fn("devSetup")(function* () {
     "HTTPS capture: use bun run capture start and bun run capture launch. Bedrock gameplay uses a separate UDP path.",
   );
   if (missing.length > 0)
-    return yield* new DevSetupError({
+    return yield* DevSetupError.make({
       message: `Development setup needs:\n${missing.map((item) => `- ${item}`).join("\n")}`,
     });
   print("Bedrock server and client are configured. Development setup is ready.");

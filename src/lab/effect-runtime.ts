@@ -16,7 +16,7 @@ export class LabError extends Schema.TaggedError<LabError, { readonly brand: uni
 export function labError(operation: string, cause: unknown) {
   return cause instanceof LabError
     ? cause
-    : new LabError({
+    : LabError.make({
         operation,
         message: cause instanceof Error ? cause.message : String(cause),
         cause,
@@ -80,7 +80,7 @@ export function labRequestBytes(url: string, maximumBytes = 512 * 1024 * 1024) {
         return fetched;
       });
       if (!response.ok)
-        return yield* new LabError({
+        return yield* LabError.make({
           operation: "download",
           message: `Download failed: ${response.status} ${url}`,
         });
@@ -94,7 +94,7 @@ export function labRequestBytes(url: string, maximumBytes = 512 * 1024 * 1024) {
           if (chunk.done) break;
           size += chunk.value.byteLength;
           if (size > maximumBytes)
-            return yield* new LabError({
+            return yield* LabError.make({
               operation: "download",
               message: "Download exceeds the size limit.",
             });
@@ -113,7 +113,7 @@ export function labRequestBytes(url: string, maximumBytes = 512 * 1024 * 1024) {
     Effect.timeoutOrElse({
       duration: 120_000,
       orElse: () =>
-        Effect.fail(new LabError({ operation: "download", message: "Download timed out." })),
+        Effect.fail(LabError.make({ operation: "download", message: "Download timed out." })),
     }),
   );
 }

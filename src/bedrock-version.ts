@@ -21,7 +21,7 @@ export class BedrockVersionError extends Schema.TaggedError<
 
 function versionError(fallback: string) {
   return (cause: unknown) =>
-    new BedrockVersionError({ message: cause instanceof Error ? cause.message : fallback, cause });
+    BedrockVersionError.make({ message: cause instanceof Error ? cause.message : fallback, cause });
 }
 type FetchMetadata = (url: URL, init: RequestInit) => Promise<Response>;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;

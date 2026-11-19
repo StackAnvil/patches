@@ -7,7 +7,7 @@ const metadata = import.meta.glob<{ frontmatter: PageMetadata }>("../../content/
 });
 
 // oxlint-disable-next-line oxc/no-map-spread -- copy so the imported MDX frontmatter stays unchanged
-export const documents = Object.entries(metadata).map(([path, { frontmatter }]) => ({
+const documents = Object.entries(metadata).map(([path, { frontmatter }]) => ({
   ...frontmatter,
   path,
   slug: path.slice(path.lastIndexOf("/") + 1, -4),

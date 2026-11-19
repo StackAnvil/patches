@@ -450,7 +450,7 @@ export async function writePrivateFixture(
 
 /** The form fixture plan or one of its inputs is invalid. */
 // oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
-export class FormFixtureError extends Schema.TaggedError<
+class FormFixtureError extends Schema.TaggedError<
   FormFixtureError,
   { readonly brand: unique symbol }
 >()("FormFixtureError", {
@@ -622,7 +622,7 @@ export const prepareFormFixture = (
       return { ...preview, previewSha256 };
     },
     catch: (cause) =>
-      new FormFixtureError({
+      FormFixtureError.make({
         message: cause instanceof Error ? cause.message : String(cause),
         cause,
       }),

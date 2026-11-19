@@ -12,13 +12,13 @@ import { execFileAsync as execute } from "./process.ts";
 // Importing does not require a modpack project or URLs for unpublished builds.
 /** The client modpack could not be bundled. */
 // oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
-export class ModpackError extends Schema.TaggedError<
-  ModpackError,
-  { readonly brand: unique symbol }
->()("ModpackError", {
-  message: Schema.String,
-  cause: Schema.Unknown,
-}) {}
+class ModpackError extends Schema.TaggedError<ModpackError, { readonly brand: unique symbol }>()(
+  "ModpackError",
+  {
+    message: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {}
 
 export const bundleModpack = Effect.fn("bundleModpack")(function* (
   artifactsPath: string = join(root, "dist"),
@@ -74,7 +74,7 @@ export const bundleModpack = Effect.fn("bundleModpack")(function* (
       }
     },
     catch: (cause) =>
-      new ModpackError({
+      ModpackError.make({
         message: cause instanceof Error ? cause.message : String(cause),
         cause,
       }),

@@ -5,7 +5,7 @@ import { ArrowDownToLine, Menu, Moon, Search, Sun, X } from "lucide-react";
 import { useState } from "react";
 import { site } from "../lib/site";
 
-export function Brand() {
+function Brand() {
   return (
     <span className="brand">
       <svg viewBox="0 0 64 64" width="28" height="28" aria-hidden="true">

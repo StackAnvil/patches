@@ -92,7 +92,7 @@ class ReaError extends Schema.TaggedError<ReaError, { readonly brand: unique sym
 function error(cause: unknown): ReaError {
   return cause instanceof ReaError
     ? cause
-    : new ReaError({ message: cause instanceof Error ? cause.message : String(cause), cause });
+    : ReaError.make({ message: cause instanceof Error ? cause.message : String(cause), cause });
 }
 
 function independentName(path: string): void {

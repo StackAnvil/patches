@@ -111,8 +111,10 @@ function alive(pid?: number): boolean {
 }
 const commandEffect = (program: string, args: string[], env = process.env) =>
   processCommand(program, args, root, env).pipe(
-    Effect.map((output) => output.trim()),
-    Effect.mapError((cause) => labError("command", cause)),
+    Effect.mapBoth({
+      onSuccess: (output) => output.trim(),
+      onFailure: (cause) => labError("command", cause),
+    }),
   );
 const waitForLogEffect = Effect.fn("Integration.waitForLog")(function* (
   path: string,
@@ -1024,186 +1026,182 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
   yield* labIO("main", async () => mkdir(dir, { recursive: true, mode: 0o700 }));
   print(`Private logs: ${dir}`);
   yield* (yield* IntegrationResources).acquireDisplay(ensureDisplay);
-  return yield* Effect.gen(function* () {
-    const probeFailures: string[] = [];
-    const java = routes.includes("java-java") ? yield* javaServerEffect(dir) : undefined;
-    const geyser = geyserRoute ? yield* javaServerEffect(dir, true) : undefined;
-    const geyserProxy = geyser?.bedrockPort
-      ? yield* viaProxyEffect(dir, geyser.bedrockPort, geyserBedrockVersion, "viaproxy-geyser")
-      : undefined;
-    const nativeBedrock = routes.includes("bedrock-bedrock")
-      ? yield* bedrockServerEffect(dir, bdsSource, "bedrock-native-server")
-      : undefined;
-    const proxyBedrock = routes.includes("java-bedrock")
-      ? yield* bedrockServerEffect(
+  const probeFailures: string[] = [];
+  const java = routes.includes("java-java") ? yield* javaServerEffect(dir) : undefined;
+  const geyser = geyserRoute ? yield* javaServerEffect(dir, true) : undefined;
+  const geyserProxy = geyser?.bedrockPort
+    ? yield* viaProxyEffect(dir, geyser.bedrockPort, geyserBedrockVersion, "viaproxy-geyser")
+    : undefined;
+  const nativeBedrock = routes.includes("bedrock-bedrock")
+    ? yield* bedrockServerEffect(dir, bdsSource, "bedrock-native-server")
+    : undefined;
+  const proxyBedrock = routes.includes("java-bedrock")
+    ? yield* bedrockServerEffect(
+        dir,
+        proxyBdsSource,
+        "bedrock-proxy-server",
+        entityProbe || gameplayCases.length > 0,
+        resourceProbe ? { variant: "a", run: resourceRun } : undefined,
+        gameplayCases.some((value) => isAuthoredInventoryCase(value)),
+      )
+    : undefined;
+  const proxy = proxyBedrock
+    ? yield* viaProxyEffect(dir, proxyBedrock.port, proxyBedrock.version)
+    : undefined;
+  for (const route of routes) {
+    if (route === "java-java" && java) {
+      if (!modpackOnly) yield* javaJoinEffect(route, "plain", dir, java);
+      if (!plainOnly) yield* javaJoinEffect(route, shaders ? "shaders" : "optimized", dir, java);
+    } else if (route === "java-geyser" && geyser && geyserProxy) {
+      const target = { ...geyserProxy, log: geyser.log, proxyLog: geyserProxy.log };
+      if (!modpackOnly)
+        yield* javaJoinEffect(
+          route,
+          "plain",
           dir,
-          proxyBdsSource,
-          "bedrock-proxy-server",
-          entityProbe || gameplayCases.length > 0,
-          resourceProbe ? { variant: "a", run: resourceRun } : undefined,
-          gameplayCases.some((value) => isAuthoredInventoryCase(value)),
-        )
-      : undefined;
-    const proxy = proxyBedrock
-      ? yield* viaProxyEffect(dir, proxyBedrock.port, proxyBedrock.version)
-      : undefined;
-    for (const route of routes) {
-      if (route === "java-java" && java) {
-        if (!modpackOnly) yield* javaJoinEffect(route, "plain", dir, java);
-        if (!plainOnly) yield* javaJoinEffect(route, shaders ? "shaders" : "optimized", dir, java);
-      } else if (route === "java-geyser" && geyser && geyserProxy) {
-        const target = { ...geyserProxy, log: geyser.log, proxyLog: geyserProxy.log };
-        if (!modpackOnly)
-          yield* javaJoinEffect(
-            route,
-            "plain",
-            dir,
-            target,
-            geyser,
-            false,
-            gameplayCases,
-            undefined,
-            probeFailures,
-            negativeControls,
-          );
-        if (gameplayCases.length > 0) {
-          yield* javaJoinEffect(route, "plain", dir, target);
-          print("PASS Geyser reconnect: the Java client rejoined the same Paper world.");
-        }
-        if (!plainOnly)
-          yield* javaJoinEffect(route, shaders ? "shaders" : "optimized", dir, target);
-      } else if (route === "java-bedrock" && proxy && proxyBedrock) {
-        let modpackProxy = proxy;
-        let modpackBedrock = proxyBedrock;
-        const proxyLogStart = (yield* textFileEffect(proxy.log)).length;
-        const firstClientLog = !modpackOnly
-          ? yield* javaJoinEffect(
-              route,
-              "plain",
-              dir,
-              { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
-              entityProbe || gameplayCases.length > 0 || resourceProbe ? proxyBedrock : undefined,
-              entityProbe,
-              gameplayCases,
-              resourceProbe ? { variant: "a", label: "a-first" } : undefined,
-              probeFailures,
-            )
-          : "";
-        if (
-          resourceProbe &&
-          (yield* textFileEffect(proxy.log)).includes(
-            "Missing bedrock -> java block state mapping: stackanvil:resource_probe_block",
-          )
-        ) {
-          return yield* labError(
-            "main",
-            new Error("The custom probe block fell back to an unrelated Java block state."),
-          );
-        }
-        if (resourceProbe) {
-          const firstConversions = convertedPackCount(
-            (yield* textFileEffect(proxy.log)).slice(proxyLogStart) + firstClientLog,
-          );
-          if (!firstConversions)
-            return yield* labError(
-              "main",
-              new Error("Resource probe A did not convert its new pack."),
-            );
-          const repeatStart = (yield* textFileEffect(proxy.log)).length;
-          const repeatClientLog = yield* javaJoinEffect(
+          target,
+          geyser,
+          false,
+          gameplayCases,
+          undefined,
+          probeFailures,
+          negativeControls,
+        );
+      if (gameplayCases.length > 0) {
+        yield* javaJoinEffect(route, "plain", dir, target);
+        print("PASS Geyser reconnect: the Java client rejoined the same Paper world.");
+      }
+      if (!plainOnly) yield* javaJoinEffect(route, shaders ? "shaders" : "optimized", dir, target);
+    } else if (route === "java-bedrock" && proxy && proxyBedrock) {
+      let modpackProxy = proxy;
+      let modpackBedrock = proxyBedrock;
+      const proxyLogStart = (yield* textFileEffect(proxy.log)).length;
+      const firstClientLog = !modpackOnly
+        ? yield* javaJoinEffect(
             route,
             "plain",
             dir,
             { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
-            proxyBedrock,
-            false,
-            [],
-            { variant: "a", label: "a-repeat" },
-          );
-          const repeatedConversions = convertedPackCount(
-            (yield* textFileEffect(proxy.log)).slice(repeatStart) + repeatClientLog,
-          );
-          if (repeatedConversions)
-            return yield* labError(
-              "main",
-              new Error("Resource probe A converted the same content again."),
-            );
-          print("PASS resource pack cache: unchanged content reused the conversion.");
-          if (proxy.child.pid !== undefined && alive(proxy.child.pid))
-            process.kill(-proxy.child.pid, "SIGINT");
-          for (let attempt = 0; attempt < 40 && alive(proxy.child.pid); attempt++)
-            yield* Effect.sleep(250);
-          if (alive(proxy.child.pid))
-            return yield* labError(
-              "main",
-              new Error("ViaProxy did not stop before the changed resource pack run."),
-            );
-          if (proxyBedrock.child.pid !== undefined && alive(proxyBedrock.child.pid))
-            process.kill(-proxyBedrock.child.pid, "SIGINT");
-          for (let attempt = 0; attempt < 40 && alive(proxyBedrock.child.pid); attempt++)
-            yield* Effect.sleep(250);
-          if (alive(proxyBedrock.child.pid))
-            return yield* labError(
-              "main",
-              new Error("Bedrock server did not stop before the changed resource pack run."),
-            );
-          const changedServer = yield* bedrockServerEffect(
-            dir,
-            proxyBdsSource,
-            "bedrock-resource-changed-server",
-            false,
-            { variant: "b", run: resourceRun },
-          );
-          const changedProxy = yield* viaProxyEffect(
-            dir,
-            changedServer.port,
-            changedServer.version,
-            "viaproxy-resource-changed",
-            "viaproxy",
-          );
-          const changedStart = (yield* textFileEffect(changedProxy.log)).length;
-          const changedClientLog = yield* javaJoinEffect(
-            route,
-            "plain",
-            dir,
-            { ...changedProxy, log: changedServer.log, proxyLog: changedProxy.log },
-            changedServer,
-            false,
-            [],
-            { variant: "b", label: "b-changed" },
-          );
-          const changedConversions = convertedPackCount(
-            (yield* textFileEffect(changedProxy.log)).slice(changedStart) + changedClientLog,
-          );
-          if (!changedConversions)
-            return yield* labError(
-              "main",
-              new Error("Resource probe B did not convert changed content."),
-            );
-          print("PASS resource pack cache: changed content produced a new conversion.");
-          modpackProxy = changedProxy;
-          modpackBedrock = changedServer;
-        } else if (gameplayCases.length > 0) {
-          yield* javaJoinEffect(route, "plain", dir, {
-            ...proxy,
-            log: proxyBedrock.log,
-            proxyLog: proxy.log,
-          });
-          print("PASS gameplay reconnect: the Java client rejoined the same Bedrock world.");
-        }
-        if (!plainOnly)
-          yield* javaJoinEffect(route, shaders ? "shaders" : "optimized", dir, {
-            ...modpackProxy,
-            log: modpackBedrock.log,
-            proxyLog: modpackProxy.log,
-          });
-      } else if (route === "bedrock-bedrock" && nativeBedrock) {
-        yield* bedrockJoinEffect(dir, nativeBedrock);
+            entityProbe || gameplayCases.length > 0 || resourceProbe ? proxyBedrock : undefined,
+            entityProbe,
+            gameplayCases,
+            resourceProbe ? { variant: "a", label: "a-first" } : undefined,
+            probeFailures,
+          )
+        : "";
+      if (
+        resourceProbe &&
+        (yield* textFileEffect(proxy.log)).includes(
+          "Missing bedrock -> java block state mapping: stackanvil:resource_probe_block",
+        )
+      ) {
+        return yield* labError(
+          "main",
+          new Error("The custom probe block fell back to an unrelated Java block state."),
+        );
       }
+      if (resourceProbe) {
+        const firstConversions = convertedPackCount(
+          (yield* textFileEffect(proxy.log)).slice(proxyLogStart) + firstClientLog,
+        );
+        if (!firstConversions)
+          return yield* labError(
+            "main",
+            new Error("Resource probe A did not convert its new pack."),
+          );
+        const repeatStart = (yield* textFileEffect(proxy.log)).length;
+        const repeatClientLog = yield* javaJoinEffect(
+          route,
+          "plain",
+          dir,
+          { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
+          proxyBedrock,
+          false,
+          [],
+          { variant: "a", label: "a-repeat" },
+        );
+        const repeatedConversions = convertedPackCount(
+          (yield* textFileEffect(proxy.log)).slice(repeatStart) + repeatClientLog,
+        );
+        if (repeatedConversions)
+          return yield* labError(
+            "main",
+            new Error("Resource probe A converted the same content again."),
+          );
+        print("PASS resource pack cache: unchanged content reused the conversion.");
+        if (proxy.child.pid !== undefined && alive(proxy.child.pid))
+          process.kill(-proxy.child.pid, "SIGINT");
+        for (let attempt = 0; attempt < 40 && alive(proxy.child.pid); attempt++)
+          yield* Effect.sleep(250);
+        if (alive(proxy.child.pid))
+          return yield* labError(
+            "main",
+            new Error("ViaProxy did not stop before the changed resource pack run."),
+          );
+        if (proxyBedrock.child.pid !== undefined && alive(proxyBedrock.child.pid))
+          process.kill(-proxyBedrock.child.pid, "SIGINT");
+        for (let attempt = 0; attempt < 40 && alive(proxyBedrock.child.pid); attempt++)
+          yield* Effect.sleep(250);
+        if (alive(proxyBedrock.child.pid))
+          return yield* labError(
+            "main",
+            new Error("Bedrock server did not stop before the changed resource pack run."),
+          );
+        const changedServer = yield* bedrockServerEffect(
+          dir,
+          proxyBdsSource,
+          "bedrock-resource-changed-server",
+          false,
+          { variant: "b", run: resourceRun },
+        );
+        const changedProxy = yield* viaProxyEffect(
+          dir,
+          changedServer.port,
+          changedServer.version,
+          "viaproxy-resource-changed",
+          "viaproxy",
+        );
+        const changedStart = (yield* textFileEffect(changedProxy.log)).length;
+        const changedClientLog = yield* javaJoinEffect(
+          route,
+          "plain",
+          dir,
+          { ...changedProxy, log: changedServer.log, proxyLog: changedProxy.log },
+          changedServer,
+          false,
+          [],
+          { variant: "b", label: "b-changed" },
+        );
+        const changedConversions = convertedPackCount(
+          (yield* textFileEffect(changedProxy.log)).slice(changedStart) + changedClientLog,
+        );
+        if (!changedConversions)
+          return yield* labError(
+            "main",
+            new Error("Resource probe B did not convert changed content."),
+          );
+        print("PASS resource pack cache: changed content produced a new conversion.");
+        modpackProxy = changedProxy;
+        modpackBedrock = changedServer;
+      } else if (gameplayCases.length > 0) {
+        yield* javaJoinEffect(route, "plain", dir, {
+          ...proxy,
+          log: proxyBedrock.log,
+          proxyLog: proxy.log,
+        });
+        print("PASS gameplay reconnect: the Java client rejoined the same Bedrock world.");
+      }
+      if (!plainOnly)
+        yield* javaJoinEffect(route, shaders ? "shaders" : "optimized", dir, {
+          ...modpackProxy,
+          log: modpackBedrock.log,
+          proxyLog: modpackProxy.log,
+        });
+    } else if (route === "bedrock-bedrock" && nativeBedrock) {
+      yield* bedrockJoinEffect(dir, nativeBedrock);
     }
-    if (probeFailures.length > 0)
-      return yield* labError("main", new Error(probeFailures.join("\n")));
-  });
+  }
+  if (probeFailures.length > 0) return yield* labError("main", new Error(probeFailures.join("\n")));
 });
 // SDK callbacks expose Promises at their boundary.
 function textFile(path: string) {

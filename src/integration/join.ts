@@ -72,19 +72,19 @@ export const waitForJoinEffect = Effect.fn("Integration.waitForJoin")(function* 
         client,
       )
     ) {
-      return yield* new LabError({
+      return yield* LabError.make({
         operation: "join probe",
         message: `Client crashed on ${probe.route}.`,
       });
     }
     if (!probe.clientAlive())
-      return yield* new LabError({
+      return yield* LabError.make({
         operation: "join probe",
         message: `Client exited before the ${probe.route} stability check finished.`,
       });
     const earlyFailure = connectionFailure(probe.route, undefined, server, connection);
     if (earlyFailure)
-      return yield* new LabError({ operation: "join probe", message: earlyFailure });
+      return yield* LabError.make({ operation: "join probe", message: earlyFailure });
     const current = joinedPlayer(probe.route, server);
     if (current && joinedAt === undefined) {
       joinedAt = yield* Clock.currentTimeMillis;
@@ -97,12 +97,12 @@ export const waitForJoinEffect = Effect.fn("Integration.waitForJoin")(function* 
         server.search(javaBackend(probe.route) ? /joined the game/u : /Player Spawned:/u),
       );
       const failure = connectionFailure(probe.route, player, postJoin);
-      if (failure) return yield* new LabError({ operation: "join probe", message: failure });
+      if (failure) return yield* LabError.make({ operation: "join probe", message: failure });
       if ((yield* Clock.currentTimeMillis) - joinedAt >= probe.dwellMs) return player;
     }
     yield* Effect.sleep(probe.pollMs ?? 1000);
   }
-  return yield* new LabError({
+  return yield* LabError.make({
     operation: "join probe",
     message: `${probe.route} did not complete a join within ${probe.timeoutMs / 1000}s.`,
   });

@@ -36,7 +36,7 @@ export function assertPrReady(patch: UpstreamablePatch): void {
   );
 }
 
-export interface DeferredPatch {
+interface DeferredPatch {
   file: string;
   reason: string;
 }

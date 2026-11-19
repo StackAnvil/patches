@@ -6,7 +6,7 @@ import { ForgeScene } from "./forge-scene";
 
 const icons = { proxy: Cable, fabric: Puzzle, modpack: Package } as const;
 
-export function SetupSwitch({
+function SetupSwitch({
   setup,
   onChange,
   disabled,
@@ -51,7 +51,7 @@ export function SetupSwitch({
   );
 }
 
-export function DownloadFiles({ release, setup }: { release: Release | null; setup: Setup }) {
+function DownloadFiles({ release, setup }: { release: Release | null; setup: Setup }) {
   const downloads = setupDownloads(release, setup);
   if (downloads.length === 0)
     return (

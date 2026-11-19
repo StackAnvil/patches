@@ -111,7 +111,7 @@ function coordinates(pom: string): Coordinates {
   };
 }
 
-export function artifactProjectDirectory(dir: string, project?: string): string {
+function artifactProjectDirectory(dir: string, project?: string): string {
   if (!project) return dir;
   if (!/^:[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)*$/u.test(project)) {
     throw new Error(`Invalid Gradle artifact project: ${project}`);
@@ -159,7 +159,7 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   const viaFabricPlusVersion =
     id === "viafabricplus-bedrock" ? built.get("viafabricplus")?.version : undefined;
   if (id === "viafabricplus-bedrock" && !viaFabricPlusVersion) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: "The Bedrock add-on needs a pinned ViaFabricPlus artifact",
     });
   }
@@ -220,7 +220,7 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   }
   const name = basename(artifact);
   if (!name.endsWith("-StackAnvil.jar")) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Branding patch did not suffix ${name} with -StackAnvil.jar`,
     });
   }
@@ -291,7 +291,7 @@ export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: s
     listArtifacts(artifactProjectDirectory(dir, target.artifactProject)),
   );
   if (artifacts.length === 0)
-    return yield* new StackError({ message: `No PR JAR artifacts found for ${id}` });
+    return yield* StackError.make({ message: `No PR JAR artifacts found for ${id}` });
   const output = patchFile
     ? join(root, "dist", "pr", id, patchFile.replace(/\.patch$/u, ""))
     : join(root, "dist", "pr", id);

@@ -13,7 +13,7 @@ import { print, printError } from "../output.ts";
 
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
-export const gameplayCaseIds = [
+const gameplayCaseIds = [
   "movement-left",
   "movement-right",
   "block-break",
@@ -802,7 +802,7 @@ async function creativeSelect(
   await uiKey(ui, "Escape");
 }
 
-export async function driveGameplay(
+async function driveGameplay(
   id: GameplayCaseId,
   ui: Ui,
   start?: () => Promise<void>,

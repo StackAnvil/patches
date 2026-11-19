@@ -18,7 +18,7 @@ import { errorCode } from "./guards.ts";
 
 type Check = "passed" | "failed" | "not-run";
 
-export interface PatchHealth {
+interface PatchHealth {
   file: string;
   group: "setup" | "upstreamable" | "deferred";
   prerequisites: string[];

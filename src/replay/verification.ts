@@ -38,7 +38,7 @@ export interface RenderAudit {
   fullSkinRecords: Record<string, number>;
 }
 
-export interface ControllerAudit {
+interface ControllerAudit {
   schema: number;
   transformed: boolean;
   identifiers: Record<string, number>;

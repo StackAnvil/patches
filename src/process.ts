@@ -9,13 +9,13 @@ export const execFileAsync = promisify(execFile);
 
 /** A child process failed. The message includes its captured output. */
 // oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
-export class CommandError extends Schema.TaggedError<
-  CommandError,
-  { readonly brand: unique symbol }
->()("CommandError", {
-  message: Schema.String,
-  cause: Schema.Unknown,
-}) {}
+class CommandError extends Schema.TaggedError<CommandError, { readonly brand: unique symbol }>()(
+  "CommandError",
+  {
+    message: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {}
 
 export const command = Effect.fn("command")(function* (
   program: string,
@@ -41,7 +41,7 @@ export const command = Effect.fn("command")(function* (
         .filter((value) => value?.trim())
         .join("\n");
       const message = cause instanceof Error ? cause.message : String(cause);
-      return new CommandError({
+      return CommandError.make({
         message: `${program} ${args.join(" ")} failed: ${output || message}`,
         cause,
       });

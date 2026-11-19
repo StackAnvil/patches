@@ -27,7 +27,10 @@ export class StackError extends Schema.TaggedError<StackError, { readonly brand:
 ) {}
 
 function stackError(cause: unknown): StackError {
-  return new StackError({ message: cause instanceof Error ? cause.message : String(cause), cause });
+  return StackError.make({
+    message: cause instanceof Error ? cause.message : String(cause),
+    cause,
+  });
 }
 
 const EditSessionSchema = Schema.Struct({
@@ -88,7 +91,7 @@ const applyPatch = Effect.fn("applyPatch")(function* (args: string[], dir: strin
 
   const text = yield* Effect.promise(() => readFile(patch, "utf8"));
   const author = text.match(/^From: (.+) <([^<>]+)>$/mu);
-  if (!author) return yield* new StackError({ message: `Patch has no author identity: ${patch}` });
+  if (!author) return yield* StackError.make({ message: `Patch has no author identity: ${patch}` });
   return yield* command("git", args, dir, {
     ...process.env,
     GIT_COMMITTER_NAME: author[1],
@@ -110,12 +113,11 @@ const applyRemaining = Effect.fn("applyRemaining")(function* (
     if (index < session.nextIndex) continue;
     const patch = session.prPatch ?? file;
     yield* applyPatch(["am", "--3way", "--committer-date-is-author-date", patch], dir, patch).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackError({
-            message: `${cause.message}\nPatch apply stopped at ${patch}. Resolve the conflict in ${dir}, stage the result, then run ${recoveryCommand}.`,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        StackError.make({
+          message: `${cause.message}\nPatch apply stopped at ${patch}. Resolve the conflict in ${dir}, stage the result, then run ${recoveryCommand}.`,
+          cause,
+        }),
       ),
     );
     session.nextIndex = index + 1;
@@ -148,7 +150,7 @@ const cloneIfMissing = Effect.fn("cloneIfMissing")(function* (
 const ensureClean = Effect.fn("ensureClean")(function* (dir: string) {
   const state = yield* git(["status", "--porcelain"], dir);
   if (state)
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Working tree is dirty at ${dir}. Commit or discard changes first.\n${state}`,
     });
 });
@@ -160,7 +162,7 @@ const resetToBase = Effect.fn("resetToBase")(function* (dir: string, target: Tar
   );
   const head = yield* git(["rev-parse", "HEAD"], dir);
   if (saved && saved !== head) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Unexported commits exist at ${dir}. Use stack rebuild or save them before sync.`,
     });
   }
@@ -178,20 +180,20 @@ export const sync = Effect.fn("sync")(function* (
   const series = yield* Effect.promise(() => getSeries(id));
   const modeKey = mode === "pr" ? prMode(patchFile) : mode;
   if (mode === "full" && existsSync(sessionPath(id))) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Edit session active for ${id}; run stack rebuild first.`,
     });
   }
   const path = applySessionPath(id, modeKey);
   if (existsSync(path)) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Patch apply is unfinished for ${id}. Resolve the conflict and run bun run stack continue ${id}${mode === "pr" ? " --pr" : ""}${patchFile ? ` --patch ${patchFile}` : ""}.`,
     });
   }
   const patches = seriesPaths(id, series, mode, patchFile);
   const [prSource] = patches;
   if (mode === "pr" && (prSource === undefined || patches.length !== 1)) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `No upstreamable patch ${patchFile ?? "at the front of the series"} for ${id}`,
     });
   }
@@ -200,7 +202,7 @@ export const sync = Effect.fn("sync")(function* (
       ? series.upstreamable.find(({ file }) => file === patchFile)
       : series.upstreamable[0];
     if (!selected) {
-      return yield* new StackError({
+      return yield* StackError.make({
         message: `No upstreamable patch ${patchFile ?? "at the front of the series"} for ${id}`,
       });
     }
@@ -244,39 +246,39 @@ export const continueApply = Effect.fn("continueApply")(function* (
   const modeKey = mode === "pr" ? prMode(patchFile) : mode;
   const path = applySessionPath(id, modeKey);
   if (!existsSync(path))
-    return yield* new StackError({ message: `No unfinished ${mode} patch apply for ${id}.` });
+    return yield* StackError.make({ message: `No unfinished ${mode} patch apply for ${id}.` });
   const target = yield* Effect.promise(() => getTarget(id));
   const series = yield* Effect.promise(() => getSeries(id));
   const sessionText = yield* Effect.promise(() => readFile(path, "utf8"));
   const session: ApplySession = parseJson(ApplySessionSchema, sessionText);
   const patches = seriesPaths(id, series, mode, patchFile);
   if (session.baseSha !== target.baseSha || encodeJson(session.patches) !== encodeJson(patches)) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message:
         "The base or patch series changed during conflict resolution. Restore them before continuing.",
     });
   }
   const dir = workdir(id, modeKey);
   if (mode === "pr" && !session.prPatch) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: "This PR apply predates test exclusion. Abort the apply, then run pr check again.",
     });
   }
   if (!existsSync(join(dir, ".git", "rebase-apply"))) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Git has no active am operation in ${dir}. Inspect it before removing ${path}.`,
     });
   }
   const commits = yield* commitIds(dir, target.baseSha);
   if (commits.length !== session.nextIndex) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Expected ${session.nextIndex} applied patches, found ${commits.length}. Inspect ${dir} before continuing.`,
     });
   }
   if (mode === "pr") yield* assertPrProductionChanges(dir, target.baseSha, true, id);
   const patch = session.prPatch ?? session.patches[session.nextIndex];
   if (patch === undefined) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `No patch remains after ${session.nextIndex} applied patches. Inspect ${dir} before continuing.`,
     });
   }
@@ -301,7 +303,7 @@ export const assertPrProductionChanges = Effect.fn("assertPrProductionChanges")(
     catch: (cause) => stackError(cause),
   });
   if (projected.omittedTests)
-    return yield* new StackError({
+    return yield* StackError.make({
       message:
         "PR changes include local tests or test configuration. Remove them from the PR checkout before continuing.",
     });
@@ -315,10 +317,10 @@ export const abortApply = Effect.fn("abortApply")(function* (
   const modeKey = mode === "pr" ? prMode(patchFile) : mode;
   const path = applySessionPath(id, modeKey);
   if (!existsSync(path))
-    return yield* new StackError({ message: `No unfinished ${mode} patch apply for ${id}.` });
+    return yield* StackError.make({ message: `No unfinished ${mode} patch apply for ${id}.` });
   const dir = workdir(id, modeKey);
   if (!existsSync(join(dir, ".git", "rebase-apply"))) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Git has no active am operation in ${dir}. Inspect it before removing ${path}.`,
     });
   }
@@ -360,12 +362,12 @@ export const edit = Effect.fn("edit")(function* (id: string, file: string) {
   const paths = patchPaths(id, series);
   const patchIndex = paths.findIndex((path) => path.endsWith(`/${file}`));
   if (patchIndex < 0)
-    return yield* new StackError({ message: `Patch ${file} is not in ${id}/series.json` });
+    return yield* StackError.make({ message: `Patch ${file} is not in ${id}/series.json` });
   const dir = yield* sync(id);
   const commits = yield* commitIds(dir, target.baseSha);
   const commit = commits[patchIndex];
   if (commit === undefined || commits.length !== paths.length)
-    return yield* new StackError({ message: "Patch/commit count mismatch" });
+    return yield* StackError.make({ message: "Patch/commit count mismatch" });
   const backupRef = `refs/stackanvil/backup/${yield* Clock.currentTimeMillis}`;
   yield* git(["update-ref", backupRef, "HEAD"], dir);
   yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
@@ -403,7 +405,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
     } else if (session.applied === 0) {
       const unstaged = yield* git(["diff", "--name-only"], dir);
       if (unstaged)
-        return yield* new StackError({ message: "Stage your edits before rebuilding the patch." });
+        return yield* StackError.make({ message: "Stage your edits before rebuilding the patch." });
       const staged = yield* git(["diff", "--cached", "--name-only"], dir);
       if (staged) yield* git(["commit", "--amend", "--no-edit"], dir);
     }
@@ -417,7 +419,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
   const commits = yield* commitIds(dir, target.baseSha);
   const paths = patchPaths(id, series);
   if (commits.length !== paths.length) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Expected ${paths.length} commits, found ${commits.length}. No patch files changed.`,
     });
   }
@@ -428,7 +430,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
     if (upstreamable && index < series.setup.length + series.upstreamable.length) {
       const message = parsePatchMessage(patch);
       if (!message.description)
-        return yield* new StackError({
+        return yield* StackError.make({
           message: `${upstreamable.file} needs a commit body describing the change`,
         });
       if (upstreamable.title !== message.title) {
@@ -458,14 +460,14 @@ export const addPatch = Effect.fn("addPatch")(function* (
   reason?: string,
 ) {
   if (group === "deferred" && !reason?.trim()) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: "A deferred patch needs a reason. Pass --reason <text>.",
     });
   }
   const target = yield* Effect.promise(() => getTarget(id));
   const series = yield* Effect.promise(() => getSeries(id));
   if (group === "upstreamable" && series.deferred.length > 0) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Cannot append an upstreamable patch after deferred patches in ${id}. Insert its commit before the deferred commits, then export the reordered series.`,
     });
   }
@@ -474,18 +476,18 @@ export const addPatch = Effect.fn("addPatch")(function* (
   const commits = yield* commitIds(dir, target.baseSha);
   const previous = patchPaths(id, series).length;
   if (commits.length !== previous + 1) {
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Commit one new change after the current stack before adding a patch. Expected ${previous + 1} commits, found ${commits.length}.`,
     });
   }
   const patch = yield* exportCommit(dir, required(commits.at(-1), "The new commit"));
   const { title, description } = parsePatchMessage(patch);
   if (expectedTitle && expectedTitle !== title)
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Supplied title differs from commit subject: ${title}`,
     });
   if (!description)
-    return yield* new StackError({
+    return yield* StackError.make({
       message: "Add a commit body describing the patch before adding it",
     });
   const slug = title
@@ -494,7 +496,7 @@ export const addPatch = Effect.fn("addPatch")(function* (
     .replaceAll(/[^a-z0-9]+/gu, "-")
     .replaceAll(/^-|-$/gu, "")
     .slice(0, 60);
-  if (!slug) return yield* new StackError({ message: "Patch title needs words for a filename" });
+  if (!slug) return yield* StackError.make({ message: "Patch title needs words for a filename" });
   const number = String(
     (group === "upstreamable" ? series.upstreamable.length : series.deferred.length) + 1,
   ).padStart(4, "0");

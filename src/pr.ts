@@ -90,7 +90,7 @@ const openPrForHead = Effect.fn("openPrForHead")(function* (target: Target, head
     url: html_url,
   }));
   if (prs.length > 1)
-    return yield* new StackError({
+    return yield* StackError.make({
       message: `Multiple open PRs for ${target.upstream} from ${head}`,
     });
   return prs[0];
@@ -104,7 +104,7 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
   const target = yield* Effect.promise(() => getTarget(id));
   const url = prUrl ?? (yield* openPrForHead(target, prHead(patchFile)))?.url;
   if (!url)
-    return yield* new StackError({ message: `No open PR for ${id} from ${prHead(patchFile)}` });
+    return yield* StackError.make({ message: `No open PR for ${id} from ${prHead(patchFile)}` });
   const desired = [...new Set(target.prAssignees)];
   if (desired.length === 0) return { url, desired, added: [], requested: [] };
 
@@ -228,7 +228,7 @@ export const prBody = Effect.fn("prBody")(function* (
   const extraBody = yield* Effect.tryPromise({
     try: () => readFile(extraBodyFile, "utf8"),
     catch: (cause) =>
-      new StackError({
+      StackError.make({
         message: `Add a PR extra body at ${extraBodyFile} before creating or updating the PR`,
         cause,
       }),
@@ -251,7 +251,7 @@ export const syncPr = Effect.fn("syncPr")(function* (
   const dir = yield* sync(id, "pr", patchFile);
   const count = yield* git(["rev-list", "--count", `${target.baseSha}..HEAD`], dir);
   if (count !== "1")
-    return yield* new StackError({ message: `Expected exactly one PR commit, found ${count}` });
+    return yield* StackError.make({ message: `Expected exactly one PR commit, found ${count}` });
   yield* assertPrProductionChanges(dir, target.baseSha, false, id);
   const remote = `https://github.com/${target.fork}.git`;
   const head = prHead(patchFile);

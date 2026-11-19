@@ -50,7 +50,7 @@ export const releaseIntegrationResources = Effect.fn("Integration.releaseResourc
     yield* Effect.sleep(250);
   }
   if (yield* labValue("inspect processes", () => children.some((child) => control.alive(child))))
-    return yield* new LabError({
+    return yield* LabError.make({
       operation: "release integration",
       message: "Integration processes remain alive; retain their dependencies and display.",
     });
@@ -64,7 +64,7 @@ export const releaseIntegrationResources = Effect.fn("Integration.releaseResourc
     .filter((value) => Result.isFailure(value))
     .map((result) => result.failure);
   if (failures.length > 0)
-    return yield* new LabError({
+    return yield* LabError.make({
       operation: "release integration",
       message: "Integration cleanup failed.",
       cause: new AggregateError(failures, "Resource setup failed."),
@@ -139,7 +139,7 @@ function makeRegistry() {
 export class IntegrationResources extends Context.Service<
   IntegrationResources,
   ReturnType<typeof makeRegistry>
->()("Integration/Resources") {}
+>()("stackanvil-patches/integration/resources/IntegrationResources") {}
 export function integrationResourcesLayer(stopDisplay: () => Promise<void>) {
   return Layer.effect(
     IntegrationResources,

@@ -46,7 +46,7 @@ function prepareStep<A>(step: () => Promise<A>) {
   return Effect.tryPromise({
     try: step,
     catch: (cause) =>
-      new PrepareError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+      PrepareError.make({ message: cause instanceof Error ? cause.message : String(cause), cause }),
   });
 }
 
