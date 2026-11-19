@@ -52,3 +52,5 @@ Include the project, upstream base commit, patch filename, steps to reproduce, e
 `bun install` installs Lefthook for this checkout and preserves the existing preparation steps.
 Run `bun run pre-commit` to run the commit checks manually.
 The hooks use the existing project tools. Before pushing, they run the relevant project checks for changed files.
+Install cargo-deny 0.20.2 for the pre-push check when `Cargo.toml`, `Cargo.lock`, or `deny.toml` changes.
+To check Rust dependencies from the repository root, run `cargo deny --manifest-path native/capture-wayland/Cargo.toml --config deny.toml --locked check`.
