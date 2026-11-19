@@ -39,10 +39,12 @@ export interface CatalogEntry {
 
 function values(definition: PropertyDefinition): unknown[] {
   switch (definition.type) {
-    case "enum":
+    case "enum": {
       return definition.values ?? [];
-    case "bool":
+    }
+    case "bool": {
       return [false, true];
+    }
     case "int":
     case "float": {
       const range = definition.range ?? [];
@@ -50,8 +52,9 @@ function values(definition: PropertyDefinition): unknown[] {
         ...new Set([range[0], definition.default, range.at(-1)].filter((value) => value != null)),
       ];
     }
-    default:
+    default: {
       return [];
+    }
   }
 }
 

@@ -301,9 +301,10 @@ export function rangedObservationPasses(
       end.tick - started.tick <= expectation.maxChargeTicks);
   const ammunitionPasses = initialCount > 0 && initialCount - remainingCount === consumed;
   switch (mode) {
-    case "empty":
+    case "empty": {
       return initialCount === 0 && remainingCount === 0 && projectiles.length === 0;
-    case "cancel":
+    }
+    case "cancel": {
       return (
         !!started &&
         !completed &&
@@ -311,10 +312,13 @@ export function rangedObservationPasses(
         projectiles.length === 0 &&
         !!observation.slots?.some((entry) => entry.slot === 1 && entry.tick > started.tick)
       );
-    case "load":
+    }
+    case "load": {
       return chargePasses(completed) && ammunitionPasses && projectiles.length === 0;
-    case "fire":
+    }
+    case "fire": {
       return chargePasses(completed) && ammunitionPasses && projectilesAfter(completed.tick);
+    }
     case "retain": {
       if (!chargePasses(completed) || !ammunitionPasses || !projectilesAfter(completed.tick))
         return false;
@@ -325,11 +329,14 @@ export function rangedObservationPasses(
         away && observation.slots?.find((entry) => entry.slot === 0 && entry.tick > away.tick);
       return !!back && projectiles.every((projectile) => projectile.tick >= back.tick);
     }
-    case "release":
+    case "release": {
       return chargePasses(released) && ammunitionPasses && projectilesAfter(released.tick);
-    case "throw":
+    }
+    case "throw": {
       return !!used && ammunitionPasses && projectilesAfter(used.tick);
-    default:
+    }
+    default: {
       return mode satisfies never;
+    }
   }
 }

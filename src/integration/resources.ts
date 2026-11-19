@@ -35,7 +35,7 @@ const processControl: ProcessControl = {
 /** Never remove server dependencies or the display while any owned process survives. */
 export const releaseIntegrationResources = Effect.fn("Integration.releaseResources")(function* (
   children: readonly OwnedProcess[],
-  dependencies: ReadonlyArray<() => Promise<void>>,
+  dependencies: readonly (() => Promise<void>)[],
   stopDisplay: () => Promise<void>,
   control: ProcessControl = processControl,
 ) {
@@ -73,7 +73,7 @@ export const releaseIntegrationResources = Effect.fn("Integration.releaseResourc
 
 function makeRegistry() {
   const children: ChildProcess[] = [];
-  const dependencies: Array<() => Promise<void>> = [];
+  const dependencies: (() => Promise<void>)[] = [];
   let ownsDisplay = false;
   return {
     acquireDisplay: (acquire: () => Promise<unknown>) =>

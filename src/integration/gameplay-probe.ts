@@ -809,12 +809,13 @@ export async function driveGameplay(
   capture?: (phase: string) => Promise<void>,
 ): Promise<void> {
   switch (id) {
-    case "pearl-wind-charge":
+    case "pearl-wind-charge": {
       await uiMouse(ui, "right", 60);
       await ui(["ui", "key-hold", "2", "50", "--client", "java"]);
       await uiMouse(ui, "right", 60);
       await Bun.sleep(5000);
       return;
+    }
     case "pearl-wind-charge-moving": {
       await Promise.all([
         ui(["ui", "key-hold", "w", "1200", "--client", "java"]),
@@ -839,37 +840,41 @@ export async function driveGameplay(
       return;
     }
     case "fishing-early-reel":
-    case "fishing-entity-reel":
+    case "fishing-entity-reel": {
       await uiMouse(ui, "right", 120);
       await Bun.sleep(id === "fishing-early-reel" ? 250 : 2500);
       await uiMouse(ui, "right", 120);
       await Bun.sleep(2500);
       return;
+    }
     case "bow-release":
     case "bow-no-ammo":
     case "bow-water-release":
     case "bow-hit":
     case "bow-infinity":
     case "bow-infinity-no-ammo":
-    case "bow-knockback-release":
+    case "bow-knockback-release": {
       await uiMouse(ui, "right", 1300);
       await Bun.sleep(300);
       return;
-    case "bow-short-release":
+    }
+    case "bow-short-release": {
       await uiMouse(ui, "right", 250);
       await Bun.sleep(300);
       return;
+    }
     case "bow-server-slot-use":
-    case "crossbow-server-slot-use":
+    case "crossbow-server-slot-use": {
       await uiMouse(ui, "right", 500);
       await Bun.sleep(350);
       await uiMouse(ui, "right");
       await Bun.sleep(300);
       return;
+    }
     case "bow-cancel":
     case "crossbow-cancel":
     case "bow-knockback-cancel":
-    case "crossbow-knockback-cancel":
+    case "crossbow-knockback-cancel": {
       await Promise.all([
         uiMouse(ui, "right", 1300),
         (async () => {
@@ -879,6 +884,7 @@ export async function driveGameplay(
       ]);
       await Bun.sleep(300);
       return;
+    }
     case "crossbow-load":
     case "crossbow-no-ammo":
     case "crossbow-retain":
@@ -891,7 +897,7 @@ export async function driveGameplay(
     case "crossbow-piercing-0":
     case "crossbow-piercing-1":
     case "crossbow-piercing-4":
-    case "crossbow-knockback-fire":
+    case "crossbow-knockback-fire": {
       await uiMouse(ui, "right", 2000);
       await Bun.sleep(300);
       if (id === "crossbow-retain") {
@@ -905,34 +911,40 @@ export async function driveGameplay(
         await Bun.sleep(id.startsWith("crossbow-piercing-") ? 1800 : 300);
       }
       return;
+    }
     case "splash-potion-throw":
-    case "lingering-potion-throw":
+    case "lingering-potion-throw": {
       await uiMouse(ui, "right");
       await Bun.sleep(300);
       return;
+    }
     case "splash-potion-speed":
-    case "lingering-potion-slowness":
+    case "lingering-potion-slowness": {
       await uiMouse(ui, "right");
       await Bun.sleep(1800);
       return;
+    }
     case "powder-snow-sink":
-    case "powder-snow-boots":
+    case "powder-snow-boots": {
       await Bun.sleep(1800);
       return;
+    }
     case "water-forward":
-    case "lava-forward":
+    case "lava-forward": {
       await ui(["ui", "key-hold", "w", "1800", "--client", "java"]);
       return;
+    }
     case "water-current":
     case "bubble-column-up":
-    case "bubble-column-down":
+    case "bubble-column-down": {
       await Bun.sleep(1800);
       return;
+    }
     case "fireball-hit":
     case "fireball-dodge":
     case "fireball-reflect":
     case "small-fireball-hit":
-    case "small-fireball-dodge":
+    case "small-fireball-dodge": {
       if (!start) throw new Error("The projectile start event is unavailable.");
       await start();
       if (id.endsWith("dodge")) await ui(["ui", "key-hold", "d", "650", "--client", "java"]);
@@ -947,41 +959,49 @@ export async function driveGameplay(
       }
       await Bun.sleep(5000);
       return;
-    case "creative-flight-ascend":
+    }
+    case "creative-flight-ascend": {
       await uiKey(ui, "space");
       await Bun.sleep(100);
       await ui(["ui", "key-hold", "space", "1200", "--client", "java"]);
       await Bun.sleep(350);
       return;
+    }
     case "movement-left":
-    case "movement-right":
+    case "movement-right": {
       await ui(["ui", "key-hold", id === "movement-left" ? "a" : "d", "500", "--client", "java"]);
       return;
+    }
     case "block-break":
     case "creative-block-break":
-    case "custom-block-break":
+    case "custom-block-break": {
       await uiMouse(ui, "left", 1200);
       return;
-    case "tnt-explosion":
+    }
+    case "tnt-explosion": {
       await uiMouse(ui, "right");
       await Bun.sleep(6500);
       return;
-    case "water-flow":
+    }
+    case "water-flow": {
       await uiMouse(ui, "right");
       await Bun.sleep(2500);
       return;
+    }
     case "block-place":
     case "custom-block-place":
     case "custom-entity-interact":
     case "offhand-block-place":
     case "equip-helmet":
     case "entity-name":
-    case "map-hold":
+    case "map-hold": {
       await uiMouse(ui, "right");
       return;
-    case "offhand-ineligible-block":
+    }
+    case "offhand-ineligible-block": {
       await rejectIneligibleOffhandBlock(ui);
       return;
+    }
     case "chest-authored-one-empty":
     case "chest-authored-one-merge": {
       if (!start) throw new Error("Authored inventory fixture needs its placement setup.");
@@ -997,38 +1017,47 @@ export async function driveGameplay(
       return;
     }
     case "chest-transfer":
-    case "custom-item-transfer":
+    case "custom-item-transfer": {
       await chestTransfer(ui);
       return;
-    case "chest-rapid-transfer":
+    }
+    case "chest-rapid-transfer": {
       await chestTransfer(ui, false, [0, 1]);
       return;
-    case "chest-pickup-all":
+    }
+    case "chest-pickup-all": {
       await chestPickupAll(ui);
       return;
-    case "lab-table-then-chest":
+    }
+    case "lab-table-then-chest": {
       await uiMouse(ui, "right");
       await Bun.sleep(750);
       await chestTransfer(ui);
       return;
-    case "chest-boat-transfer":
+    }
+    case "chest-boat-transfer": {
       await chestTransfer(ui, true);
       return;
-    case "chest-minecart-transfer":
+    }
+    case "chest-minecart-transfer": {
       await chestTransfer(ui);
       return;
+    }
     case "furnace-quick-move-log":
-    case "furnace-quick-move-coal":
+    case "furnace-quick-move-coal": {
       await furnaceQuickMove(ui);
       return;
+    }
     case "furnace-book-cook":
     case "smoker-book-cook":
-    case "blast-furnace-book-cook":
+    case "blast-furnace-book-cook": {
       await cookFromBook(ui, id);
       return;
-    case "brewing-stand":
+    }
+    case "brewing-stand": {
       await brewingStand(ui);
       return;
+    }
     case "enchant-basic": {
       await uiMouse(ui, "right");
       await Bun.sleep(600);
@@ -1090,13 +1119,15 @@ export async function driveGameplay(
       await uiKey(ui, "Escape");
       return;
     }
-    case "crafting-manual-sticks":
+    case "crafting-manual-sticks": {
       await craftSticksManually(ui);
       return;
-    case "crafting-bulk-sticks":
+    }
+    case "crafting-bulk-sticks": {
       await craftSticksInBulk(ui);
       return;
-    case "crafting-book-sticks":
+    }
+    case "crafting-book-sticks": {
       await uiMouse(ui, "right");
       await Bun.sleep(500);
       {
@@ -1194,33 +1225,41 @@ export async function driveGameplay(
         await uiKey(ui, "Escape");
       }
       return;
+    }
     case "creative-select":
-    case "creative-replace":
+    case "creative-replace": {
       await creativeSelect(ui);
       return;
-    case "creative-replace-main":
+    }
+    case "creative-replace-main": {
       await creativeSelect(ui, true);
       return;
-    case "creative-replace-twice":
+    }
+    case "creative-replace-twice": {
       await creativeSelect(ui);
       await Bun.sleep(800);
       await creativeSelect(ui, false, "ender pearl");
       await Bun.sleep(800);
       return;
-    case "eat-golden-apple":
+    }
+    case "eat-golden-apple": {
       await uiMouse(ui, "right", 2300);
       return;
-    case "offhand-shield-use":
+    }
+    case "offhand-shield-use": {
       await uiMouse(ui, "right", 1000);
       return;
-    case "shield-projectile-baseline":
+    }
+    case "shield-projectile-baseline": {
       await Bun.sleep(11000);
       return;
-    case "shield-projectile-block":
+    }
+    case "shield-projectile-block": {
       await uiMouse(ui, "right", 9500);
       return;
+    }
     case "offhand-elytra-rocket":
-    case "mainhand-elytra-rocket":
+    case "mainhand-elytra-rocket": {
       await uiKey(ui, "e");
       await Bun.sleep(300);
       await ui([
@@ -1241,47 +1280,58 @@ export async function driveGameplay(
       await uiMouse(ui, "right");
       await Bun.sleep(450);
       return;
-    case "boat-forward":
+    }
+    case "boat-forward": {
       await ui(["ui", "key-hold", "w", "1800", "--client", "java"]);
       return;
-    case "minecart-dismount":
+    }
+    case "minecart-dismount": {
       await Bun.sleep(1800);
       await uiKey(ui, "Shift_L");
       await Bun.sleep(650);
       return;
-    case "equip-offhand":
+    }
+    case "equip-offhand": {
       await uiKey(ui, "f");
       return;
-    case "offhand-remove":
+    }
+    case "offhand-remove": {
       await removeOffhandToInventory(ui);
       return;
+    }
     case "drop-item":
-    case "inventory-script-slot":
+    case "inventory-script-slot": {
       await uiKey(ui, "q");
       return;
+    }
     case "entity-attack":
-    case "custom-entity-attack":
+    case "custom-entity-attack": {
       await uiMouse(ui, "left");
       return;
+    }
     case "command-time":
-    case "command-denied":
+    case "command-denied": {
       await uiKey(ui, "slash");
       await ui(["ui", "type", "time set day", "--client", "java"]);
       await uiKey(ui, "Return");
       return;
-    case "command-completion":
+    }
+    case "command-completion": {
       await uiKey(ui, "slash");
       await ui(["ui", "type", "time se", "--client", "java"]);
       await uiKey(ui, "Tab");
       await ui(["ui", "type", " day", "--client", "java"]);
       await uiKey(ui, "Return");
       return;
+    }
     case "respawn":
-    case "dimension-change":
+    case "dimension-change": {
       await Bun.sleep(1500);
       return;
-    case "complex-world":
+    }
+    case "complex-world": {
       await ui(["ui", "key-hold", "w", "9000", "--client", "java"]);
+    }
   }
 }
 

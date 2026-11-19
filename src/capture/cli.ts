@@ -597,52 +597,67 @@ async function scenario(
   for (const step of recipe.steps) {
     if (!isStep(step)) throw new Error("Unknown scenario action.");
     switch (step.action) {
-      case "mark":
+      case "mark": {
         await mark(step.label);
         break;
-      case "wait":
+      }
+      case "wait": {
         if (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 120_000)
           throw new Error("Wait must be 0 to 120000 ms.");
         await Bun.sleep(step.ms);
         break;
-      case "screenshot":
+      }
+      case "screenshot": {
         print(await screenshot(step.name, windowId, client));
         break;
-      case "click":
+      }
+      case "click": {
         await click(step.x, step.y, windowId, client, allowFocus, step.button);
         break;
-      case "doubleClick":
+      }
+      case "doubleClick": {
         await click(step.x, step.y, windowId, client, allowFocus, step.button, undefined, true);
         break;
-      case "mouseHold":
+      }
+      case "mouseHold": {
         await click(step.x, step.y, windowId, client, allowFocus, step.button, step.ms);
         break;
-      case "buttonHold":
+      }
+      case "buttonHold": {
         await buttonHold(step.button, step.ms, windowId, client, allowFocus);
         break;
-      case "drag":
+      }
+      case "drag": {
         await drag(step.points, step.button, step.ms, windowId, client, allowFocus);
         break;
-      case "key":
+      }
+      case "key": {
         await key(step.key, windowId, client, allowFocus);
         break;
-      case "doubleKey":
+      }
+      case "doubleKey": {
         await key(step.key, windowId, client, allowFocus, undefined, true);
         break;
-      case "keyHold":
+      }
+      case "keyHold": {
         await key(step.key, windowId, client, allowFocus, step.ms);
         break;
-      case "type":
+      }
+      case "type": {
         await typeText(step.text, windowId, client, allowFocus);
         break;
-      case "videoStart":
+      }
+      case "videoStart": {
         await startVideo(step.name, client, windowId, step.fps);
         break;
-      case "videoStop":
+      }
+      case "videoStop": {
         await stopVideo(client);
         break;
-      default:
+      }
+      default: {
         throw new Error("Unknown scenario action.");
+      }
     }
   }
 }
@@ -796,31 +811,41 @@ async function status(): Promise<void> {
 async function main(): Promise<void> {
   const [command, ...args] = Bun.argv.slice(2);
   switch (command) {
-    case "doctor":
+    case "doctor": {
       return doctor();
-    case "start":
+    }
+    case "start": {
       if (!args[0]) throw new Error("Usage: bun run capture start <name> [--local]");
       return start(args[0], args.includes("--local") ? "local" : "regular");
-    case "launch":
+    }
+    case "launch": {
       return args.includes("--direct") ? launchDirect() : launchGame();
-    case "game-stop":
+    }
+    case "game-stop": {
       return stopGame();
-    case "prepare-launcher":
+    }
+    case "prepare-launcher": {
       print(await prepareLauncher());
       return;
-    case "mark":
+    }
+    case "mark": {
       return mark(args.join(" "));
-    case "stop":
+    }
+    case "stop": {
       return stop();
-    case "status":
+    }
+    case "status": {
       return status();
-    case "report":
+    }
+    case "report": {
       await report(args[0]);
       return;
-    case "compare":
+    }
+    case "compare": {
       if (!args[0] || !args[1])
         throw new Error("Usage: bun run capture compare <first-id> <second-id>");
       return compare(args[0], args[1]);
+    }
     case "video": {
       const [action, ...input] = args;
       const clientInput = input.includes("--client")
@@ -863,10 +888,11 @@ async function main(): Promise<void> {
       if (result) print(result);
       return;
     }
-    default:
+    default: {
       throw new Error(
         "Usage: bun run capture <doctor|start|launch|game-stop|mark|stop|status|report|compare|video|ui>",
       );
+    }
   }
 }
 

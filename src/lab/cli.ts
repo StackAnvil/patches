@@ -344,13 +344,15 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
     return yield* labError("jvm", new Error("Supply a running local JVM PID."));
   let command: string[];
   switch (action) {
-    case "threads":
+    case "threads": {
       command = ["Thread.print", "-l"];
       break;
-    case "properties":
+    }
+    case "properties": {
       command = ["VM.system_properties"];
       break;
-    case "jfr-start":
+    }
+    case "jfr-start": {
       command = [
         "JFR.start",
         `name=stackanvil-${pid}`,
@@ -358,17 +360,20 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
         `filename=${join(privateRoot, `jfr-${pid}.jfr`)}`,
       ];
       break;
-    case "jfr-dump":
+    }
+    case "jfr-dump": {
       command = [
         "JFR.dump",
         `name=stackanvil-${pid}`,
         `filename=${join(privateRoot, `jfr-${pid}.jfr`)}`,
       ];
       break;
-    case "jfr-stop":
+    }
+    case "jfr-stop": {
       command = ["JFR.stop", `name=stackanvil-${pid}`];
       break;
-    case "agent":
+    }
+    case "agent": {
       if (!third || !existsSync(resolve(third)))
         return yield* labError("jvm", new Error("Supply an existing local agent JAR."));
       yield* labIO("jvm", async () =>
@@ -392,18 +397,21 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
       ]);
       print(`Attached Java agent to PID ${pid}.`);
       return;
-    case "native-agent":
+    }
+    case "native-agent": {
       if (!third || !existsSync(resolve(third)))
         return yield* labError("jvm", new Error("Supply an existing local JVMTI library."));
       command = ["JVMTI.agent_load", resolve(third)];
       break;
-    default:
+    }
+    default: {
       return yield* labError(
         "jvm",
         new Error(
           "Usage: bun run lab jvm <list|threads|properties|jfr-start|jfr-dump|jfr-stop|agent|native-agent> [pid] [agent file]",
         ),
       );
+    }
   }
   yield* labIO("jvm", async () => mkdir(privateRoot, { recursive: true, mode: 0o700 }));
   const { stdout, stderr } = yield* labExecute("jcmd", [String(pid), ...command], {

@@ -40,7 +40,12 @@ const SERVER = 830;
 const LANE_OUT = 286;
 const LANE_IN = 312;
 
-type Lane = { from: number; to: number; y: number; tone: "java" | "bedrock" };
+interface Lane {
+  from: number;
+  to: number;
+  y: number;
+  tone: "java" | "bedrock";
+}
 
 function Packets({ lane, hidden }: { lane: Lane; hidden?: boolean }) {
   return (

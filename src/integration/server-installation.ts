@@ -90,7 +90,7 @@ async function prepareDependencyCleanup(destination: string): Promise<() => Prom
   const owners = await Promise.all(
     parents.map(async (path) => ({ path, identity: await lstat(path) })),
   );
-  const dependencies: Array<{ path: string; identity: Stats; digest: string }> = [];
+  const dependencies: { path: string; identity: Stats; digest: string }[] = [];
   for (const path of paths) {
     try {
       dependencies.push({ path, identity: await lstat(path), digest: await treeDigest(path) });

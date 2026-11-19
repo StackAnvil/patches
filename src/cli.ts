@@ -47,28 +47,34 @@ async function main(): Promise<void> {
   if (!action || !id) throw new Error(`Choose a project: ${(await targetIds()).join(", ")}`);
   if (area === "stack") {
     switch (action) {
-      case "sync":
+      case "sync": {
         print(await Effect.runPromise(sync(id)));
         return;
-      case "continue":
+      }
+      case "continue": {
         print(
           await Effect.runPromise(continueApply(id, extra === "--pr" ? "pr" : "full", patchFile)),
         );
         return;
-      case "abort":
+      }
+      case "abort": {
         print(await Effect.runPromise(abortApply(id, extra === "--pr" ? "pr" : "full", patchFile)));
         return;
-      case "edit":
+      }
+      case "edit": {
         if (!extra) throw new Error("Supply a .patch filename to edit");
         print(`Edit ${workdir(id)}, stage changes, then run: bun run stack rebuild ${id}`);
         print(await Effect.runPromise(edit(id, extra)));
         return;
-      case "rebuild":
+      }
+      case "rebuild": {
         print(`Rebuilt ${await Effect.runPromise(rebuild(id))} patches`);
         return;
-      case "build":
+      }
+      case "build": {
         print(await Effect.runPromise(build(id)));
         return;
+      }
       case "add": {
         if (extra !== "upstreamable" && extra !== "deferred")
           throw new Error("Choose upstreamable or deferred");
@@ -97,16 +103,19 @@ async function main(): Promise<void> {
   }
   if (area === "pr") {
     switch (action) {
-      case "check":
+      case "check": {
         print(await Effect.runPromise(sync(id, "pr", patchFile)));
         return;
-      case "body":
+      }
+      case "body": {
         print(await Effect.runPromise(prBody(id, artifact, patchFile)));
         return;
-      case "build":
+      }
+      case "build": {
         print(await Effect.runPromise(buildPr(id, patchFile)));
         return;
-      case "assign":
+      }
+      case "assign": {
         print(
           JSON.stringify(
             await Effect.runPromise(updatePrParticipants(id, undefined, patchFile)),
@@ -115,9 +124,11 @@ async function main(): Promise<void> {
           ),
         );
         return;
-      case "sync":
+      }
+      case "sync": {
         print(await Effect.runPromise(syncPr(id, artifact, patchFile)));
         return;
+      }
     }
   }
   throw new Error(`Unknown command: ${area} ${action}`);

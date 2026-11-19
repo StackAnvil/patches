@@ -462,11 +462,13 @@ export function createCaptureUi(
     if (input.includes("--output-dir") && (!outputDir || outputDir.startsWith("--")))
       throw new Error("--output-dir needs a directory.");
     switch (action) {
-      case "list":
+      case "list": {
         return JSON.stringify(await windows(), null, 2);
-      case "screenshot":
+      }
+      case "screenshot": {
         if (!input[0]) throw new Error("Supply a screenshot name.");
         return screenshot(input[0], windowId, client, outputDir);
+      }
       case "record": {
         if (!input[0]) throw new Error("Supply a recording name.");
         const fpsIndex = input.indexOf("--fps");
@@ -479,14 +481,17 @@ export function createCaptureUi(
           outputDir,
         );
       }
-      case "pixel":
+      case "pixel": {
         return pixel(Number(input[0]), Number(input[1]), windowId, client);
-      case "move":
+      }
+      case "move": {
         await move(Number(input[0]), Number(input[1]), windowId, client);
         return "";
-      case "look":
+      }
+      case "look": {
         await look(Number(input[0]), Number(input[1]), windowId, client);
         return "";
+      }
       case "click":
       case "double-click": {
         if (input[2] && !input[2].startsWith("--") && input[2] !== "left" && input[2] !== "right") {
@@ -541,26 +546,31 @@ export function createCaptureUi(
         await drag(points, button, Number(dwell), windowId, client, allowFocus);
         return "";
       }
-      case "key":
+      case "key": {
         if (!input[0]) throw new Error("Supply a key name.");
         await key(input[0], windowId, client, allowFocus);
         return "";
-      case "double-key":
+      }
+      case "double-key": {
         if (!input[0]) throw new Error("Supply a key name.");
         await key(input[0], windowId, client, allowFocus, undefined, true);
         return "";
-      case "key-hold":
+      }
+      case "key-hold": {
         if (!input[0]) throw new Error("Supply a key name.");
         await key(input[0], windowId, client, allowFocus, Number(input[1]));
         return "";
-      case "type":
+      }
+      case "type": {
         if (!input[0]) throw new Error("Supply text.");
         await typeText(input[0], windowId, client, allowFocus);
         return "";
-      default:
+      }
+      default: {
         throw new Error(
           "Usage: bun run capture ui <list|screenshot|record|pixel|move|look|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>",
         );
+      }
     }
   }
   return {
