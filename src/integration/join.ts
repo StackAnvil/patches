@@ -21,7 +21,7 @@ export function connectionFailure(
   if (disconnect)
     return `Proxy closed the ${route} connection: ${disconnect.slice(disconnect.indexOf("["))}`;
   if (!player) return undefined;
-  const escaped = player.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const escaped = player.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
   const plain = stripVTControlCharacters(server);
   const pattern = javaBackend(route)
     ? `${escaped} lost connection\\b`
@@ -41,8 +41,8 @@ export interface JoinProbe {
   pollMs?: number;
 }
 
-export function joinedPlayer(route: JoinRoute, log: string): string | undefined {
-  log = stripVTControlCharacters(log);
+export function joinedPlayer(route: JoinRoute, rawLog: string): string | undefined {
+  const log = stripVTControlCharacters(rawLog);
   if (javaBackend(route)) {
     return (
       /\]: (?:System chat: )?([^\r\n]+?) joined the game\b/mu.exec(log)?.[1] ??

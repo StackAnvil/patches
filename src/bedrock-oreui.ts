@@ -92,7 +92,7 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
       throw new Error("Bundled OreUI exceeds asset limits");
     if (
       /\.(otf|ttf)$/u.test(path) &&
-      (contents.length < 12 || ![0x4f54544f, 0x00010000].includes(contents.readUInt32BE(0)))
+      (contents.length < 12 || ![0x4f_54_54_4f, 0x00_01_00_00].includes(contents.readUInt32BE(0)))
     )
       throw new Error(`Invalid bundled OreUI font: ${path}`);
   }

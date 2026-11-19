@@ -1,8 +1,8 @@
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { Data, Effect, Schema } from "effect";
-import { parseJson, required } from "./guards.ts";
+import { Clock, Effect, Schema } from "effect";
+import { parseJson, required, encodeJson, encodeIndentedJson } from "./guards.ts";
 import {
   assertPrReady,
   getSeries,
@@ -17,10 +17,14 @@ import { projectPrPatch } from "./pr-patch.ts";
 import { command, git } from "./process.ts";
 
 /** A patch stack operation failed. */
-export class StackError extends Data.TaggedError("StackError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+export class StackError extends Schema.TaggedError<StackError, { readonly brand: unique symbol }>()(
+  "StackError",
+  {
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Unknown),
+  },
+) {}
 
 function stackError(cause: unknown): StackError {
   return new StackError({ message: cause instanceof Error ? cause.message : String(cause), cause });
@@ -115,7 +119,7 @@ const applyRemaining = Effect.fn("applyRemaining")(function* (
       ),
     );
     session.nextIndex = index + 1;
-    yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
+    yield* Effect.promise(() => writeFile(path, encodeIndentedJson(session)));
   }
   yield* git(["update-ref", syncedRef(modeKey), "HEAD"], dir);
   yield* Effect.promise(() => rm(path));
@@ -228,7 +232,7 @@ export const sync = Effect.fn("sync")(function* (
     prPatch = file;
   }
   const session: ApplySession = { baseSha: target.baseSha, patches, nextIndex: 0, prPatch };
-  yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
+  yield* Effect.promise(() => writeFile(path, encodeIndentedJson(session)));
   return yield* applyRemaining(id, dir, path, mode, modeKey, session, patchFile);
 });
 
@@ -243,15 +247,10 @@ export const continueApply = Effect.fn("continueApply")(function* (
     return yield* new StackError({ message: `No unfinished ${mode} patch apply for ${id}.` });
   const target = yield* Effect.promise(() => getTarget(id));
   const series = yield* Effect.promise(() => getSeries(id));
-  const session: ApplySession = parseJson(
-    ApplySessionSchema,
-    yield* Effect.promise(() => readFile(path, "utf8")),
-  );
+  const sessionText = yield* Effect.promise(() => readFile(path, "utf8"));
+  const session: ApplySession = parseJson(ApplySessionSchema, sessionText);
   const patches = seriesPaths(id, series, mode, patchFile);
-  if (
-    session.baseSha !== target.baseSha ||
-    JSON.stringify(session.patches) !== JSON.stringify(patches)
-  ) {
+  if (session.baseSha !== target.baseSha || encodeJson(session.patches) !== encodeJson(patches)) {
     return yield* new StackError({
       message:
         "The base or patch series changed during conflict resolution. Restore them before continuing.",
@@ -283,7 +282,7 @@ export const continueApply = Effect.fn("continueApply")(function* (
   }
   yield* applyPatch(["am", "--continue"], dir, patch);
   session.nextIndex++;
-  yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
+  yield* Effect.promise(() => writeFile(path, encodeIndentedJson(session)));
   return yield* applyRemaining(id, dir, path, mode, modeKey, session, patchFile);
 });
 
@@ -367,22 +366,18 @@ export const edit = Effect.fn("edit")(function* (id: string, file: string) {
   const commit = commits[patchIndex];
   if (commit === undefined || commits.length !== paths.length)
     return yield* new StackError({ message: "Patch/commit count mismatch" });
-  const backupRef = `refs/stackanvil/backup/${Date.now()}`;
+  const backupRef = `refs/stackanvil/backup/${yield* Clock.currentTimeMillis}`;
   yield* git(["update-ref", backupRef, "HEAD"], dir);
   yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
   yield* Effect.promise(() =>
     writeFile(
       sessionPath(id),
-      JSON.stringify(
-        {
-          patchIndex,
-          remaining: commits.slice(patchIndex + 1),
-          applied: 0,
-          backupRef,
-        } satisfies EditSession,
-        null,
-        2,
-      ),
+      encodeIndentedJson({
+        patchIndex,
+        remaining: commits.slice(patchIndex + 1),
+        applied: 0,
+        backupRef,
+      } satisfies EditSession),
     ),
   );
   yield* git(["reset", "--hard", commit], dir);
@@ -390,7 +385,7 @@ export const edit = Effect.fn("edit")(function* (id: string, file: string) {
 });
 
 function writeSession(id: string, session: EditSession) {
-  return Effect.promise(() => writeFile(sessionPath(id), JSON.stringify(session, null, 2)));
+  return Effect.promise(() => writeFile(sessionPath(id), encodeIndentedJson(session)));
 }
 
 export const rebuild = Effect.fn("rebuild")(function* (id: string) {
@@ -399,10 +394,8 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
   const dir = workdir(id);
   let session: EditSession | undefined;
   if (existsSync(sessionPath(id))) {
-    session = parseJson(
-      EditSessionSchema,
-      yield* Effect.promise(() => readFile(sessionPath(id), "utf8")),
-    );
+    const sessionText = yield* Effect.promise(() => readFile(sessionPath(id), "utf8"));
+    session = parseJson(EditSessionSchema, sessionText);
     if (existsSync(join(dir, ".git", "CHERRY_PICK_HEAD"))) {
       yield* git(["cherry-pick", "--continue"], dir);
       session.applied++;
@@ -451,7 +444,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
   }
   if (titleChanged)
     yield* Effect.promise(() =>
-      writeFile(join(root, "patches", id, "series.json"), `${JSON.stringify(series, null, 2)}\n`),
+      writeFile(join(root, "patches", id, "series.json"), `${encodeIndentedJson(series)}\n`),
     );
   yield* git(["update-ref", syncedRef("full"), "HEAD"], dir);
   if (session) yield* Effect.promise(() => rm(sessionPath(id)));
@@ -511,7 +504,7 @@ export const addPatch = Effect.fn("addPatch")(function* (
   const path = join(root, "patches", id, group, file);
   yield* Effect.promise(() => writeFile(path, patch));
   yield* Effect.promise(() =>
-    writeFile(join(root, "patches", id, "series.json"), `${JSON.stringify(series, null, 2)}\n`),
+    writeFile(join(root, "patches", id, "series.json"), `${encodeIndentedJson(series)}\n`),
   );
   yield* rebuild(id);
   return path;

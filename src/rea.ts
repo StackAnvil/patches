@@ -12,11 +12,11 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { Data, Effect, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { runLabCommand } from "./lab/effect-runtime.ts";
 import { root } from "./model.ts";
 import { command, execFileAsync as execute } from "./process.ts";
-import { errorCode, parseJson, stringProperty } from "./guards.ts";
+import { errorCode, parseJson, stringProperty, decodeJson, optionalEnv } from "./guards.ts";
 import { print, printError } from "./output.ts";
 
 const reader = join(root, "native", "rea-controls", "pe.py");
@@ -80,10 +80,14 @@ const isReaCapture = Schema.is(
   }),
 );
 
-class ReaError extends Data.TaggedError("ReaError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+class ReaError extends Schema.TaggedError<ReaError, { readonly brand: unique symbol }>()(
+  "ReaError",
+  {
+    message: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {}
 
 function error(cause: unknown): ReaError {
   return cause instanceof ReaError
@@ -250,7 +254,7 @@ export const setupReaControls = Effect.fn("setupReaControls")(function* () {
     try: () => writeFile(join(controlsRoot, "environment.json"), `${receipt}\n`, { mode: 0o600 }),
     catch: error,
   });
-  return JSON.parse(receipt) as unknown;
+  return decodeJson(receipt);
 });
 
 export function validateReaEvidence(value: unknown, slice: Slice): { id: string; profile: string } {
@@ -319,7 +323,8 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
   const input = join(run, "function.bin");
   const args = ["extract", "--va", options.address, "--output", input];
   if (options.end !== undefined) args.push("--end", options.end);
-  const slice = parseJson(SliceSchema, yield* readReaPe(args, options.target));
+  const sliceText = yield* readReaPe(args, options.target);
+  const slice = parseJson(SliceSchema, sliceText);
   // Bind this run to the target read before extraction, even if selection changes concurrently.
   if (slice.sourceSha256 !== target.artifact.sha256)
     return yield* error("The selected REA target changed during extraction");
@@ -342,7 +347,7 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
     "--format",
     "json",
   ];
-  const ghidra = process.env["GHIDRA_INSTALL_DIR"];
+  const ghidra = yield* optionalEnv("GHIDRA_INSTALL_DIR");
   if (ghidra)
     yield* Effect.tryPromise({
       try: () => independentPath(ghidra),
@@ -402,8 +407,8 @@ export const captureReaControl = Effect.fn("captureReaControl")(function* (optio
       const path = relative(root, script);
       if (path.startsWith("..") || path.startsWith("/"))
         throw new Error("Keep comparison scripts inside this repository");
-      const timeout = options.timeoutMs ?? 60000;
-      if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 60000)
+      const timeout = options.timeoutMs ?? 60_000;
+      if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 60_000)
         throw new Error("Control timeouts must be 1 to 60000 ms");
       const target = await targetFrom(options.target);
       const directory = join(privateRoot, "controls");
@@ -430,10 +435,10 @@ export const captureReaControl = Effect.fn("captureReaControl")(function* (optio
         finalization_ms: 3000,
         terminal: { columns: 140, rows: 32, scrollback: 600 },
         limits: {
-          output_bytes: 65536,
+          output_bytes: 65_536,
           processes: 16,
           files: 40,
-          file_bytes: 1048576,
+          file_bytes: 1_048_576,
           filesystem_depth: 1,
         },
         filesystem_observation_paths: [dirname(script)],

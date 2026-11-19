@@ -1,7 +1,8 @@
+import { encodeJson, encodeIndentedJson } from "./guards.ts";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { Data, Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { clientArtifacts } from "./client-artifacts.ts";
 import { root } from "./model.ts";
 import type { ViaFabricPlusPin } from "./viafabricplus.ts";
@@ -10,20 +11,24 @@ import { execFileAsync as execute } from "./process.ts";
 // Client overrides keep the verified Jenkins and StackAnvil JARs in the pack.
 // Importing does not require a modpack project or URLs for unpublished builds.
 /** The client modpack could not be bundled. */
-export class ModpackError extends Data.TaggedError("ModpackError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+export class ModpackError extends Schema.TaggedError<
+  ModpackError,
+  { readonly brand: unique symbol }
+>()("ModpackError", {
+  message: Schema.String,
+  cause: Schema.Unknown,
+}) {}
 
 export const bundleModpack = Effect.fn("bundleModpack")(function* (
-  artifactsDir: string = join(root, "dist"),
-  outputDir: string = join(root, "dist", "modpack"),
+  artifactsPath: string = join(root, "dist"),
+  outputPath: string = join(root, "dist", "modpack"),
   pin?: ViaFabricPlusPin,
 ) {
   return yield* Effect.tryPromise({
     try: async () => {
-      artifactsDir = resolve(artifactsDir);
-      outputDir = resolve(outputDir);
+      const artifactsDir = resolve(artifactsPath);
+      const outputDir = resolve(outputPath);
       const { baseJar, addonJar, version, loader } = await clientArtifacts(artifactsDir, pin);
       await mkdir(outputDir, { recursive: true });
       const staging = await mkdtemp(join(outputDir, ".modpack-"));
@@ -42,24 +47,19 @@ export const bundleModpack = Effect.fn("bundleModpack")(function* (
           });
         }
         const versionId = createHash("sha256")
-          .update(JSON.stringify({ version, loader, content }))
+          .update(encodeJson({ version, loader, content }))
           .digest("hex");
         await writeFile(
           join(staging, "modrinth.index.json"),
-          `${JSON.stringify(
-            {
-              formatVersion: 1,
-              game: "minecraft",
-              versionId,
-              name: "StackAnvil Bedrock client",
-              summary:
-                "ViaFabricPlus and the StackAnvil Bedrock add-on for Minecraft Java Edition.",
-              files: [],
-              dependencies: { minecraft: version, "fabric-loader": loader },
-            },
-            null,
-            2,
-          )}\n`,
+          `${encodeIndentedJson({
+            formatVersion: 1,
+            game: "minecraft",
+            versionId,
+            name: "StackAnvil Bedrock client",
+            summary: "ViaFabricPlus and the StackAnvil Bedrock add-on for Minecraft Java Edition.",
+            files: [],
+            dependencies: { minecraft: version, "fabric-loader": loader },
+          })}\n`,
         );
         const archive = join(staging, "pack.mrpack");
         await execute("zip", ["-q", "-r", archive, "modrinth.index.json", "client-overrides"], {

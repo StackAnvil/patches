@@ -1,3 +1,4 @@
+import { errorCode } from "../guards.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
@@ -44,11 +45,9 @@ export function createCaptureWaylandBuilder(build: NativeBuild, directory = root
 
   async function prepare(env: NodeJS.ProcessEnv): Promise<string> {
     const digest = await sourceDigest();
-    const previous = await readFile(receipt, "utf8").catch(
-      (error: NodeJS.ErrnoException): undefined => {
-        if (error.code !== "ENOENT") throw error;
-      },
-    );
+    const previous = await readFile(receipt, "utf8").catch((error: unknown): undefined => {
+      if (errorCode(error) !== "ENOENT") throw error;
+    });
     if (previous === digest && existsSync(binary)) return binary;
     await mkdir(tools, { recursive: true });
     await build(

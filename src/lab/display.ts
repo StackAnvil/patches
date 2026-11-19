@@ -123,8 +123,9 @@ export async function ensureDisplay(): Promise<DisplayState> {
     throw new Error("Set XDG_RUNTIME_DIR to your session's private runtime directory.");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   const lock = join(privateRoot, "display-start.lock");
-  await mkdir(lock, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "EEXIST") throw new Error("Another lab display startup is in progress.");
+  await mkdir(lock, { mode: 0o700 }).catch((error: unknown) => {
+    if (errorCode(error) === "EEXIST")
+      throw new Error("Another lab display startup is in progress.");
     throw error;
   });
   let runtime: string | undefined;

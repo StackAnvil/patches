@@ -8,7 +8,7 @@ import { print, printError } from "./output.ts";
 
 const addon = "viafabricplus-bedrock";
 const viaFabricPlusModrinthId = "rIC2XJV4";
-const viaFabricPlusCurseForgeId = 830604;
+const viaFabricPlusCurseForgeId = 830_604;
 const stackAnvilModrinthId = "opL7gK2I";
 const stackAnvilCurseForgeId = "1713307";
 

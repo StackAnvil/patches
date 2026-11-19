@@ -39,7 +39,7 @@ export function readBedrockArchive(data: Uint8Array): Map<string, Buffer> {
   const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
   if (
     bytes.length < 16 ||
-    bytes.readBigUInt64LE(0) !== 0x267052a0b125277dn ||
+    bytes.readBigUInt64LE(0) !== 0x26_70_52_a0_b1_25_27_7dn ||
     bytes.readUInt32LE(12) !== 1
   ) {
     throw new Error("Invalid Bedrock archive header");
@@ -75,14 +75,14 @@ export function readBedrockArchive(data: Uint8Array): Map<string, Buffer> {
 
 const crcTable = Array.from({ length: 256 }, (_, value) => {
   let crc = value;
-  for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+  for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? 0xed_b8_83_20 ^ (crc >>> 1) : crc >>> 1;
   return crc >>> 0;
 });
 
 function crc32(bytes: Uint8Array) {
-  let crc = 0xffffffff;
+  let crc = 0xff_ff_ff_ff;
   for (const byte of bytes) crc = (crcTable[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
+  return (crc ^ 0xff_ff_ff_ff) >>> 0;
 }
 
 /** Stable ZIP entries retain native paths and bytes, with no host timestamps. */
@@ -96,9 +96,9 @@ export function assetZip(files: ReadonlyMap<string, Uint8Array>): Buffer {
     const compressed = deflateRawSync(bytes, { level: 9 });
     const crc = crc32(bytes);
     const header = Buffer.alloc(30);
-    header.writeUInt32LE(0x04034b50);
+    header.writeUInt32LE(0x04_03_4b_50);
     header.writeUInt16LE(20, 4);
-    header.writeUInt16LE(0x800, 6);
+    header.writeUInt16LE(0x8_00, 6);
     header.writeUInt16LE(8, 8);
     header.writeUInt16LE(33, 12); // 1980-01-01.
     header.writeUInt32LE(crc, 14);
@@ -106,7 +106,7 @@ export function assetZip(files: ReadonlyMap<string, Uint8Array>): Buffer {
     header.writeUInt32LE(bytes.length, 22);
     header.writeUInt16LE(name.length, 26);
     const directory = Buffer.alloc(46);
-    directory.writeUInt32LE(0x02014b50);
+    directory.writeUInt32LE(0x02_01_4b_50);
     directory.writeUInt16LE(20, 4);
     header.copy(directory, 6, 4, 30);
     directory.writeUInt32LE(offset, 42);
@@ -116,7 +116,7 @@ export function assetZip(files: ReadonlyMap<string, Uint8Array>): Buffer {
   }
   const directory = Buffer.concat(central);
   const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50);
+  end.writeUInt32LE(0x06_05_4b_50);
   end.writeUInt16LE(files.size, 8);
   end.writeUInt16LE(files.size, 10);
   end.writeUInt32LE(directory.length, 12);
@@ -195,7 +195,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
         if (previous && !previous.equals(contents))
           throw new Error(`Conflicting Bedrock assets: ${key}`);
         if (!previous) expandedBytes += contents.length;
-        if (expandedBytes > totalLimit || files.size >= 32768)
+        if (expandedBytes > totalLimit || files.size >= 32_768)
           throw new Error("Bedrock bundle exceeds limits");
         files.set(key, contents);
       }
@@ -226,7 +226,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
       if (!validPath(key) || files.has(key))
         throw new Error("Invalid built-in attachable definition path");
       expandedBytes += bytes.length;
-      if (expandedBytes > totalLimit || files.size >= 32768)
+      if (expandedBytes > totalLimit || files.size >= 32_768)
         throw new Error("Bedrock bundle exceeds limits");
       files.set(key, bytes);
       attachableIdentifiers.add(identifier);

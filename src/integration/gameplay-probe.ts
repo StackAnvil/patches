@@ -1251,7 +1251,7 @@ export async function driveGameplay(
       return;
     }
     case "shield-projectile-baseline": {
-      await Bun.sleep(11000);
+      await Bun.sleep(11_000);
       return;
     }
     case "shield-projectile-block": {

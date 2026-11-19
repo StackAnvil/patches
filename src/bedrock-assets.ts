@@ -62,7 +62,7 @@ export async function verifyBuiltinAssets(
       const size = read().length;
       if (size === 0) throw new Error(`Empty bundled actor resource: ${path}`);
       archiveExpanded += size;
-      if (expanded + archiveExpanded > 256 * 1024 * 1024 || paths.size >= 32768)
+      if (expanded + archiveExpanded > 256 * 1024 * 1024 || paths.size >= 32_768)
         throw new Error("Bundled actor resources exceed limits");
       paths.add(path);
     }

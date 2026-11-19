@@ -181,7 +181,7 @@ export async function buildJavaProbe(): Promise<{
         "--release",
         "25",
         "-encoding",
-        "UTF-8",
+        "utf8",
         "-classpath",
         classpath,
         "-d",
@@ -217,7 +217,7 @@ export async function buildJavaProbe(): Promise<{
 }
 
 export function geyserConfig(port: number): string {
-  if (!Number.isInteger(port) || port < 1 || port > 65535)
+  if (!Number.isInteger(port) || port < 1 || port > 65_535)
     throw new Error("Invalid Geyser UDP port.");
   return `bedrock:
   address: 127.0.0.1
@@ -277,7 +277,7 @@ if (import.meta.main) {
   try {
     const destination = resolve(Bun.argv[2] ?? join(root, "dist", "test-packs", "java-probe"));
     await mkdir(destination, { recursive: true });
-    await installJavaProbe(destination, 19132);
+    await installJavaProbe(destination, 19_132);
     print(destination);
   } catch (error: unknown) {
     printError(error);

@@ -67,7 +67,7 @@ export const releaseIntegrationResources = Effect.fn("Integration.releaseResourc
     return yield* new LabError({
       operation: "release integration",
       message: "Integration cleanup failed.",
-      cause: new AggregateError(failures),
+      cause: new AggregateError(failures, "Resource setup failed."),
     });
 }, Effect.uninterruptible);
 

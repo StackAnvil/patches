@@ -363,7 +363,7 @@ async function stageArtifacts(): Promise<void> {
 export function shareResponse(pathname: string, path: string): Response {
   const names = ["StackAnvil-Prism.zip", "ViaProxy.jar", "manifest.json", "SHA256SUMS"];
   if (pathname === "/")
-    return new Response(names.join("\n") + "\n", { headers: { "Content-Type": "text/plain" } });
+    return new Response(`${names.join("\n")}\n`, { headers: { "Content-Type": "text/plain" } });
   const name = pathname.slice(1);
   if (!names.includes(name) || basename(name) !== name || !existsSync(join(path, name)))
     return new Response("Not found", { status: 404 });
@@ -383,7 +383,7 @@ export async function vmMain(args: string[]): Promise<void> {
       throw new Error("Run bun run lab vm artifacts first.");
     const server = Bun.serve({
       hostname: "127.0.0.1",
-      port: 18081,
+      port: 18_081,
       fetch: (request) => {
         if (request.method !== "GET" && request.method !== "HEAD")
           return new Response("Method not allowed", { status: 405 });

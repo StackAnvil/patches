@@ -331,7 +331,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
                 }
                 return join(runtime, ".stackanvil-game");
               },
-              (error) => {
+              (error: unknown) => {
                 if (errorCode(error) !== "ENOENT") throw error;
                 return join(runtime, ".stackanvil-games", relative(sourceGames, sourcePaths[key]));
               },

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { Data, Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { stringProperty } from "./guards.ts";
 
 /** Runs a program without a shell and resolves with its standard output and error. */
@@ -8,10 +8,14 @@ import { stringProperty } from "./guards.ts";
 export const execFileAsync = promisify(execFile);
 
 /** A child process failed. The message includes its captured output. */
-export class CommandError extends Data.TaggedError("CommandError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+export class CommandError extends Schema.TaggedError<
+  CommandError,
+  { readonly brand: unique symbol }
+>()("CommandError", {
+  message: Schema.String,
+  cause: Schema.Unknown,
+}) {}
 
 export const command = Effect.fn("command")(function* (
   program: string,

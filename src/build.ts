@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { Effect, Schema } from "effect";
-import { parseJson } from "./guards.ts";
+import { parseJson, encodeIndentedJson } from "./guards.ts";
 import { buildOrder } from "./dependencies.ts";
 import { getTarget, getTargets, listArtifacts, root, type Target } from "./model.ts";
 import { command } from "./process.ts";
@@ -181,10 +181,10 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   );
   const { artifact, pom, coordinate } = yield* Effect.promise(() => readBuildArtifact(dir, target));
   if (["viabedrock", "viafabricplus-bedrock", "viaproxy"].includes(id)) {
-    const { version } = parseJson(
-      BedrockAssetsSchema,
-      yield* Effect.promise(() => readFile(join(root, "bedrock-assets.json"), "utf8")),
+    const assetsText = yield* Effect.promise(() =>
+      readFile(join(root, "bedrock-assets.json"), "utf8"),
     );
+    const { version } = parseJson(BedrockAssetsSchema, assetsText);
     yield* Effect.promise(() =>
       verifyEmbeddedBuiltinUi(
         artifact,
@@ -246,15 +246,15 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
     auxiliaryArtifacts: [],
   };
   yield* Effect.promise(() =>
-    writeFile(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`),
+    writeFile(join(output, "manifest.json"), `${encodeIndentedJson(manifest)}\n`),
   );
   built.set(id, coordinate);
   return output;
 });
 
 export const build = Effect.fn("build")(function* (id: string) {
-  const order =
-    id === "viafabricplus" ? [] : buildOrder(yield* Effect.promise(() => getTargets()), id);
+  const targets = id === "viafabricplus" ? undefined : yield* Effect.promise(() => getTargets());
+  const order = targets === undefined ? [] : buildOrder(targets, id);
   yield* Effect.promise(() => rm(localRepo, { recursive: true, force: true }));
   const built = new Map<string, Coordinates>();
   const includeViaFabricPlus = id === "viafabricplus" || order.includes("viafabricplus-bedrock");
@@ -305,7 +305,7 @@ export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: s
   yield* Effect.promise(() =>
     writeFile(
       join(output, "manifest.json"),
-      `${JSON.stringify({ target: id, upstream: target.upstream, baseSha: target.baseSha, featureCommit: commit }, null, 2)}\n`,
+      `${encodeIndentedJson({ target: id, upstream: target.upstream, baseSha: target.baseSha, featureCommit: commit })}\n`,
     ),
   );
   return output;

@@ -6,13 +6,13 @@ import { closeSync, existsSync, lstatSync, openSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { Effect, Schema } from "effect";
+import { Clock, type Config, DateTime, Effect, Schema } from "effect";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { installPrism } from "../prism.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "./display.ts";
 import { vmMain } from "./vm.ts";
-import { isOneOf, parseJson } from "../guards.ts";
+import { isOneOf, parseJson, encodeIndentedJson, optionalEnv } from "../guards.ts";
 import { print, printError } from "../output.ts";
 const privateRoot = join(root, ".stackanvil", "lab");
 const processFile = join(privateRoot, "processes.json");
@@ -70,10 +70,8 @@ const ManagedSchema = Schema.Struct({
 });
 const managedEffect = Effect.fn("Lab.managed")(function* () {
   if (!existsSync(processFile)) return {};
-  const managed: Managed = parseJson(
-    ManagedSchema,
-    yield* labIO("managed", async () => readFile(processFile, "utf8")),
-  );
+  const managedText = yield* labIO("managed", async () => readFile(processFile, "utf8"));
+  const managed: Managed = parseJson(ManagedSchema, managedText);
   return managed;
 });
 const saveEffect = Effect.fn("Lab.save")(function* (entries: Managed) {
@@ -98,7 +96,7 @@ const matchingProcessesEffect = Effect.fn("Lab.matchingProcesses")(function* (se
   });
 });
 const viaProxyJarEffect = Effect.fn("Lab.viaProxyJar")(function* () {
-  const configured = process.env["VIAPROXY_JAR"];
+  const configured = yield* optionalEnv("VIAPROXY_JAR");
   return configured ? resolve(configured) : yield* labIO("viaProxyJar", () => artifact("viaproxy"));
 });
 const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
@@ -110,7 +108,7 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
     cwd: string;
     env?: NodeJS.ProcessEnv;
   },
-  LabError
+  LabError | Config.ConfigError
 > {
   if (service === "server") {
     const program = join(serverHome, "bedrock_server");
@@ -130,6 +128,10 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
         "serviceCommand",
         new Error(`ViaProxy JAR missing: ${jar}. Run bun run build viaproxy.`),
       );
+    const bind = (yield* optionalEnv("STACKANVIL_VIAPROXY_BIND")) ?? "127.0.0.1:25568";
+    const target = (yield* optionalEnv("STACKANVIL_BEDROCK_TARGET")) ?? "127.0.0.1:19132";
+    const version = (yield* optionalEnv("STACKANVIL_BEDROCK_VERSION")) ?? "Bedrock 1.26.51";
+    const auth = (yield* optionalEnv("STACKANVIL_VIAPROXY_AUTH")) ?? "NONE";
     return {
       program: Bun.which("java") ?? "java",
       args: [
@@ -138,13 +140,13 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
         jar,
         "cli",
         "--bind-address",
-        process.env["STACKANVIL_VIAPROXY_BIND"] ?? "127.0.0.1:25568",
+        bind,
         "--target-address",
-        process.env["STACKANVIL_BEDROCK_TARGET"] ?? "127.0.0.1:19132",
+        target,
         "--target-version",
-        process.env["STACKANVIL_BEDROCK_VERSION"] ?? "Bedrock 1.26.51",
+        version,
         "--auth-method",
-        process.env["STACKANVIL_VIAPROXY_AUTH"] ?? "NONE",
+        auth,
         "--log-ips",
         "false",
       ],
@@ -162,16 +164,10 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
       "serviceCommand",
       new Error("Flatpak is required to launch the PrismLauncher instance."),
     );
+  const server = (yield* optionalEnv("STACKANVIL_JAVA_SERVER")) ?? "127.0.0.1:25568";
   return {
     program: "flatpak",
-    args: [
-      "run",
-      "org.prismlauncher.PrismLauncher",
-      "--launch",
-      javaInstance,
-      "--server",
-      process.env["STACKANVIL_JAVA_SERVER"] ?? "127.0.0.1:25568",
-    ],
+    args: ["run", "org.prismlauncher.PrismLauncher", "--launch", javaInstance, "--server", server],
     cwd: root,
   };
 });
@@ -196,7 +192,7 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
   if (service === "java") {
     const environment =
       isolated ??
-      (process.env["STACKANVIL_USE_DESKTOP"] === "1"
+      ((yield* optionalEnv("STACKANVIL_USE_DESKTOP")) === "1"
         ? nativeWaylandEnvironment(process.env)
         : undefined);
     if (!environment)
@@ -236,9 +232,10 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
             "start",
             new Error(`${service} exited. Read the private ${service}.log.`),
           );
+        const now = yield* DateTime.now;
         entries[service] = {
           pid: child.pid,
-          startedAt: new Date().toISOString(),
+          startedAt: DateTime.formatIso(now),
           command: command.program,
         };
         yield* saveEffect(entries);
@@ -264,11 +261,10 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
 });
 const stopEffect = Effect.fn("Lab.stop")(function* (service: Service) {
   const entries = yield* managedEffect();
-  const entry = entries[service];
+  const { [service]: entry, ...remaining } = entries;
   if (!entry || !groupAlive(entry.pid)) {
     print(`${service} is not running under this lab.`);
-    delete entries[service];
-    yield* saveEffect(entries);
+    yield* saveEffect(remaining);
     return;
   }
   process.kill(-entry.pid, "SIGINT");
@@ -278,8 +274,7 @@ const stopEffect = Effect.fn("Lab.stop")(function* (service: Service) {
       "stop",
       new Error(`${service} did not stop. Process group ${entry.pid} was left running.`),
     );
-  delete entries[service];
-  yield* saveEffect(entries);
+  yield* saveEffect(remaining);
   print(`Stopped ${service}.`);
 }, Effect.uninterruptible);
 const statusEffect = Effect.fn("Lab.status")(function* () {
@@ -418,7 +413,7 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
     maxBuffer: 32 * 1024 * 1024,
   });
   if (action === "properties" || action === "threads") {
-    const file = join(privateRoot, `${action}-${pid}-${Date.now()}.txt`);
+    const file = join(privateRoot, `${action}-${pid}-${yield* Clock.currentTimeMillis}.txt`);
     yield* labIO("jvm", async () => writeFile(file, stdout + stderr, { mode: 0o600 }));
     print(`Private JVM diagnostic: ${file}`);
   } else print((stdout + stderr).trimEnd());
@@ -426,25 +421,21 @@ const jvmEffect = Effect.fn("Lab.jvm")(function* (args: string[]) {
 const doctorEffect = Effect.fn("Lab.doctor")(function* () {
   const viaProxy = yield* Effect.orElseSucceed(viaProxyJarEffect(), () => "missing");
   print(
-    JSON.stringify(
-      {
-        server: existsSync(join(serverHome, "bedrock_server")) ? serverHome : "missing",
-        viaProxy: existsSync(viaProxy) ? viaProxy : "missing",
-        bedrockOnLinux: existsSync(bedrockHome) ? bedrockHome : "missing",
-        prismInstance: existsSync(join(prismHome, javaInstance, "instance.cfg"))
-          ? javaInstance
-          : "missing",
-        jcmd: Bun.which("jcmd") ?? "missing",
-        sway: waylandTool("sway") ?? "missing",
-        swaymsg: waylandTool("swaymsg") ?? "missing",
-        grim: waylandTool("grim") ?? "missing",
-        recorder: waylandTool("wf-recorder") ?? "missing",
-        pactl: Bun.which("pactl") ?? "missing",
-        capture: existsSync(join(root, "src", "capture", "cli.ts")) ? "available" : "missing",
-      },
-      null,
-      2,
-    ),
+    encodeIndentedJson({
+      server: existsSync(join(serverHome, "bedrock_server")) ? serverHome : "missing",
+      viaProxy: existsSync(viaProxy) ? viaProxy : "missing",
+      bedrockOnLinux: existsSync(bedrockHome) ? bedrockHome : "missing",
+      prismInstance: existsSync(join(prismHome, javaInstance, "instance.cfg"))
+        ? javaInstance
+        : "missing",
+      jcmd: Bun.which("jcmd") ?? "missing",
+      sway: waylandTool("sway") ?? "missing",
+      swaymsg: waylandTool("swaymsg") ?? "missing",
+      grim: waylandTool("grim") ?? "missing",
+      recorder: waylandTool("wf-recorder") ?? "missing",
+      pactl: Bun.which("pactl") ?? "missing",
+      capture: existsSync(join(root, "src", "capture", "cli.ts")) ? "available" : "missing",
+    }),
   );
   yield* statusEffect();
 });
@@ -455,14 +446,16 @@ export const mainEffect = Effect.fn("Lab.main")(function* () {
   if (command === "doctor") return yield* doctorEffect();
   if (command === "status") return yield* statusEffect();
   if (command === "display" && action === "start") {
-    print(yield* labIO("main", async () => ensureDisplay()));
+    const display = yield* labIO("main", async () => ensureDisplay());
+    print(display);
     return;
   }
   if (command === "display" && action === "stop")
     return yield* labIO("main", async () => stopDisplay());
   if (command === "credentials" && action === "snapshot") return yield* snapshotCredentialsEffect();
   if (command === "java" && action === "prepare") {
-    print(yield* labIO("main", async () => installPrism()));
+    const instance = yield* labIO("main", async () => installPrism());
+    print(instance);
     return;
   }
   if (command === "jvm" && action) return yield* jvmEffect([action, ...rest]);
@@ -474,14 +467,14 @@ export const mainEffect = Effect.fn("Lab.main")(function* () {
     return yield* action === "start" ? startEffect(command) : stopEffect(command);
   }
   if (command === "up") {
-    if (process.env["STACKANVIL_USE_DESKTOP"] !== "1")
+    if ((yield* optionalEnv("STACKANVIL_USE_DESKTOP")) !== "1")
       yield* labIO("main", async () => ensureDisplay());
     for (const service of ["server", "viaproxy", "java"] as const) yield* startEffect(service);
     return;
   }
   if (command === "down") {
     for (const service of ["java", "viaproxy", "server"] as const) yield* stopEffect(service);
-    if (process.env["STACKANVIL_USE_DESKTOP"] !== "1")
+    if ((yield* optionalEnv("STACKANVIL_USE_DESKTOP")) !== "1")
       yield* labIO("main", async () => stopDisplay());
     return;
   }

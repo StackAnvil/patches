@@ -234,8 +234,8 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await mkdir(caDirectory, { recursive: true, mode: 0o700 });
   const log = openSync(join(dir, "proxy.log"), "a", 0o600);
-  const port = Number(process.env["STACKANVIL_PROXY_PORT"] ?? 18080);
-  if (!Number.isInteger(port) || port < 1024 || port > 65535)
+  const port = Number(process.env["STACKANVIL_PROXY_PORT"] ?? 18_080);
+  if (!Number.isInteger(port) || port < 1024 || port > 65_535)
     throw new Error("STACKANVIL_PROXY_PORT must be an unprivileged TCP port.");
   const args = [
     "--mode",

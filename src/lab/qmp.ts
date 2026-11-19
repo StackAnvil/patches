@@ -1,10 +1,15 @@
+import { encodeJson, decodeJson } from "../guards.ts";
 import { createConnection } from "node:net";
-import { Data, Deferred, Effect, Schema } from "effect";
+import { Deferred, Effect, Schema } from "effect";
 
-export class QmpError extends Data.TaggedError("QmpError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+export class QmpError extends Schema.TaggedError<QmpError, { readonly brand: unique symbol }>()(
+  "QmpError",
+  {
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Unknown),
+  },
+) {}
 
 const isQmpMessage = Schema.is(
   Schema.Struct({
@@ -33,7 +38,7 @@ export function withQmpEffect<A, E, R>(
         Effect.sync(() => {
           const socket = createConnection(path);
           socket.setEncoding("utf8");
-          const greeting = Deferred.makeUnsafe<void, QmpError>();
+          const greeting = Deferred.makeUnsafe<undefined, QmpError>();
           const pending = new Map<number, Deferred.Deferred<unknown, QmpError>>();
           let failure: QmpError | undefined;
           let buffer = "";
@@ -63,9 +68,9 @@ export function withQmpEffect<A, E, R>(
               buffer = buffer.slice(newline + 1);
               if (!line) continue;
               try {
-                const message: unknown = JSON.parse(line);
+                const message: unknown = decodeJson(line);
                 if (!isQmpMessage(message)) throw new Error("Expected a QMP message");
-                if (message.QMP) Deferred.doneUnsafe(greeting, Effect.void);
+                if (message.QMP) Deferred.doneUnsafe(greeting, Effect.undefined);
                 if (message.id === undefined) continue;
                 const reply = pending.get(message.id);
                 if (!reply) continue;
@@ -99,8 +104,7 @@ export function withQmpEffect<A, E, R>(
                 () =>
                   Effect.gen(function* () {
                     yield* Effect.try({
-                      try: () =>
-                        socket.write(`${JSON.stringify({ execute, arguments: args, id })}\n`),
+                      try: () => socket.write(`${encodeJson({ execute, arguments: args, id })}\n`),
                       catch: (cause) =>
                         new QmpError({ message: "Could not write QMP command.", cause }),
                     });
@@ -204,8 +208,8 @@ export function pointerEvents(x: number, y: number, button: string): Record<stri
   if (button !== "left" && button !== "right" && button !== "middle")
     throw new Error("Use left, right, or middle.");
   return [
-    { type: "abs", data: { axis: "x", value: Math.round(x * 32767) } },
-    { type: "abs", data: { axis: "y", value: Math.round(y * 32767) } },
+    { type: "abs", data: { axis: "x", value: Math.round(x * 32_767) } },
+    { type: "abs", data: { axis: "y", value: Math.round(y * 32_767) } },
     { type: "btn", data: { button, down: true } },
   ];
 }

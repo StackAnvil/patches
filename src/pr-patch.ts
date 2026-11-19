@@ -178,7 +178,7 @@ export function projectPrPatch(patch: string, project?: string): PrPatch {
   const prefix =
     separator < 0
       ? normalized.slice(0, start)
-      : normalized.slice(0, separator + "\n---\n".length) + "\n";
+      : `${normalized.slice(0, separator + "\n---\n".length)}\n`;
   const sections = normalized
     .slice(start)
     .replace(/\n-- \n[^\n]+\n?$/u, "\n")

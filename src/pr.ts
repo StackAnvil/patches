@@ -108,10 +108,8 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
   const desired = [...new Set(target.prAssignees)];
   if (desired.length === 0) return { url, desired, added: [], requested: [] };
 
-  const repository = parseJson(
-    RepositorySchema,
-    yield* gh(["api", `repos/${target.upstream}`], root),
-  );
+  const repositoryText = yield* gh(["api", `repos/${target.upstream}`], root);
+  const repository = parseJson(RepositorySchema, repositoryText);
   const permissions = repository.permissions;
   const canAssign = Boolean(
     permissions &&
@@ -120,21 +118,19 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
   const canRequestReviews = Boolean(
     permissions && [permissions.admin, permissions.maintain, permissions.push].some(Boolean),
   );
-  const pr = parseJson(
-    PrParticipantsSchema,
-    yield* gh(
-      [
-        "pr",
-        "view",
-        url,
-        "--repo",
-        target.upstream,
-        "--json",
-        "author,assignees,isDraft,reviewRequests,reviews",
-      ],
-      root,
-    ),
+  const prText = yield* gh(
+    [
+      "pr",
+      "view",
+      url,
+      "--repo",
+      target.upstream,
+      "--json",
+      "author,assignees,isDraft,reviewRequests,reviews",
+    ],
+    root,
   );
+  const pr = parseJson(PrParticipantsSchema, prText);
   const missing = missingPrParticipants(desired, pr);
   const skipped: string[] = [];
   if (missing.assignees.length > 0 && canAssign) {

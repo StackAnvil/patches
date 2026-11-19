@@ -9,7 +9,7 @@ const SiteSearch = lazy(() => import("../components/search"));
 export const Route = createRootRoute({
   head: () => ({
     meta: [
-      { charSet: "utf-8" },
+      { charSet: "utf8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { name: "theme-color", content: "#0e1123" },
     ],

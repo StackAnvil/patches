@@ -3,10 +3,10 @@ import { inflateRawSync } from "node:zlib";
 /** Reads selected entries from ordinary ZIP/JAR archives, including entries with data descriptors. */
 export function zipEntries(bytes: Buffer): Map<string, () => Buffer> {
   let end = bytes.length - 22;
-  const minimum = Math.max(0, end - 0xffff);
+  const minimum = Math.max(0, end - 0xff_ff);
   for (; end >= minimum; end--) {
     if (
-      bytes.readUInt32LE(end) === 0x06054b50 &&
+      bytes.readUInt32LE(end) === 0x06_05_4b_50 &&
       end + 22 + bytes.readUInt16LE(end + 20) === bytes.length
     )
       break;
@@ -17,12 +17,12 @@ export function zipEntries(bytes: Buffer): Map<string, () => Buffer> {
   const count = bytes.readUInt16LE(end + 10);
   let offset = bytes.readUInt32LE(end + 16);
   const directoryEnd = offset + bytes.readUInt32LE(end + 12);
-  if (count === 0xffff || count !== bytes.readUInt16LE(end + 8) || directoryEnd !== end) {
+  if (count === 0xff_ff || count !== bytes.readUInt16LE(end + 8) || directoryEnd !== end) {
     throw new Error("Invalid ZIP directory bounds");
   }
   const entries = new Map<string, () => Buffer>();
   for (let index = 0; index < count; index++) {
-    if (offset + 46 > directoryEnd || bytes.readUInt32LE(offset) !== 0x02014b50)
+    if (offset + 46 > directoryEnd || bytes.readUInt32LE(offset) !== 0x02_01_4b_50)
       throw new Error("Invalid ZIP entry");
     const flags = bytes.readUInt16LE(offset + 8),
       method = bytes.readUInt16LE(offset + 10);
@@ -37,7 +37,7 @@ export function zipEntries(bytes: Buffer): Map<string, () => Buffer> {
       flags & 1 ||
       bytes.readUInt16LE(offset + 34) !== 0 ||
       local + 30 > bytes.readUInt32LE(end + 16) ||
-      bytes.readUInt32LE(local) !== 0x04034b50 ||
+      bytes.readUInt32LE(local) !== 0x04_03_4b_50 ||
       ![0, 8].includes(method)
     )
       throw new Error("Unsupported ZIP entry");

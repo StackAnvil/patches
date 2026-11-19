@@ -49,21 +49,21 @@ export function verifyOreUiShaperBinary(bytes: Buffer, target: OreUiShaperPlatfo
       bytes.readUInt16LE(16) === 3 &&
       bytes.readUInt16LE(18) === (arm ? 183 : 62);
   } else if (platform === "windows") {
-    if (bytes.length >= 64 && bytes.readUInt16LE(0) === 0x5a4d) {
+    if (bytes.length >= 64 && bytes.readUInt16LE(0) === 0x5a_4d) {
       const pe = bytes.readUInt32LE(60);
       matches =
         pe >= 64 &&
         pe <= bytes.length - 26 &&
-        bytes.readUInt32LE(pe) === 0x4550 &&
-        bytes.readUInt16LE(pe + 4) === (arm ? 0xaa64 : 0x8664) &&
-        (bytes.readUInt16LE(pe + 22) & 0x2000) !== 0 &&
-        bytes.readUInt16LE(pe + 24) === 0x20b;
+        bytes.readUInt32LE(pe) === 0x45_50 &&
+        bytes.readUInt16LE(pe + 4) === (arm ? 0xaa_64 : 0x86_64) &&
+        (bytes.readUInt16LE(pe + 22) & 0x20_00) !== 0 &&
+        bytes.readUInt16LE(pe + 24) === 0x2_0b;
     }
   } else if (platform === "macos") {
     matches =
       bytes.length >= 32 &&
-      bytes.readUInt32LE(0) === 0xfeedfacf &&
-      bytes.readUInt32LE(4) === (arm ? 0x100000c : 0x1000007) &&
+      bytes.readUInt32LE(0) === 0xfe_ed_fa_cf &&
+      bytes.readUInt32LE(4) === (arm ? 0x1_00_00_0c : 0x1_00_00_07) &&
       bytes.readUInt32LE(12) === 6;
   }
   if (!matches) throw new Error(`OreUI shaper binary does not match ${target}`);

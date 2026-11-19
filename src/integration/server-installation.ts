@@ -141,12 +141,12 @@ async function prepareDependencyCleanup(destination: string): Promise<() => Prom
 
 /** Budget all installation files before creating a fresh, privately writable test server. */
 export async function copyBedrockServerInstallation(
-  source: string,
-  destination: string,
+  sourcePath: string,
+  destinationPath: string,
   io: InstallationCopyIo = filesystemIo,
 ): Promise<() => Promise<void>> {
-  source = resolve(source);
-  destination = resolve(destination);
+  const source = resolve(sourcePath);
+  const destination = resolve(destinationPath);
   if (
     (await realpath(source)) !== source ||
     (await realpath(dirname(destination))) !== dirname(destination)

@@ -7,7 +7,7 @@ import {
   readBedrockArchive,
   ResourcePackManifestSchema,
 } from "./bundle-bedrock-assets.ts";
-import { parseJson } from "../src/guards.ts";
+import { parseJson, errorCode } from "../src/guards.ts";
 import { print } from "../src/output.ts";
 
 /** Build-time inputs come from an acquired package. Runtime consumers use the resulting JAR resource. */
@@ -63,12 +63,12 @@ export async function planBedrockUi(game: string, version: string, output: strin
         const original = `${path}.bol-orig`;
         const selected = await stat(original)
           .then((info) => (info.isFile() ? original : path))
-          .catch((error: NodeJS.ErrnoException) => {
-            if (error.code !== "ENOENT") throw error;
+          .catch((error: unknown) => {
+            if (errorCode(error) !== "ENOENT") throw error;
             return path;
           });
-        const bytes = await readFile(selected).catch((error: NodeJS.ErrnoException): undefined => {
-          if (required || error.code !== "ENOENT") throw error;
+        const bytes = await readFile(selected).catch((error: unknown): undefined => {
+          if (required || errorCode(error) !== "ENOENT") throw error;
         });
         if (!bytes) return;
         const entries = readBedrockArchive(bytes);
@@ -81,8 +81,8 @@ export async function planBedrockUi(game: string, version: string, output: strin
       };
       const walk = async (directory: string, prefix: string, archives: boolean): Promise<void> => {
         const entries = await readdir(directory, { withFileTypes: true }).catch(
-          (error: NodeJS.ErrnoException) => {
-            if (error.code !== "ENOENT") throw error;
+          (error: unknown) => {
+            if (errorCode(error) !== "ENOENT") throw error;
             return [];
           },
         );
@@ -157,8 +157,8 @@ export async function applyBedrockUi(plan: Awaited<ReturnType<typeof planBedrock
   for (const [path] of targets) {
     const exists = await stat(path)
       .then(() => true)
-      .catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "ENOENT") throw error;
+      .catch((error: unknown) => {
+        if (errorCode(error) !== "ENOENT") throw error;
         return false;
       });
     if (exists) throw new Error("UI output already exists; choose a fresh reviewed destination");

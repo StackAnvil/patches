@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { Data, Effect } from "effect";
-import { isRecord } from "./guards.ts";
+import { Effect, Schema } from "effect";
+import { isRecord, decodeJson } from "./guards.ts";
 import { printError } from "./output.ts";
 
 const products = {
@@ -10,10 +10,14 @@ const products = {
 } as const;
 export type BedrockChannel = keyof typeof products;
 /** Store or Xbox metadata did not resolve to a valid Bedrock package. */
-export class BedrockVersionError extends Data.TaggedError("BedrockVersionError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+export class BedrockVersionError extends Schema.TaggedError<
+  BedrockVersionError,
+  { readonly brand: unique symbol }
+>()("BedrockVersionError", {
+  message: Schema.String,
+  cause: Schema.Unknown,
+}) {}
 
 function versionError(fallback: string) {
   return (cause: unknown) =>
@@ -58,9 +62,11 @@ export function xboxAuthorization(text: string): string {
     try {
       const response = record(JSON.parse(header));
       const claims = record(response["DisplayClaims"])["xui"];
-      if (!Array.isArray(claims) || claims.length !== 1) throw new Error();
+      if (!Array.isArray(claims) || claims.length !== 1)
+        throw new Error("Expected exactly one PlayFab token claim.");
       const hash = record(claims[0])["uhs"];
-      if (typeof hash !== "string" || typeof response["Token"] !== "string") throw new TypeError();
+      if (typeof hash !== "string" || typeof response["Token"] !== "string")
+        throw new TypeError("Expected a PlayFab token and claim hash.");
       header = `XBL3.0 x=${hash};${response["Token"]}`;
     } catch {
       throw new Error(
@@ -183,7 +189,7 @@ function metadataRequest(url: URL, headers: Record<string, string>, fetchMetadat
           if (size > metadataLimit) throw new Error("The metadata response exceeds 2 MiB");
           chunks.push(value);
         }
-        return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+        return decodeJson(Buffer.concat(chunks).toString("utf8"));
       } catch {
         await reader.cancel().catch(() => {});
         throw new Error("Could not read valid JSON metadata within the time and size limits");

@@ -1,5 +1,5 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { Data, Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { parseRelease } from "../src/lib/releases";
 import { pageUrl, site } from "../src/lib/site";
 
@@ -33,10 +33,14 @@ async function fetchRelease() {
 }
 
 /** Preparing the release snapshot, sitemap, or page list failed. */
-class PrepareError extends Data.TaggedError("PrepareError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+class PrepareError extends Schema.TaggedError<PrepareError, { readonly brand: unique symbol }>()(
+  "PrepareError",
+  {
+    message: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {}
 
 function prepareStep<A>(step: () => Promise<A>) {
   return Effect.tryPromise({

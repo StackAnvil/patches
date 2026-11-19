@@ -1,13 +1,17 @@
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process";
-import { Data, Effect, type Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { parseJson } from "../guards.ts";
 import { execFileAsync as executeFile } from "../process.ts";
 
-export class LabError extends Data.TaggedError("LabError")<{
-  readonly operation: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+export class LabError extends Schema.TaggedError<LabError, { readonly brand: unique symbol }>()(
+  "LabError",
+  {
+    operation: Schema.String,
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Unknown),
+  },
+) {}
 
 export function labError(operation: string, cause: unknown) {
   return cause instanceof LabError

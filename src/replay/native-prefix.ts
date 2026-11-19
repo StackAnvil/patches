@@ -46,7 +46,7 @@ export function nativeReplayServerLine(port: number, added: number): string {
   if (
     !Number.isInteger(port) ||
     port < 1 ||
-    port > 65535 ||
+    port > 65_535 ||
     !Number.isSafeInteger(added) ||
     added < 0
   ) {

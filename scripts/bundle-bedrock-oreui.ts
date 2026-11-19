@@ -13,7 +13,7 @@ import {
   verifyBuiltinOreUiContents,
   type OreUiDescriptor,
 } from "../src/bedrock-oreui.ts";
-import { parseJson, required } from "../src/guards.ts";
+import { parseJson, required, errorCode } from "../src/guards.ts";
 import { print } from "../src/output.ts";
 
 /** Acquire original Gameface resources; do not execute or translate the shipped JavaScript. */
@@ -73,8 +73,8 @@ export async function planBedrockOreUi(game: string, version: string, output: st
   const original = `${archive}.bol-orig`;
   const selected = await lstat(original)
     .then(() => original)
-    .catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
+    .catch((error: unknown) => {
+      if (errorCode(error) !== "ENOENT") throw error;
       return archive;
     });
   const texts = readBedrockArchive(await read(selected));

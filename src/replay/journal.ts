@@ -1,7 +1,7 @@
 import { stat, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 
-export const journalMagic = 0x53425231;
+export const journalMagic = 0x53_42_52_31;
 export const maxJournalBytes = 512 * 1024 * 1024;
 const maxJournalEntries = 3_000_000;
 export interface PacketSummary {
@@ -60,9 +60,9 @@ export function summarizeJournal(bytes: Buffer): PacketSummary {
       header += (part & 127) * 2 ** (width * 7);
       if (!(part & 128)) break;
     }
-    if (width >= Math.min(5, length) || header > 0x3fff)
+    if (width >= Math.min(5, length) || header > 0x3f_ff)
       throw new Error("Invalid Bedrock packet ID.");
-    const id = header & 0x3ff;
+    const id = header & 0x3_ff;
     if (direction === 1 ? [3, 143].includes(id) : [1, 4, 94, 193].includes(id))
       throw new Error("Authentication packet in journal.");
     if (direction === 1) {

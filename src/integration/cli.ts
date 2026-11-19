@@ -14,14 +14,14 @@ import {
   startIntegrationProcess,
   retainServerDependencies,
 } from "./resources.ts";
-import { type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { Effect, Schema } from "effect";
-import { isOneOf, parseJson } from "../guards.ts";
+import { Clock, DateTime, Effect, Schema } from "effect";
+import { isOneOf, parseJson, encodeJson, optionalEnv } from "../guards.ts";
 import { createCaptureUi } from "../capture/ui.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
@@ -118,10 +118,10 @@ const waitForLogEffect = Effect.fn("Integration.waitForLog")(function* (
   path: string,
   pattern: RegExp,
   child: ChildProcess | (() => boolean),
-  timeoutMs: number = 90000,
+  timeoutMs: number = 90_000,
 ) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const deadline = (yield* Clock.currentTimeMillis) + timeoutMs;
+  while ((yield* Clock.currentTimeMillis) < deadline) {
     const log = yield* textFileEffect(path);
     if (pattern.test(log)) return log;
     if (!(typeof child === "function" ? child() : alive(child.pid)))
@@ -143,9 +143,8 @@ const downloadEffect = Effect.fn("Integration.download")(function* (
   algorithm: "sha1" | "sha512",
 ) {
   if (existsSync(path)) {
-    const existing = createHash(algorithm)
-      .update(new Uint8Array(yield* labIO("download", async () => Bun.file(path).arrayBuffer())))
-      .digest("hex");
+    const existingBytes = yield* labIO("download", async () => Bun.file(path).arrayBuffer());
+    const existing = createHash(algorithm).update(new Uint8Array(existingBytes)).digest("hex");
     if (existing === hash) return;
   }
   const bytes = yield* labRequestBytes(url);
@@ -157,8 +156,8 @@ const downloadEffect = Effect.fn("Integration.download")(function* (
   yield* labIO("download", async () => writeFile(path, new Uint8Array(bytes), { mode: 0o600 }));
 });
 const vanillaServerEffect = Effect.fn("Integration.vanillaServer")(function* () {
-  if (process.env["STACKANVIL_JAVA_SERVER_JAR"])
-    return resolve(process.env["STACKANVIL_JAVA_SERVER_JAR"]);
+  const configuredJar = yield* optionalEnv("STACKANVIL_JAVA_SERVER_JAR");
+  if (configuredJar) return resolve(configuredJar);
   const manifest = yield* labRequestJson(
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
     Schema.Struct({
@@ -214,7 +213,7 @@ const javaServerEffect = Effect.fn("Integration.javaServer")(function* (
   if (geyser)
     properties.push(
       "level-type=minecraft:flat",
-      `generator-settings=${JSON.stringify({
+      `generator-settings=${encodeJson({
         layers: [
           { block: "minecraft:bedrock", height: 1 },
           { block: "minecraft:dirt", height: 2 },
@@ -238,7 +237,7 @@ const javaServerEffect = Effect.fn("Integration.javaServer")(function* (
     process.env,
     true,
   );
-  yield* waitForLogEffect(log, /Done \(/u, child, 120000);
+  yield* waitForLogEffect(log, /Done \(/u, child, 120_000);
   if (geyser) {
     yield* waitForLogEffect(log, /\[StackAnvil Java Probe\] ready/u, child);
     yield* waitForLogEffect(log, /\[StackAnvil Geyser Probe\] ready/u, child);
@@ -318,10 +317,11 @@ const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
     true,
   );
   const output = yield* waitForLogEffect(log, /Server started\./u, child);
-  if (entityProbe) yield* waitForLogEffect(log, /\[ViaBedrock Entity Probe\] ready/u, child, 30000);
+  if (entityProbe)
+    yield* waitForLogEffect(log, /\[ViaBedrock Entity Probe\] ready/u, child, 30_000);
   if (resourceProbe) {
     child.stdin?.write("tickingarea add circle 0 64 0 2 stackanvil_probe\n");
-    yield* waitForLogEffect(log, /Added ticking area centered/u, child, 30000);
+    yield* waitForLogEffect(log, /Added ticking area centered/u, child, 30_000);
     let placed = false;
     for (let attempt = 0; attempt < 10 && !placed; attempt++) {
       child.stdin?.write("setblock 0 64 0 stackanvil:resource_probe_block\n");
@@ -354,8 +354,9 @@ const viaProxyEffect = Effect.fn("Integration.viaProxy")(function* (
   name: string = "viaproxy",
   homeName: string = name,
 ) {
-  const jar = process.env["VIAPROXY_JAR"]
-    ? resolve(process.env["VIAPROXY_JAR"])
+  const configuredJar = yield* optionalEnv("VIAPROXY_JAR");
+  const jar = configuredJar
+    ? resolve(configuredJar)
     : yield* labIO("viaProxy", async () => artifact("viaproxy"));
   if (!existsSync(jar))
     return yield* labError(
@@ -415,7 +416,7 @@ const isolatedPrismRootEffect = Effect.fn("Integration.isolatedPrismRoot")(funct
   dir: string,
   name: string,
 ) {
-  const isolated = join(dir, `prism-${name}-${Date.now().toString(36)}`);
+  const isolated = join(dir, `prism-${name}-${(yield* Clock.currentTimeMillis).toString(36)}`);
   yield* labIO("isolatedPrismRoot", async () => mkdir(isolated, { recursive: true, mode: 0o700 }));
   yield* labIO("isolatedPrismRoot", async () => mkdir(join(isolated, "logs"), { mode: 0o700 }));
   for (const entry of yield* labIO("isolatedPrismRoot", async () =>
@@ -525,22 +526,20 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
           clientLog,
           /Connecting to 127\.0\.0\.1/u,
           () => alive(gamePid),
-          120000,
+          120_000,
         );
         if (route === "java-geyser" && proxyLog) {
           const proxyLogText = async () => (await textFile(proxyLog)).slice(connectionLogStart);
-          const deadline = Date.now() + 120000;
-          while (
-            !/All resource packs have been loaded/u.test(
-              yield* labIO("javaJoin", async () => proxyLogText()),
-            )
-          ) {
+          const deadline = (yield* Clock.currentTimeMillis) + 120_000;
+          while (true) {
+            const proxyOutput = yield* labIO("javaJoin", async () => proxyLogText());
+            if (/All resource packs have been loaded/u.test(proxyOutput)) break;
             if (!alive(gamePid))
               return yield* labError(
                 "javaJoin",
                 new Error("The Java client stopped before resource packs were ready."),
               );
-            if (Date.now() > deadline)
+            if ((yield* Clock.currentTimeMillis) > deadline)
               return yield* labError(
                 "javaJoin",
                 new Error(`Resource packs did not become ready. Read ${target.proxyLog}.`),
@@ -559,8 +558,8 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
           ? async () => (await textFile(proxyLog)).slice(connectionLogStart)
           : undefined,
         clientAlive: () => alive(gamePid),
-        timeoutMs: 150000,
-        dwellMs: 20000,
+        timeoutMs: 150_000,
+        dwellMs: 20_000,
         onJoin:
           route === "java-java"
             ? (joined) => {
@@ -570,12 +569,12 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
               }
             : undefined,
       });
-      const renderingFailures = graphicsFailures(
-        yield* textFileEffect(clientLog),
+      const clientOutput = yield* textFileEffect(clientLog);
+      const shaderPack =
         profile === "shaders"
           ? (yield* labIO("javaJoin", async () => readGraphicsLock())).shader.filename
-          : undefined,
-      );
+          : undefined;
+      const renderingFailures = graphicsFailures(clientOutput, shaderPack);
       if (renderingFailures.length > 0)
         return yield* labError("javaJoin", new Error(renderingFailures.join(" ")));
       print(
@@ -723,15 +722,14 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
   const serverLogStart = (yield* textFileEffect(target.log)).length;
   const current = join(root, ".stackanvil", "captures", "current.json");
   if (existsSync(current)) {
-    const { id } = parseJson(
-      CaptureIdSchema,
-      yield* labIO("bedrockJoin", async () => readFile(current, "utf8")),
+    const currentText = yield* labIO("bedrockJoin", async () => readFile(current, "utf8"));
+    const { id } = parseJson(CaptureIdSchema, currentText);
+    const existingText = yield* labIO("bedrockJoin", async () =>
+      readFile(join(root, ".stackanvil", "captures", id, "session.json"), "utf8"),
     );
     const existing = parseJson(
       Schema.Struct({ stoppedAt: Schema.optionalKey(Schema.String), proxyPid: Schema.Finite }),
-      yield* labIO("bedrockJoin", async () =>
-        readFile(join(root, ".stackanvil", "captures", id, "session.json"), "utf8"),
-      ),
+      existingText,
     );
     if (!existing.stoppedAt && alive(existing.proxyPid))
       return yield* labError(
@@ -739,22 +737,22 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
         new Error("An HTTPS capture is active. Stop it before the native join test."),
       );
   }
-  const label = `stackanvil-it-${Date.now().toString(36)}`;
-  const env = { ...process.env, STACKANVIL_PROXY_PORT: String(yield* tcpPort) };
+  const label = `stackanvil-it-${(yield* Clock.currentTimeMillis).toString(36)}`;
+  const port = yield* tcpPort;
+  const env = { ...process.env, STACKANVIL_PROXY_PORT: String(port) };
   let session: string | undefined;
   return yield* Effect.ensuring(
     Effect.gen(function* () {
       yield* captureEffect(["start", "native-join"], env);
-      const captureId = parseJson(
-        CaptureIdSchema,
-        yield* labIO("bedrockJoin", async () => readFile(current, "utf8")),
-      ).id;
+      const captureText = yield* labIO("bedrockJoin", async () => readFile(current, "utf8"));
+      const captureId = parseJson(CaptureIdSchema, captureText).id;
       session = captureId;
       yield* captureEffect(["launch"]);
       const sessionPath = join(root, ".stackanvil", "captures", captureId, "session.json");
+      const sessionText = yield* labIO("bedrockJoin", async () => readFile(sessionPath, "utf8"));
       const gamePid = parseJson(
         Schema.Struct({ gamePid: Schema.optionalKey(Schema.Finite) }),
-        yield* labIO("bedrockJoin", async () => readFile(sessionPath, "utf8")),
+        sessionText,
       ).gamePid;
       for (let attempt = 0; attempt < 90; attempt++) {
         const listing = yield* captureEffect(["ui", "list"]);
@@ -768,7 +766,7 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
           );
         yield* Effect.sleep(1000);
       }
-      yield* Effect.sleep(20000);
+      yield* Effect.sleep(20_000);
       yield* captureEffect(["ui", "screenshot", "native-menu"]);
       yield* captureEffect(["ui", "key", "Return"]);
       yield* Effect.sleep(2500);
@@ -809,8 +807,8 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
         serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
         clientLog: () => textFile(join(root, ".stackanvil", "captures", captureId, "game.log")),
         clientAlive: () => alive(gamePid),
-        timeoutMs: 90000,
-        dwellMs: 20000,
+        timeoutMs: 90_000,
+        dwellMs: 20_000,
       });
       yield* captureEffect(["ui", "screenshot", "native-joined"]);
       print(`PASS bedrock-bedrock: ${player} joined and remained connected for 20s.`);
@@ -895,7 +893,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     return yield* labError("main", new Error("Choose --plain-only or --modpack-only, not both."));
   const entityProbe = options["entity-probe"] ?? false;
   const resourceProbe = options["resource-pack-probe"] ?? false;
-  const resourceRun = Date.now().toString(36);
+  const resourceRun = (yield* Clock.currentTimeMillis).toString(36);
   const gameplayProbe = options["gameplay-probe"];
   const complexGameplay = options["gameplay-complex"];
   const geyserProbe = options["geyser-probe"];
@@ -1007,7 +1005,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     );
   if ((entityProbe || gameplayCases.length > 0 || resourceProbe) && modpackOnly)
     return yield* labError("main", new Error("Probe cases require the plain Java client run."));
-  if (process.env["STACKANVIL_USE_DESKTOP"] === "1")
+  if ((yield* optionalEnv("STACKANVIL_USE_DESKTOP")) === "1")
     return yield* labError(
       "main",
       new Error("Integration tests require a private display and never take desktop focus."),
@@ -1021,7 +1019,8 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     );
   if (!options["reuse-build"])
     yield* commandEffect(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "all"]);
-  const dir = join(privateRoot, "runs", new Date().toISOString().replaceAll(/[:.]/gu, "-"));
+  const now = yield* DateTime.now;
+  const dir = join(privateRoot, "runs", DateTime.formatIso(now).replaceAll(/[:.]/gu, "-"));
   yield* labIO("main", async () => mkdir(dir, { recursive: true, mode: 0o700 }));
   print(`Private logs: ${dir}`);
   yield* (yield* IntegrationResources).acquireDisplay(ensureDisplay);

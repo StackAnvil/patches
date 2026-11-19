@@ -58,7 +58,7 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
   }
   if (
     images.size === 0 ||
-    images.size > 32768 ||
+    images.size > 32_768 ||
     [...images.values()].reduce((sum, bytes) => sum + bytes.length, 0) > 256 * 1024 * 1024
   )
     throw new Error("Invalid native image bundle size");
@@ -120,16 +120,16 @@ export function verifyPreparedUiImages(catalog: Buffer, source: Buffer) {
   if (
     !index ||
     index.length < 44 ||
-    catalog.readUInt32LE(0) !== 0x04034b50 ||
+    catalog.readUInt32LE(0) !== 0x04_03_4b_50 ||
     catalog.readUInt16LE(26) !== 7 ||
     catalog.subarray(30, 37).toString("utf8") !== "0-index" ||
-    index.readUInt32BE(0) !== 0x5549504e ||
+    index.readUInt32BE(0) !== 0x55_49_50_4e ||
     index.readUInt32BE(4) !== 1 ||
     !index.subarray(8, 40).equals(sha256Digest(source))
   )
     throw new Error("Prepared UI image source or format does not match");
   const count = index.readInt32BE(40);
-  if (count < 0 || count > 32768 || index.length !== 44 + count * 68 || entries.size !== count + 1)
+  if (count < 0 || count > 32_768 || index.length !== 44 + count * 68 || entries.size !== count + 1)
     throw new Error("Invalid prepared UI image index");
   const sources = new Map<string, Buffer>();
   for (const [path, read] of zipEntries(source))
@@ -159,11 +159,11 @@ export function verifyPreparedUiImages(catalog: Buffer, source: Buffer) {
       !sha256Digest(png).equals(index.subarray(offset + 32, offset + 64)) ||
       !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
       png.readUInt32BE(8) !== 13 ||
-      png.readUInt32BE(12) !== 0x49484452 ||
+      png.readUInt32BE(12) !== 0x49_48_44_52 ||
       png.readUInt32BE(16) === 0 ||
       png.readUInt32BE(20) === 0 ||
-      png.readUInt32BE(16) > 16384 ||
-      png.readUInt32BE(20) > 16384 ||
+      png.readUInt32BE(16) > 16_384 ||
+      png.readUInt32BE(20) > 16_384 ||
       png.readUInt32BE(16) * png.readUInt32BE(20) > 16 * 1024 * 1024 ||
       png.readUInt32BE(16) !== original.readUInt16LE(12) ||
       png.readUInt32BE(20) !== original.readUInt16LE(14)

@@ -1,16 +1,23 @@
+import { optionalEnv } from "./guards.ts";
 import { waylandTool } from "./lab/wayland.ts";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { Data, Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { command } from "./process.ts";
 import { root } from "./model.ts";
 import { artifact } from "./client-artifacts.ts";
 import { print } from "./output.ts";
 
 /** The development machine lacks a required tool. */
-class DevSetupError extends Data.TaggedError("DevSetupError")<{ readonly message: string }> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+class DevSetupError extends Schema.TaggedError<DevSetupError, { readonly brand: unique symbol }>()(
+  "DevSetupError",
+  {
+    message: Schema.String,
+  },
+) {}
 
 const toolsDir = join(root, ".stackanvil", "tools");
 
@@ -27,9 +34,10 @@ export const devSetup = Effect.fn("devSetup")(function* () {
     yield* command("python3", ["-m", "venv", join(toolsDir, "mitmproxy")], root);
     yield* command(join(toolsDir, "mitmproxy", "bin", "pip"), ["install", "mitmproxy"], root);
   }
-  const server = process.env["BEDROCK_SERVER_HOME"] ?? join(homedir(), "bedrock-server");
+  const server = (yield* optionalEnv("BEDROCK_SERVER_HOME")) ?? join(homedir(), "bedrock-server");
   const launcher =
-    process.env["BEDROCK_LAUNCHER"] ?? join(homedir(), "AppImages", "bedrockonlinux.appimage");
+    (yield* optionalEnv("BEDROCK_LAUNCHER")) ??
+    join(homedir(), "AppImages", "bedrockonlinux.appimage");
   const missing: string[] = [];
   if (!Bun.which("cargo")) missing.push("Cargo: install Rust to build the Wayland capture helper");
   if (!existsSync(join(server, "bedrock_server")))
@@ -37,8 +45,8 @@ export const devSetup = Effect.fn("devSetup")(function* () {
       "BEDROCK_SERVER_HOME: download the official Bedrock Dedicated Server and point this variable at its extracted directory (https://www.minecraft.net/en-us/download/server/bedrock)",
     );
   if (
-    !process.env["BEDROCK_DEVICE_HOST"] &&
-    !process.env["BEDROCK_CLIENT_COMMAND"] &&
+    !(yield* optionalEnv("BEDROCK_DEVICE_HOST")) &&
+    !(yield* optionalEnv("BEDROCK_CLIENT_COMMAND")) &&
     !existsSync(launcher)
   ) {
     missing.push(

@@ -2,9 +2,16 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { Data, Effect, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { journalMagic, maxJournalBytes, summarizeJournal } from "./journal.ts";
-import { errorCode, isRecord, required } from "../guards.ts";
+import {
+  errorCode,
+  isRecord,
+  required,
+  encodeJson,
+  encodeIndentedJson,
+  decodeJson,
+} from "../guards.ts";
 import { execFileAsync as execute } from "../process.ts";
 
 const protocol = 2193;
@@ -51,8 +58,9 @@ export interface FormFixturePlan {
   packs: { from: string; source: string; sha256: string; decrypted: true; uiFiles?: number }[];
 }
 
-function uint(value: number): Buffer {
-  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+function uint(input: number): Buffer {
+  let value = input;
+  if (!Number.isInteger(value) || value < 0 || value > 0xff_ff_ff_ff) {
     throw new Error("Invalid unsigned integer.");
   }
   const result: number[] = [];
@@ -243,7 +251,7 @@ export function buildFormFixtureJournal(
     ids.add(form.id);
     const data = Buffer.from(form.json);
     if (data.length > maxFormBytes) throw new Error("Captured form exceeds its size bound.");
-    const value: unknown = JSON.parse(form.json);
+    const value: unknown = decodeJson(form.json);
     if (!isCapturedForm(value)) throw new Error("Unsupported captured form.");
     entries.push({
       direction: 1,
@@ -316,7 +324,7 @@ function validatePlan(value: unknown): FormFixturePlan {
       if (
         !Number.isInteger(form["id"]) ||
         Number(form["id"]) < 0 ||
-        Number(form["id"]) > 0xffffffff
+        Number(form["id"]) > 0xff_ff_ff_ff
       )
         throw new Error("Invalid fixture form ID.");
       return {
@@ -441,10 +449,14 @@ export async function writePrivateFixture(
 }
 
 /** The form fixture plan or one of its inputs is invalid. */
-export class FormFixtureError extends Data.TaggedError("FormFixtureError")<{
-  readonly message: string;
-  readonly cause: unknown;
-}> {}
+// oxlint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError is a class factory.
+export class FormFixtureError extends Schema.TaggedError<
+  FormFixtureError,
+  { readonly brand: unique symbol }
+>()("FormFixtureError", {
+  message: Schema.String,
+  cause: Schema.Unknown,
+}) {}
 
 export const prepareFormFixture = (
   planPath: string,
@@ -453,8 +465,8 @@ export const prepareFormFixture = (
 ) =>
   Effect.tryPromise({
     try: async () => {
-      const planBytes = await boundedFile(planPath, 65536);
-      const plan = validatePlan(JSON.parse(planBytes.toString("utf8")));
+      const planBytes = await boundedFile(planPath, 65_536);
+      const plan = validatePlan(decodeJson(planBytes.toString("utf8")));
       const base = resolve(privateRoot);
       await freshOutput(plan.output, base);
       const inputs: InputFile[] = [
@@ -493,9 +505,9 @@ export const prepareFormFixture = (
         const targetName = replacement ? basename(source) : name;
         const expected = identity(targetName);
         const { stdout: manifest } = await execute("unzip", ["-p", source, "manifest.json"], {
-          maxBuffer: 65536,
+          maxBuffer: 65_536,
         });
-        const header = object(object(JSON.parse(manifest))["header"]);
+        const header = object(object(decodeJson(manifest))["header"]);
         const version = Array.isArray(header["version"])
           ? header["version"].join(".")
           : header["version"];
@@ -590,10 +602,10 @@ export const prepareFormFixture = (
         liveHostConnections: false,
         packDelivery: "ReplayServer-owned loopback HTTP only; original CDN and keys not used",
       };
-      const previewSha256 = sha(Buffer.from(JSON.stringify(preview)));
+      const previewSha256 = sha(Buffer.from(encodeJson(preview)));
       if (reviewedPreview !== undefined) {
         if (reviewedPreview !== previewSha256) throw new Error("Reviewed fixture preview changed.");
-        const metadata = Buffer.from(JSON.stringify({ ...preview, previewSha256 }, null, 2));
+        const metadata = Buffer.from(encodeIndentedJson({ ...preview, previewSha256 }));
         await writePrivateFixture(
           plan.output,
           base,

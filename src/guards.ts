@@ -1,4 +1,13 @@
-import { Schema } from "effect";
+import { Config, Effect, Option, Schema } from "effect";
+
+export const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+export const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+export const encodeIndentedJson = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Unknown, { space: 2 }),
+);
+
+export const optionalEnv = (name: string) =>
+  Config.option(Config.String(name)).pipe(Effect.map(Option.getOrUndefined));
 
 /** Returns the system error code, such as `ENOENT`, when the value carries one. */
 export function errorCode(error: unknown): string | undefined {

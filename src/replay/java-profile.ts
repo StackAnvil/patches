@@ -75,7 +75,7 @@ export async function privateReplayJavaPath(
   configured: string,
 ): Promise<string> {
   const sourceJava = join(source, "java");
-  if (!configured.startsWith(sourceJava + "/") || !inside(sourceJava, await realpath(configured))) {
+  if (!configured.startsWith(`${sourceJava}/`) || !inside(sourceJava, await realpath(configured))) {
     throw new Error("Replay Java executable must come from the copied Prism runtime.");
   }
   const privateJava = join(target, "java");

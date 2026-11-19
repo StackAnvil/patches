@@ -67,7 +67,7 @@ export function verifyNativeOfflineState(state: NativeOfflineState): NativeOffli
     const loopback = destination === 1n && prefix === 128;
     // Linux includes an unreachable default-route sentinel even in a fresh namespace.
     const unreachable =
-      destination === 0n && prefix === 0 && (Number.parseInt(field(8), 16) & 0x200) !== 0;
+      destination === 0n && prefix === 0 && (Number.parseInt(field(8), 16) & 0x2_00) !== 0;
     if (fields[9] !== "lo" || BigInt(`0x${field(4)}`) !== 0n || (!loopback && !unreachable))
       refuse("an external IPv6 route is present");
   }
