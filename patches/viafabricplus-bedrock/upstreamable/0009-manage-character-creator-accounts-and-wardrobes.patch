@@ -184,6 +184,14 @@ query.get_root_locator_offset('armor_offset.chestplate', axis) and its
 leggings and boots siblings, so InPVP players without a Bedrock skin
 geometry lost every Bedrock armor attachable to a missing-query rejection.
 
+Load the game's built-in Standard pack (Steve, Alex and the other
+starter skins) from the bundled copy when the active classic character
+uses it. The Store never lists that pack as owned, so these account
+characters failed to load and the Dressing Room fell back to Steve. The
+bundled pack has the native pack identity and skin order, which the
+saved "<pack>.<index>" recipe depends on. A pack that is missing from
+the owned list now reports that cause and logs its identity.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 90b628980cfec1b8b11374a4219cd6922f76d4b9..391c96b165bc16027d564a3d797a67f825c4f163 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -626,10 +634,10 @@ index b961354f332d33a1708b3f5f756e2ac212cd3d6e..e53e1012cb521e51f1909262e47bda10
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..85d54c88afa816985457da0a735b871a421ac11b
+index 0000000000000000000000000000000000000000..e9237623efbb7f75fc7aad116b1c4352c25b3d71
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
-@@ -0,0 +1,1540 @@
+@@ -0,0 +1,1551 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -643,6 +651,7 @@ index 0000000000000000000000000000000000000000..85d54c88afa816985457da0a735b871a
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +import com.google.gson.JsonPrimitive;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import java.io.IOException;
 +import java.io.InputStreamReader;
 +import java.net.URI;
@@ -1824,14 +1833,24 @@ index 0000000000000000000000000000000000000000..85d54c88afa816985457da0a735b871a
 +                    throw new IOException("The active character has no saved appearance");
 +                }
 +                if (active.classic()) {
-+                    final var owned = BedrockOwnedSkinPacks.list(account).join();
 +                    final var candidates = active.pieceIds().stream().map(CLASSIC_ID::matcher)
 +                        .filter(java.util.regex.Matcher::matches).toList();
 +                    if (candidates.size() != 1) throw new IOException("This classic selection has no downloadable skin-pack reference");
 +                    final var reference = candidates.getFirst();
-+                    final var selected = owned.stream().filter(item -> item.packId().equalsIgnoreCase(reference.group(1)))
-+                        .findFirst().orElseThrow(() -> new IOException("The active classic skin pack is not available on this account"));
-+                    final var pack = BedrockOwnedSkinPacks.load(account, selected).join();
++                    final BedrockClassicSkinPack pack;
++                    if (BedrockClassicAssets.STANDARD_PACK.equalsIgnoreCase(reference.group(1))) {
++                        // Starter skins come with the game, so the Store never lists their pack.
++                        pack = BedrockClassicAssets.loadStandard().join();
++                    } else {
++                        final var selected = BedrockOwnedSkinPacks.list(account).join().stream()
++                            .filter(item -> item.packId().equalsIgnoreCase(reference.group(1))).findFirst().orElse(null);
++                        if (selected == null) {
++                            ViaFabricPlusBedrock.impl().logger().warn("The active classic skin pack {} is not in the owned pack list",
++                                reference.group(1));
++                            throw new IOException("Its skin pack is not in this account's owned packs");
++                        }
++                        pack = BedrockOwnedSkinPacks.load(account, selected).join();
++                    }
 +                    final int index = Integer.parseInt(reference.group(2));
 +                    final var skin = pack.skins().stream().filter(value -> value.index() == index).findFirst()
 +                        .orElseThrow(() -> new IOException("The saved classic skin is not supported by this pack"));
@@ -2172,10 +2191,10 @@ index 0000000000000000000000000000000000000000..85d54c88afa816985457da0a735b871a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..6424079f67f4086fa77d39eccfb00b9647dbb7d0
+index 0000000000000000000000000000000000000000..2ddf12917385ab661e440f9d9be7449cbbb67f3b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicAssets.java
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,101 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2187,9 +2206,14 @@ index 0000000000000000000000000000000000000000..6424079f67f4086fa77d39eccfb00b96
 +
 +
 +import java.io.IOException;
++import java.io.InputStream;
 +import java.nio.file.Path;
++import java.util.HashMap;
 +import java.util.Map;
 +import java.util.concurrent.CompletableFuture;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipInputStream;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import java.util.concurrent.CompletionException;
 +
 +/** Resolves classic pack dependencies from the licensed game package when needed. */
@@ -2199,6 +2223,25 @@ index 0000000000000000000000000000000000000000..6424079f67f4086fa77d39eccfb00b96
 +    public static CompletableFuture<BedrockClassicSkinPack> load(
 +            final Path path) {
 +        return load(source -> BedrockClassicSkinPack.read(path, source));
++    }
++
++    /** The game's built-in Standard pack with Steve, Alex and the other starter skins. No account owns it. */
++    static final String STANDARD_PACK = "c18e65aa-7b21-4637-9b63-8ad63622ef01";
++
++    /** Reads the bundled copy of the Standard pack, which uses the native pack's identity and skin order. */
++    static CompletableFuture<BedrockClassicSkinPack> loadStandard() {
++        return load(source -> {
++            final Map<String, byte[]> files = new HashMap<>();
++            try (InputStream input = BedrockProtocol.class.getResourceAsStream("/assets/viabedrock/skin_packs/vanilla.mcpack")) {
++                if (input == null) throw new IOException("The bundled Standard skin pack is missing");
++                try (ZipInputStream zip = new ZipInputStream(input)) {
++                    for (ZipEntry entry; (entry = zip.getNextEntry()) != null; ) {
++                        if (!entry.isDirectory()) files.put(entry.getName(), zip.readAllBytes());
++                    }
++                }
++            }
++            return BedrockClassicSkinPack.readAccountPack("Standard", files, source);
++        });
 +    }
 +
 +    static CompletableFuture<BedrockClassicSkinPack> loadAccount(
@@ -16265,6 +16308,35 @@ index 0000000000000000000000000000000000000000..0825679594df73711acad8324d82f518
 +        assertSame(server, animations.firstPerson(server, false));
 +        assertNull(animations.firstPerson(null, false));
 +        assertNull(animations.firstPerson(server, true));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockStandardSkinPackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockStandardSkinPackTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5541c1d5026429f017284d5781cfa93605662d8d
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockStandardSkinPackTest.java
+@@ -0,0 +1,23 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockStandardSkinPackTest {
++    @Test
++    void aStarterSkinRecipeResolvesToTheSameSkinAsTheNativeStandardPack() {
++        // Account recipes store "<pack>.<index>". Native 1.26.60 lists Steve, Alex, Ari, Efe, Kai, Makena, Noor, Sunny, Zuri.
++        final var pack = BedrockClassicAssets.loadStandard().join();
++        final var alex = pack.skins().stream().filter(skin -> skin.index() == 1).findFirst().orElseThrow();
++        assertEquals(BedrockClassicAssets.STANDARD_PACK + ".1", alex.recipeId());
++        assertEquals("Alex", alex.localizationName());
++        assertTrue(alex.slim());
++        assertEquals("Noor", pack.skins().stream().filter(skin -> skin.index() == 6).findFirst().orElseThrow().localizationName());
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayloadTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/NativeEmotePayloadTest.java

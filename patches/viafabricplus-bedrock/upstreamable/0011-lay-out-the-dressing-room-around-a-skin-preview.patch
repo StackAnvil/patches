@@ -1,0 +1,1897 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 10:58:00 +0100
+Subject: [PATCH] feat(dressing-room): lay out the Dressing Room around a skin
+ preview
+
+Rework the Dressing Room pages so they fit small GUI sizes and show
+choices clearly, while keeping vanilla Java widgets.
+
+A shared frame puts the page title in the top row between Back and
+the Minecoin balance, and reserves two status lines above the footer,
+so messages no longer overlap buttons. Chosen options use the vanilla
+highlighted button sprite instead of the disabled one, which read as
+unavailable.
+
+The main page groups its actions beside a large 3D preview. Skin packs
+and saved skins list every skin beside that preview, so one click
+previews a skin and a double click wears it, instead of stepping
+through one skin at a time. Owned packs gains a search bar.
+
+The Character Creator keeps its tabs and slots in two rows. Slot labels
+show the active and empty slots. The wardrobe lists all categories,
+fills the space with a thumbnail grid that pages with the mouse wheel,
+and shows piece details beside the grid on wide windows. Size and
+color pickers use highlighted choices, and swatches are square and
+mark the current color.
+
+Saved skins no longer passes a missing skin to PlayerSkinWidget, which
+crashed the client when the list was empty. A failed account character
+now names the cause instead of only suggesting a retry.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
+index c0532c4883b332abe6abc2bccc53afaffa552e90..589e7d762ccaad30d18198c30f1628c05e74f679 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
+@@ -30,10 +30,11 @@ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Locale;
+ import java.util.concurrent.CompletableFuture;
++import net.minecraft.ChatFormatting;
+ import net.minecraft.client.gui.GuiGraphicsExtractor;
+ import net.minecraft.client.gui.components.AbstractButton;
+ import net.minecraft.client.gui.components.Button;
+-import net.minecraft.client.gui.components.CycleButton;
++import net.minecraft.client.gui.components.ObjectSelectionList;
+ import net.minecraft.client.gui.components.Tooltip;
+ import net.minecraft.client.gui.narration.NarrationElementOutput;
+ import net.minecraft.client.gui.screens.ConfirmScreen;
+@@ -59,6 +60,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+     private final Button[] limbSideButtons = new Button[BedrockLimbSide.values().length];
+     private Category loadedCategory;
+     private String activeAvatar;
++    private boolean avatarFailed;
+     private long avatarRequest;
+     private long colorRequest;
+     private ColorContext colorContext;
+@@ -90,11 +92,10 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+     private boolean confirmDelete;
+     private final Button[] slotButtons = new Button[5];
+     private final Button[] presetButtons = new Button[Starter.values().length];
+-    private final Button[] categoryButtons = new Button[Category.values().length];
+     private final Button[] emoteSlotButtons = new Button[4];
+     private final Button[] heightButtons = new Button[Height.values().length];
+     private final Button[] armSizeButtons = new Button[2];
+-    private CycleButton<Category> compactCategory;
++    private CategoryList categories;
+     private Button slotsTab;
+     private Button wardrobeTab;
+     private Button sizeTab;
+@@ -133,81 +134,70 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+         super.init();
+         this.wallet = new BedrockMinecoinWallet(this);
+         this.wallet.buttons().forEach(this::addRenderableWidget);
+-        final int left = this.width / 2 - 150;
+-        final int top = this.contentTop();
+-        this.slotsTab = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.slots"),
+-            _ -> this.changeView(View.SLOTS)).bounds(left, top, 96, 20).build());
+-        this.wardrobeTab = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.wardrobe"),
+-            _ -> this.changeView(View.WARDROBE)).bounds(left + 102, top, 96, 20).build());
+-        this.sizeTab = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.size"),
+-            _ -> this.changeView(View.SIZE)).bounds(left + 204, top, 96, 20).build());
++        final int left = this.blockLeft();
++        final int width = this.blockWidth();
++        final int tabsTop = this.tabsTop();
++        this.slotsTab = this.tab(View.SLOTS, "bedrock_character_slots.viafabricplus.slots");
++        this.wardrobeTab = this.tab(View.WARDROBE, "bedrock_character_slots.viafabricplus.wardrobe");
++        this.sizeTab = this.tab(View.SIZE, "bedrock_character_slots.viafabricplus.size");
++        BedrockDressingRoomUi.row(left, tabsTop, width, this.slotsTab, this.wardrobeTab, this.sizeTab);
+         for (int index = 0; index < 5; index++) {
+             final int slot = index;
+-            this.slotButtons[index] = this.addRenderableWidget(Button.builder(
++            this.slotButtons[index] = this.addRenderableWidget(BedrockDressingRoomUi.selectable(Button.builder(
+                 Component.translatable("bedrock_character_slots.viafabricplus.slot", index + 1),
+                 _ -> {
+                     this.selectedSlot = slot;
+                     this.selectionFailed = false;
+                     this.confirmDelete = false;
+                     this.updateControls();
+-                }).bounds(left + index * 61, top + 24, 56, 20).build());
++                }).build(), () -> this.selectedSlot == slot));
+         }
++        BedrockDressingRoomUi.row(left, tabsTop + BedrockDressingRoomUi.ROW, width, this.slotButtons);
+         final Starter[] starters = Starter.values();
++        final int starterWidth = (width - 2 * BedrockDressingRoomUi.GAP) / 3;
+         for (int index = 0; index < starters.length; index++) {
+             final Starter starter = starters[index];
+             this.presetButtons[index] = this.addRenderableWidget(Button.builder(Component.literal(starter.label()),
+                 _ -> this.createCharacter(false, starter))
+-                .bounds(left + index % 3 * 102, top + 92 + index / 3 * 36, 96, 26).build());
+-        }
+-        final Category[] categories = Category.values();
+-        for (int index = 0; index < categories.length; index++) {
+-            final Category option = categories[index];
+-            this.categoryButtons[index] = this.addRenderableWidget(Button.builder(Component.literal(option.label()),
+-                _ -> this.selectCategory(option)).bounds(this.wardrobeLeft(), top + 52 + index * 19, this.categoryWidth(), 18).build());
+-        }
+-        this.compactCategory = this.addRenderableWidget(CycleButton.builder(
+-            (Category value) -> Component.literal(value.label()), this.category)
+-            .withValues(Category.values()).displayOnlyValue()
+-            .create(this.wardrobeLeft(), top + 52, this.categoryWidth(), 20, Component.translatable("bedrock_character_slots.viafabricplus.wardrobe"),
+-                (_, value) -> this.selectCategory(value)));
+-        final boolean inlineWheel = this.compactDetails()
+-            || this.contentTop() + 332 > this.height - FOOTER_HEIGHT;
+-        final int wheelLeft = this.gridLeft() + this.gridWidth() + (inlineWheel ? 16 : 22);
+-        final int wheelTop = this.limbControlsTop();
+-        final int wheelButtonWidth = inlineWheel
+-            ? Math.min(32, (this.width - wheelLeft - this.wardrobeLeft() - 12) / 4) : 44;
+-        final int[] wheelX = {52, 104, 52, 0};
+-        final int[] wheelY = {0, 25, 50, 25};
++                .bounds(left + index % 3 * (starterWidth + BedrockDressingRoomUi.GAP), this.starterTop(index), starterWidth, 20).build());
++        }
++        this.categories = this.addRenderableWidget(new CategoryList());
++        final int controlsTop = this.contentTop(View.WARDROBE);
+         for (int index = 0; index < this.emoteSlotButtons.length; index++) {
+             final int slot = index;
+-            this.emoteSlotButtons[index] = this.addRenderableWidget(Button.builder(Component.literal(Integer.toString(index + 1)),
++            this.emoteSlotButtons[index] = this.addRenderableWidget(BedrockDressingRoomUi.selectable(Button.builder(
++                Component.literal(Integer.toString(index + 1)),
+                 _ -> {
+                     this.selectedEmoteSlot = slot;
+                     this.updateControls();
+-                }).bounds(wheelLeft + (inlineWheel ? index * (wheelButtonWidth + 4) : wheelX[index]),
+-                    wheelTop + (inlineWheel ? 0 : wheelY[index]), wheelButtonWidth, 20).build());
++                }).bounds(this.gridLeft() + index * 24, controlsTop, 20, 20)
++                .tooltip(Tooltip.create(Component.translatable("bedrock_character_slots.viafabricplus.emote_wheel", index + 1)))
++                .build(), () -> this.selectedEmoteSlot == slot));
+         }
+         for (final BedrockLimbSide side : BedrockLimbSide.values()) {
+-            this.limbSideButtons[side.ordinal()] = this.addRenderableWidget(Button.builder(
++            this.limbSideButtons[side.ordinal()] = this.addRenderableWidget(BedrockDressingRoomUi.selectable(Button.builder(
+                 Component.translatable("bedrock_character_slots.viafabricplus.limb_" + side.name().toLowerCase(Locale.ROOT)),
+                 _ -> {
+                     this.limbSide = side;
+                     this.updateControls();
+-                })
+-                .bounds(this.gridLeft() + this.gridWidth() + 16 + side.ordinal() * (this.limbButtonWidth() + 4), this.limbControlsTop(), this.limbButtonWidth(), 20).build());
++                }).bounds(this.gridLeft() + side.ordinal() * 50, controlsTop, 46, 20).build(), () -> this.limbSide == side));
+         }
++        final int sizeTop = this.contentTop(View.SIZE);
+         final Height[] heights = Height.values();
+         for (int index = 0; index < heights.length; index++) {
+             final Height height = heights[index];
+-            this.heightButtons[index] = this.addRenderableWidget(Button.builder(Component.literal(height.label()),
+-                _ -> this.changeHeight(height)).bounds(left + index * 76, top + 75, 70, 20).build());
++            this.heightButtons[index] = this.addRenderableWidget(BedrockDressingRoomUi.selectable(
++                Button.builder(Component.literal(height.label()), _ -> this.changeHeight(height)).build(),
++                () -> this.currentHeight() == height));
+         }
+-        this.armSizeButtons[0] = this.addRenderableWidget(Button.builder(
++        BedrockDressingRoomUi.row(left, sizeTop + 14, width, this.heightButtons);
++        this.armSizeButtons[0] = this.addRenderableWidget(BedrockDressingRoomUi.selectable(Button.builder(
+             Component.translatable("bedrock_character_slots.viafabricplus.narrow"),
+-            _ -> this.changeArmSize("slim")).bounds(left, top + 137, 146, 20).build());
+-        this.armSizeButtons[1] = this.addRenderableWidget(Button.builder(
++            _ -> this.changeArmSize("slim")).build(), () -> "slim".equals(this.currentArm())));
++        this.armSizeButtons[1] = this.addRenderableWidget(BedrockDressingRoomUi.selectable(Button.builder(
+             Component.translatable("bedrock_character_slots.viafabricplus.wide"),
+-            _ -> this.changeArmSize("wide")).bounds(left + 154, top + 137, 146, 20).build());
++            _ -> this.changeArmSize("wide")).build(), () -> "wide".equals(this.currentArm())));
++        BedrockDressingRoomUi.row(left, sizeTop + 14 + BedrockDressingRoomUi.ROW + 18, width, this.armSizeButtons);
+         this.previousItem = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.previous"),
+             _ -> this.changePage(-1)).build();
+         this.nextItem = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.next"),
+@@ -223,7 +213,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+             _ -> new BedrockEmotePreviewScreen(this.items.get(this.selectedItem)).open(this)).build();
+         this.colorButton = Button.builder(Component.empty(), _ -> this.toggleColors()).build();
+         this.colorChannelButton = this.addRenderableWidget(Button.builder(Component.empty(), _ -> this.nextColorChannel())
+-            .bounds(left + 154, top + 52, 146, 20).build());
++            .bounds(left + width - 120, this.contentTop(View.COLORS), 120, 20).build());
+         this.refreshButton = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.refresh"),
+             _ -> this.refresh()).build();
+         this.presetBackButton = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.back"),
+@@ -248,348 +238,380 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+         }
+     }
+ 
++    private Button tab(final View tab, final String key) {
++        return this.addRenderableWidget(BedrockDressingRoomUi.selectable(
++            Button.builder(Component.translatable(key), _ -> this.changeView(tab)).build(), () -> this.view == tab));
++    }
++
+     @Override
+     public void renderTitle(final GuiGraphicsExtractor graphics) {
+-        super.renderTitle(graphics);
+-        graphics.centeredText(this.font, this.title, this.width / 2, 32, -1);
++        BedrockDressingRoomUi.title(graphics, this.font, this.width, this.title);
+     }
+ 
+     @Override
+     public void extractRenderState(final @NonNull GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
+-        super.extractRenderState(graphics, mouseX, mouseY, delta);
+-        final int left = this.width / 2 - 150;
+-        final int top = this.contentTop() + 52;
+-        if (this.purchaseStatus != null) {
+-            graphics.centeredText(this.font, this.purchaseStatus, this.width / 2, this.contentTop() - 12, ACCENT_COLOR);
+-        }
+-        if (this.loading && this.wardrobe == null) {
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.loading"), left, top, ACCENT_COLOR);
+-            return;
++        final int left = this.blockLeft();
++        final int top = this.contentTop();
++        if (this.wardrobe != null && this.view == View.SLOTS) {
++            BedrockDressingRoomUi.panel(graphics, left, top, this.previewWidth(), this.contentBottom() - top);
++        } else if (this.wardrobe != null && this.view == View.WARDROBE && this.showDetails()) {
++            BedrockDressingRoomUi.panel(graphics, this.detailLeft(), top, this.detailWidth(), this.contentBottom() - top);
+         }
++        super.extractRenderState(graphics, mouseX, mouseY, delta);
++        BedrockDressingRoomUi.status(graphics, this.font, this.width, this.height, true, this.statusLine());
+         if (this.wardrobe == null) {
+-            graphics.textWithWordWrap(this.font, Component.translatable(this.failed
+-                ? "bedrock_character_slots.viafabricplus.failed" : "bedrock_character_slots.viafabricplus.sign_in"),
+-                left, top, 300, ACCENT_COLOR);
+-            return;
+-        }
+-        if (this.view == View.COLORS) {
+-            this.renderColors(graphics, left, this.contentTop() + 8);
++            graphics.textWithWordWrap(this.font, Component.translatable(this.loading ? "bedrock_character_slots.viafabricplus.loading"
++                    : this.failed ? "bedrock_character_slots.viafabricplus.failed" : "bedrock_character_slots.viafabricplus.sign_in"),
++                left, top + 4, this.blockWidth(), BedrockDressingRoomUi.MUTED);
+             return;
+         }
+-        if (this.view == View.PRESETS) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.choose_starter"),
+-                left, top, 300, ACCENT_COLOR);
+-            for (int index = 0; index < Starter.values().length; index++) {
+-                final int x = left + index % 3 * 102;
+-                final int y = top + 76 + index / 3 * 36;
+-                graphics.fill(x, y, x + 96, y + 10,
+-                    (int) Long.parseLong(Starter.values()[index].skinColor().substring(1), 16));
+-            }
+-            if (this.selectionFailed) {
+-                graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.select_failed"),
+-                    left, top + 210, 300, ACCENT_COLOR);
+-            }
+-            return;
++        switch (this.view) {
++            case COLORS -> this.renderColors(graphics, left, top);
++            case PRESETS -> this.renderPresets(graphics, left, top);
++            case WARDROBE -> this.renderWardrobe(graphics);
++            case SIZE -> this.renderSize(graphics, left, top);
++            case SLOTS -> this.renderSlot(graphics, left, top);
+         }
+-        if (this.view == View.WARDROBE) {
+-            this.renderWardrobe(graphics, left, top);
+-            return;
+-        }
+-        if (this.view == View.SIZE) {
+-            this.renderSize(graphics, left, top);
+-            return;
+-        }
+-        final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
+-        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.selected", slot.number()),
+-            left, top, -1);
+-        graphics.text(this.font, Component.translatable(slot.occupied()
+-            ? "bedrock_character_slots.viafabricplus.saved" : "bedrock_character_slots.viafabricplus.empty"),
+-            left, top + 16, -1);
++    }
++
++    /** One line under the content for progress, failures and the selected piece when there is no detail column. */
++    private Component statusLine() {
++        if (this.purchaseStatus != null) return this.purchaseStatus;
++        if (this.wardrobe == null) return null;
++        if (this.saving) {
++            return Component.translatable(this.acquiring ? "bedrock_character_slots.viafabricplus.acquiring"
++                : this.view == View.SLOTS || this.view == View.PRESETS ? "bedrock_character_slots.viafabricplus.saving"
++                : "bedrock_character_slots.viafabricplus.saving_piece");
++        }
++        if (this.editFailed) return Component.translatable("bedrock_character_slots.viafabricplus.edit_failed");
++        if (this.acquisitionFailed) return Component.translatable("bedrock_character_slots.viafabricplus.acquire_failed");
++        return switch (this.view) {
++            case SLOTS -> this.modelFailed ? Component.translatable("bedrock_character_slots.viafabricplus.model_failed")
++                : this.liveFailed ? Component.translatable("bedrock_character_slots.viafabricplus.live_failed")
++                : this.selectionFailed ? Component.translatable("bedrock_character_slots.viafabricplus.select_failed") : null;
++            case PRESETS -> this.selectionFailed ? Component.translatable("bedrock_character_slots.viafabricplus.select_failed")
++                : Component.translatable("bedrock_character_slots.viafabricplus.choose_starter");
++            case SIZE -> this.selectedSlotData().occupied() && this.currentHeight() == null
++                ? Component.translatable("bedrock_character_slots.viafabricplus.unknown_height") : null;
++            case COLORS -> this.selectedColor >= 0 ? Component.literal(this.palette().get(this.selectedColor))
++                : Component.translatable("bedrock_character_slots.viafabricplus.choose_color");
++            case WARDROBE -> this.showDetails() || this.items == null || this.items.isEmpty() ? null
++                : Component.translatable("bedrock_character_slots.viafabricplus.piece_status",
++                    this.items.get(this.selectedItem).name(), this.pieceStatus(this.items.get(this.selectedItem)));
++        };
++    }
++
++    private void renderSlot(final GuiGraphicsExtractor graphics, final int left, final int top) {
++        final Slot slot = this.selectedSlotData();
++        final int previewWidth = this.previewWidth();
++        final int bottom = this.contentBottom();
++        if (this.wardrobe.activeSlot() == slot.number() && this.activeAvatar != null) {
++            this.drawAvatar(graphics, slot, left, top, previewWidth, bottom - top);
++        } else {
++            graphics.textWithWordWrap(this.font, Component.translatable(!slot.occupied() ? "bedrock_character_slots.viafabricplus.empty"
++                    : this.wardrobe.activeSlot() != slot.number() ? "bedrock_character_slots.viafabricplus.no_preview"
++                    : this.avatarFailed ? "bedrock_character_slots.viafabricplus.preview_failed"
++                    : "bedrock_character_slots.viafabricplus.preview_loading"),
++                left + 6, top + (bottom - top) / 2 - 10, previewWidth - 12, BedrockDressingRoomUi.MUTED);
++        }
++        final int x = left + previewWidth + BedrockDressingRoomUi.MARGIN;
++        final int width = this.blockWidth() - previewWidth - BedrockDressingRoomUi.MARGIN;
++        int y = top + 4;
++        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.selected", slot.number()), x, y, -1);
++        graphics.text(this.font, Component.translatable(!slot.occupied() ? "bedrock_character_slots.viafabricplus.empty"
++                : this.wardrobe.activeSlot() != slot.number() ? "bedrock_character_slots.viafabricplus.saved"
++                : this.characterSelected ? "bedrock_character_slots.viafabricplus.world_active"
++                : "bedrock_character_slots.viafabricplus.active"), x, y += 12, ACCENT_COLOR);
+         if (slot.occupied()) {
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.pieces", slot.pieceIds().size()),
+-                left, top + 32, -1);
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.arms", slot.arm()),
+-                left, top + 48, -1);
++            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.arms",
++                this.armLabel(slot.arm())), x, y += 16, BedrockDressingRoomUi.MUTED);
++            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.height_value",
++                BedrockCharacterProfiles.height(slot).map(Height::label).orElse("?")), x, y += 12, BedrockDressingRoomUi.MUTED);
+         }
+-        if (this.saving) {
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.saving"),
+-                left, top + 64, ACCENT_COLOR);
+-        } else if (this.modelFailed) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.model_failed"),
+-                left, top + 64, 300, ACCENT_COLOR);
+-        } else if (this.liveFailed) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.live_failed"),
+-                left, top + 64, 300, ACCENT_COLOR);
+-        } else if (this.selectionFailed) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.select_failed"),
+-                left, top + 64, 300, ACCENT_COLOR);
+-        } else if (this.wardrobe.activeSlot() == slot.number()) {
+-            graphics.text(this.font, Component.translatable(this.characterSelected
+-                ? "bedrock_character_slots.viafabricplus.world_active" : "bedrock_character_slots.viafabricplus.active"),
+-                left, top + 64, ACCENT_COLOR);
++        final Component notice = Component.translatable("bedrock_character_slots.viafabricplus.recipe_notice");
++        if (y + 16 + this.font.split(notice, width).size() * 9 <= bottom) {
++            graphics.textWithWordWrap(this.font, notice, x, y + 16, width, BedrockDressingRoomUi.MUTED);
+         }
+-        if (this.wardrobe.activeSlot() == slot.number() && this.activeAvatar != null) {
+-            BedrockImageCache.drawEncoded(graphics, slot.profileHash(), this.activeAvatar,
+-                left + 188, top, 108, 144);
++    }
++
++    private void renderPresets(final GuiGraphicsExtractor graphics, final int left, final int top) {
++        final int width = (this.blockWidth() - 2 * BedrockDressingRoomUi.GAP) / 3;
++        for (int index = 0; index < Starter.values().length; index++) {
++            final int x = left + index % 3 * (width + BedrockDressingRoomUi.GAP);
++            final int y = this.starterTop(index) - 5;
++            graphics.fill(x + 2, y, x + width - 2, y + 3,
++                (int) Long.parseLong(Starter.values()[index].skinColor().substring(1), 16));
+         }
+-        graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.recipe_notice"),
+-            left, top + 160, 300, ACCENT_COLOR);
++    }
++
++    private void drawAvatar(final GuiGraphicsExtractor graphics, final Slot slot, final int x, final int y, final int width, final int height) {
++        // The account render is 3:4. Fit it inside the panel without stretching.
++        final int drawHeight = Math.min(height - 8, (width - 8) * 4 / 3);
++        final int drawWidth = drawHeight * 3 / 4;
++        BedrockImageCache.drawEncoded(graphics, slot.profileHash(), this.activeAvatar,
++            x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
++    }
++
++    private Slot selectedSlotData() {
++        return this.wardrobe.slots().get(this.selectedSlot);
++    }
++
++    private Height currentHeight() {
++        return this.wardrobe == null ? null : BedrockCharacterProfiles.height(this.selectedSlotData()).orElse(null);
++    }
++
++    private String currentArm() {
++        return this.wardrobe == null ? "" : this.selectedSlotData().arm();
++    }
++
++    private Component armLabel(final String arm) {
++        return "slim".equals(arm) ? Component.translatable("bedrock_character_slots.viafabricplus.narrow")
++            : "wide".equals(arm) ? Component.translatable("bedrock_character_slots.viafabricplus.wide") : Component.literal("?");
++    }
++
++    private int blockWidth() {
++        return Math.min(this.width - BedrockDressingRoomUi.MARGIN * 2, 360);
++    }
++
++    private int blockLeft() {
++        return (this.width - this.blockWidth()) / 2;
++    }
++
++    private int previewWidth() {
++        return Math.clamp(this.blockWidth() / 3, 80, 120);
++    }
++
++    private int tabsTop() {
++        return BedrockDressingRoomUi.TOP_BAR + 2;
+     }
+ 
+     private int contentTop() {
+-        return CONTENT_TOP;
++        return this.contentTop(this.view);
++    }
++
++    /** The color and starter pickers hide the tabs and slots, so their content starts right below the title. */
++    private int contentTop(final View view) {
++        return view == View.COLORS || view == View.PRESETS ? this.tabsTop() : this.tabsTop() + 2 * BedrockDressingRoomUi.ROW + 4;
+     }
+ 
+-    private boolean compactDetails() {
+-        return this.height < this.contentTop() + 52 + 228;
++    private int contentBottom() {
++        return BedrockDressingRoomUi.contentBottom(this.height, true);
+     }
+ 
+-    private boolean compactCategories() {
+-        return this.contentTop() + 52 + Category.values().length * 19 > this.height - FOOTER_HEIGHT;
++    private int starterTop(final int index) {
++        return this.contentTop(View.PRESETS) + 8 + index / 3 * 30;
+     }
+ 
+-    private int limbControlsTop() {
+-        return Math.min(this.contentTop() + 250, this.height - FOOTER_HEIGHT - 32);
++    private int wardrobeWidth() {
++        return Math.min(this.width - BedrockDressingRoomUi.MARGIN * 2, 720);
+     }
+ 
+     private int wardrobeLeft() {
+-        return Math.max(12, (this.width - 1000) / 2);
++        return (this.width - this.wardrobeWidth()) / 2;
+     }
+ 
+     private int categoryWidth() {
+-        return Math.min(112, Math.max(72, this.width - 240));
++        return Math.clamp(this.wardrobeWidth() / 4, 80, 110);
++    }
++
++    private boolean showDetails() {
++        return this.wardrobeWidth() >= 520;
++    }
++
++    private int detailWidth() {
++        return this.showDetails() ? Math.clamp(this.wardrobeWidth() / 4, 120, 160) : 0;
++    }
++
++    private int detailLeft() {
++        return this.wardrobeLeft() + this.wardrobeWidth() - this.detailWidth();
+     }
+ 
+     private int gridLeft() {
+-        return this.wardrobeLeft() + this.categoryWidth() + 8;
++        return this.wardrobeLeft() + this.categoryWidth() + BedrockDressingRoomUi.MARGIN;
+     }
+ 
+-    private int limbButtonWidth() {
+-        final int available = this.width - this.gridLeft() - this.gridWidth() - 16 - this.wardrobeLeft();
+-        return Math.min(48, (available - 8) / 3);
++    private int gridTop() {
++        return this.contentTop(View.WARDROBE) + BedrockDressingRoomUi.ROW;
+     }
+ 
+     private int gridWidth() {
+-        return Math.max(70, Math.min(420, this.width - this.gridLeft() - 272));
++        return (this.showDetails() ? this.detailLeft() - BedrockDressingRoomUi.MARGIN
++            : this.wardrobeLeft() + this.wardrobeWidth()) - this.gridLeft();
+     }
+ 
+-    private int gridTop() {
+-        return this.contentTop() + 75;
++    /** Large windows get 56 pixel cells. Smaller ones shrink the cells so at least two rows fit. */
++    private int cellSize() {
++        final int available = this.contentBottom() - this.gridTop();
++        return Math.clamp((available - BedrockDressingRoomUi.GAP) / 2 - BedrockDressingRoomUi.GAP / 2, 28, 56);
++    }
++
++    private int cellStep() {
++        return this.cellSize() + BedrockDressingRoomUi.GAP;
+     }
+ 
+     private int gridColumns() {
+-        return Math.max(1, this.gridWidth() / 70);
++        return Math.max(1, (this.gridWidth() + BedrockDressingRoomUi.GAP) / this.cellStep());
++    }
++
++    private int gridRows() {
++        return Math.max(1, (this.contentBottom() - this.gridTop() + BedrockDressingRoomUi.GAP) / this.cellStep());
+     }
+ 
+     private int pageSize() {
+-        return this.gridColumns() * Math.max(1, (this.height - FOOTER_HEIGHT - this.gridTop() - 12) / 72);
++        return this.gridColumns() * this.gridRows();
+     }
+ 
+-    private void renderWardrobe(final GuiGraphicsExtractor graphics, final int left, final int top) {
++    private void renderWardrobe(final GuiGraphicsExtractor graphics) {
+         final int gridLeft = this.gridLeft();
+-        final int gridTop = this.gridTop();
++        final int top = this.contentTop();
+         if (this.items == null) {
+             graphics.textWithWordWrap(this.font, Component.translatable(this.itemsFailed
+                 ? "bedrock_character_slots.viafabricplus.items_failed" : "bedrock_character_slots.viafabricplus.items_loading"),
+-                gridLeft, top, this.gridWidth(), ACCENT_COLOR);
++                gridLeft, this.gridTop(), this.gridWidth(), BedrockDressingRoomUi.MUTED);
+             return;
+         }
+-        if (!this.compactCategories()) {
+-            graphics.text(this.font, Component.literal(this.category.label() + " (" + this.items.size() + ")"), gridLeft, top, -1);
+-        }
+         if (this.items.isEmpty()) {
+             graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.no_pieces"),
+-                gridLeft, gridTop, this.gridWidth(), ACCENT_COLOR);
++                gridLeft, this.gridTop(), this.gridWidth(), BedrockDressingRoomUi.MUTED);
+             return;
+         }
+         final int pageSize = this.pageSize();
+         final int pages = (this.items.size() + pageSize - 1) / pageSize;
+-        graphics.text(this.font, Component.literal((this.itemPage + 1) + " / " + pages),
+-            gridLeft + this.gridWidth() - 42, top, ACCENT_COLOR);
++        final Component page = Component.translatable("bedrock_character_slots.viafabricplus.page", this.itemPage + 1, pages);
++        graphics.text(this.font, page, gridLeft + this.gridWidth() - this.font.width(page), top + 6, BedrockDressingRoomUi.MUTED);
++        if (this.category != Category.EMOTES && !this.isLimbCategory()) {
++            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.category_count",
++                this.category.label(), this.items.size()), gridLeft, top + 6, -1);
++        }
++        final Slot slot = this.selectedSlotData();
++        final int cell = this.cellSize();
+         for (int index = this.itemPage * pageSize; index < Math.min(this.items.size(), (this.itemPage + 1) * pageSize); index++) {
+             final WardrobeItem item = this.items.get(index);
+             final int offset = index - this.itemPage * pageSize;
+-            final int x = gridLeft + offset % this.gridColumns() * 70;
+-            final int y = gridTop + offset / this.gridColumns() * 72;
+-            final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
++            final int x = gridLeft + offset % this.gridColumns() * this.cellStep();
++            final int y = this.gridTop() + offset / this.gridColumns() * this.cellStep();
+             final int border = index == this.selectedItem ? 0xFFFFFFFF
+-                : this.isEquipped(item, slot) ? 0xFF67C878 : this.isSaved(item) ? 0xFF719ED2 : 0xFF646464;
+-            graphics.fill(x, y, x + 64, y + 64, border);
+-            graphics.fill(x + 2, y + 2, x + 62, y + 62, 0xFF202428);
+-            BedrockImageCache.drawRemote(graphics, item.thumbnailUrl(), x + 4, y + 4, 56, 56);
++                : this.isEquippedHere(item, slot) ? 0xFF67C878 : 0xFF3C3C3C;
++            graphics.fill(x, y, x + cell, y + cell, border);
++            graphics.fill(x + 1, y + 1, x + cell - 1, y + cell - 1, 0xFF202428);
++            BedrockImageCache.drawRemote(graphics, item.thumbnailUrl(), x + 2, y + 2, cell - 4, cell - 4);
++            if (!item.canEquip() && !this.isEquippedHere(item, slot)) {
++                graphics.fill(x + 1, y + 1, x + cell - 1, y + cell - 1, 0x80000000);
++            }
+         }
+-        final WardrobeItem item = this.items.get(this.selectedItem);
+-        final int detailLeft = gridLeft + this.gridWidth() + 16;
+-        final int detailWidth = Math.max(120, this.width - detailLeft - this.wardrobeLeft());
+-        final boolean compact = this.compactDetails();
+-        final boolean showAvatar = !compact && this.wardrobe.activeSlot() == this.selectedSlot + 1
+-            && this.activeAvatar != null && detailWidth >= 220;
+-        final int statusLeft = compact ? detailLeft + 40 : detailLeft;
+-        final int statusTop = top + (compact ? 32 : 152);
+-        final int statusWidth = compact ? detailWidth - 40 : showAvatar ? detailWidth - 116 : detailWidth;
+-        graphics.textWithWordWrap(this.font, Component.literal(item.name()), detailLeft, top, detailWidth, -1);
+-        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.item_number",
+-            this.selectedItem + 1, this.items.size()), detailLeft, top + (compact ? 16 : 28), ACCENT_COLOR);
+-        final int thumbnailSize = compact ? 32 : 80;
+-        BedrockImageCache.drawRemote(graphics, item.thumbnailUrl(), detailLeft, top + (compact ? 32 : 44), thumbnailSize, thumbnailSize);
+-        if (!compact) {
+-            graphics.textWithWordWrap(this.font, Component.literal(item.type().replace("persona_", "").replace('_', ' ')),
+-                detailLeft + 88, top + 44, Math.max(32, statusWidth - 88), ACCENT_COLOR);
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.selected", this.selectedSlot + 1),
+-                detailLeft, top + 136, -1);
++        if (this.showDetails()) this.renderDetails(graphics, this.items.get(this.selectedItem), slot);
++    }
++
++    private void renderDetails(final GuiGraphicsExtractor graphics, final WardrobeItem item, final Slot slot) {
++        final int x = this.detailLeft() + 6;
++        final int width = this.detailWidth() - 12;
++        int y = this.contentTop() + 6;
++        final int thumbnail = Math.min(width, 64);
++        BedrockImageCache.drawRemote(graphics, item.thumbnailUrl(), x + (width - thumbnail) / 2, y, thumbnail, thumbnail);
++        y += thumbnail + 6;
++        graphics.textWithWordWrap(this.font, Component.literal(item.name()), x, y, width, -1);
++        y += this.font.split(Component.literal(item.name()), width).size() * 9 + 2;
++        graphics.text(this.font, BedrockDressingRoomUi.ellipsize(this.font,
++            Component.translatable("bedrock_character_slots.viafabricplus.item_number", this.selectedItem + 1, this.items.size()),
++            width), x, y, BedrockDressingRoomUi.MUTED);
++        y += 14;
++        graphics.textWithWordWrap(this.font, this.pieceStatus(item), x, y, width, ACCENT_COLOR);
++        y += this.font.split(this.pieceStatus(item), width).size() * 9 + 6;
++        final int avatarHeight = this.contentBottom() - y - 4;
++        if (this.wardrobe.activeSlot() == slot.number() && this.activeAvatar != null && avatarHeight >= 60) {
++            this.drawAvatar(graphics, slot, this.detailLeft(), y, this.detailWidth(), avatarHeight);
+         }
+-        final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
+-        if (this.saving) {
+-            graphics.textWithWordWrap(this.font, Component.translatable(this.acquiring ? "bedrock_character_slots.viafabricplus.acquiring"
+-                    : "bedrock_character_slots.viafabricplus.saving_piece"),
+-                statusLeft, statusTop, statusWidth, ACCENT_COLOR);
+-        } else if (this.acquisitionFailed) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.acquire_failed"),
+-                statusLeft, statusTop, statusWidth, ACCENT_COLOR);
+-        } else if (this.editFailed) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.edit_failed"),
+-                statusLeft, statusTop, statusWidth, ACCENT_COLOR);
+-        } else if (this.isEquippedHere(item, slot)) {
+-            final Component status = this.category == Category.EMOTES
++    }
++
++    private Component pieceStatus(final WardrobeItem item) {
++        final Slot slot = this.selectedSlotData();
++        if (this.isEquippedHere(item, slot)) {
++            return this.category == Category.EMOTES
+                 ? Component.translatable("bedrock_character_slots.viafabricplus.emote_equipped", this.selectedEmoteSlot + 1)
+                 : Component.translatable("bedrock_character_slots.viafabricplus.equipped");
+-            graphics.textWithWordWrap(this.font, status, statusLeft, statusTop, statusWidth, ACCENT_COLOR);
+-        } else if (!item.canEquip()) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.piece_locked"),
+-                statusLeft, statusTop, statusWidth, ACCENT_COLOR);
+-        } else if (this.isSaved(item)) {
+-            graphics.textWithWordWrap(this.font, Component.translatable(this.category == Category.EMOTES
+-                    ? "bedrock_character_slots.viafabricplus.emote_available"
+-                    : this.category == Category.CAPES ? "bedrock_character_slots.viafabricplus.cape_available"
+-                        : "bedrock_character_slots.viafabricplus.saved_piece"),
+-                statusLeft, statusTop, statusWidth, ACCENT_COLOR);
+-        } else {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.piece_available"),
+-                statusLeft, statusTop, statusWidth, ACCENT_COLOR);
+         }
+-        if (showAvatar) {
+-            BedrockImageCache.drawEncoded(graphics, slot.profileHash(), this.activeAvatar,
+-                detailLeft + detailWidth - 110, top + 44, 108, 144);
+-        }
+-        if (this.category == Category.EMOTES && !compact) {
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.emote_wheel",
+-                    this.selectedEmoteSlot + 1),
+-                detailLeft, this.emoteSlotButtons[0].getY() - 14, -1);
++        if (!item.canEquip()) return Component.translatable("bedrock_character_slots.viafabricplus.piece_locked");
++        if (this.isSaved(item)) {
++            return Component.translatable(this.category == Category.EMOTES
++                ? "bedrock_character_slots.viafabricplus.emote_available"
++                : this.category == Category.CAPES ? "bedrock_character_slots.viafabricplus.cape_available"
++                : "bedrock_character_slots.viafabricplus.saved_piece");
+         }
++        return Component.translatable("bedrock_character_slots.viafabricplus.piece_available");
+     }
+ 
+     private void renderSize(final GuiGraphicsExtractor graphics, final int left, final int top) {
+-        final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
+-        if (!slot.occupied()) {
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.empty"),
+-                left, top, ACCENT_COLOR);
++        if (!this.selectedSlotData().occupied()) {
++            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.empty"), left, top + 4,
++                BedrockDressingRoomUi.MUTED);
+             return;
+         }
+-        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.height"), left, top, -1);
+-        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.selected", slot.number()),
+-            left + 170, top, ACCENT_COLOR);
++        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.height"), left, top + 2, -1);
+         graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.arm_size"),
+-            left, top + 62, -1);
+-        final String height = BedrockCharacterProfiles.height(slot).map(Height::label).orElse("?");
+-        final Component armSize = "slim".equals(slot.arm())
+-            ? Component.translatable("bedrock_character_slots.viafabricplus.narrow")
+-            : "wide".equals(slot.arm()) ? Component.translatable("bedrock_character_slots.viafabricplus.wide")
+-                : Component.literal("?");
+-        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.current_size",
+-            height, armSize), left, top + 116, ACCENT_COLOR);
+-        if (this.saving) {
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.saving_piece"),
+-                left, top + 138, ACCENT_COLOR);
+-        } else if (this.editFailed) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.edit_failed"),
+-                left, top + 138, 300, ACCENT_COLOR);
+-        } else if (slot.occupied() && BedrockCharacterProfiles.height(slot).isEmpty()) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.unknown_height"),
+-                left, top + 138, 300, ACCENT_COLOR);
+-        }
+-        if (this.wardrobe.activeSlot() == slot.number() && this.activeAvatar != null) {
+-            BedrockImageCache.drawEncoded(graphics, slot.profileHash(), this.activeAvatar,
+-                left + 188, top + 180, 108, 144);
+-        }
++            left, top + 14 + BedrockDressingRoomUi.ROW + 6, -1);
+     }
+ 
+     private void renderColors(final GuiGraphicsExtractor graphics, final int left, final int top) {
+-        graphics.text(this.font, Component.translatable(this.colorLabel()),
+-            left, top, -1);
+-        final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
+-        if (!this.colorChannelButton.visible) {
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.selected", slot.number()),
+-                left + 158, top, ACCENT_COLOR);
+-        }
+-        if (this.wardrobe.activeSlot() == slot.number() && this.activeAvatar != null
+-            && left + 428 <= this.width - 10) {
+-            BedrockImageCache.drawEncoded(graphics, slot.profileHash(), this.activeAvatar,
+-                left + 320, top + 18, 108, 144);
+-        }
+-        final List<String> colors = this.palette();
+-        graphics.text(this.font, this.selectedColor >= 0 ? Component.literal(colors.get(this.selectedColor))
+-            : Component.translatable("bedrock_character_slots.viafabricplus.choose_color"),
+-            left, this.colorGridBottom() + 8, ACCENT_COLOR);
+-        if (this.saving) {
+-            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.saving_piece"),
+-                left, this.colorGridBottom() + 24, ACCENT_COLOR);
+-        } else if (this.editFailed) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.edit_failed"),
+-                left, this.colorGridBottom() + 24, 300, ACCENT_COLOR);
+-        }
++        graphics.text(this.font, Component.translatable(this.colorLabel()), left, top + 6, -1);
+     }
+ 
+     @Override
+     public boolean mouseClicked(final MouseButtonEvent event, final boolean doubleClick) {
+         if (this.view == View.WARDROBE && !this.saving && this.items != null && !this.items.isEmpty()
+             && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+-            final int column = ((int) event.x() - this.gridLeft()) / 70;
+-            final int row = ((int) event.y() - this.gridTop()) / 72;
+-            if (event.x() >= this.gridLeft() && event.y() >= this.gridTop()
+-                && column >= 0 && column < this.gridColumns() && row >= 0
+-                && row < this.pageSize() / this.gridColumns()
+-                && (int) event.x() - this.gridLeft() - column * 70 < 64
+-                && (int) event.y() - this.gridTop() - row * 72 < 64) {
+-                final int index = this.itemPage * this.pageSize() + row * this.gridColumns() + column;
+-                if (index < this.items.size()) {
+-                    this.selectedItem = index;
+-                    this.editFailed = false;
+-                    this.acquisitionFailed = false;
+-                    this.updateControls();
+-                    return true;
+-                }
++            final int index = this.itemAt(event.x(), event.y());
++            if (index >= 0) {
++                this.selectedItem = index;
++                this.editFailed = false;
++                this.acquisitionFailed = false;
++                this.updateControls();
++                if (doubleClick && this.editPiece.active) this.changePiece();
++                return true;
+             }
+         }
+         return super.mouseClicked(event, doubleClick);
+     }
+ 
+-    private int colorGridTop() {
+-        return this.contentTop() + 32;
++    @Override
++    public boolean mouseScrolled(final double x, final double y, final double horizontal, final double vertical) {
++        if (this.view == View.WARDROBE && vertical != 0 && x >= this.gridLeft() && x < this.gridLeft() + this.gridWidth()
++            && y >= this.gridTop() && y < this.contentBottom() && this.items != null && this.items.size() > this.pageSize()) {
++            this.changePage(vertical > 0 ? -1 : 1);
++            return true;
++        }
++        return super.mouseScrolled(x, y, horizontal, vertical);
+     }
+ 
+-    private int colorRowHeight() {
+-        final int rows = Math.max(1, (this.palette().size() + 5) / 6);
+-        return Math.max(8, Math.min(30, (this.height - FOOTER_HEIGHT - this.colorGridTop() - 32) / rows - 4));
++    private int itemAt(final double x, final double y) {
++        final int column = (int) Math.floor((x - this.gridLeft()) / this.cellStep());
++        final int row = (int) Math.floor((y - this.gridTop()) / this.cellStep());
++        if (column < 0 || column >= this.gridColumns() || row < 0 || row >= this.gridRows()
++            || x - this.gridLeft() - column * this.cellStep() >= this.cellSize()
++            || y - this.gridTop() - row * this.cellStep() >= this.cellSize()) return -1;
++        final int index = this.itemPage * this.pageSize() + row * this.gridColumns() + column;
++        return index < this.items.size() ? index : -1;
+     }
+ 
+-    private int colorGridBottom() {
+-        return this.colorGridTop() + (this.palette().size() + 5) / 6 * (this.colorRowHeight() + 4) - 4;
++    private int swatchSize() {
++        return this.height >= 320 ? 24 : 18;
+     }
+ 
+     private void updateColorSwatches() {
+         final List<String> colors = this.palette();
+-        final int rowHeight = this.colorRowHeight();
++        final int size = this.swatchSize();
++        final int step = size + BedrockDressingRoomUi.GAP;
++        final int columns = Math.max(1, Math.min(colors.size(), (this.blockWidth() + BedrockDressingRoomUi.GAP) / step));
++        final int left = this.blockLeft() + (this.blockWidth() - columns * step + BedrockDressingRoomUi.GAP) / 2;
++        final int top = this.contentTop(View.COLORS) + BedrockDressingRoomUi.ROW + 4;
+         for (final ColorSwatch swatch : this.colorSwatches) {
+             swatch.visible = this.view == View.COLORS && this.wardrobe != null && swatch.index < colors.size();
+             swatch.active = !this.saving && !this.loading;
+             if (swatch.index < colors.size()) {
+-                swatch.setRectangle(42, rowHeight, this.width / 2 - 150 + swatch.index % 6 * 48,
+-                    this.colorGridTop() + swatch.index / 6 * (rowHeight + 4));
++                swatch.setRectangle(size, size, left + swatch.index % columns * step, top + swatch.index / columns * step);
+                 swatch.setMessage(Component.literal(colors.get(swatch.index)));
+                 swatch.setTooltip(Tooltip.create(swatch.getMessage()));
+             }
+         }
+-        this.colorChannelButton.setY(this.contentTop() + 8);
+     }
+ 
+     private final class ColorSwatch extends AbstractButton {
+@@ -597,7 +619,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+         private final int index;
+ 
+         private ColorSwatch(final int index) {
+-            super(0, 0, 42, 30, Component.empty());
++            super(0, 0, 18, 18, Component.empty());
+             this.index = index;
+         }
+ 
+@@ -609,11 +631,19 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+ 
+         @Override
+         protected void extractContents(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
+-            final int border = this.index == BedrockCharacterSlotsScreen.this.selectedColor ? 0xFFFFFFFF
+-                : this.isHoveredOrFocused() ? ACCENT_COLOR : 0xFF555555;
++            final BedrockCharacterSlotsScreen screen = BedrockCharacterSlotsScreen.this;
++            final int border = this.index == screen.selectedColor ? 0xFFFFFFFF
++                : this.isHoveredOrFocused() ? 0xFFA0A0A0 : 0xFF000000;
+             graphics.fill(this.getX(), this.getY(), this.getRight(), this.getBottom(), border);
+             graphics.fill(this.getX() + 2, this.getY() + 2, this.getRight() - 2, this.getBottom() - 2,
+                 (int) Long.parseLong(this.getMessage().getString().substring(1), 16));
++            // Mark the color the character wears now, so a new choice is easy to compare.
++            if (this.index == screen.colorTarget.paletteIndex(screen.currentColor())) {
++                final int centerX = (this.getX() + this.getRight()) / 2;
++                final int centerY = (this.getY() + this.getBottom()) / 2;
++                graphics.fill(centerX - 3, centerY - 3, centerX + 3, centerY + 3, 0xFF000000);
++                graphics.fill(centerX - 2, centerY - 2, centerX + 2, centerY + 2, 0xFFFFFFFF);
++            }
+         }
+ 
+         @Override
+@@ -622,6 +652,70 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+         }
+     }
+ 
++    private final class CategoryList extends ObjectSelectionList<CategoryRow> {
++        private CategoryList() {
++            super(BedrockCharacterSlotsScreen.this.minecraft, BedrockCharacterSlotsScreen.this.categoryWidth(),
++                BedrockCharacterSlotsScreen.this.contentBottom() - BedrockCharacterSlotsScreen.this.contentTop(View.WARDROBE),
++                BedrockCharacterSlotsScreen.this.contentTop(View.WARDROBE), 14);
++            this.setX(BedrockCharacterSlotsScreen.this.wardrobeLeft());
++            for (final Category category : Category.values()) this.addEntry(new CategoryRow(category));
++        }
++
++        @Override
++        public int getRowWidth() {
++            return this.getWidth() - 10;
++        }
++
++        @Override
++        protected int scrollBarX() {
++            return this.getRight() - 6;
++        }
++
++        private void show(final Category category) {
++            for (final CategoryRow row : this.children()) {
++                if (row.category == category && this.getSelected() != row) {
++                    super.setSelected(row);
++                    this.scrollToEntry(row);
++                }
++            }
++        }
++
++        @Override
++        public void setSelected(final CategoryRow row) {
++            super.setSelected(row);
++            if (row != null) BedrockCharacterSlotsScreen.this.selectCategory(row.category);
++        }
++    }
++
++    private final class CategoryRow extends ObjectSelectionList.Entry<CategoryRow> {
++        private final Category category;
++
++        private CategoryRow(final Category category) {
++            this.category = category;
++        }
++
++        @Override
++        public void extractContent(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY,
++                                   final boolean hovered, final float delta) {
++            final CategoryList list = BedrockCharacterSlotsScreen.this.categories;
++            graphics.text(BedrockCharacterSlotsScreen.this.font, BedrockDressingRoomUi.ellipsize(BedrockCharacterSlotsScreen.this.font,
++                    Component.literal(this.category.label()), list.getRowWidth() - 6),
++                list.getRowLeft() + 3, this.getY() + 2, list.getSelected() == this ? -1 : 0xFFD0D0D0);
++        }
++
++        @Override
++        public boolean mouseClicked(final MouseButtonEvent click, final boolean doubled) {
++            if (BedrockCharacterSlotsScreen.this.saving) return false;
++            BedrockCharacterSlotsScreen.this.categories.setSelected(this);
++            return true;
++        }
++
++        @Override
++        public Component getNarration() {
++            return Component.translatable("narrator.select", this.category.label());
++        }
++    }
++
+     private List<String> palette() {
+         return this.colorTarget.palette();
+     }
+@@ -779,6 +873,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+ 
+     private void loadAvatar(final BedrockAuthManager account) {
+         this.activeAvatar = null;
++        this.avatarFailed = false;
+         final long request = ++this.avatarRequest;
+         BedrockCharacterProfiles.loadActiveAvatar(account).whenComplete((encoded, error) -> this.minecraft.execute(() -> {
+             if (this.minecraft.gui.screen() != this || this.avatarRequest != request) {
+@@ -786,6 +881,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+             }
+             if (error != null) {
+                 ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock character preview", error);
++                this.avatarFailed = true;
+             } else {
+                 this.activeAvatar = encoded;
+             }
+@@ -860,45 +956,45 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+         this.slotsTab.visible = this.view != View.COLORS && this.view != View.PRESETS;
+         this.wardrobeTab.visible = this.view != View.COLORS && this.view != View.PRESETS;
+         this.sizeTab.visible = this.view != View.COLORS && this.view != View.PRESETS;
+-        this.slotsTab.active = this.view != View.SLOTS;
+-        this.wardrobeTab.active = this.view != View.WARDROBE;
+-        this.sizeTab.active = this.view != View.SIZE;
+-        for (final Button button : this.slotButtons) {
++        for (int index = 0; index < this.slotButtons.length; index++) {
++            final Button button = this.slotButtons[index];
+             button.visible = this.view != View.COLORS && this.view != View.PRESETS;
++            final Slot slot = this.wardrobe == null ? null : this.wardrobe.slots().get(index);
++            final Component label = Component.translatable("bedrock_character_slots.viafabricplus.slot", index + 1);
++            // Green marks the account's active character and gray marks an empty slot.
++            button.setMessage(slot == null ? label : this.wardrobe.activeSlot() == index + 1 ? label.copy().withStyle(ChatFormatting.GREEN)
++                : slot.occupied() ? label : label.copy().withStyle(ChatFormatting.GRAY));
++            button.setTooltip(slot == null ? null : Tooltip.create(Component.translatable(!slot.occupied()
++                ? "bedrock_character_slots.viafabricplus.empty" : this.wardrobe.activeSlot() == index + 1
++                ? "bedrock_character_slots.viafabricplus.active" : "bedrock_character_slots.viafabricplus.saved")));
+         }
+         for (final Button button : this.presetButtons) {
+             button.visible = this.view == View.PRESETS;
+             button.active = !this.saving;
+         }
+-        for (int index = 0; index < this.categoryButtons.length; index++) {
+-            this.categoryButtons[index].visible = this.view == View.WARDROBE && !this.compactCategories();
+-            this.categoryButtons[index].active = this.category != Category.values()[index];
+-        }
+-        this.compactCategory.visible = this.view == View.WARDROBE && this.compactCategories();
+-        this.compactCategory.active = !this.saving;
+-        this.compactCategory.setValue(this.category);
++        this.categories.visible = this.view == View.WARDROBE;
++        this.categories.active = !this.saving;
++        this.categories.show(this.category);
+         for (int index = 0; index < this.emoteSlotButtons.length; index++) {
+             this.emoteSlotButtons[index].visible = this.view == View.WARDROBE && this.category == Category.EMOTES;
+-            this.emoteSlotButtons[index].active = !this.saving && index != this.selectedEmoteSlot;
++            this.emoteSlotButtons[index].active = !this.saving;
+         }
+         for (final BedrockLimbSide side : BedrockLimbSide.values()) {
+             final Button button = this.limbSideButtons[side.ordinal()];
+             button.visible = this.view == View.WARDROBE && this.isLimbCategory();
+-            button.active = !this.saving && side != this.limbSide && (side == BedrockLimbSide.BOTH
+-                || canEditSides);
++            button.active = !this.saving && (side == BedrockLimbSide.BOTH || canEditSides);
+         }
+         final Slot sizeSlot = this.wardrobe == null ? null : this.wardrobe.slots().get(this.selectedSlot);
+         final Height currentHeight = sizeSlot == null ? null : BedrockCharacterProfiles.height(sizeSlot).orElse(null);
+         for (int index = 0; index < this.heightButtons.length; index++) {
+             this.heightButtons[index].visible = this.view == View.SIZE;
+             this.heightButtons[index].active = !this.saving && !this.loading && sizeSlot != null && sizeSlot.occupied()
+-                && currentHeight != null && currentHeight != Height.values()[index];
++                && currentHeight != null;
+         }
+         for (int index = 0; index < this.armSizeButtons.length; index++) {
+             this.armSizeButtons[index].visible = this.view == View.SIZE;
+             this.armSizeButtons[index].active = !this.saving && !this.loading && sizeSlot != null && sizeSlot.occupied()
+-                && ("wide".equals(sizeSlot.arm()) || "slim".equals(sizeSlot.arm()))
+-                && !sizeSlot.arm().equals(index == 0 ? "slim" : "wide");
++                && ("wide".equals(sizeSlot.arm()) || "slim".equals(sizeSlot.arm()));
+         }
+         this.previewEmote.visible = this.view == View.WARDROBE && this.category == Category.EMOTES;
+         this.previewEmote.active = this.items != null && !this.items.isEmpty()
+@@ -997,7 +1093,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+     }
+ 
+     private void changeArmSize(final String armSize) {
+-        if (this.wardrobe == null || this.saving) {
++        if (this.wardrobe == null || this.saving || armSize.equals(this.currentArm())) {
+             return;
+         }
+         final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
+@@ -1010,7 +1106,7 @@ public final class BedrockCharacterSlotsScreen extends VFPScreen {
+     }
+ 
+     private void changeHeight(final Height height) {
+-        if (this.wardrobe == null || this.saving) {
++        if (this.wardrobe == null || this.saving || height == this.currentHeight()) {
+             return;
+         }
+         final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
+index 6683caf5edcf3b7701ec502e3635416871e45a22..19bd371837ee1c94cc038ee299a63fc58b28fe2f 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
+@@ -32,8 +32,7 @@ public final class BedrockClassicSkinPackScreen extends VFPScreen {
+     private final BedrockOwnedSkinPacks.Item owned;
+     private final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
+     private final String accountId = BedrockAppearanceStore.accountId(this.account);
+-    private Button previous;
+-    private Button next;
++    private BedrockSkinList skins;
+     private Button use;
+     private boolean saving;
+     private int request;
+@@ -42,6 +41,7 @@ public final class BedrockClassicSkinPackScreen extends VFPScreen {
+     private BufferedImage selectedImage;
+     private Component error;
+     private BedrockPlayerSkins.Preview preview;
++    private PlayerSkinWidget previewWidget;
+ 
+     public BedrockClassicSkinPackScreen(final BedrockDressingRoomScreen dressingRoom, final BedrockClassicSkinPack pack,
+                                        final BedrockOwnedSkinPacks.Item owned) {
+@@ -64,45 +64,42 @@ public final class BedrockClassicSkinPackScreen extends VFPScreen {
+         super.init();
+         this.wallet = new BedrockMinecoinWallet(this);
+         this.wallet.buttons().forEach(this::addRenderableWidget);
+-        final int left = this.width / 2 - 150;
+-        final int top = Math.max(CONTENT_TOP, (this.height - 250) / 2);
+-        this.previous = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.previous_skin"),
+-            _ -> this.changeSkin(-1)).bounds(left, top, 146, 20).build());
+-        this.next = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.next_skin"),
+-            _ -> this.changeSkin(1)).bounds(left + 154, top, 146, 20).build());
++        final BedrockDressingRoomUi.Split split = BedrockDressingRoomUi.split(this.width, this.height, true, 260);
++        this.skins = this.addRenderableWidget(new BedrockSkinList(this.minecraft, split.contentX(), split.top(),
++            split.contentWidth(), split.height(), this::changeSkin, _ -> this.importSkin()));
++        this.skins.show(this.pack.skins().stream().map(skin -> new BedrockSkinList.Entry(Component.literal(skin.name()),
++            Component.translatable(skin.model() != null ? "bedrock_dressing_room.viafabricplus.custom_model"
++                : skin.slim() ? "bedrock_dressing_room.viafabricplus.slim" : "bedrock_dressing_room.viafabricplus.wide"))).toList(),
++            this.selected);
+         this.use = Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.use_pack_skin"),
+             _ -> this.importSkin()).build();
+         this.addFooter(this.use);
+-        final PlayerSkinWidget preview = new PlayerSkinWidget(145, Math.min(200, Math.max(60, this.height - top - 90)),
++        final PlayerSkinWidget preview = new PlayerSkinWidget(split.previewWidth() - 8, split.height() - 8,
+             this.minecraft.getEntityModels(), () -> this.previewSkin);
+-        preview.setX(left);
+-        preview.setY(top + 30);
+-        this.addRenderableWidget(preview);
+-        this.showSkin();
++        preview.setX(split.previewX() + 4);
++        preview.setY(split.top() + 4);
++        this.preview(preview);
++        if (this.preview == null && this.error == null) this.showSkin();
+         this.updateControls();
+     }
+ 
+     @Override
+     public void renderTitle(final GuiGraphicsExtractor graphics) {
+-        super.renderTitle(graphics);
+-        graphics.centeredText(this.font, this.title, this.width / 2, 32, -1);
++        BedrockDressingRoomUi.title(graphics, this.font, this.width, this.title);
+     }
+ 
+     @Override
+     public void extractRenderState(final @NonNull GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
++        final BedrockDressingRoomUi.Split split = BedrockDressingRoomUi.split(this.width, this.height, true, 260);
++        BedrockDressingRoomUi.panel(graphics, split.previewX(), split.top(), split.previewWidth(), split.height());
+         super.extractRenderState(graphics, mouseX, mouseY, delta);
+-        final int left = this.width / 2 - 150;
+-        final int top = Math.max(CONTENT_TOP, (this.height - 250) / 2) + 30;
+-        final Skin skin = this.pack.skins().get(this.selected);
+-        graphics.textWithWordWrap(this.font, Component.literal(skin.name()), left + 157, top + 4, 143, -1);
+-        graphics.text(this.font, Component.translatable("bedrock_dressing_room.viafabricplus.pack_skin_number",
+-            this.selected + 1, this.pack.skins().size()), left + 157, top + 38, ACCENT_COLOR);
+-        graphics.text(this.font, Component.translatable(skin.slim()
+-            ? "bedrock_dressing_room.viafabricplus.slim" : "bedrock_dressing_room.viafabricplus.wide"),
+-            left + 157, top + 55, ACCENT_COLOR);
+-        if (this.error != null) {
+-            graphics.textWithWordWrap(this.font, this.error, left, top + 110, 300, ACCENT_COLOR);
+-        }
++        BedrockDressingRoomUi.status(graphics, this.font, this.width, this.height, true, this.error != null ? this.error
++            : Component.translatable("bedrock_dressing_room.viafabricplus.pack_skin_number", this.selected + 1, this.pack.skins().size()));
++    }
++
++    private void preview(final PlayerSkinWidget widget) {
++        this.previewWidget = this.addRenderableWidget(widget);
++        this.previewWidget.visible = this.previewSkin != null;
+     }
+ 
+     @Override
+@@ -112,9 +109,9 @@ public final class BedrockClassicSkinPackScreen extends VFPScreen {
+         super.removed();
+     }
+ 
+-    private void changeSkin(final int offset) {
+-        if (this.saving) return;
+-        this.selected = Math.floorMod(this.selected + offset, this.pack.skins().size());
++    private void changeSkin(final int index) {
++        if (this.saving || index == this.selected) return;
++        this.selected = index;
+         this.showSkin();
+         this.updateControls();
+     }
+@@ -134,6 +131,7 @@ public final class BedrockClassicSkinPackScreen extends VFPScreen {
+         } catch (IOException e) {
+             this.error = Component.literal(e.getMessage());
+         }
++        if (this.previewWidget != null) this.previewWidget.visible = this.previewSkin != null;
+     }
+ 
+     private void importSkin() {
+@@ -174,8 +172,7 @@ public final class BedrockClassicSkinPackScreen extends VFPScreen {
+     }
+ 
+     private void updateControls() {
+-        this.previous.active = !this.saving;
+-        this.next.active = !this.saving;
++        this.skins.active = !this.saving;
+         this.use.active = !this.saving && this.selectedImage != null && this.currentAccount();
+         this.use.setMessage(Component.translatable(this.saving ? "bedrock_character_slots.viafabricplus.saving_piece"
+             : "bedrock_dressing_room.viafabricplus.use_pack_skin"));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
+index 10c8ce8b9f6d695923254fb551c737e5be9bdf42..01e78f29bc31515bcb74919b7e650e7e88e71799 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
+@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicLong;
+ import net.minecraft.client.gui.GuiGraphicsExtractor;
+ import net.minecraft.client.gui.components.Button;
+ import net.minecraft.client.gui.components.PlayerSkinWidget;
+-import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.client.gui.components.Tooltip;
+ import net.minecraft.network.chat.Component;
+ import net.minecraft.world.entity.player.PlayerSkin;
+ import org.jspecify.annotations.NonNull;
+@@ -95,7 +95,6 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+     private boolean filePickerOpen;
+     private boolean packImportPending;
+     private boolean accountCharacterRequested;
+-    private int actionRows = 2;
+ 
+     public BedrockDressingRoomScreen() {
+         super(TITLE, true);
+@@ -114,49 +113,51 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+         super.init();
+         this.wallet = new BedrockMinecoinWallet(this);
+         this.wallet.buttons().forEach(this::addRenderableWidget);
+-        final int left = this.width / 2 - 150;
+-        final int top = this.contentTop();
+-        final int buttonWidth = 96;
+-        this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.steve"), _ -> this.select(Selection.STEVE))
+-            .bounds(left, top, buttonWidth, 20).build());
+-        this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.alex"), _ -> this.select(Selection.ALEX))
+-            .bounds(left + 102, top, buttonWidth, 20).build());
+-        this.customButton = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.custom"),
+-            _ -> this.select(Selection.CUSTOM)).bounds(left + 204, top, buttonWidth, 20).build());
+-
+-        this.modelButton = this.addRenderableWidget(Button.builder(Component.empty(), _ -> this.toggleModel())
+-            .bounds(left + 157, top + 53, 143, 20).build());
+-
+-        final Button ownedPacks = Button.builder(Component.translatable("bedrock_owned_skin_packs.viafabricplus.title"),
+-            _ -> new BedrockOwnedSkinPacksScreen(this).open(this)).build();
++        final BedrockDressingRoomUi.Split split = BedrockDressingRoomUi.split(this.width, this.height, false, 220);
++        final Button steve = this.choice(Selection.STEVE);
++        final Button alex = this.choice(Selection.ALEX);
++        this.customButton = this.choice(Selection.CUSTOM);
++        this.customButton.setTooltip(Tooltip.create(Component.translatable("bedrock_dressing_room.viafabricplus.custom_hint")));
++        this.modelButton = this.addRenderableWidget(Button.builder(Component.empty(), _ -> this.toggleModel()).build());
++        final Button importSkin = this.addRenderableWidget(Button.builder(
++            Component.translatable("bedrock_dressing_room.viafabricplus.import_skin"), _ -> this.chooseFile(false)).build());
++        final Button importPack = this.addRenderableWidget(Button.builder(
++            Component.translatable("bedrock_dressing_room.viafabricplus.import_pack"), _ -> this.choosePack()).build());
++        final Button ownedPacks = this.addRenderableWidget(Button.builder(
++            Component.translatable("bedrock_owned_skin_packs.viafabricplus.title"),
++            _ -> new BedrockOwnedSkinPacksScreen(this).open(this)).build());
+         ownedPacks.active = ViaFabricPlusBedrock.impl().account().get() != null;
+-        final List<Button> actions = List.of(
+-            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_skin"), _ -> this.chooseFile(false)).build(),
+-            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_pack"), _ -> this.choosePack()).build(),
+-            ownedPacks,
+-            Button.builder(Component.translatable("bedrock_saved_skins.viafabricplus.title"), _ -> new BedrockSavedSkinsScreen(this).open(this)).build(),
+-            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_cape"), _ -> this.chooseFile(true)).build(),
+-            this.removeCapeButton = Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.remove_cape"), _ -> this.removeCape()).build(),
+-            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.character_creator"),
+-                _ -> new BedrockCharacterSlotsScreen().open(this)).build()
+-        );
+-        this.actionRows = (actions.size() + 2) / 3;
+-        final int actionWidth = Math.min(120, (this.width - 32) / 3);
+-        final int actionLeft = (this.width - actionWidth * 3 - 8) / 2;
+-        for (int index = 0; index < actions.size(); index++) {
+-            this.addRenderableWidget(actions.get(index));
+-            actions.get(index).setWidth(actionWidth);
+-            actions.get(index).setX(actionLeft + index % 3 * (actionWidth + 4));
+-            actions.get(index).setY(this.height - 30 - (this.actionRows - 1 - index / 3) * 24);
+-        }
+-
++        final Button savedSkins = this.addRenderableWidget(Button.builder(
++            Component.translatable("bedrock_saved_skins.viafabricplus.title"), _ -> new BedrockSavedSkinsScreen(this).open(this)).build());
++        final Button importCape = this.addRenderableWidget(Button.builder(
++            Component.translatable("bedrock_dressing_room.viafabricplus.import_cape"), _ -> this.chooseFile(true)).build());
++        this.removeCapeButton = this.addRenderableWidget(Button.builder(
++            Component.translatable("bedrock_dressing_room.viafabricplus.remove_cape"), _ -> this.removeCape()).build());
++        final Button characters = this.addRenderableWidget(Button.builder(
++            Component.translatable("bedrock_dressing_room.viafabricplus.character_creator"),
++            _ -> new BedrockCharacterSlotsScreen().open(this)).build());
++
++        // Four groups: the worn skin, other skins, the cape, and the account character.
++        final int x = split.contentX();
++        final int width = split.contentWidth();
++        final int rows = 6;
++        final int groupGap = 6;
++        final int blockHeight = rows * BedrockDressingRoomUi.ROW - BedrockDressingRoomUi.GAP + 3 * groupGap;
++        int y = split.top() + Math.max(0, (split.height() - blockHeight) / 2);
++        BedrockDressingRoomUi.row(x, y, width, steve, alex, this.customButton);
++        BedrockDressingRoomUi.row(x, y += BedrockDressingRoomUi.ROW, width, this.modelButton);
++        BedrockDressingRoomUi.row(x, y += BedrockDressingRoomUi.ROW + groupGap, width, importSkin, importPack);
++        BedrockDressingRoomUi.row(x, y += BedrockDressingRoomUi.ROW, width, ownedPacks, savedSkins);
++        BedrockDressingRoomUi.row(x, y += BedrockDressingRoomUi.ROW + groupGap, width, importCape, this.removeCapeButton);
++        BedrockDressingRoomUi.row(x, y + BedrockDressingRoomUi.ROW + groupGap, width, characters);
++
++        this.previewWidget = this.addRenderableWidget(new PlayerSkinWidget(split.previewWidth() - 8, split.height() - 20,
++            this.minecraft.getEntityModels(), () -> this.previewSkin));
++        this.previewWidget.setX(split.previewX() + 4);
++        this.previewWidget.setY(split.top() + 4);
++        this.previewWidget.visible = false;
+         try {
+             this.showAppearance(this.store.load(this.accountId));
+-            this.previewWidget = new PlayerSkinWidget(145, this.previewHeight(), this.minecraft.getEntityModels(), () -> this.previewSkin);
+-            this.previewWidget.setX(left);
+-            this.previewWidget.setY(top + 30);
+-            this.previewWidget.visible = true;
+-            this.addRenderableWidget(this.previewWidget);
+             this.loadAccountCharacter();
+         } catch (IOException e) {
+             ViaFabricPlusBedrock.impl().logger().warn("Could not load the selected Bedrock appearance", e);
+@@ -164,6 +165,12 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+         }
+     }
+ 
++    private Button choice(final Selection selection) {
++        return this.addRenderableWidget(BedrockDressingRoomUi.selectable(Button.builder(
++            Component.translatable("bedrock_dressing_room.viafabricplus." + selection.name().toLowerCase(Locale.ROOT)),
++            _ -> this.select(selection)).build(), () -> this.appearance != null && this.appearance.selection() == selection));
++    }
++
+     private void loadAccountCharacter() {
+         final var account = ViaFabricPlusBedrock.impl().account().get();
+         if (this.accountCharacterRequested || account == null || this.store.hasSavedAppearance(this.accountId)) return;
+@@ -180,46 +187,37 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+             } catch (IOException e) {
+                 ViaFabricPlusBedrock.impl().logger().warn("Could not initialize the Dressing Room account character", e);
+                 if (this.minecraft.gui.screen() == this) {
+-                    this.status = Component.translatable("bedrock_dressing_room.viafabricplus.account_failed");
++                    this.status = Component.translatable("bedrock_dressing_room.viafabricplus.account_failed", reason(e));
+                 }
+             }
+         }));
+     }
+ 
++    /** The innermost message, which names what was missing rather than the wrapping task. */
++    private static String reason(final Throwable error) {
++        Throwable cause = error;
++        while (cause.getCause() != null) cause = cause.getCause();
++        return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
++    }
++
+     @Override
+     public void renderTitle(final GuiGraphicsExtractor graphics) {
+-        super.renderTitle(graphics);
+-        graphics.centeredText(this.font, this.title, this.width / 2, 32, -1);
++        BedrockDressingRoomUi.title(graphics, this.font, this.width, this.title);
+     }
+ 
+     @Override
+     public void extractRenderState(final @NonNull GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
++        final BedrockDressingRoomUi.Split split = BedrockDressingRoomUi.split(this.width, this.height, false, 220);
++        BedrockDressingRoomUi.panel(graphics, split.previewX(), split.top(), split.previewWidth(), split.height());
+         super.extractRenderState(graphics, mouseX, mouseY, delta);
+-
+-        final int left = this.width / 2 - 150;
+-        final int previewTop = this.contentTop() + 30;
+         if (this.appearance != null) {
+-            graphics.text(this.font, Component.translatable("bedrock_dressing_room.viafabricplus.selected",
+-                Component.translatable("bedrock_dressing_room.viafabricplus." + this.appearance.selection().name().toLowerCase(Locale.ROOT))),
+-                left + 157, previewTop + 4, -1);
+-            graphics.text(this.font, Component.translatable(this.appearance.cape() == null
+-                ? "bedrock_dressing_room.viafabricplus.no_cape" : "bedrock_dressing_room.viafabricplus.cape_selected"),
+-                left + 157, previewTop + 56, -1);
+-            if (this.previewSkin != null && this.previewSkin.cape() != null && this.previewHeight() >= 130) {
+-                graphics.blit(RenderPipelines.GUI_TEXTURED, this.previewSkin.cape().id(), left + 157, previewTop + 74, 0, 0,
+-                    64, 32, this.appearance.cape().getWidth(), this.appearance.cape().getHeight(),
+-                    this.appearance.cape().getWidth(), this.appearance.cape().getHeight());
+-            }
++            final Component worn = Component.translatable("bedrock_dressing_room.viafabricplus."
++                + this.appearance.selection().name().toLowerCase(Locale.ROOT));
++            graphics.centeredText(this.font, BedrockDressingRoomUi.ellipsize(this.font, this.appearance.cape() == null ? worn
++                    : Component.translatable("bedrock_dressing_room.viafabricplus.with_cape", worn), split.previewWidth() - 8),
++                split.previewX() + split.previewWidth() / 2, split.bottom() - 13, BedrockDressingRoomUi.MUTED);
+         }
+-        graphics.textWithWordWrap(this.font, this.status, left, previewTop + this.previewHeight() + 6, 300, ACCENT_COLOR);
+-    }
+-
+-    private int contentTop() {
+-        return Math.max(CONTENT_TOP, (this.height - 250) / 2);
+-    }
+-
+-    private int previewHeight() {
+-        return Math.min(200, Math.max(60, this.height - this.contentTop() - 66 - this.actionRows * 24));
++        BedrockDressingRoomUi.status(graphics, this.font, this.width, this.height, false, this.status);
+     }
+ 
+     @Override
+@@ -369,9 +367,11 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+         this.releasePreview();
+         this.preview = BedrockPlayerSkins.preview(appearance.skinData(""));
+         this.previewSkin = this.preview.skin();
+-        if (this.previewWidget != null) this.previewWidget.visible = true;
++        this.previewWidget.visible = this.previewSkin != null;
+         this.customButton.active = appearance.selection() == Selection.CUSTOM || this.store.hasCustomSkin(this.accountId);
+         this.modelButton.active = appearance.selection() == Selection.CUSTOM && appearance.classicModel() == null;
++        this.modelButton.setTooltip(this.modelButton.active ? null
++            : Tooltip.create(Component.translatable("bedrock_dressing_room.viafabricplus.model_hint")));
+         this.modelButton.setMessage(Component.translatable(appearance.effectiveSlim()
+             ? "bedrock_dressing_room.viafabricplus.slim" : "bedrock_dressing_room.viafabricplus.wide"));
+         this.removeCapeButton.active = appearance.cape() != null;
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomUi.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomUi.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..cbd75705168bcfc0ec2bdebfddb5e2f2f14ed6a8
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomUi.java
+@@ -0,0 +1,144 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import java.util.List;
++import java.util.function.BooleanSupplier;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.AbstractButton;
++import net.minecraft.network.chat.Component;
++import net.minecraft.util.FormattedCharSequence;
++
++/**
++ * Shared frame for the Dressing Room screens. The title sits in the top row between Back and the Minecoin
++ * balance, content fills the space above the footer, and one reserved status line keeps messages off buttons.
++ */
++final class BedrockDressingRoomUi {
++    static final int TOP_BAR = 30;
++    static final int MARGIN = 8;
++    static final int GAP = 4;
++    static final int ROW = 20 + GAP;
++    static final int FOOTER = 30;
++    static final int STATUS_LINES = 2;
++    static final int PANEL = 0x66000000;
++    static final int PANEL_BORDER = 0x33FFFFFF;
++    static final int MUTED = 0xFFA0A0A0;
++
++    private static final int BACK_RIGHT = 69;
++    private static final int WALLET_LEFT_MARGIN = 140;
++
++    private BedrockDressingRoomUi() {
++    }
++
++    /** Draws the screen title in the top row, shortened to the space between Back and the balance. */
++    static void title(final GuiGraphicsExtractor graphics, final Font font, final int width, final Component title) {
++        final int walletLeft = width - Math.min(120, Math.max(24, (width - WALLET_LEFT_MARGIN) / 2 - 38)) - 34;
++        final int half = Math.max(20, Math.min(width / 2 - BACK_RIGHT, walletLeft - width / 2));
++        graphics.centeredText(font, ellipsize(font, title, half * 2), width / 2, 11, -1);
++    }
++
++    /** Shows a chosen option with the vanilla highlighted button sprite instead of the disabled one. */
++    static <T extends AbstractButton> T selectable(final T button, final BooleanSupplier selected) {
++        button.setOverrideRenderHighlightedSprite(selected::getAsBoolean);
++        return button;
++    }
++
++    /** The top of the area left for status text, which sits directly above the footer. */
++    static int statusTop(final int height, final boolean footer) {
++        return height - (footer ? FOOTER : 4) - STATUS_LINES * 10 - 2;
++    }
++
++    /** The bottom edge for content, leaving room for the status lines and the footer. */
++    static int contentBottom(final int height, final boolean footer) {
++        return statusTop(height, footer) - GAP;
++    }
++
++    /** Centers up to two lines of status text above the footer, shortening the second line if needed. */
++    static void status(final GuiGraphicsExtractor graphics, final Font font, final int width, final int height,
++                       final boolean footer, final Component status) {
++        if (status == null || status.getString().isEmpty()) return;
++        final int lineWidth = Math.min(width - MARGIN * 2, 400);
++        final List<FormattedCharSequence> lines = font.split(status, lineWidth);
++        final int shown = Math.min(STATUS_LINES, lines.size());
++        final int top = statusTop(height, footer) + (STATUS_LINES - shown) * 10;
++        for (int index = 0; index < shown; index++) {
++            FormattedCharSequence line = lines.get(index);
++            if (index == STATUS_LINES - 1 && lines.size() > STATUS_LINES) {
++                final String rest = status.getString().substring(Math.min(status.getString().length(), plain(lines.getFirst()).length())).strip();
++                line = ellipsize(font, Component.literal(rest).withStyle(status.getStyle()), lineWidth);
++            }
++            graphics.centeredText(font, line, width / 2, top + index * 10, VFPScreen.ACCENT_COLOR);
++        }
++    }
++
++    /** A dark frame behind a preview or list, matching the translucent in-game menu lists. */
++    static void panel(final GuiGraphicsExtractor graphics, final int x, final int y, final int width, final int height) {
++        graphics.fill(x, y, x + width, y + height, PANEL);
++        graphics.fill(x, y, x + width, y + 1, PANEL_BORDER);
++        graphics.fill(x, y + height - 1, x + width, y + height, PANEL_BORDER);
++        graphics.fill(x, y + 1, x + 1, y + height - 1, PANEL_BORDER);
++        graphics.fill(x + width - 1, y + 1, x + width, y + height - 1, PANEL_BORDER);
++    }
++
++    /** A preview column beside a content column, centered and capped so wide windows do not stretch it. */
++    record Split(int previewX, int previewWidth, int contentX, int contentWidth, int top, int bottom) {
++        int height() {
++            return this.bottom - this.top;
++        }
++    }
++
++    /** Tall windows get a capped, vertically centered block so the preview keeps a player-like shape. */
++    static Split split(final int width, final int height, final boolean footer, final int maxContentWidth) {
++        final int available = width - MARGIN * 2;
++        final int top = TOP_BAR + 2;
++        final int bottom = contentBottom(height, footer);
++        final int blockHeight = Math.min(bottom - top, 280);
++        final int previewWidth = Math.clamp(Math.min(available / 3, blockHeight * 3 / 5), 80, 168);
++        final int contentWidth = Math.min(maxContentWidth, available - previewWidth - MARGIN);
++        final int left = (width - previewWidth - MARGIN - contentWidth) / 2;
++        final int blockTop = top + (bottom - top - blockHeight) / 2;
++        return new Split(left, previewWidth, left + previewWidth + MARGIN, contentWidth, blockTop, blockTop + blockHeight);
++    }
++
++    /** Lays out buttons in one row with equal widths. */
++    static void row(final int x, final int y, final int width, final AbstractButton... buttons) {
++        final int buttonWidth = (width - (buttons.length - 1) * GAP) / buttons.length;
++        for (int index = 0; index < buttons.length; index++) {
++            buttons[index].setRectangle(index == buttons.length - 1 ? width - index * (buttonWidth + GAP) : buttonWidth, 20,
++                x + index * (buttonWidth + GAP), y);
++        }
++    }
++
++    static FormattedCharSequence ellipsize(final Font font, final Component text, final int width) {
++        if (font.width(text) <= width) return text.getVisualOrderText();
++        final String shortened = font.plainSubstrByWidth(text.getString(), Math.max(0, width - font.width("...")));
++        return Component.literal(shortened.stripTrailing() + "...").withStyle(text.getStyle()).getVisualOrderText();
++    }
++
++    private static String plain(final FormattedCharSequence line) {
++        final StringBuilder text = new StringBuilder();
++        line.accept((_, _, codePoint) -> {
++            text.appendCodePoint(codePoint);
++            return true;
++        });
++        return text.toString();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockOwnedSkinPacksScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockOwnedSkinPacksScreen.java
+index 59a61c1a1b2ac1b1f7e99000c8e7139fcc91378b..edfe4d2c60e0f6b4d16199737f604d600d016bd9 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockOwnedSkinPacksScreen.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockOwnedSkinPacksScreen.java
+@@ -23,6 +23,7 @@ import org.jspecify.annotations.NonNull;
+ import org.jspecify.annotations.Nullable;
+ 
+ import java.util.List;
++import java.util.Locale;
+ 
+ /** Browses owned account packs and opens the shared classic skin preview. */
+ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+@@ -39,6 +40,7 @@ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+     private boolean downloading;
+     private boolean loading;
+     private int request;
++    private String query = "";
+ 
+     public BedrockOwnedSkinPacksScreen(final BedrockDressingRoomScreen dressingRoom) {
+         super(Component.translatable("bedrock_owned_skin_packs.viafabricplus.title"), true);
+@@ -58,6 +60,10 @@ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+         super.init();
+         this.wallet = new BedrockMinecoinWallet(this);
+         this.wallet.buttons().forEach(this::addRenderableWidget);
++        this.addSearchBar(query -> {
++            this.query = query;
++            if (this.items != null) this.packs.populate();
++        }).setValue(this.query);
+         this.packs = this.addRenderableWidget(new PackList());
+         this.open =
+                 Button.builder(
+@@ -82,8 +88,7 @@ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+ 
+     @Override
+     public void renderTitle(final GuiGraphicsExtractor graphics) {
+-        super.renderTitle(graphics);
+-        graphics.centeredText(this.font, this.title, this.width / 2, 32, -1);
++        BedrockDressingRoomUi.title(graphics, this.font, this.width, this.title);
+     }
+ 
+     @Override
+@@ -93,9 +98,7 @@ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+             final int mouseY,
+             final float delta) {
+         super.extractRenderState(graphics, mouseX, mouseY, delta);
+-        final int width = Math.min(360, this.width - 24);
+-        graphics.textWithWordWrap(
+-                this.font, this.status, (this.width - width) / 2, 54, width, ACCENT_COLOR);
++        BedrockDressingRoomUi.status(graphics, this.font, this.width, this.height, true, this.status);
+     }
+ 
+     @Override
+@@ -215,6 +218,12 @@ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+                                         }));
+     }
+ 
++    private boolean matches(final Item item) {
++        return this.query.isEmpty()
++                || item.name().toLowerCase(Locale.ROOT).contains(this.query)
++                || item.creator().toLowerCase(Locale.ROOT).contains(this.query);
++    }
++
+     private void updateControls() {
+         if (this.open != null)
+             this.open.active = this.selected != null && !this.downloading && !this.loading && this.account != null;
+@@ -227,9 +236,10 @@ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+             super(
+                     BedrockOwnedSkinPacksScreen.this.minecraft,
+                     Math.min(360, BedrockOwnedSkinPacksScreen.this.width - 24),
+-                    Math.max(36, BedrockOwnedSkinPacksScreen.this.height - 112),
+-                    72,
+-                    36);
++                    Math.max(36, BedrockDressingRoomUi.contentBottom(BedrockOwnedSkinPacksScreen.this.height, true)
++                            - CONTENT_TOP),
++                    CONTENT_TOP,
++                    30);
+             this.setX((BedrockOwnedSkinPacksScreen.this.width - this.getWidth()) / 2);
+         }
+ 
+@@ -242,6 +252,7 @@ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+             final Item selected = BedrockOwnedSkinPacksScreen.this.selected;
+             this.clearEntries();
+             for (final Item item : BedrockOwnedSkinPacksScreen.this.items) {
++                if (!BedrockOwnedSkinPacksScreen.this.matches(item)) continue;
+                 final var entry = new PackEntry(item);
+                 this.addEntry(entry);
+                 if (item.equals(selected)) this.setSelected(entry);
+@@ -277,15 +288,15 @@ public final class BedrockOwnedSkinPacksScreen extends VFPScreen {
+                     BedrockOwnedSkinPacksScreen.this.font.plainSubstrByWidth(
+                             this.item.name(), width),
+                     left,
+-                    this.getY() + 5,
++                    this.getY() + 4,
+                     -1);
+             graphics.text(
+                     BedrockOwnedSkinPacksScreen.this.font,
+                     BedrockOwnedSkinPacksScreen.this.font.plainSubstrByWidth(
+                             this.item.creator(), width),
+                     left,
+-                    this.getY() + 18,
+-                    0xFFAAAAAA);
++                    this.getY() + 15,
++                    BedrockDressingRoomUi.MUTED);
+         }
+ 
+         @Override
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSavedSkinsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSavedSkinsScreen.java
+index 5b882548ed034ea830be9900d5ce269ff23bbd94..052679bcde6fdd4b1f7f7d234af2518a38d01e08 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSavedSkinsScreen.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSavedSkinsScreen.java
+@@ -24,6 +24,10 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore.Sa
+ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
+ import com.viaversion.viafabricplus.screen.base.VFPScreen;
+ import java.io.IOException;
++import java.time.Instant;
++import java.time.ZoneId;
++import java.time.format.DateTimeFormatter;
++import java.time.format.FormatStyle;
+ import java.util.List;
+ import net.minecraft.client.gui.GuiGraphicsExtractor;
+ import net.minecraft.client.gui.components.Button;
+@@ -34,14 +38,15 @@ import org.jspecify.annotations.NonNull;
+ 
+ /** Browses custom skins imported earlier on this account. */
+ public final class BedrockSavedSkinsScreen extends VFPScreen {
++    private static final DateTimeFormatter DATE = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM);
+ 
+     private final BedrockDressingRoomScreen dressingRoom;
+     private final BedrockAppearanceStore store = ViaFabricPlusBedrock.impl().appearances();
+     private final String accountId = BedrockAppearanceStore.accountId(ViaFabricPlusBedrock.impl().account().get());
+     private List<SavedSkin> skins = List.of();
+     private int selected;
+-    private Button previous;
+-    private Button next;
++    private BedrockSkinList list;
++    private PlayerSkinWidget previewWidget;
+     private Button use;
+     private Button remove;
+     private PlayerSkin previewSkin;
+@@ -56,44 +61,39 @@ public final class BedrockSavedSkinsScreen extends VFPScreen {
+     @Override
+     protected void init() {
+         super.init();
+-        final int left = this.width / 2 - 150;
+-        final int top = Math.max(CONTENT_TOP, (this.height - 250) / 2);
+-        this.previous = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.previous_skin"),
+-            _ -> this.changeSkin(-1)).bounds(left, top, 146, 20).build());
+-        this.next = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.next_skin"),
+-            _ -> this.changeSkin(1)).bounds(left + 154, top, 146, 20).build());
++        final BedrockDressingRoomUi.Split split = BedrockDressingRoomUi.split(this.width, this.height, true, 260);
++        this.list = this.addRenderableWidget(new BedrockSkinList(this.minecraft, split.contentX(), split.top(),
++            split.contentWidth(), split.height(), this::selectSkin, _ -> this.wear()));
+         this.use = Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.use_pack_skin"), _ -> this.wear()).build();
+         this.remove = Button.builder(Component.translatable("bedrock_saved_skins.viafabricplus.remove"), _ -> this.removeSelected()).build();
+         this.addFooter(this.use, this.remove);
+-        final PlayerSkinWidget preview = new PlayerSkinWidget(145, Math.min(200, Math.max(60, this.height - top - 90)),
+-            this.minecraft.getEntityModels(), () -> this.previewSkin);
+-        preview.setX(left);
+-        preview.setY(top + 30);
+-        this.addRenderableWidget(preview);
++        this.previewWidget = this.addRenderableWidget(new PlayerSkinWidget(split.previewWidth() - 8, split.height() - 8,
++            this.minecraft.getEntityModels(), () -> this.previewSkin));
++        this.previewWidget.setX(split.previewX() + 4);
++        this.previewWidget.setY(split.top() + 4);
+         this.reload();
+     }
+ 
+     @Override
+     public void renderTitle(final GuiGraphicsExtractor graphics) {
+-        super.renderTitle(graphics);
+-        graphics.centeredText(this.font, this.title, this.width / 2, 32, -1);
++        BedrockDressingRoomUi.title(graphics, this.font, this.width, this.title);
+     }
+ 
+     @Override
+     public void extractRenderState(final @NonNull GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
++        final BedrockDressingRoomUi.Split split = BedrockDressingRoomUi.split(this.width, this.height, true, 260);
++        if (!this.skins.isEmpty()) {
++            BedrockDressingRoomUi.panel(graphics, split.previewX(), split.top(), split.previewWidth(), split.height());
++        }
+         super.extractRenderState(graphics, mouseX, mouseY, delta);
+-        final int left = this.width / 2 - 150;
+-        final int top = Math.max(CONTENT_TOP, (this.height - 250) / 2) + 30;
+         if (this.skins.isEmpty()) {
+-            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_saved_skins.viafabricplus.empty"), left + 157, top + 4, 143, -1);
+-        } else {
+-            graphics.textWithWordWrap(this.font, Component.literal(this.skins.get(this.selected).name()), left + 157, top + 4, 143, -1);
+-            graphics.text(this.font, Component.translatable("bedrock_dressing_room.viafabricplus.pack_skin_number",
+-                this.selected + 1, this.skins.size()), left + 157, top + 38, ACCENT_COLOR);
+-        }
+-        if (this.error != null) {
+-            graphics.textWithWordWrap(this.font, this.error, left, top + 110, 300, ACCENT_COLOR);
++            final int width = Math.min(260, this.width - 32);
++            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_saved_skins.viafabricplus.empty"),
++                (this.width - width) / 2, split.top() + split.height() / 2 - 10, width, BedrockDressingRoomUi.MUTED);
+         }
++        BedrockDressingRoomUi.status(graphics, this.font, this.width, this.height, true, this.error != null ? this.error
++            : this.skins.isEmpty() ? null : Component.translatable("bedrock_dressing_room.viafabricplus.pack_skin_number",
++                this.selected + 1, this.skins.size()));
+     }
+ 
+     @Override
+@@ -110,12 +110,15 @@ public final class BedrockSavedSkinsScreen extends VFPScreen {
+             this.error = Component.literal(e.getMessage());
+         }
+         this.selected = this.skins.isEmpty() ? 0 : Math.min(this.selected, this.skins.size() - 1);
++        this.list.show(this.skins.stream().map(skin -> new BedrockSkinList.Entry(Component.literal(skin.name()),
++            Component.translatable("bedrock_saved_skins.viafabricplus.saved_at",
++                DATE.format(Instant.ofEpochMilli(skin.savedAt()).atZone(ZoneId.systemDefault()))))).toList(), this.selected);
+         this.showSkin();
+     }
+ 
+-    private void changeSkin(final int offset) {
+-        if (this.skins.isEmpty()) return;
+-        this.selected = Math.floorMod(this.selected + offset, this.skins.size());
++    private void selectSkin(final int index) {
++        if (index == this.selected || index >= this.skins.size()) return;
++        this.selected = index;
+         this.showSkin();
+     }
+ 
+@@ -131,8 +134,8 @@ public final class BedrockSavedSkinsScreen extends VFPScreen {
+                 this.error = Component.literal(e.getMessage());
+             }
+         }
+-        this.previous.active = this.skins.size() > 1;
+-        this.next.active = this.skins.size() > 1;
++        this.previewWidget.visible = this.previewSkin != null;
++        this.list.visible = !this.skins.isEmpty();
+         this.use.active = this.previewSkin != null && this.currentAccount();
+         this.remove.active = !this.skins.isEmpty() && this.currentAccount();
+     }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSkinList.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSkinList.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..60334d2d4f5f220f49910112662e919f021d6553
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockSkinList.java
+@@ -0,0 +1,101 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import java.util.List;
++import java.util.function.IntConsumer;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.ObjectSelectionList;
++import net.minecraft.client.input.MouseButtonEvent;
++import net.minecraft.network.chat.Component;
++import org.jspecify.annotations.Nullable;
++
++/** A two-line list of skins. Selecting a row previews it, and a double click runs the screen's main action. */
++final class BedrockSkinList extends ObjectSelectionList<BedrockSkinList.Row> {
++    private static final int ROW_HEIGHT = 26;
++
++    record Entry(Component name, Component detail) {
++    }
++
++    private final IntConsumer selected;
++    private final IntConsumer activated;
++
++    BedrockSkinList(final Minecraft minecraft, final int x, final int y, final int width, final int height,
++                    final IntConsumer selected, final IntConsumer activated) {
++        super(minecraft, width, height, y, ROW_HEIGHT);
++        this.setX(x);
++        this.selected = selected;
++        this.activated = activated;
++    }
++
++    void show(final List<Entry> entries, final int selection) {
++        this.clearEntries();
++        for (int index = 0; index < entries.size(); index++) this.addEntry(new Row(index, entries.get(index)));
++        if (selection >= 0 && selection < entries.size()) {
++            super.setSelected(this.children().get(selection));
++            this.scrollToEntry(this.children().get(selection));
++        }
++    }
++
++    @Override
++    public int getRowWidth() {
++        return this.getWidth() - 12;
++    }
++
++    @Override
++    public void setSelected(final @Nullable Row row) {
++        final boolean changed = row != this.getSelected();
++        super.setSelected(row);
++        if (row != null && changed) this.selected.accept(row.index);
++    }
++
++    final class Row extends ObjectSelectionList.Entry<Row> {
++        private final int index;
++        private final BedrockSkinList.Entry entry;
++
++        private Row(final int index, final BedrockSkinList.Entry entry) {
++            this.index = index;
++            this.entry = entry;
++        }
++
++        @Override
++        public void extractContent(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY,
++                                   final boolean hovered, final float delta) {
++            final var font = BedrockSkinList.this.minecraft.font;
++            final int left = BedrockSkinList.this.getRowLeft() + 4;
++            final int width = BedrockSkinList.this.getRowWidth() - 8;
++            graphics.text(font, BedrockDressingRoomUi.ellipsize(font, this.entry.name(), width), left, this.getY() + 3, -1);
++            graphics.text(font, BedrockDressingRoomUi.ellipsize(font, this.entry.detail(), width), left, this.getY() + 14,
++                BedrockDressingRoomUi.MUTED);
++        }
++
++        @Override
++        public boolean mouseClicked(final MouseButtonEvent click, final boolean doubled) {
++            BedrockSkinList.this.setSelected(this);
++            if (doubled) BedrockSkinList.this.activated.accept(this.index);
++            return true;
++        }
++
++        @Override
++        public Component getNarration() {
++            return Component.translatable("narrator.select", this.entry.name());
++        }
++    }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index 04666f0fc77870aa11f0bc6c988a03cb430c28ed..4dce5e7142eece3ef356785b95038662e6516eb0 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -36,15 +36,14 @@
+   "bedrock_dressing_room.viafabricplus.steve": "Steve",
+   "bedrock_dressing_room.viafabricplus.alex": "Alex",
+   "bedrock_dressing_room.viafabricplus.custom": "Custom",
+-  "bedrock_dressing_room.viafabricplus.selected": "Skin: %s",
+   "bedrock_dressing_room.viafabricplus.slim": "Model: Slim",
+   "bedrock_dressing_room.viafabricplus.wide": "Model: Wide",
+-  "bedrock_dressing_room.viafabricplus.no_cape": "Cape: None",
+-  "bedrock_dressing_room.viafabricplus.cape_selected": "Cape: Custom",
++  "bedrock_dressing_room.viafabricplus.with_cape": "%s with cape",
++  "bedrock_dressing_room.viafabricplus.custom_model": "Custom model",
++  "bedrock_dressing_room.viafabricplus.custom_hint": "Your imported skin. Import a skin first to use it.",
++  "bedrock_dressing_room.viafabricplus.model_hint": "Only imported skins with the standard model can switch arm width.",
+   "bedrock_dressing_room.viafabricplus.import_skin": "Import skin",
+   "bedrock_dressing_room.viafabricplus.import_pack": "Import skin pack",
+-  "bedrock_dressing_room.viafabricplus.previous_skin": "Previous skin",
+-  "bedrock_dressing_room.viafabricplus.next_skin": "Next skin",
+   "bedrock_dressing_room.viafabricplus.use_pack_skin": "Use this skin",
+   "bedrock_dressing_room.viafabricplus.pack_skin_number": "Skin %s of %s",
+   "bedrock_dressing_room.viafabricplus.import_cape": "Import cape",
+@@ -53,7 +52,7 @@
+   "bedrock_dressing_room.viafabricplus.persona": "Account character",
+   "bedrock_dressing_room.viafabricplus.loading_pack": "Loading skin pack…",
+   "bedrock_dressing_room.viafabricplus.loading_account": "Loading your account character…",
+-  "bedrock_dressing_room.viafabricplus.account_failed": "Could not load your account character. Open Characters to try again.",
++  "bedrock_dressing_room.viafabricplus.account_failed": "Could not load your account character: %s",
+   "bedrock_dressing_room.viafabricplus.reconnect": "Applies when you next join a Bedrock world.",
+   "bedrock_dressing_room.viafabricplus.live_request": "Skin change sent. Waiting for the server to send it back...",
+   "bedrock_dressing_room.viafabricplus.live_confirmed": "The server sent back your new skin.",
+@@ -62,6 +61,7 @@
+   "bedrock_dressing_room.viafabricplus.one_file": "Drop one PNG or skin pack at a time.",
+   "bedrock_saved_skins.viafabricplus.title": "Saved skins",
+   "bedrock_saved_skins.viafabricplus.remove": "Remove skin",
++  "bedrock_saved_skins.viafabricplus.saved_at": "Saved %s",
+   "bedrock_saved_skins.viafabricplus.empty": "Skins you import appear here so you can switch back to them.",
+   "bedrock_character_slots.viafabricplus.slot": "Slot %s",
+   "bedrock_character_slots.viafabricplus.slots": "Saved characters",
+@@ -71,7 +71,6 @@
+   "bedrock_character_slots.viafabricplus.arm_size": "Arm size",
+   "bedrock_character_slots.viafabricplus.narrow": "Narrow",
+   "bedrock_character_slots.viafabricplus.wide": "Wide",
+-  "bedrock_character_slots.viafabricplus.current_size": "Current: %s height, %s arms",
+   "bedrock_character_slots.viafabricplus.unknown_height": "This character has a height recipe that this version cannot edit.",
+   "bedrock_character_slots.viafabricplus.category": "Category: %s",
+   "bedrock_character_slots.viafabricplus.previous": "Previous",
+@@ -79,8 +78,14 @@
+   "bedrock_character_slots.viafabricplus.selected": "Character slot %s",
+   "bedrock_character_slots.viafabricplus.saved": "Saved to your Bedrock account",
+   "bedrock_character_slots.viafabricplus.empty": "Empty slot",
+-  "bedrock_character_slots.viafabricplus.pieces": "Selected pieces: %s",
+   "bedrock_character_slots.viafabricplus.arms": "Arms: %s",
++  "bedrock_character_slots.viafabricplus.height_value": "Height: %s",
++  "bedrock_character_slots.viafabricplus.no_preview": "Use this slot to see its preview.",
++  "bedrock_character_slots.viafabricplus.preview_loading": "Loading preview...",
++  "bedrock_character_slots.viafabricplus.preview_failed": "Bedrock has no preview for this character.",
++  "bedrock_character_slots.viafabricplus.page": "Page %s of %s",
++  "bedrock_character_slots.viafabricplus.category_count": "%s (%s)",
++  "bedrock_character_slots.viafabricplus.piece_status": "%s: %s",
+   "bedrock_character_slots.viafabricplus.owned_pieces": "Available pieces: %s",
+   "bedrock_character_slots.viafabricplus.items_loading": "Loading character pieces...",
+   "bedrock_character_slots.viafabricplus.items_failed": "Could not load character pieces. Try refreshing.",
+@@ -89,7 +94,7 @@
+   "bedrock_character_slots.viafabricplus.piece_available": "Available to equip",
+   "bedrock_character_slots.viafabricplus.piece_locked": "Not owned",
+   "bedrock_character_slots.viafabricplus.saved_piece": "Available from a saved or starting character.",
+-  "bedrock_character_slots.viafabricplus.use_piece": "Use saved piece",
++  "bedrock_character_slots.viafabricplus.use_piece": "Equip",
+   "bedrock_character_slots.viafabricplus.remove_piece": "Remove piece",
+   "bedrock_character_slots.viafabricplus.use_emote": "Equip emote",
+   "bedrock_character_slots.viafabricplus.remove_emote": "Remove emote",
