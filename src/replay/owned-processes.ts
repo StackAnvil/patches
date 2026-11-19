@@ -43,8 +43,11 @@ const procfsSystem: ProcessSystem = {
 export class OwnedProcesses {
   private readonly identities = new Map<number, ProcessIdentity>();
   private readonly excluded = new Set<number>();
+  private readonly system: ProcessSystem;
 
-  constructor(private readonly system: ProcessSystem = procfsSystem) {}
+  constructor(system: ProcessSystem = procfsSystem) {
+    this.system = system;
+  }
 
   exclude(pid: number): void {
     this.excluded.add(pid);

@@ -68,7 +68,11 @@ function text(value: string): Buffer {
 }
 class Reader {
   offset = 0;
-  constructor(readonly bytes: Buffer) {}
+  readonly bytes: Buffer;
+
+  constructor(bytes: Buffer) {
+    this.bytes = bytes;
+  }
 
   take(length: number): Buffer {
     if (!Number.isInteger(length) || length < 0 || this.offset + length > this.bytes.length) {
