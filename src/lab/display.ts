@@ -1,17 +1,16 @@
 import { createCaptureWaylandBuilder } from "../capture/native.ts";
-import { spawn, execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, openSync, closeSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { root } from "../model.ts";
 import { nativeWaylandEnvironment, waylandTool, waylandToolEnvironment } from "./wayland.ts";
 import { Schema } from "effect";
 import { errorCode, parseJson } from "../guards.ts";
 import { print } from "../output.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "lab");
 const stateFile = join(privateRoot, "display.json");
 const identity = createHash("sha256").update(root).digest("hex").slice(0, 12);
@@ -188,7 +187,7 @@ export async function ensureDisplay(): Promise<DisplayState> {
     state = { backend: "wayland", pid: child.pid, display: "", runtime, socket };
     for (let attempt = 0; attempt < 100 && alive(child.pid); attempt++) {
       const waylandSocket = (await readdir(runtime, { withFileTypes: true })).find(
-        (entry) => entry.isSocket() && /^wayland-\d+$/.test(entry.name),
+        (entry) => entry.isSocket() && /^wayland-\d+$/u.test(entry.name),
       );
       if (existsSync(socket) && waylandSocket) {
         state.display = join(runtime, waylandSocket.name);

@@ -33,7 +33,7 @@ export function rangedKnockbackPasses(
     !impulse ||
     !Number.isInteger(impulse.tick) ||
     [impulse.position, impulse.force, impulse.velocityBefore, impulse.velocityAfter].some(
-      (vector) => ![vector.x, vector.y, vector.z].every(Number.isFinite),
+      (vector) => ![vector.x, vector.y, vector.z].every((value) => Number.isFinite(value)),
     )
   )
     return false;
@@ -72,7 +72,7 @@ export function rangedKnockbackPasses(
       frame.tick < endTick &&
       !frame.onGround &&
       [frame.position, frame.velocity].every((vector) =>
-        [vector.x, vector.y, vector.z].every(Number.isFinite),
+        [vector.x, vector.y, vector.z].every((value) => Number.isFinite(value)),
       ) &&
       frame.position.y > impulse.position.y + 0.05 &&
       ((frame.position.x - impulse.position.x) * impulse.force.x +

@@ -50,7 +50,7 @@ export async function prepareReleaseAssets(
     if (
       basename(artifact.file) !== artifact.file ||
       (project === "viafabricplus"
-        ? !/^ViaFabricPlus-[^/]+\.jar$/.test(artifact.file)
+        ? !/^ViaFabricPlus-[^/]+\.jar$/u.test(artifact.file)
         : !artifact.file.endsWith("-StackAnvil.jar"))
     ) {
       throw new Error(`Invalid ${project} release JAR name: ${artifact.file}`);

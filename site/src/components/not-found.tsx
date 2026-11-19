@@ -14,7 +14,13 @@ export function NotFoundPage() {
       <h1>Page not found</h1>
       <p>This page may have moved. Search the documentation or return to the homepage.</p>
       <div className="actions">
-        <button type="button" className="button forge" onClick={() => setOpenSearch(true)}>
+        <button
+          type="button"
+          className="button forge"
+          onClick={() => {
+            setOpenSearch(true);
+          }}
+        >
           Search documentation
         </button>
         <Link className="button ghost" to="/">

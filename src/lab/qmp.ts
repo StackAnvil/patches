@@ -45,10 +45,12 @@ export function withQmpEffect<A, E, R>(
             pending.clear();
             socket.destroy();
           };
-          socket.on("error", (cause) =>
-            fail(new QmpError({ message: "QMP connection failed.", cause })),
-          );
-          socket.on("close", () => fail(new QmpError({ message: "QMP disconnected." })));
+          socket.on("error", (cause) => {
+            fail(new QmpError({ message: "QMP connection failed.", cause }));
+          });
+          socket.on("close", () => {
+            fail(new QmpError({ message: "QMP disconnected." }));
+          });
           socket.on("data", (data) => {
             buffer += data.toString();
             if (buffer.length > 1024 * 1024) {
@@ -113,7 +115,9 @@ export function withQmpEffect<A, E, R>(
           return {
             greeting,
             command,
-            close: () => fail(new QmpError({ message: "QMP scope closed." })),
+            close: () => {
+              fail(new QmpError({ message: "QMP scope closed." }));
+            },
           };
         }),
         (opened) => Effect.sync(opened.close),
@@ -187,7 +191,7 @@ export function withNamedQmp<A>(
 
 export function keyEvents(chord: string): Record<string, unknown>[] {
   const keys = chord.split("+");
-  if (!keys.length || keys.some((key) => !/^[a-z0-9][a-z0-9_-]*$/.test(key))) {
+  if (keys.length === 0 || keys.some((key) => !/^[a-z0-9][a-z0-9_-]*$/u.test(key))) {
     throw new Error("Use QEMU key names, such as ret, esc, or ctrl+alt+delete.");
   }
   return keys.map((key) => ({ type: "qcode", data: key }));
@@ -211,7 +215,7 @@ export const clickPointerEffect = Effect.fn("Qmp.clickPointer")(function* (
   x: number,
   y: number,
   button: string,
-  holdMs = 100,
+  holdMs: number = 100,
 ) {
   const events = yield* Effect.try({
     try: () => {

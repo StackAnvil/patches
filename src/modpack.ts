@@ -1,14 +1,11 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { Data, Effect } from "effect";
 import { clientArtifacts } from "./client-artifacts.ts";
 import { root } from "./model.ts";
 import type { ViaFabricPlusPin } from "./viafabricplus.ts";
-
-const execute = promisify(execFile);
+import { execFileAsync as execute } from "./process.ts";
 
 // Client overrides keep the verified Jenkins and StackAnvil JARs in the pack.
 // Importing does not require a modpack project or URLs for unpublished builds.
@@ -19,8 +16,8 @@ export class ModpackError extends Data.TaggedError("ModpackError")<{
 }> {}
 
 export const bundleModpack = Effect.fn("bundleModpack")(function* (
-  artifactsDir = join(root, "dist"),
-  outputDir = join(root, "dist", "modpack"),
+  artifactsDir: string = join(root, "dist"),
+  outputDir: string = join(root, "dist", "modpack"),
   pin?: ViaFabricPlusPin,
 ) {
   return yield* Effect.tryPromise({

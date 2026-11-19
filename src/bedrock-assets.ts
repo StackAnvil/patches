@@ -1,9 +1,28 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Schema } from "effect";
 import { zipEntries } from "./zip.ts";
 
 export const builtinAssetsResource = "assets/viafabricplus-bedrock/builtin";
+
+const isBuiltinAssetsManifest = Schema.is(
+  Schema.Struct({
+    format: Schema.Literal(1),
+    version: Schema.String,
+    protocolVersion: Schema.String,
+    files: Schema.Finite,
+    expandedBytes: Schema.Finite,
+    archives: Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        sha256: Schema.String,
+        files: Schema.Finite,
+        expandedBytes: Schema.Finite,
+      }),
+    ),
+  }),
+);
 
 /** Verifies all versioned actor archives before they become Gradle inputs. */
 export async function verifyBuiltinAssets(
@@ -11,12 +30,11 @@ export async function verifyBuiltinAssets(
   version: string,
 ): Promise<Map<string, Buffer>> {
   const manifestBytes = await readFile(join(directory, "manifest.json"));
-  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  const manifest: unknown = JSON.parse(manifestBytes.toString("utf8"));
   if (
-    manifest.format !== 1 ||
+    !isBuiltinAssetsManifest(manifest) ||
     manifest.version !== version ||
     manifest.protocolVersion !== version.split(".").slice(0, 3).join(".") ||
-    !Array.isArray(manifest.archives) ||
     manifest.archives.length === 0 ||
     manifest.archives.length > 16
   ) {
@@ -26,7 +44,7 @@ export async function verifyBuiltinAssets(
   const paths = new Set<string>();
   let expanded = 0;
   for (const archive of manifest.archives) {
-    if (!/^builtin-\d{2}\.zip$/.test(archive.name) || resources.has(archive.name))
+    if (!/^builtin-\d{2}\.zip$/u.test(archive.name) || resources.has(archive.name))
       throw new Error("Invalid bundled actor archive name");
     const bytes = await readFile(join(directory, archive.name));
     if (createHash("sha256").update(bytes).digest("hex") !== archive.sha256)
@@ -36,7 +54,7 @@ export async function verifyBuiltinAssets(
     for (const [path, read] of entries) {
       if (
         paths.has(path) ||
-        /[\\:\0]/.test(path) ||
+        /[\\:\0]/u.test(path) ||
         path.split("/").some((part) => !part || part === "." || part === "..")
       ) {
         throw new Error("Invalid bundled actor resource path");
@@ -66,7 +84,7 @@ export async function verifyBuiltinAssets(
     if (!paths.has(`library/vanilla/${path}`))
       throw new Error(`Bundled actor resources are missing ${path}`);
   }
-  if (![...paths].some((path) => /^library\/vanilla[^/]*\/attachables\/.+\.json$/.test(path)))
+  if (![...paths].some((path) => /^library\/vanilla[^/]*\/attachables\/.+\.json$/u.test(path)))
     throw new Error("Bundled native equipment definitions are missing");
   return resources;
 }

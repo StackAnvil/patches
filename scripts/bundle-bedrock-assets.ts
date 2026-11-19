@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { deflateRawSync } from "node:zlib";
+import { Schema } from "effect";
 import JSON5 from "json5";
+import { isRecord, parseJson, stringProperty } from "../src/guards.ts";
 import { print } from "../src/output.ts";
+
+export const ResourcePackManifestSchema = Schema.Struct({
+  header: Schema.Struct({ version: Schema.Array(Schema.Finite) }),
+});
 
 const archiveLimit = 48 * 1024 * 1024;
 const fileLimit = 32 * 1024 * 1024;
@@ -24,7 +30,7 @@ const libraryDirectories = new Set([
 
 function validPath(name: string) {
   return (
-    !/[\\:\0]/.test(name) &&
+    !/[\\:\0]/u.test(name) &&
     name.split("/").every((part) => part !== "" && part !== "." && part !== "..")
   );
 }
@@ -130,16 +136,18 @@ async function* walk(root: string): AsyncGenerator<string> {
 }
 
 function attachableIdentifier(bytes: Buffer): string | undefined {
-  const description = JSON5.parse(bytes.toString("utf8"))["minecraft:attachable"]?.description;
-  return typeof description?.identifier === "string" ? description.identifier : undefined;
+  const document: unknown = JSON5.parse(bytes.toString("utf8"));
+  const attachable = isRecord(document) ? document["minecraft:attachable"] : undefined;
+  return stringProperty(isRecord(attachable) ? attachable["description"] : undefined, "identifier");
 }
 
 export async function bundleBedrockAssets(game: string, version: string, destination: string) {
-  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version))
+  if (!/^\d+\.\d+\.\d+\.\d+$/u.test(version))
     throw new Error("Expected a four-part Bedrock version");
   const protocolVersion = version.split(".").slice(0, 3).join(".");
   const source = join(game, "data", "resource_packs");
-  const latest = JSON.parse(
+  const latest = parseJson(
+    ResourcePackManifestSchema,
     await readFile(join(source, `vanilla_${protocolVersion}`, "manifest.json"), "utf8"),
   );
   if (latest.header.version.join(".") !== protocolVersion)
@@ -147,7 +155,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
   const files = new Map<string, Buffer>();
   let expandedBytes = 0;
   for (const pack of (await readdir(source)).toSorted()) {
-    if (pack !== "persona" && !/^vanilla(?:_base|_\d+\.\d+(?:\.\d+)?)?$/.test(pack)) continue;
+    if (pack !== "persona" && !/^vanilla(?:_base|_\d+\.\d+(?:\.\d+)?)?$/u.test(pack)) continue;
     const packRoot = join(source, pack);
     for await (const original of walk(packRoot)) {
       const path = relative(packRoot, original).replaceAll("\\", "/");
@@ -160,7 +168,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
           path === "manifest.json" ||
           path === "sounds.json" ||
           (libraryDirectories.has(logical.split("/")[0] ?? "") &&
-            (archived || /\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/.test(path)))
+            (archived || /\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/u.test(path)))
         )
       )
         continue;
@@ -176,7 +184,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
         if (!validPath(key)) throw new Error("Invalid Bedrock asset path");
         // UI definitions and font data have their own required, independently verified core bundle.
         // Ignore archive placeholders and unsupported source formats rather than publish empty assets.
-        if (pack !== "persona" && !/\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/.test(name))
+        if (pack !== "persona" && !/\.(json|material|lang|fsb|ogg|wav|png|jpg|tga)$/u.test(name))
           continue;
         if (sourceBytes.length === 0) continue;
         // Native materials allow comments and trailing commas; Gson's object reader does not.
@@ -230,7 +238,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
   let batch = new Map<string, Buffer>();
   let batchBytes = 0;
   async function flush() {
-    if (!batch.size) return;
+    if (batch.size === 0) return;
     const name = `builtin-${String(archives.length + 1).padStart(2, "0")}.zip`;
     const bytes = assetZip(batch);
     await writeFile(join(staging, name), bytes);

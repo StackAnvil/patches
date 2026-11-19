@@ -44,10 +44,11 @@ export function createCaptureWaylandBuilder(build: NativeBuild, directory = root
 
   async function prepare(env: NodeJS.ProcessEnv): Promise<string> {
     const digest = await sourceDigest();
-    const previous = await readFile(receipt, "utf8").catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-      return undefined;
-    });
+    const previous = await readFile(receipt, "utf8").catch(
+      (error: NodeJS.ErrnoException): undefined => {
+        if (error.code !== "ENOENT") throw error;
+      },
+    );
     if (previous === digest && existsSync(binary)) return binary;
     await mkdir(tools, { recursive: true });
     await build(

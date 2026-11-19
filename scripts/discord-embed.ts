@@ -18,21 +18,26 @@ function shorten(value: string, length: number) {
 }
 
 function markdown(value: string) {
-  return value.replaceAll(/([\\`*_{}[\]()<>#|~])/g, "\\$1");
+  return value.replaceAll(/([\\`*_{}[\]()<>#|~])/gu, "\\$1");
+}
+
+function parsedUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
 }
 
 function publicUrl(value: string, maximum = 512) {
-  try {
-    const url = new URL(value);
-    return ["https:", "http:"].includes(url.protocol) &&
-      !url.username &&
-      !url.password &&
-      url.href.length <= maximum
-      ? url.href
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  const url = parsedUrl(value);
+  return url &&
+    ["https:", "http:"].includes(url.protocol) &&
+    !url.username &&
+    !url.password &&
+    url.href.length <= maximum
+    ? url.href
+    : undefined;
 }
 
 export function serializeDiscordEmbed(component: APIContainerComponent) {
@@ -74,7 +79,7 @@ export function createDiscordEmbed(
               accessory: { type: ComponentType.Thumbnail, media: { url: thumbnail } },
             }
           : text,
-        ...(images.length
+        ...(images.length > 0
           ? [
               {
                 type: ComponentType.MediaGallery as const,
@@ -94,9 +99,9 @@ export function createDiscordEmbed(
     };
     if (new TextEncoder().encode(serializeDiscordEmbed(component)).byteLength <= 3000)
       return component;
-    if (images.length) images.pop();
+    if (images.length > 0) images.pop();
     else if (links.length > 1) links.pop();
-    else if (description.length)
+    else if (description.length > 0)
       description = shorten(description, Math.floor(Array.from(description).length / 2));
     else if (Array.from(title).length > 16) title = shorten(title, 16);
     else return undefined;

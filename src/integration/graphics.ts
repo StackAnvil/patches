@@ -45,8 +45,8 @@ export async function readGraphicsLock(): Promise<GraphicsLock> {
     await readFile(join(root, "integration/modpacks/bedrock-shaders.json"), "utf8"),
   );
   if (
-    !/^[A-Za-z0-9_.+-]+\.zip$/.test(lock.shader.filename) ||
-    !/^[a-f0-9]{128}$/.test(lock.shader.sha512)
+    !/^[A-Za-z0-9_.+-]+\.zip$/u.test(lock.shader.filename) ||
+    !/^[a-f0-9]{128}$/u.test(lock.shader.sha512)
   ) {
     throw new Error("Invalid Bedrock shader lock file.");
   }
@@ -55,8 +55,8 @@ export async function readGraphicsLock(): Promise<GraphicsLock> {
 
 /** Preserve unrelated Iris preferences while replacing every managed key, including duplicates. */
 export function updateProperties(text: string, values: Readonly<Record<string, string>>): string {
-  const lines = text.split(/\r?\n/).filter((line) => {
-    const key = /^\s*([^#!\s=:]+)\s*[=:]/.exec(line)?.[1];
+  const lines = text.split(/\r?\n/u).filter((line) => {
+    const key = /^\s*([^#!\s=:]+)\s*[=:]/u.exec(line)?.[1];
     return !key || !Object.hasOwn(values, key);
   });
   while (lines.at(-1) === "") lines.pop();
@@ -139,17 +139,17 @@ export function graphicsFailures(clientLog: string, shaderFilename?: string): st
   const failures: string[] = [];
   if (
     shaderFilename &&
-    !clientLog.split(/\r?\n/).some((line) => line.endsWith(`Using shaderpack: ${shaderFilename}`))
+    !clientLog.split(/\r?\n/u).some((line) => line.endsWith(`Using shaderpack: ${shaderFilename}`))
   ) {
     failures.push("Iris did not activate the pinned shader pack.");
   }
-  if (/Missing program viafabricplus-bedrock:pipeline\//.test(clientLog)) {
+  if (/Missing program viafabricplus-bedrock:pipeline\//u.test(clientLog)) {
     failures.push(
       "Iris has no override for a Bedrock render pipeline; actor vertex formats can disagree.",
     );
   }
   if (
-    /Failed to create shader rendering pipeline|Shader compilation failed|Failed to compile shader/.test(
+    /Failed to create shader rendering pipeline|Shader compilation failed|Failed to compile shader/u.test(
       clientLog,
     )
   ) {

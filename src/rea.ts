@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import {
@@ -12,15 +11,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { Data, Effect, Schema } from "effect";
 import { runLabCommand } from "./lab/effect-runtime.ts";
 import { root } from "./model.ts";
-import { command } from "./process.ts";
+import { command, execFileAsync as execute } from "./process.ts";
 import { errorCode, parseJson, stringProperty } from "./guards.ts";
 import { print, printError } from "./output.ts";
 
-const execute = promisify(execFile);
 const reader = join(root, "native", "rea-controls", "pe.py");
 const privateRoot = join(root, ".stackanvil", "rea");
 const controlsRoot = join(root, ".stackanvil", "tools", "rea-controls-venv");
@@ -29,7 +27,7 @@ const controlsPython = join(
   process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
 );
 const reaVersion = "6.7.0";
-const shaPattern = /^[a-f0-9]{64}$/i;
+const shaPattern = /^[a-f0-9]{64}$/iu;
 
 const TargetSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -94,7 +92,7 @@ function error(cause: unknown): ReaError {
 }
 
 function independentName(path: string): void {
-  if (/pistondecompiler/i.test(path)) throw new Error("PistonDecompiler paths are not permitted");
+  if (/pistondecompiler/iu.test(path)) throw new Error("PistonDecompiler paths are not permitted");
 }
 
 export async function independentPath(path: string): Promise<string> {
@@ -106,7 +104,11 @@ export async function independentPath(path: string): Promise<string> {
 
 export async function artifactSha256(path: string): Promise<string> {
   const digest = createHash("sha256");
-  for await (const chunk of createReadStream(path)) digest.update(chunk);
+  for await (const chunk of createReadStream(path)) {
+    if (!Buffer.isBuffer(chunk))
+      throw new TypeError("File streams without an encoding yield Buffers.");
+    digest.update(chunk);
+  }
   return digest.digest("hex");
 }
 
@@ -509,10 +511,11 @@ export async function reaMain(args: string[]): Promise<void> {
       "timeout-ms": { type: "string" },
     },
   });
-  if (positionals.length)
+  if (positionals.length > 0)
     throw new Error("Unexpected positional arguments. Use bun run rea --help");
-  if (values.va && !/^(0x)?[a-f0-9]+$/i.test(values.va)) throw new Error("Supply a hexadecimal VA");
-  if (values.end && !/^(0x)?[a-f0-9]+$/i.test(values.end))
+  if (values.va && !/^(0x)?[a-f0-9]+$/iu.test(values.va))
+    throw new Error("Supply a hexadecimal VA");
+  if (values.end && !/^(0x)?[a-f0-9]+$/iu.test(values.end))
     throw new Error("Supply a hexadecimal end address");
   if (action === "import") {
     if (!values.artifact || !values.sha256 || !values.version)

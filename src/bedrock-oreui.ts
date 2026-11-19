@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { Schema } from "effect";
 import { builtinUiManifest } from "./bedrock-ui.ts";
+import { isRecord } from "./guards.ts";
 import { zipEntries } from "./zip.ts";
 
 export const builtinOreUiResource = "assets/viafabricplus-bedrock/builtin_oreui.zip";
@@ -45,7 +46,7 @@ const isOreUiDescriptor = Schema.is(
 /** Read the declarations used by the acquired gameplay stylesheet, including Gameface's SDF opt-out. */
 export function oreUiFonts(css: string): OreUiFont[] {
   const fonts: OreUiFont[] = [];
-  for (const match of css.matchAll(/@font-face\{([^}]+)\}/g)) {
+  for (const match of css.matchAll(/@font-face\{([^}]+)\}/gu)) {
     const properties = new Map(
       (match[1] ?? "").split(";").map((property) => {
         const colon = property.indexOf(":");
@@ -53,7 +54,9 @@ export function oreUiFonts(css: string): OreUiFont[] {
       }),
     );
     const family = properties.get("font-family"),
-      url = /^url\(ui:\/\/hbui\/(fonts\/[^/()]+\.(?:otf|ttf))\)$/.exec(properties.get("src") ?? "");
+      url = /^url\(ui:\/\/hbui\/(fonts\/[^/()]+\.(?:otf|ttf))\)$/u.exec(
+        properties.get("src") ?? "",
+      );
     if (!family || !url) throw new Error("Unsupported OreUI font-face declaration");
     const sdf = properties.get("coh-font-sdf");
     if (sdf !== undefined && sdf !== "off")
@@ -76,19 +79,19 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
   let expanded = 0;
   for (const [path, read] of entries) {
     if (
-      /[\\:\0]/.test(path) ||
+      /[\\:\0]/u.test(path) ||
       path.split("/").includes("..") ||
-      !/^(?:oreui\.json|NOTICE\.txt|hbui\/gameplay-[0-9a-f]+\.css|hbui\/fonts\/[^/]+\.(?:otf|ttf)|hbui\/assets\/animation-[0-9a-f]+\.gif|texts\/[a-z]{2}_[A-Z]{2}\.lang)$/.test(
+      !/^(?:oreui\.json|NOTICE\.txt|hbui\/gameplay-[0-9a-f]+\.css|hbui\/fonts\/[^/]+\.(?:otf|ttf)|hbui\/assets\/animation-[0-9a-f]+\.gif|texts\/[a-z]{2}_[A-Z]{2}\.lang)$/u.test(
         path,
       )
     )
       throw new Error(`Invalid bundled OreUI path: ${path}`);
     const contents = read();
     expanded += contents.length;
-    if (!contents.length || contents.length > 16 * 1024 * 1024 || expanded > oreUiLimit)
+    if (contents.length === 0 || contents.length > 16 * 1024 * 1024 || expanded > oreUiLimit)
       throw new Error("Bundled OreUI exceeds asset limits");
     if (
-      /\.(otf|ttf)$/.test(path) &&
+      /\.(otf|ttf)$/u.test(path) &&
       (contents.length < 12 || ![0x4f54544f, 0x00010000].includes(contents.readUInt32BE(0)))
     )
       throw new Error(`Invalid bundled OreUI font: ${path}`);
@@ -112,13 +115,11 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
   if (
     descriptor?.format !== 1 ||
     descriptor.version !== version ||
-    !/^hbui\/gameplay-[0-9a-f]+\.css$/.test(descriptor.stylesheet) ||
+    !/^hbui\/gameplay-[0-9a-f]+\.css$/u.test(descriptor.stylesheet) ||
     !entries.has(descriptor.stylesheet) ||
     !entries.has("NOTICE.txt") ||
-    !Array.isArray(descriptor.fonts) ||
     descriptor.fonts.length === 0 ||
     descriptor.fonts.length > 32 ||
-    !Array.isArray(descriptor.languages) ||
     !descriptor.languages.includes("en_US") ||
     new Set(descriptor.languages).size !== descriptor.languages.length
   )
@@ -127,17 +128,14 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
   if (!stylesheet) throw new Error("Bundled OreUI stylesheet is missing");
   if (JSON.stringify(descriptor.fonts) !== JSON.stringify(oreUiFonts(stylesheet.toString("utf8"))))
     throw new Error("Bundled OreUI font registrations do not match the stylesheet");
-  if (
-    !Array.isArray(descriptor.images ?? []) ||
-    JSON.stringify(descriptor.images ?? []) !== JSON.stringify(images)
-  )
+  if (JSON.stringify(descriptor.images ?? []) !== JSON.stringify(images))
     throw new Error("Bundled OreUI images do not match the descriptor");
   for (const font of descriptor.fonts) {
     if (
       typeof font.family !== "string" ||
-      !font.family.length ||
+      font.family.length === 0 ||
       font.family.length > 128 ||
-      !/^hbui\/fonts\/[^/]+\.(otf|ttf)$/.test(font.file) ||
+      !/^hbui\/fonts\/[^/]+\.(otf|ttf)$/u.test(font.file) ||
       !entries.has(font.file) ||
       ![400, 700].includes(font.weight) ||
       !["normal", "italic"].includes(font.style) ||
@@ -146,7 +144,7 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
       throw new Error("Invalid bundled OreUI font registration");
   }
   for (const language of descriptor.languages) {
-    if (!/^[a-z]{2}_[A-Z]{2}$/.test(language) || !entries.has(`texts/${language}.lang`))
+    if (!/^[a-z]{2}_[A-Z]{2}$/u.test(language) || !entries.has(`texts/${language}.lang`))
       throw new Error("Missing bundled OreUI language");
   }
   const languages = [...entries.keys()]
@@ -159,10 +157,10 @@ export function verifyBuiltinOreUiContents(bytes: Buffer, version: string): void
 
 export async function verifyBuiltinOreUi(path: string, version: string): Promise<string> {
   if ((await stat(path)).size > oreUiLimit) throw new Error("Bundled OreUI exceeds the size limit");
-  const declared = JSON.parse(await readFile(`${path}.manifest.json`, "utf8"));
+  const declared: unknown = JSON.parse(await readFile(`${path}.manifest.json`, "utf8"));
   const bytes = await readFile(path);
   const actual = builtinUiManifest(version, bytes);
-  if (!declared || Object.entries(actual).some(([key, value]) => declared[key] !== value))
+  if (!isRecord(declared) || Object.entries(actual).some(([key, value]) => declared[key] !== value))
     throw new Error("Bundled OreUI identity mismatch");
   verifyBuiltinOreUiContents(bytes, version);
   return path;

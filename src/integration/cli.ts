@@ -72,7 +72,7 @@ const captureUi = createCaptureUi({
       CaptureIdSchema,
       await readFile(join(captures, "current.json"), "utf8"),
     );
-    if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id)) throw new Error("Invalid capture session ID.");
+    if (!/^[a-z0-9][a-z0-9-]{0,90}$/u.test(id)) throw new Error("Invalid capture session ID.");
     return join(captures, id);
   },
 });
@@ -118,7 +118,7 @@ const waitForLogEffect = Effect.fn("Integration.waitForLog")(function* (
   path: string,
   pattern: RegExp,
   child: ChildProcess | (() => boolean),
-  timeoutMs = 90000,
+  timeoutMs: number = 90000,
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -190,7 +190,7 @@ const vanillaServerEffect = Effect.fn("Integration.vanillaServer")(function* () 
 });
 const javaServerEffect = Effect.fn("Integration.javaServer")(function* (
   dir: string,
-  geyser = false,
+  geyser: boolean = false,
 ) {
   const port = yield* tcpPort;
   const bedrockPort = geyser ? yield* udpPort : undefined;
@@ -238,27 +238,27 @@ const javaServerEffect = Effect.fn("Integration.javaServer")(function* (
     process.env,
     true,
   );
-  yield* waitForLogEffect(log, /Done \(/, child, 120000);
+  yield* waitForLogEffect(log, /Done \(/u, child, 120000);
   if (geyser) {
-    yield* waitForLogEffect(log, /\[StackAnvil Java Probe\] ready/, child);
-    yield* waitForLogEffect(log, /\[StackAnvil Geyser Probe\] ready/, child);
-    yield* waitForLogEffect(log, /Enabled extension Boar/, child);
-    yield* waitForLogEffect(log, /Started Geyser on.*127\.0\.0\.1/, child);
+    yield* waitForLogEffect(log, /\[StackAnvil Java Probe\] ready/u, child);
+    yield* waitForLogEffect(log, /\[StackAnvil Geyser Probe\] ready/u, child);
+    yield* waitForLogEffect(log, /Enabled extension Boar/u, child);
+    yield* waitForLogEffect(log, /Started Geyser on.*127\.0\.0\.1/u, child);
   }
   return { child, log, port, bedrockPort };
 });
 const setServerProperty = (value: string, key: string, replacement: string) =>
-  new RegExp(`^${key}=.*$`, "m").test(value)
-    ? value.replace(new RegExp(`^${key}=.*$`, "m"), `${key}=${replacement}`)
+  new RegExp(`^${key}=.*$`, "mu").test(value)
+    ? value.replace(new RegExp(`^${key}=.*$`, "mu"), `${key}=${replacement}`)
     : `${value}\n${key}=${replacement}\n`;
 
 const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
   dir: string,
   source: string,
   name: string,
-  entityProbe = false,
+  entityProbe: boolean = false,
   resourceProbe?: { variant: "a" | "b"; run: string },
-  inventoryUiProbe = false,
+  inventoryUiProbe: boolean = false,
 ) {
   if (!existsSync(join(source, "bedrock_server")))
     return yield* labError(
@@ -317,11 +317,11 @@ const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
     { ...process.env, LD_LIBRARY_PATH: home },
     true,
   );
-  const output = yield* waitForLogEffect(log, /Server started\./, child);
-  if (entityProbe) yield* waitForLogEffect(log, /\[ViaBedrock Entity Probe\] ready/, child, 30000);
+  const output = yield* waitForLogEffect(log, /Server started\./u, child);
+  if (entityProbe) yield* waitForLogEffect(log, /\[ViaBedrock Entity Probe\] ready/u, child, 30000);
   if (resourceProbe) {
     child.stdin?.write("tickingarea add circle 0 64 0 2 stackanvil_probe\n");
-    yield* waitForLogEffect(log, /Added ticking area centered/, child, 30000);
+    yield* waitForLogEffect(log, /Added ticking area centered/u, child, 30000);
     let placed = false;
     for (let attempt = 0; attempt < 10 && !placed; attempt++) {
       child.stdin?.write("setblock 0 64 0 stackanvil:resource_probe_block\n");
@@ -334,7 +334,7 @@ const bedrockServerEffect = Effect.fn("Integration.bedrockServer")(function* (
         new Error(`Could not place the custom probe block. Read ${log}.`),
       );
   }
-  const version = /Version:\s*(\d+\.\d+\.\d+)/.exec(output)?.[1];
+  const version = /Version:\s*(\d+\.\d+\.\d+)/u.exec(output)?.[1];
   if (!version)
     return yield* labError(
       "bedrockServer",
@@ -351,8 +351,8 @@ const viaProxyEffect = Effect.fn("Integration.viaProxy")(function* (
   dir: string,
   bedrockPort: number,
   version: string,
-  name = "viaproxy",
-  homeName = name,
+  name: string = "viaproxy",
+  homeName: string = name,
 ) {
   const jar = process.env["VIAPROXY_JAR"]
     ? resolve(process.env["VIAPROXY_JAR"])
@@ -387,7 +387,7 @@ const viaProxyEffect = Effect.fn("Integration.viaProxy")(function* (
     home,
     log,
   );
-  yield* waitForLogEffect(log, /Binding proxy server/, child);
+  yield* waitForLogEffect(log, /Binding proxy server/u, child);
   return { child, log, port };
 });
 const preparePrismEffect = Effect.fn("Integration.preparePrism")(function* (
@@ -405,7 +405,7 @@ const preparePrismEffect = Effect.fn("Integration.preparePrism")(function* (
   } else {
     const mods = join(instance, "minecraft", "mods");
     for (const file of yield* labIO("preparePrism", async () => readdir(mods))) {
-      if (/^(?:iris|sodium)-.*\.jar$/i.test(file))
+      if (/^(?:iris|sodium)-.*\.jar$/iu.test(file))
         yield* labIO("preparePrism", async () => rm(join(mods, file)));
     }
   }
@@ -466,21 +466,22 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
     child: ChildProcess;
     log: string;
   },
-  runEntityProbe = false,
+  runEntityProbe: boolean = false,
   gameplayCases: readonly GameplayCaseId[] = [],
   resource?: {
     variant: "a" | "b";
     label: string;
   },
   probeFailures?: string[],
-  negativeControls = false,
+  negativeControls: boolean = false,
 ) {
   const { instance, name } = yield* preparePrismEffect(profile);
   const prismRoot = yield* isolatedPrismRootEffect(
     dir,
     profile === "shaders" ? "shaders" : profile === "optimized" ? "modpack" : "plain",
   );
-  if (gameplayCases.length) yield* labIO("javaJoin", async () => installProbeGuiScale(instance));
+  if (gameplayCases.length > 0)
+    yield* labIO("javaJoin", async () => installProbeGuiScale(instance));
   const serverLogStart = (yield* textFileEffect(target.log)).length;
   const proxyLog = target.proxyLog;
   const connectionLogStart = proxyLog ? (yield* textFileEffect(proxyLog)).length : 0;
@@ -522,7 +523,7 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
       if (route === "java-bedrock" || route === "java-geyser") {
         yield* waitForLogEffect(
           clientLog,
-          /Connecting to 127\.0\.0\.1/,
+          /Connecting to 127\.0\.0\.1/u,
           () => alive(gamePid),
           120000,
         );
@@ -530,7 +531,7 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
           const proxyLogText = async () => (await textFile(proxyLog)).slice(connectionLogStart);
           const deadline = Date.now() + 120000;
           while (
-            !/All resource packs have been loaded/.test(
+            !/All resource packs have been loaded/u.test(
               yield* labIO("javaJoin", async () => proxyLogText()),
             )
           ) {
@@ -575,14 +576,14 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
           ? (yield* labIO("javaJoin", async () => readGraphicsLock())).shader.filename
           : undefined,
       );
-      if (renderingFailures.length)
+      if (renderingFailures.length > 0)
         return yield* labError("javaJoin", new Error(renderingFailures.join(" ")));
       print(
         `PASS ${route}${profile === "shaders" ? "+fabulously-optimized-shaders" : profile === "optimized" ? "+fabulously-optimized" : ""}: ${player} joined and remained connected for 20s.`,
       );
       if (resource) {
         const resourceLog = yield* textFileEffect(clientLog);
-        if (!/Reloading ResourceManager:.*server\//.test(resourceLog)) {
+        if (!/Reloading ResourceManager:.*server\//u.test(resourceLog)) {
           return yield* labError(
             "javaJoin",
             new Error(`Resource probe ${resource.label} did not load the converted Java pack.`),
@@ -619,7 +620,7 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
           print(`PASS ${group} entity probe: ${result.passed} script actions accepted.`);
         }
       }
-      if (gameplayCases.length && entityProbe) {
+      if (gameplayCases.length > 0 && entityProbe) {
         yield* labIO("javaJoin", async () =>
           runGameplayCases(gameplayCases, {
             server: entityProbe.child,
@@ -639,7 +640,9 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
               route === "java-geyser"
                 ? async (id, serverLog, event) => {
                     if (isOneOf(geyserCaseIds, id)) {
-                      if (!/Reloading ResourceManager:.*server\//.test(await textFile(clientLog))) {
+                      if (
+                        !/Reloading ResourceManager:.*server\//u.test(await textFile(clientLog))
+                      ) {
                         throw new Error(
                           "The Java client did not load the converted Geyser resource pack.",
                         );
@@ -705,7 +708,7 @@ const javaJoinEffect = Effect.fn("Integration.javaJoin")(function* (
 });
 const captureEffect = Effect.fn("Integration.capture")(function* (
   args: string[],
-  env = process.env,
+  env: NodeJS.ProcessEnv = process.env,
 ) {
   if (args[0] === "ui") return yield* labIO("capture", async () => captureUi.command(args));
   return yield* commandEffect(process.execPath, [captureCli, ...args], env);
@@ -787,7 +790,7 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
       yield* Effect.sleep(4000);
       yield* captureEffect(["ui", "screenshot", "native-before-trust"]);
       const trustPanelPixel = (yield* captureEffect(["ui", "pixel", "0.36", "0.28"]))
-        .split(/\s+/)
+        .split(/\s+/u)
         .map(Number);
       if (
         trustPanelPixel.length !== 3 ||
@@ -868,7 +871,7 @@ const removeTemporaryServerEffect = Effect.fn("Integration.removeTemporaryServer
     const file = join(users, user, "games", "com.mojang", "minecraftpe", "external_servers.txt");
     if (!existsSync(file)) continue;
     const original = yield* labIO("removeTemporaryServer", async () => readFile(file, "utf8"));
-    const lines = original.split(/(?<=\n)/);
+    const lines = original.split(/(?<=\n)/u);
     const retained = lines.filter((line) => !line.includes(`:${name}:127.0.0.1:${port}:`));
     if (retained.length !== lines.length)
       yield* labIO("removeTemporaryServer", async () => writeFile(file, retained.join("")));
@@ -978,7 +981,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
       new Error("Geyser cases and negative controls require --route java-geyser."),
     );
   }
-  if (geyserRoute && gameplayCases.some(isAuthoredInventoryCase)) {
+  if (geyserRoute && gameplayCases.some((value) => isAuthoredInventoryCase(value))) {
     return yield* labError(
       "main",
       new Error("Authored Bedrock inventory actions require the java-bedrock route."),
@@ -997,12 +1000,12 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
   }
   if ((entityProbe || resourceProbe) && !routes.includes("java-bedrock"))
     return yield* labError("main", new Error("Bedrock probes require the java-bedrock route."));
-  if (gameplayCases.length && !routes.includes("java-bedrock") && !geyserRoute)
+  if (gameplayCases.length > 0 && !routes.includes("java-bedrock") && !geyserRoute)
     return yield* labError(
       "main",
       new Error("Gameplay cases require java-bedrock or java-geyser."),
     );
-  if ((entityProbe || gameplayCases.length || resourceProbe) && modpackOnly)
+  if ((entityProbe || gameplayCases.length > 0 || resourceProbe) && modpackOnly)
     return yield* labError("main", new Error("Probe cases require the plain Java client run."));
   if (process.env["STACKANVIL_USE_DESKTOP"] === "1")
     return yield* labError(
@@ -1018,7 +1021,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
     );
   if (!options["reuse-build"])
     yield* commandEffect(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "all"]);
-  const dir = join(privateRoot, "runs", new Date().toISOString().replaceAll(/[:.]/g, "-"));
+  const dir = join(privateRoot, "runs", new Date().toISOString().replaceAll(/[:.]/gu, "-"));
   yield* labIO("main", async () => mkdir(dir, { recursive: true, mode: 0o700 }));
   print(`Private logs: ${dir}`);
   yield* (yield* IntegrationResources).acquireDisplay(ensureDisplay);
@@ -1039,7 +1042,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
           "bedrock-proxy-server",
           entityProbe || gameplayCases.length > 0,
           resourceProbe ? { variant: "a", run: resourceRun } : undefined,
-          gameplayCases.some(isAuthoredInventoryCase),
+          gameplayCases.some((value) => isAuthoredInventoryCase(value)),
         )
       : undefined;
     const proxy = proxyBedrock
@@ -1064,7 +1067,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
             probeFailures,
             negativeControls,
           );
-        if (gameplayCases.length) {
+        if (gameplayCases.length > 0) {
           yield* javaJoinEffect(route, "plain", dir, target);
           print("PASS Geyser reconnect: the Java client rejoined the same Paper world.");
         }
@@ -1080,7 +1083,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
               "plain",
               dir,
               { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
-              entityProbe || gameplayCases.length || resourceProbe ? proxyBedrock : undefined,
+              entityProbe || gameplayCases.length > 0 || resourceProbe ? proxyBedrock : undefined,
               entityProbe,
               gameplayCases,
               resourceProbe ? { variant: "a", label: "a-first" } : undefined,
@@ -1181,7 +1184,7 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
           print("PASS resource pack cache: changed content produced a new conversion.");
           modpackProxy = changedProxy;
           modpackBedrock = changedServer;
-        } else if (gameplayCases.length) {
+        } else if (gameplayCases.length > 0) {
           yield* javaJoinEffect(route, "plain", dir, {
             ...proxy,
             log: proxyBedrock.log,
@@ -1199,7 +1202,8 @@ export const mainEffect = Effect.fn("Integration.main")(function* () {
         yield* bedrockJoinEffect(dir, nativeBedrock);
       }
     }
-    if (probeFailures.length) return yield* labError("main", new Error(probeFailures.join("\n")));
+    if (probeFailures.length > 0)
+      return yield* labError("main", new Error(probeFailures.join("\n")));
   });
 });
 // SDK callbacks expose Promises at their boundary.

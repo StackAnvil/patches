@@ -54,7 +54,7 @@ export const devSetup = Effect.fn("devSetup")(function* () {
   print(
     "HTTPS capture: use bun run capture start and bun run capture launch. Bedrock gameplay uses a separate UDP path.",
   );
-  if (missing.length)
+  if (missing.length > 0)
     return yield* new DevSetupError({
       message: `Development setup needs:\n${missing.map((item) => `- ${item}`).join("\n")}`,
     });

@@ -20,7 +20,7 @@ function versionError(fallback: string) {
     new BedrockVersionError({ message: cause instanceof Error ? cause.message : fallback, cause });
 }
 type FetchMetadata = (url: URL, init: RequestInit) => Promise<Response>;
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const metadataLimit = 2 * 1024 * 1024;
 
 export interface BedrockVersionPin {
@@ -45,7 +45,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function windowsPackageVersion(versionId: string): string {
-  const [, packageVersion, suffix] = /^(\d+\.\d+\.\d+\.\d+)\.(.+)$/.exec(versionId) ?? [];
+  const [, packageVersion, suffix] = /^(\d+\.\d+\.\d+\.\d+)\.(.+)$/u.exec(versionId) ?? [];
   if (packageVersion === undefined || suffix === undefined || !uuid.test(suffix))
     throw new Error("Invalid Xbox version ID");
   return packageVersion;
@@ -60,7 +60,7 @@ export function xboxAuthorization(text: string): string {
       const claims = record(response["DisplayClaims"])["xui"];
       if (!Array.isArray(claims) || claims.length !== 1) throw new Error();
       const hash = record(claims[0])["uhs"];
-      if (typeof hash !== "string" || typeof response["Token"] !== "string") throw new Error();
+      if (typeof hash !== "string" || typeof response["Token"] !== "string") throw new TypeError();
       header = `XBL3.0 x=${hash};${response["Token"]}`;
     } catch {
       throw new Error(
@@ -68,7 +68,7 @@ export function xboxAuthorization(text: string): string {
       );
     }
   }
-  if (!/^XBL3\.0 x=\d+;[A-Za-z0-9._~+/-]+=*$/.test(header)) {
+  if (!/^XBL3\.0 x=\d+;[A-Za-z0-9._~+/-]+=*$/u.test(header)) {
     throw new Error("Invalid Xbox Authorization header. Use XBL3.0 x=<user hash>;<XSTS token>");
   }
   return header;
@@ -76,12 +76,12 @@ export function xboxAuthorization(text: string): string {
 
 export function bedrockContentId(metadata: unknown, productId: string): string {
   const items = record(metadata)["Items"];
-  if (!Array.isArray(items)) throw new Error("The Store response contains no products");
+  if (!Array.isArray(items)) throw new TypeError("The Store response contains no products");
   const ids = new Set<string>();
-  for (const item of items.map(record)) {
+  for (const item of items.map((value) => record(value))) {
     if (item["ProductId"] !== productId) continue;
     if (!Array.isArray(item["ContentIds"]))
-      throw new Error("The Store product contains no content IDs");
+      throw new TypeError("The Store product contains no content IDs");
     for (const id of item["ContentIds"]) {
       if (typeof id !== "string" || !uuid.test(id))
         throw new Error("The Store product contains an invalid content ID");
@@ -111,13 +111,14 @@ export function bedrockVersionPin(
     throw new Error("Xbox returned a different content ID");
   }
   const versionId = response["VersionId"];
-  if (typeof versionId !== "string") throw new Error("Invalid Xbox version ID");
+  if (typeof versionId !== "string") throw new TypeError("Invalid Xbox version ID");
   const packageVersion = windowsPackageVersion(versionId);
   if (response["Version"] !== versionId && response["Version"] !== packageVersion)
     throw new Error("Xbox package version and version ID differ");
   if (response["UpdatePredownload"] !== false)
     throw new Error("Xbox did not confirm that this package is available now");
-  if (!Array.isArray(response["PackageFiles"])) throw new Error("Xbox returned no package files");
+  if (!Array.isArray(response["PackageFiles"]))
+    throw new TypeError("Xbox returned no package files");
   const product = products[channel];
   const fileName = `${product.family}_${packageVersion}_x64__8wekyb3d8bbwe.msixvc`;
   const files = response["PackageFiles"]

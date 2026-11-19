@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import {
@@ -15,7 +15,6 @@ import {
 } from "node:fs/promises";
 import { cpus, freemem, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { bundlePrism } from "../prism.ts";
@@ -24,8 +23,8 @@ import { clickPointer, keyEvents, validateHoldMs, withNamedQmp, type QmpCommand 
 import { Schema } from "effect";
 import { errorCode, parseJson } from "../guards.ts";
 import { print } from "../output.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const vmRoot = join(root, ".stackanvil", "lab", "vms");
 const shareRoot = join(vmRoot, "share");
 type Guest = "windows" | "macos";
@@ -66,7 +65,7 @@ function guest(value: string | undefined): Guest {
 export function validateSpec(spec: VmSpec): VmSpec {
   if (
     !releases[spec.guest].includes(spec.release) ||
-    !/^sa-(windows|macos)-[0-9a-f]{12}$/.test(spec.name) ||
+    !/^sa-(windows|macos)-[0-9a-f]{12}$/u.test(spec.name) ||
     !spec.name.startsWith(`sa-${spec.guest}-`)
   ) {
     throw new Error(
@@ -118,7 +117,7 @@ export function vmConfig(spec: VmSpec): string {
 /** Quickget can return success after a blocked download or save an HTML error page as an ISO. */
 export async function validateInstallMedia(config: string): Promise<void> {
   const contents = await readFile(config, "utf8");
-  for (const [, path = ""] of contents.matchAll(/^(?:iso|fixed_iso)=["']([^"'\n]+)["']\s*$/gm)) {
+  for (const [, path = ""] of contents.matchAll(/^(?:iso|fixed_iso)=["']([^"'\n]+)["']\s*$/gmu)) {
     const media = resolve(dirname(config), path);
     let handle;
     try {
@@ -237,7 +236,7 @@ async function requireHost(): Promise<void> {
   const [major = 0, minor = 0, patch = 0] = version;
   if (
     version.length !== 3 ||
-    !version.every(Number.isInteger) ||
+    !version.every((value) => Number.isInteger(value)) ||
     major < 4 ||
     (major === 4 && (minor < 9 || (minor === 9 && patch < 9)))
   ) {
@@ -279,11 +278,10 @@ async function runQuickemu(spec: VmSpec): Promise<void> {
     );
     await new Promise<void>((settle, reject) => {
       child.on("error", reject);
-      child.on("exit", (code) =>
-        code === 0
-          ? settle()
-          : reject(new Error(`Quickemu exited with ${code}. Read ${path}/launch.log.`)),
-      );
+      child.on("exit", (code) => {
+        if (code === 0) settle();
+        else reject(new Error(`Quickemu exited with ${code}. Read ${path}/launch.log.`));
+      });
     });
   } finally {
     await log.close();
@@ -405,7 +403,7 @@ export async function vmMain(args: string[]): Promise<void> {
       "Usage: bun run lab vm <doctor|prepare|start|status|stop|view|screenshot|key|click|artifacts|serve> [windows|macos] [arguments]",
     );
   }
-  if (["start", "status", "stop"].includes(action) && rest.length)
+  if (["start", "status", "stop"].includes(action) && rest.length > 0)
     throw new Error("This VM command accepts only the guest name.");
   const selected = guest(selectedText);
   const path = directory(selected);
@@ -440,11 +438,11 @@ export async function vmMain(args: string[]): Promise<void> {
           });
           await new Promise<void>((settle, reject) => {
             child.on("error", reject);
-            child.on("exit", (code) =>
-              code === 0
-                ? settle()
-                : reject(new Error(`Quickget exited with ${code}. Read the private download log.`)),
-            );
+            child.on("exit", (code) => {
+              if (code === 0) settle();
+              else
+                reject(new Error(`Quickget exited with ${code}. Read the private download log.`));
+            });
           });
         } finally {
           await log.close();
@@ -546,7 +544,7 @@ export async function vmMain(args: string[]): Promise<void> {
   }
   if (action === "screenshot") {
     const name = rest[0] ?? `screen-${Date.now()}`;
-    if (rest.length > 1 || !/^[a-zA-Z0-9_-]+$/.test(name))
+    if (rest.length > 1 || !/^[a-zA-Z0-9_-]+$/u.test(name))
       throw new Error("Use a screenshot name containing letters, digits, underscores, or hyphens.");
     const captures = join(path, "captures");
     await privateDirectory(captures);

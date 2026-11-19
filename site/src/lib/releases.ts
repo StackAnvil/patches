@@ -16,19 +16,23 @@ export interface Release {
 
 export type Setup = "proxy" | "fabric" | "modpack";
 
-function githubUrl(value: unknown, prefix: string) {
-  if (typeof value !== "string") return undefined;
+function parsedUrl(value: unknown): URL | null {
+  if (typeof value !== "string") return null;
   try {
-    const url = new URL(value);
-    return url.origin === "https://github.com" &&
-      url.pathname.startsWith(prefix) &&
-      !url.username &&
-      !url.password
-      ? url.href
-      : undefined;
+    return new URL(value);
   } catch {
-    return undefined;
+    return null;
   }
+}
+
+function githubUrl(value: unknown, prefix: string) {
+  const url = parsedUrl(value);
+  return url?.origin === "https://github.com" &&
+    url.pathname.startsWith(prefix) &&
+    !url.username &&
+    !url.password
+    ? url.href
+    : undefined;
 }
 
 export function parseRelease(value: unknown): Release | null {
@@ -68,7 +72,7 @@ export function parseRelease(value: unknown): Release | null {
     if (!new URL(download).pathname.startsWith(expected)) return [];
     return [{ name: asset.name, url: download, size: asset.size }];
   });
-  const modpack = assets.find((asset) => /^StackAnvil-(.+)\.mrpack$/.test(asset.name));
+  const modpack = assets.find((asset) => /^StackAnvil-(.+)\.mrpack$/u.test(asset.name));
   return {
     tag: value.tag_name,
     url,
@@ -86,13 +90,13 @@ function only(assets: ReleaseAsset[], pattern: RegExp) {
 
 export function setupDownloads(release: Release | null, setup: Setup) {
   const assets = release?.assets ?? [];
-  const proxy = only(assets, /^ViaProxy-.+-StackAnvil\.jar$/);
+  const proxy = only(assets, /^ViaProxy-.+-StackAnvil\.jar$/u);
   const viafabricplus = only(
     assets,
-    /^ViaFabricPlus-(?!.*(?:-sources|-javadoc|-api)\.jar$).+\.jar$/,
+    /^ViaFabricPlus-(?!.*(?:-sources|-javadoc|-api)\.jar$).+\.jar$/u,
   );
-  const addon = only(assets, /^viafabricplus-bedrock-.+-StackAnvil\.jar$/);
-  const modpack = only(assets, /^StackAnvil-.+\.mrpack$/);
+  const addon = only(assets, /^viafabricplus-bedrock-.+-StackAnvil\.jar$/u);
+  const modpack = only(assets, /^StackAnvil-.+\.mrpack$/u);
   if (setup === "proxy") return proxy ? [{ title: "ViaProxy", asset: proxy }] : [];
   if (setup === "modpack") return modpack ? [{ title: "Client modpack", asset: modpack }] : [];
   return viafabricplus && addon

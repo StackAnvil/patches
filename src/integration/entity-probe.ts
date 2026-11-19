@@ -55,7 +55,7 @@ export function probeResult(log: string, group: "status" | "metadata"): ProbeRes
   const summary = log
     .split("\n")
     .find((line) => line.includes(`${prefix} ${group} sweep complete:`));
-  const match = summary && /(\d+) attempted, (\d+) passed, (\d+) failed\./.exec(summary);
+  const match = summary && /(\d+) attempted, (\d+) passed, (\d+) failed\./u.exec(summary);
   if (!match) return undefined;
   return { attempted: Number(match[1]), passed: Number(match[2]), failed: Number(match[3]) };
 }

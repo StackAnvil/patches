@@ -50,7 +50,13 @@ export function SiteHeader() {
         Skip to content
       </a>
       <div className="header-inner">
-        <Link to="/" aria-label="StackAnvil home" onClick={() => setMenuOpen(false)}>
+        <Link
+          to="/"
+          aria-label="StackAnvil home"
+          onClick={() => {
+            setMenuOpen(false);
+          }}
+        >
           <Brand />
         </Link>
         <nav className="desktop-nav" aria-label="Main navigation">
@@ -60,7 +66,9 @@ export function SiteHeader() {
           <button
             type="button"
             className="search-trigger"
-            onClick={() => setOpenSearch(true)}
+            onClick={() => {
+              setOpenSearch(true);
+            }}
             aria-label="Search documentation"
           >
             <Search size={17} aria-hidden="true" />
@@ -71,7 +79,9 @@ export function SiteHeader() {
             type="button"
             className="icon-button theme-toggle"
             aria-label="Toggle color theme"
-            onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+            onClick={() => {
+              setTheme(resolvedTheme === "dark" ? "light" : "dark");
+            }}
           >
             <Sun className="theme-sun" size={19} aria-hidden="true" />
             <Moon className="theme-moon" size={19} aria-hidden="true" />
@@ -82,14 +92,18 @@ export function SiteHeader() {
             aria-label={menuOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={menuOpen}
             aria-controls="mobile-navigation"
-            onClick={() => setMenuOpen(!menuOpen)}
+            onClick={() => {
+              setMenuOpen(!menuOpen);
+            }}
           >
             {menuOpen ? <X size={21} /> : <Menu size={21} />}
           </button>
           <Link
             className="button forge header-download"
             to="/releases/"
-            onClick={() => setMenuOpen(false)}
+            onClick={() => {
+              setMenuOpen(false);
+            }}
           >
             <ArrowDownToLine size={17} aria-hidden="true" />
             <span className="header-download-label">Download</span>
@@ -98,11 +112,25 @@ export function SiteHeader() {
       </div>
       {menuOpen && (
         <nav id="mobile-navigation" className="mobile-nav" aria-label="Mobile navigation">
-          <NavLinks onNavigate={() => setMenuOpen(false)} />
-          <a href={site.discord} onClick={() => setMenuOpen(false)}>
+          <NavLinks
+            onNavigate={() => {
+              setMenuOpen(false);
+            }}
+          />
+          <a
+            href={site.discord}
+            onClick={() => {
+              setMenuOpen(false);
+            }}
+          >
             Discord
           </a>
-          <a href={site.github} onClick={() => setMenuOpen(false)}>
+          <a
+            href={site.github}
+            onClick={() => {
+              setMenuOpen(false);
+            }}
+          >
             GitHub
           </a>
         </nav>

@@ -1,7 +1,7 @@
-import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
-import { promisify } from "node:util";
+import type { ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { Data, Effect, type Schema } from "effect";
 import { parseJson } from "../guards.ts";
+import { execFileAsync as executeFile } from "../process.ts";
 
 export class LabError extends Data.TaggedError("LabError")<{
   readonly operation: string;
@@ -34,7 +34,9 @@ export function labValue<A>(operation: string, work: () => A) {
 /** SIGINT/SIGTERM interrupt the root fiber and wait for scoped cleanup. */
 export async function runLabCommand<A, E>(program: Effect.Effect<A, E>) {
   const controller = new AbortController();
-  const interrupt = () => controller.abort();
+  const interrupt = () => {
+    controller.abort();
+  };
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   try {
@@ -120,7 +122,6 @@ export function labRequestJson<S extends Schema.Decoder<unknown>>(url: string, s
   );
 }
 
-const executeFile = promisify(execFile);
 export function labExecute(
   program: string,
   args: string[],

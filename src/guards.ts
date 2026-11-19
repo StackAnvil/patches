@@ -27,6 +27,9 @@ export function parseJson<S extends Schema.Decoder<unknown>>(schema: S, text: st
   throw new Error("JSON does not match the expected shape.");
 }
 
+/** A JSON object whose values are checked by the caller. */
+export const JsonObjectSchema = Schema.Record(Schema.String, Schema.Unknown);
+
 /** Checks for a plain JSON-style object. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -45,7 +45,7 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     BedrockAssetsSchema,
     await readFile(join(repository, "bedrock-assets.json"), "utf8"),
   );
-  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version))
+  if (!/^\d+\.\d+\.\d+\.\d+$/u.test(version))
     throw new Error("Invalid bundled Bedrock asset version");
   const directory = join(repository, "assets", "bedrock", version);
   if (id === "viabedrock") {
@@ -98,7 +98,7 @@ export async function buildEnvironment(version: string): Promise<NodeJS.ProcessE
 }
 
 function pomValue(pom: string, tag: string): string {
-  const value = new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(pom)?.[1];
+  const value = new RegExp(`<${tag}>([^<]+)</${tag}>`, "u").exec(pom)?.[1];
   if (!value) throw new Error(`Generated POM has no ${tag}`);
   return value;
 }
@@ -113,7 +113,7 @@ function coordinates(pom: string): Coordinates {
 
 export function artifactProjectDirectory(dir: string, project?: string): string {
   if (!project) return dir;
-  if (!/^:[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)*$/.test(project)) {
+  if (!/^:[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)*$/u.test(project)) {
     throw new Error(`Invalid Gradle artifact project: ${project}`);
   }
   return join(dir, ...project.slice(1).split(":"));
@@ -290,10 +290,10 @@ export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: s
   const artifacts = yield* Effect.promise(() =>
     listArtifacts(artifactProjectDirectory(dir, target.artifactProject)),
   );
-  if (!artifacts.length)
+  if (artifacts.length === 0)
     return yield* new StackError({ message: `No PR JAR artifacts found for ${id}` });
   const output = patchFile
-    ? join(root, "dist", "pr", id, patchFile.replace(/\.patch$/, ""))
+    ? join(root, "dist", "pr", id, patchFile.replace(/\.patch$/u, ""))
     : join(root, "dist", "pr", id);
   yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
   yield* Effect.promise(() => mkdir(output, { recursive: true }));

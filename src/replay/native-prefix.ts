@@ -100,7 +100,7 @@ export async function validateNativeReplayPrefix(
 export async function requireNativePrefixIdle(prefix: string): Promise<void> {
   const expected = `WINEPREFIX=${prefix}`;
   for (const name of await readdir("/proc")) {
-    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+    if (!/^\d+$/u.test(name) || Number(name) === process.pid) continue;
     let environment: Buffer;
     try {
       environment = await readFile(`/proc/${name}/environ`);
@@ -159,7 +159,7 @@ export async function prepareNativeReplayPrefix(options: NativePrefixOptions): P
       folders.add(folder);
     }
   }
-  if (!folders.size)
+  if (folders.size === 0)
     throw new Error("The native prefix has no versioned Minecraft game-data folders.");
   const backup = join(run, "native-server-list-backup");
   await mkdir(backup, { mode: 0o700 });

@@ -61,7 +61,7 @@ const syncedRef = (mode: string) => `refs/stackanvil/last-synced-${mode}`;
 
 export function prMode(patchFile?: string): string {
   if (!patchFile) return "pr";
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.patch$/.test(patchFile)) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.patch$/u.test(patchFile)) {
     throw new Error(`Invalid patch filename: ${patchFile}`);
   }
   return `pr-${patchFile.slice(0, -".patch".length)}`;
@@ -83,7 +83,7 @@ const applyPatch = Effect.fn("applyPatch")(function* (args: string[], dir: strin
   if (committer) return yield* git(args, dir);
 
   const text = yield* Effect.promise(() => readFile(patch, "utf8"));
-  const author = text.match(/^From: (.+) <([^<>]+)>$/m);
+  const author = text.match(/^From: (.+) <([^<>]+)>$/mu);
   if (!author) return yield* new StackError({ message: `Patch has no author identity: ${patch}` });
   return yield* command("git", args, dir, {
     ...process.env,
@@ -135,7 +135,7 @@ const cloneIfMissing = Effect.fn("cloneIfMissing")(function* (
   // Generated checkouts are separate repositories, so the root .gitignore does not apply here.
   const exclude = join(dir, ".git", "info", "exclude");
   const rules = yield* Effect.promise(() => readFile(exclude, "utf8"));
-  if (!rules.split(/\r?\n/).includes("/logs/")) {
+  if (!rules.split(/\r?\n/u).includes("/logs/")) {
     yield* Effect.promise(() => appendFile(exclude, `${rules.endsWith("\n") ? "" : "\n"}/logs/\n`));
   }
   return dir;
@@ -201,7 +201,9 @@ export const sync = Effect.fn("sync")(function* (
       });
     }
     yield* Effect.try({
-      try: () => assertPrReady(selected),
+      try: () => {
+        assertPrReady(selected);
+      },
       catch: (cause) => stackError(cause),
     });
   }
@@ -288,7 +290,7 @@ export const continueApply = Effect.fn("continueApply")(function* (
 export const assertPrProductionChanges = Effect.fn("assertPrProductionChanges")(function* (
   dir: string,
   baseSha: string,
-  staged = false,
+  staged: boolean = false,
   project?: string,
 ) {
   const diff = yield* git(
@@ -469,7 +471,7 @@ export const addPatch = Effect.fn("addPatch")(function* (
   }
   const target = yield* Effect.promise(() => getTarget(id));
   const series = yield* Effect.promise(() => getSeries(id));
-  if (group === "upstreamable" && series.deferred.length) {
+  if (group === "upstreamable" && series.deferred.length > 0) {
     return yield* new StackError({
       message: `Cannot append an upstreamable patch after deferred patches in ${id}. Insert its commit before the deferred commits, then export the reordered series.`,
     });
@@ -495,9 +497,9 @@ export const addPatch = Effect.fn("addPatch")(function* (
     });
   const slug = title
     .toLowerCase()
-    .replace(/^[a-z]+(?:\([^)]*\))?:\s*/, "")
-    .replaceAll(/[^a-z0-9]+/g, "-")
-    .replaceAll(/^-|-$/g, "")
+    .replace(/^[a-z]+(?:\([^)]*\))?:\s*/u, "")
+    .replaceAll(/[^a-z0-9]+/gu, "-")
+    .replaceAll(/^-|-$/gu, "")
     .slice(0, 60);
   if (!slug) return yield* new StackError({ message: "Patch title needs words for a filename" });
   const number = String(

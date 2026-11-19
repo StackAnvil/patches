@@ -30,7 +30,7 @@ function validFrames(observation: PlayerUseObservation): boolean {
           ? [impact.playerPosition, impact.impactPosition]
           : [impact.playerPosition],
       ),
-    ].every((v) => [v.x, v.y, v.z].every(Number.isFinite)) &&
+    ].every((v) => [v.x, v.y, v.z].every((value) => Number.isFinite(value))) &&
     observation.events.every((event) => Number.isInteger(event.tick)) &&
     observation.impacts.every((impact) => Number.isInteger(impact.tick)) &&
     observation.frames.length > 1 &&
@@ -38,7 +38,9 @@ function validFrames(observation: PlayerUseObservation): boolean {
       (frame, index, frames) =>
         Number.isInteger(frame.tick) &&
         (index === 0 || frame.tick === (frames[index - 1]?.tick ?? Number.NaN) + 1) &&
-        [frame.position, frame.velocity].every((v) => [v.x, v.y, v.z].every(Number.isFinite)),
+        [frame.position, frame.velocity].every((v) =>
+          [v.x, v.y, v.z].every((value) => Number.isFinite(value)),
+        ),
     )
   );
 }

@@ -1,15 +1,13 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { promisify } from "node:util";
 import { Schema } from "effect";
 import { isRecord, parseJson, required } from "../guards.ts";
 import { root } from "../model.ts";
 import { print, printError } from "../output.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const project = "fabulously-optimized";
 const packDirectory = join(root, "integration", "modpacks");
 const packFile = join(packDirectory, `${project}.mrpack`);
@@ -116,7 +114,8 @@ export function validatePackIndex(
     );
   }
   const files: unknown = value["files"];
-  if (!Array.isArray(files) || !files.length) throw new Error("The modpack contains no files.");
+  if (!Array.isArray(files) || files.length === 0)
+    throw new Error("The modpack contains no files.");
   const entries: readonly unknown[] = files;
   const paths = new Set<string>();
   for (const file of entries) {
@@ -125,12 +124,13 @@ export function validatePackIndex(
       throw new Error(`Invalid or repeated modpack path: ${String(path)}`);
     paths.add(path);
     const hash = isRecord(file) && isRecord(file["hashes"]) ? file["hashes"]["sha512"] : undefined;
-    if (typeof hash !== "string" || !/^[a-f0-9]{128}$/i.test(hash))
+    if (typeof hash !== "string" || !/^[a-f0-9]{128}$/iu.test(hash))
       throw new Error(`Missing SHA-512 for ${path}.`);
     const downloads: unknown = isRecord(file) ? file["downloads"] : undefined;
     if (
       !Array.isArray(downloads) ||
-      !downloads.some((url) => {
+      !downloads.some((url: unknown) => {
+        if (typeof url !== "string") return false;
         try {
           return new URL(url).protocol === "https:";
         } catch {
@@ -171,7 +171,7 @@ export async function verifiedDownload(
 
 async function readPack(): Promise<{ lock: PackLock; index: PackIndex; entries: string[] }> {
   const lock = parseJson(PackLockSchema, await readFile(lockFile, "utf8"));
-  if (lock.project !== project || !/^[a-f0-9]{128}$/i.test(lock.sha512))
+  if (lock.project !== project || !/^[a-f0-9]{128}$/iu.test(lock.sha512))
     throw new Error("Invalid Fabulously Optimized lock file.");
   const bytes = new Uint8Array(await readFile(packFile));
   if (sha512(bytes) !== lock.sha512)
@@ -312,8 +312,8 @@ export async function installModpack(
   const options = existsSync(optionsFile) ? await readFile(optionsFile, "utf8") : "";
   await writeFile(
     optionsFile,
-    /^soundCategory_master:.*$/m.test(options)
-      ? options.replace(/^soundCategory_master:.*$/m, "soundCategory_master:0.0")
+    /^soundCategory_master:.*$/mu.test(options)
+      ? options.replace(/^soundCategory_master:.*$/mu, "soundCategory_master:0.0")
       : `${options}${options.endsWith("\n") || !options ? "" : "\n"}soundCategory_master:0.0\n`,
   );
   await writeFile(packMetadata, `${JSON.stringify(component, null, 2)}\n`);

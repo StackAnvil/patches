@@ -3,7 +3,9 @@ import { promisify } from "node:util";
 import { Data, Effect } from "effect";
 import { stringProperty } from "./guards.ts";
 
-const execFileAsync = promisify(execFile);
+/** Runs a program without a shell and resolves with its standard output and error. */
+// oxlint-disable-next-line typescript/strict-void-return -- promisify selects execFile's custom promise overload, so the callback form's ChildProcess result is never used.
+export const execFileAsync = promisify(execFile);
 
 /** A child process failed. The message includes its captured output. */
 export class CommandError extends Data.TaggedError("CommandError")<{
@@ -16,7 +18,7 @@ export const command = Effect.fn("command")(function* (
   args: string[],
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
-  trimOutput = true,
+  trimOutput: boolean = true,
 ) {
   return yield* Effect.tryPromise({
     try: async (signal) => {

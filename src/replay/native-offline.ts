@@ -19,27 +19,27 @@ function refuse(reason: string): never {
 }
 
 export function verifyNativeOfflineState(state: NativeOfflineState): NativeOfflineProof {
-  const devices = state.devices.trim().split(/\r?\n/);
+  const devices = state.devices.trim().split(/\r?\n/u);
   if (devices.length < 3 || !devices[0]?.includes("|") || !devices[1]?.includes("|"))
     refuse("network interface metadata is incomplete");
   const interfaces = devices.slice(2).map((row) => {
-    const [, name, counters] = /^\s*([^:]+):\s*(.*)$/.exec(row) ?? [];
-    if (name === undefined || counters === undefined || !/^\d+(?:\s+\d+){15}$/.test(counters))
+    const [, name, counters] = /^\s*([^:]+):\s*(.*)$/u.exec(row) ?? [];
+    if (name === undefined || counters === undefined || !/^\d+(?:\s+\d+){15}$/u.test(counters))
       refuse("network interface metadata is malformed");
     return name.trim();
   });
   if (interfaces.length !== 1 || interfaces[0] !== "lo")
     refuse("an external network interface is present");
 
-  const ipv4 = state.ipv4Routes.trim().split(/\r?\n/);
-  if (!/^Iface\s+Destination\s+Gateway\s+Flags\s+/.test(ipv4[0] ?? ""))
+  const ipv4 = state.ipv4Routes.trim().split(/\r?\n/u);
+  if (!/^Iface\s+Destination\s+Gateway\s+Flags\s+/u.test(ipv4[0] ?? ""))
     refuse("IPv4 route metadata is incomplete");
   for (const row of ipv4.slice(1)) {
-    const fields = row.trim().split(/\s+/);
+    const fields = row.trim().split(/\s+/u);
     const field = (index: number) => fields[index] ?? "";
     if (
       fields.length !== 11 ||
-      ![field(1), field(2), field(7)].every((value) => /^[\da-f]{8}$/i.test(value))
+      ![field(1), field(2), field(7)].every((value) => /^[\da-f]{8}$/iu.test(value))
     )
       refuse("IPv4 route metadata is malformed");
     const destination = Number.parseInt(field(1), 16);
@@ -52,14 +52,14 @@ export function verifyNativeOfflineState(state: NativeOfflineState): NativeOffli
     )
       refuse("an external IPv4 route is present");
   }
-  for (const row of state.ipv6Routes.trim().split(/\r?\n/).filter(Boolean)) {
-    const fields = row.trim().split(/\s+/);
+  for (const row of state.ipv6Routes.trim().split(/\r?\n/u).filter(Boolean)) {
+    const fields = row.trim().split(/\s+/u);
     const field = (index: number) => fields[index] ?? "";
     if (
       fields.length !== 10 ||
-      ![0, 2, 4].every((index) => /^[\da-f]{32}$/i.test(field(index))) ||
-      ![1, 3].every((index) => /^[\da-f]{2}$/i.test(field(index))) ||
-      ![5, 6, 7, 8].every((index) => /^[\da-f]{8}$/i.test(field(index)))
+      ![0, 2, 4].every((index) => /^[\da-f]{32}$/iu.test(field(index))) ||
+      ![1, 3].every((index) => /^[\da-f]{2}$/iu.test(field(index))) ||
+      ![5, 6, 7, 8].every((index) => /^[\da-f]{8}$/iu.test(field(index)))
     )
       refuse("IPv6 route metadata is malformed");
     const destination = BigInt(`0x${field(0)}`);
@@ -72,18 +72,18 @@ export function verifyNativeOfflineState(state: NativeOfflineState): NativeOffli
       refuse("an external IPv6 route is present");
   }
   for (const name of ["CapEff", "CapAmb", "CapBnd", "CapPrm", "CapInh"]) {
-    const values = state.status.split(/\r?\n/).filter((line) => line.startsWith(`${name}:`));
+    const values = state.status.split(/\r?\n/u).filter((line) => line.startsWith(`${name}:`));
     const [value] = values;
     if (
       value === undefined ||
       values.length !== 1 ||
-      !new RegExp(`^${name}:\\s+[\\da-f]+$`, "i").test(value)
+      !new RegExp(`^${name}:\\s+[\\da-f]+$`, "iu").test(value)
     )
       refuse(`${name} metadata is incomplete`);
-    const [, capabilities = ""] = value.split(/\s+/);
+    const [, capabilities = ""] = value.split(/\s+/u);
     if (BigInt(`0x${capabilities}`) !== 0n) refuse(`${name} is not cleared`);
   }
-  if (!/^net:\[\d+\]$/.test(state.namespace))
+  if (!/^net:\[\d+\]$/u.test(state.namespace))
     refuse("the process network namespace cannot be identified");
   return { namespace: state.namespace };
 }
@@ -105,7 +105,7 @@ export async function requireNativeReplayProcessNamespaces(
   proof: NativeOfflineProof,
   pids: readonly number[],
 ): Promise<void> {
-  if (!pids.length || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
+  if (pids.length === 0 || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
     refuse("owned process IDs are missing or invalid");
   for (const pid of pids) {
     const namespace = await readlink(`/proc/${pid}/ns/net`);

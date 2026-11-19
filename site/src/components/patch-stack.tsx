@@ -20,8 +20,6 @@ export function PatchStack() {
   const [visible, setVisible] = useState(false);
   const [readout, setReadout] = useState<Record<string, string>>({});
   useEffect(() => {
-    const node = root.current;
-    if (!node) return undefined;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry?.isIntersecting) {
@@ -31,8 +29,10 @@ export function PatchStack() {
       },
       { threshold: 0.25 },
     );
-    observer.observe(node);
-    return () => observer.disconnect();
+    if (root.current) observer.observe(root.current);
+    return () => {
+      observer.disconnect();
+    };
   }, []);
   function inspect(project: string, event: PointerEvent) {
     const title = event.target instanceof HTMLElement ? event.target.dataset["title"] : undefined;
@@ -50,7 +50,9 @@ export function PatchStack() {
           </div>
           <div
             className="patch-blocks"
-            onPointerOver={(event) => inspect(project, event)}
+            onPointerOver={(event) => {
+              inspect(project, event);
+            }}
             aria-hidden="true"
           >
             {patches.map((patch, index) => (

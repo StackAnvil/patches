@@ -21,12 +21,12 @@ export function connectionFailure(
   if (disconnect)
     return `Proxy closed the ${route} connection: ${disconnect.slice(disconnect.indexOf("["))}`;
   if (!player) return undefined;
-  const escaped = player.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = player.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const plain = stripVTControlCharacters(server);
   const pattern = javaBackend(route)
     ? `${escaped} lost connection\\b`
     : `Player disconnected:\\s*${escaped}\\b`;
-  return new RegExp(pattern).test(plain) ? `${player} disconnected on ${route}.` : undefined;
+  return new RegExp(pattern, "u").test(plain) ? `${player} disconnected on ${route}.` : undefined;
 }
 
 export interface JoinProbe {
@@ -45,11 +45,11 @@ export function joinedPlayer(route: JoinRoute, log: string): string | undefined 
   log = stripVTControlCharacters(log);
   if (javaBackend(route)) {
     return (
-      /\]: (?:System chat: )?([^\r\n]+?) joined the game\b/m.exec(log)?.[1] ??
-      /^(?:System chat: )?([^\r\n]+?) joined the game\b/m.exec(log)?.[1]
+      /\]: (?:System chat: )?([^\r\n]+?) joined the game\b/mu.exec(log)?.[1] ??
+      /^(?:System chat: )?([^\r\n]+?) joined the game\b/mu.exec(log)?.[1]
     );
   }
-  return /Player Spawned:\s*(.+?)\s+xuid:/.exec(log)?.[1];
+  return /Player Spawned:\s*(.+?)\s+xuid:/u.exec(log)?.[1];
 }
 
 export const waitForJoinEffect = Effect.fn("Integration.waitForJoin")(function* (probe: JoinProbe) {
@@ -68,7 +68,7 @@ export const waitForJoinEffect = Effect.fn("Integration.waitForJoin")(function* 
     );
     const server = stripVTControlCharacters(serverOutput);
     if (
-      /\b(?:ReportedException|ClassCastException|Crash report saved to|Exception in thread)\b/.test(
+      /\b(?:ReportedException|ClassCastException|Crash report saved to|Exception in thread)\b/u.test(
         client,
       )
     ) {
@@ -94,7 +94,7 @@ export const waitForJoinEffect = Effect.fn("Integration.waitForJoin")(function* 
     }
     if (joinedAt !== undefined && player) {
       const postJoin = server.slice(
-        server.search(javaBackend(probe.route) ? /joined the game/ : /Player Spawned:/),
+        server.search(javaBackend(probe.route) ? /joined the game/u : /Player Spawned:/u),
       );
       const failure = connectionFailure(probe.route, player, postJoin);
       if (failure) return yield* new LabError({ operation: "join probe", message: failure });

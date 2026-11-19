@@ -17,21 +17,21 @@ const tuple = (name: string) =>
 
 /** Keep the native image layers and atlases in their original overlay order. */
 export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, version: string) {
-  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid built-in image version");
+  if (!/^\d+\.\d+\.\d+\.\d+$/u.test(version)) throw new Error("Invalid built-in image version");
   const images = new Map<string, Uint8Array>();
   const packs = new Set<string>();
   for (const [path, bytes] of files) {
     const [, pack, texture] =
-      /^library\/(vanilla(?:_base|_\d+\.\d+(?:\.\d+)?)?)\/(textures\/.+)$/.exec(path) ?? [];
+      /^library\/(vanilla(?:_base|_\d+\.\d+(?:\.\d+)?)?)\/(textures\/.+)$/u.exec(path) ?? [];
     if (pack === undefined || texture === undefined) continue;
     if (
-      !/\.(png|jpg|tga)$/.test(texture) &&
+      !/\.(png|jpg|tga)$/u.test(texture) &&
       !["textures/item_texture.json", "textures/terrain_texture.json"].includes(texture)
     )
       continue;
     if (
       path.split("/").some((part) => !part || part === "." || part === "..") ||
-      /[\\:\0]/.test(path)
+      /[\\:\0]/u.test(path)
     )
       throw new Error("Invalid native image path");
     if (bytes.length === 0 || bytes.length > 32 * 1024 * 1024)
@@ -57,7 +57,7 @@ export function builtinImageBundle(files: ReadonlyMap<string, Uint8Array>, versi
       throw new Error("Ambiguous native image overlay");
   }
   if (
-    !images.size ||
+    images.size === 0 ||
     images.size > 32768 ||
     [...images.values()].reduce((sum, bytes) => sum + bytes.length, 0) > 256 * 1024 * 1024
   )
@@ -97,9 +97,9 @@ export async function verifyEmbeddedBuiltinImages(
   let entries = zipEntries(await readFile(artifact));
   if (project === "viafabricplus-bedrock") {
     const [core, ...otherCores] = [...entries].filter(([path]) =>
-      /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/.test(path),
+      /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/u.test(path),
     );
-    if (!core || otherCores.length)
+    if (!core || otherCores.length > 0)
       throw new Error("The Bedrock add-on must embed exactly one core JAR");
     entries = zipEntries(core[1]());
   }

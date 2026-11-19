@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { assetZip, readBedrockArchive } from "./bundle-bedrock-assets.ts";
+import {
+  assetZip,
+  readBedrockArchive,
+  ResourcePackManifestSchema,
+} from "./bundle-bedrock-assets.ts";
 import { applyBedrockUi } from "./bundle-bedrock-ui.ts";
 import {
   oreUiFonts,
@@ -9,15 +13,16 @@ import {
   verifyBuiltinOreUiContents,
   type OreUiDescriptor,
 } from "../src/bedrock-oreui.ts";
-import { required } from "../src/guards.ts";
+import { parseJson, required } from "../src/guards.ts";
 import { print } from "../src/output.ts";
 
 /** Acquire original Gameface resources; do not execute or translate the shipped JavaScript. */
 export async function planBedrockOreUi(game: string, version: string, output: string) {
-  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version))
+  if (!/^\d+\.\d+\.\d+\.\d+$/u.test(version))
     throw new Error("Expected a four-part Bedrock version");
   const protocol = version.split(".").slice(0, 3).join(".");
-  const manifest = JSON.parse(
+  const manifest = parseJson(
+    ResourcePackManifestSchema,
     await readFile(
       join(game, "data", "resource_packs", `vanilla_${protocol}`, "manifest.json"),
       "utf8",
@@ -37,14 +42,14 @@ export async function planBedrockOreUi(game: string, version: string, output: st
     return bytes;
   }
   function add(path: string, bytes: Uint8Array) {
-    if (!bytes.length) return;
+    if (bytes.length === 0) return;
     expanded += bytes.length - (files.get(path)?.length ?? 0);
     if (bytes.length > 16 * 1024 * 1024 || expanded > oreUiLimit)
       throw new Error("OreUI assets exceed limits");
     files.set(path, bytes);
   }
   const hbui = join(game, "data", "gui", "dist", "hbui");
-  const styles = (await readdir(hbui)).filter((name) => /^gameplay-[0-9a-f]+\.css$/.test(name));
+  const styles = (await readdir(hbui)).filter((name) => /^gameplay-[0-9a-f]+\.css$/u.test(name));
   const [style] = styles;
   if (style === undefined || styles.length !== 1)
     throw new Error("Expected one active OreUI gameplay stylesheet");
@@ -55,11 +60,12 @@ export async function planBedrockOreUi(game: string, version: string, output: st
   const fontDirectory = join(hbui, "fonts");
   if (!(await lstat(fontDirectory)).isDirectory()) throw new Error("Invalid OreUI font directory");
   for (const name of (await readdir(fontDirectory)).toSorted()) {
-    if (/\.(otf|ttf)$/.test(name)) add(`hbui/fonts/${name}`, await read(join(fontDirectory, name)));
+    if (/\.(otf|ttf)$/u.test(name))
+      add(`hbui/fonts/${name}`, await read(join(fontDirectory, name)));
   }
   const imageDirectory = join(hbui, "assets");
   const images = (await readdir(imageDirectory))
-    .filter((name) => /^animation-[0-9a-f]+\.gif$/.test(name))
+    .filter((name) => /^animation-[0-9a-f]+\.gif$/u.test(name))
     .toSorted();
   for (const name of images) add(`hbui/assets/${name}`, await read(join(imageDirectory, name)));
   const textRoot = join(game, "data", "resource_packs", "oreui");
@@ -74,12 +80,12 @@ export async function planBedrockOreUi(game: string, version: string, output: st
   const texts = readBedrockArchive(await read(selected));
   required(sources.at(-1), "The OreUI text archive source").entries = texts.size;
   for (const [name, bytes] of texts) {
-    if (/^[a-z]{2}_[A-Z]{2}\.lang$/.test(name)) add(`texts/${name}`, bytes);
+    if (/^[a-z]{2}_[A-Z]{2}\.lang$/u.test(name)) add(`texts/${name}`, bytes);
   }
   const textDirectory = join(textRoot, "texts");
   if (!(await lstat(textDirectory)).isDirectory()) throw new Error("Invalid OreUI text directory");
   for (const name of (await readdir(textDirectory)).toSorted()) {
-    if (/^[a-z]{2}_[A-Z]{2}\.lang$/.test(name))
+    if (/^[a-z]{2}_[A-Z]{2}\.lang$/u.test(name))
       add(`texts/${name}`, await read(join(textDirectory, name)));
   }
   const descriptor: OreUiDescriptor = {

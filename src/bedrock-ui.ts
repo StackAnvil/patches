@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import { Schema } from "effect";
 import { zipEntries } from "./zip.ts";
 import { isRecord } from "./guards.ts";
 
 export const builtinUiResource = "assets/viabedrock/builtin_ui.zip";
+
+const isFontMetadata = Schema.is(Schema.Struct({ fonts: Schema.Array(Schema.Unknown) }));
 
 export function verifyBuiltinUiContents(bytes: Buffer): void {
   const entries = zipEntries(bytes);
@@ -29,24 +32,18 @@ export function verifyBuiltinUiContents(bytes: Buffer): void {
     if (typeof document !== "object" || document === null || Array.isArray(document))
       throw new Error(`Invalid bundled UI definition: ${path}`);
   }
-  if (![...entries.keys()].some((path) => /^textures\/ui\/.+\.(png|jpg|tga)$/.test(path))) {
+  if (![...entries.keys()].some((path) => /^textures\/ui\/.+\.(png|jpg|tga)$/u.test(path))) {
     throw new Error("Bundled Bedrock UI textures are missing");
   }
   const metadata = entries.get("font/font_metadata.json")?.();
   if (!metadata?.length) throw new Error("Bundled Bedrock UI font metadata is missing");
   const fonts: unknown = JSON.parse(metadata.toString("utf8"));
-  if (
-    typeof fonts !== "object" ||
-    fonts === null ||
-    !("fonts" in fonts) ||
-    !Array.isArray(fonts.fonts)
-  ) {
-    throw new Error("Invalid bundled Bedrock UI font metadata");
-  }
+  if (!isFontMetadata(fonts)) throw new Error("Invalid bundled Bedrock UI font metadata");
   for (const font of fonts.fonts) {
-    if (font?.font_format !== "ttf") continue;
-    if (typeof font.font_file !== "string") throw new Error("Invalid bundled UI font path");
-    const path = font.font_file.endsWith(".ttf") ? font.font_file : `${font.font_file}.ttf`;
+    if (!isRecord(font) || font["font_format"] !== "ttf") continue;
+    const file = font["font_file"];
+    if (typeof file !== "string") throw new TypeError("Invalid bundled UI font path");
+    const path = file.endsWith(".ttf") ? file : `${file}.ttf`;
     if (!entries.get(path)?.().length) throw new Error(`Bundled Bedrock UI is missing ${path}`);
   }
 }
@@ -91,9 +88,9 @@ export async function verifyEmbeddedBuiltinUi(
   let entries = zipEntries(await readFile(artifact));
   if (project === "viafabricplus-bedrock") {
     const [core, ...otherCores] = [...entries].filter(([path]) =>
-      /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/.test(path),
+      /^META-INF\/jars\/ViaBedrock-[^/]+\.jar$/u.test(path),
     );
-    if (!core || otherCores.length)
+    if (!core || otherCores.length > 0)
       throw new Error("The Bedrock add-on must embed exactly one ViaBedrock JAR");
     entries = zipEntries(core[1]());
   }

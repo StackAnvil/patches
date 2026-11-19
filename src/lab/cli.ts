@@ -86,12 +86,12 @@ const matchingProcessesEffect = Effect.fn("Lab.matchingProcesses")(function* (se
   const output = yield* labExecute("ps", ["-eo", "pid=,args="], { maxBuffer: 4 * 1024 * 1024 });
   const pattern =
     service === "server"
-      ? /(?:^|\s)(?:\.\/|[^ ]*\/)bedrock_server(?:\s|$)/
+      ? /(?:^|\s)(?:\.\/|[^ ]*\/)bedrock_server(?:\s|$)/u
       : service === "viaproxy"
-        ? /\bViaProxy(?:-[^ ]*)?\.jar\b.*\bcli\b/
-        : /^\S*java(?:\s|$).*\borg\.prismlauncher\.EntryPoint\b/;
+        ? /\bViaProxy(?:-[^ ]*)?\.jar\b.*\bcli\b/u
+        : /^\S*java(?:\s|$).*\borg\.prismlauncher\.EntryPoint\b/u;
   return output.stdout.split("\n").flatMap((line) => {
-    const [, pid, commandLine] = /^\s*(\d+)\s+(.+)$/.exec(line) ?? [];
+    const [, pid, commandLine] = /^\s*(\d+)\s+(.+)$/u.exec(line) ?? [];
     return pid !== undefined && commandLine !== undefined && pattern.test(commandLine)
       ? [Number(pid)]
       : [];
@@ -182,7 +182,7 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
     return;
   }
   const external = yield* matchingProcessesEffect(service);
-  if (external.length) {
+  if (external.length > 0) {
     print(
       `${service} is already running outside this lab (PID ${external.join(", ")}). It will not be restarted or stopped by the lab.`,
     );
@@ -290,7 +290,7 @@ const statusEffect = Effect.fn("Lab.status")(function* () {
     const entry = entries[service];
     const external = yield* matchingProcessesEffect(service);
     print(
-      `${service}: ${entry && groupAlive(entry.pid) ? `managed process group ${entry.pid}` : external.length ? `external PID ${external.join(", ")}` : "stopped"}`,
+      `${service}: ${entry && groupAlive(entry.pid) ? `managed process group ${entry.pid}` : external.length > 0 ? `external PID ${external.join(", ")}` : "stopped"}`,
     );
   }
 });
@@ -323,7 +323,7 @@ const snapshotCredentialsEffect = Effect.fn("Lab.snapshotCredentials")(function*
     yield* labIO("snapshotCredentials", async () => chmod(target, 0o600));
     copied.push(file);
   }
-  if (!copied.length)
+  if (copied.length === 0)
     return yield* labError(
       "snapshotCredentials",
       new Error(`No known BedrockOnLinux credential files found under ${bedrockHome}.`),

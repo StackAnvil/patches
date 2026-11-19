@@ -106,7 +106,7 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
   if (!url)
     return yield* new StackError({ message: `No open PR for ${id} from ${prHead(patchFile)}` });
   const desired = [...new Set(target.prAssignees)];
-  if (!desired.length) return { url, desired, added: [], requested: [] };
+  if (desired.length === 0) return { url, desired, added: [], requested: [] };
 
   const repository = parseJson(
     RepositorySchema,
@@ -137,26 +137,26 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
   );
   const missing = missingPrParticipants(desired, pr);
   const skipped: string[] = [];
-  if (missing.assignees.length && canAssign) {
+  if (missing.assignees.length > 0 && canAssign) {
     yield* gh(
       ["pr", "edit", url, "--repo", target.upstream, "--add-assignee", missing.assignees.join(",")],
       root,
     );
-  } else if (missing.assignees.length) {
+  } else if (missing.assignees.length > 0) {
     skipped.push(
       `Cannot assign ${missing.assignees.join(", ")} on ${target.upstream}: this GitHub account lacks upstream triage or write access.`,
     );
   }
-  if (missing.reviewers.length && pr.isDraft) {
+  if (missing.reviewers.length > 0 && pr.isDraft) {
     skipped.push(
       `Review requests for ${missing.reviewers.join(", ")} will wait until the PR is ready for review.`,
     );
-  } else if (missing.reviewers.length && canRequestReviews) {
+  } else if (missing.reviewers.length > 0 && canRequestReviews) {
     yield* gh(
       ["pr", "edit", url, "--repo", target.upstream, "--add-reviewer", missing.reviewers.join(",")],
       root,
     );
-  } else if (missing.reviewers.length) {
+  } else if (missing.reviewers.length > 0) {
     skipped.push(
       `Cannot request reviews from ${missing.reviewers.join(", ")} on ${target.upstream}: this GitHub account lacks upstream write access.`,
     );
@@ -166,7 +166,7 @@ export const updatePrParticipants = Effect.fn("updatePrParticipants")(function* 
     desired,
     added: canAssign ? missing.assignees : [],
     requested: canRequestReviews && !pr.isDraft ? missing.reviewers : [],
-    ...(skipped.length ? { skippedReason: skipped.join("\n") } : {}),
+    ...(skipped.length > 0 ? { skippedReason: skipped.join("\n") } : {}),
   };
 });
 
@@ -228,7 +228,7 @@ export const prBody = Effect.fn("prBody")(function* (
     readFile(join(upstreamableDir, upstreamable.file), "utf8"),
   );
   const message = parsePatchMessage(patch);
-  const extraBodyFile = join(upstreamableDir, upstreamable.file.replace(/\.patch$/, ".pr.md"));
+  const extraBodyFile = join(upstreamableDir, upstreamable.file.replace(/\.patch$/u, ".pr.md"));
   const extraBody = yield* Effect.tryPromise({
     try: () => readFile(extraBodyFile, "utf8"),
     catch: (cause) =>

@@ -143,7 +143,11 @@ export function rangedPiercingPasses(observation: RangedObservation, hitCount: n
       return false;
     const contacts = observation.impacts?.filter((impact) => impact.target === target.id) ?? [];
     if (index === hitCount) {
-      if (contacts.length || target.damage.length || target.healthBefore !== target.healthAfter)
+      if (
+        contacts.length > 0 ||
+        target.damage.length > 0 ||
+        target.healthBefore !== target.healthAfter
+      )
         return false;
       continue;
     }

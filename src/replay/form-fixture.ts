@@ -1,20 +1,21 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
-import { Data, Effect } from "effect";
+import { Data, Effect, Schema } from "effect";
 import { journalMagic, maxJournalBytes, summarizeJournal } from "./journal.ts";
 import { errorCode, isRecord, required } from "../guards.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const protocol = 2193;
 const maxFormBytes = 1024 * 1024;
 const maxPackBytes = 64 * 1024 * 1024;
 const packName =
-  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_([0-9]+(?:\.[0-9]+)*)\.mcpack$/i;
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_([0-9]+(?:\.[0-9]+)*)\.mcpack$/iu;
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+const isCapturedForm = Schema.is(
+  Schema.Struct({ type: Schema.Literals(["form", "custom_form", "modal"]) }),
+);
 
 interface Entry {
   direction: number;
@@ -183,7 +184,7 @@ export function buildFormFixtureJournal(
     !Number.isInteger(intervalSeconds) ||
     intervalSeconds < 10 ||
     intervalSeconds > 60 ||
-    forms.length < 1 ||
+    forms.length === 0 ||
     forms.length > 16 ||
     packs.length > 64
   ) {
@@ -238,9 +239,8 @@ export function buildFormFixtureJournal(
     ids.add(form.id);
     const data = Buffer.from(form.json);
     if (data.length > maxFormBytes) throw new Error("Captured form exceeds its size bound.");
-    const value = JSON.parse(form.json);
-    if (!value || !["form", "custom_form", "modal"].includes(value.type))
-      throw new Error("Unsupported captured form.");
+    const value: unknown = JSON.parse(form.json);
+    if (!isCapturedForm(value)) throw new Error("Unsupported captured form.");
     entries.push({
       direction: 1,
       nanos: cutoff + BigInt(5 + index * intervalSeconds) * 1_000_000_000n,
@@ -277,7 +277,7 @@ function path(value: unknown): string {
   return value;
 }
 function digest(value: unknown): string {
-  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value))
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/u.test(value))
     throw new Error("Invalid fixture input digest.");
   return value;
 }
@@ -285,7 +285,7 @@ function validatePlan(value: unknown): FormFixturePlan {
   const plan = object(value);
   if (
     !Array.isArray(plan["forms"]) ||
-    plan["forms"].length < 1 ||
+    plan["forms"].length === 0 ||
     plan["forms"].length > 16 ||
     !Array.isArray(plan["packs"]) ||
     plan["packs"].length > 64
@@ -324,7 +324,7 @@ function validatePlan(value: unknown): FormFixturePlan {
     // oxlint-disable-next-line oxc/no-map-spread -- the spread only adds an optional field to a new object
     packs: plan["packs"].map((entry) => {
       const pack = object(entry);
-      if (typeof pack["from"] !== "string") throw new Error("Invalid source pack identity.");
+      if (typeof pack["from"] !== "string") throw new TypeError("Invalid source pack identity.");
       identity(pack["from"]);
       if (pack["decrypted"] !== true)
         throw new Error("Fixture replacements require explicit decrypted-export provenance.");
@@ -405,7 +405,7 @@ export async function writePrivateFixture(
   const names = new Set<string>();
   for (const file of files) {
     if (
-      !/^(?:packets\.sbr|fixture\.json|packs\/[0-9a-f-]+_[0-9.]+\.mcpack)$/i.test(file.name) ||
+      !/^(?:packets\.sbr|fixture\.json|packs\/[0-9a-f-]+_[0-9.]+\.mcpack)$/iu.test(file.name) ||
       names.has(file.name)
     ) {
       throw new Error("Invalid or duplicate fixture output name.");

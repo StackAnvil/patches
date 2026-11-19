@@ -3,12 +3,12 @@ import { Schema } from "effect";
 /** Only the exact normal transfer notice is expected in a transfer-enabled live session. */
 export function clientSessionFailed(log: string, allowTransfers = false): boolean {
   const observed = allowTransfers
-    ? log.replaceAll(/^.*Client disconnected with reason: Transferred to another server\r?$/gm, "")
+    ? log.replaceAll(/^.*Client disconnected with reason: Transferred to another server\r?$/gmu, "")
     : log;
   return (
-    /Client disconnected with reason:|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/.test(
+    /Client disconnected with reason:|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/u.test(
       observed,
-    ) || /^.*\[Server Connector #\d+\/ERROR\]: Couldn't connect to server\r?$/m.test(observed)
+    ) || /^.*\[Server Connector #\d+\/ERROR\]: Couldn't connect to server\r?$/mu.test(observed)
   );
 }
 
@@ -109,7 +109,7 @@ export function verifyRendering(
       typeof audit.transformed !== "boolean" ||
       (expected.customActorIdentifiers.length > 0 && !audit.transformed) ||
       !Array.isArray(audit.failures) ||
-      audit.failures.length ||
+      audit.failures.length > 0 ||
       typeof audit.identifiers !== "object" ||
       Array.isArray(audit.identifiers) ||
       Object.values(audit.identifiers).some((count) => !Number.isSafeInteger(count) || count <= 0)
@@ -118,7 +118,7 @@ export function verifyRendering(
     } else proxyActors = Object.keys(audit.identifiers);
   }
 
-  if (expected.skinUpdates || expected.customActorIdentifiers.length) {
+  if (expected.skinUpdates || expected.customActorIdentifiers.length > 0) {
     if (!actual) return [...failures, "The native renderer produced no audit."];
     if (actual.installedSkins !== expected.skinUpdates || actual.rejectedSkins)
       failures.push("The client did not install every recorded skin update.");
@@ -161,8 +161,8 @@ export function verifyRendering(
       failures.push("An unregistered actor unexpectedly reached custom model evaluation.");
     if (expected.customActorIdentifiers.some((identifier) => !actors.has(identifier)))
       failures.push("Some recorded custom actors never reached native model evaluation.");
-    if (expected.customActorIdentifiers.length) {
-      if (!actual.evaluatedModels.length)
+    if (expected.customActorIdentifiers.length > 0) {
+      if (actual.evaluatedModels.length === 0)
         failures.push("The client evaluated no custom actor models.");
       if (
         !(actual.nativeCustomActorResolvedModels > 0) ||
@@ -174,25 +174,25 @@ export function verifyRendering(
     }
   }
   if (
-    /Couldn't parse item model|Failed to load model|Unable to bake model|Failed to bake|Multiple atlases|Failed to evaluate render controller|Failed to initialize custom entity variables|Could not evaluate the server's player render controllers|Could not load the server's player animation graph|Could not load native actor graph|Could not load classic skin animations|Failed to parse Bedrock (?:player geometry|persona geometry|skin options)/.test(
+    /Couldn't parse item model|Failed to load model|Unable to bake model|Failed to bake|Multiple atlases|Failed to evaluate render controller|Failed to initialize custom entity variables|Could not evaluate the server's player render controllers|Could not load the server's player animation graph|Could not load native actor graph|Could not load classic skin animations|Failed to parse Bedrock (?:player geometry|persona geometry|skin options)/u.test(
       clientLog,
     )
   )
     failures.push("The replay reported model parsing, baking, or controller failures.");
   if (
-    /Missing textures in model|Missing texture references in model|Missing bedrock -> java block state mapping|Missing bedrock entity type|Unresolved server player costume|Unresolved native entity (?:geometry|texture)|Selected unresolved custom entity model|Selected unresolved custom item icon/.test(
+    /Missing textures in model|Missing texture references in model|Missing bedrock -> java block state mapping|Missing bedrock entity type|Unresolved server player costume|Unresolved native entity (?:geometry|texture)|Selected unresolved custom entity model|Selected unresolved custom item icon/u.test(
       clientLog,
     )
   )
     failures.push("The scene has unresolved block, entity, or texture mappings.");
   if (
-    [...clientLog.matchAll(/Unknown bedrock entity type: ([^\s]+)/g)].some(
+    [...clientLog.matchAll(/Unknown bedrock entity type: ([^\s]+)/gu)].some(
       ([, type]) => type === undefined || !unregistered.has(type),
     )
   )
     failures.push("The client rejected an advertised actor type.");
   if (
-    /Client disconnected with reason|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/.test(
+    /Client disconnected with reason|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/u.test(
       clientLog,
     )
   )

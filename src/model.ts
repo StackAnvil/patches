@@ -27,7 +27,7 @@ export interface UpstreamablePatch {
 
 export function assertPrReady(patch: UpstreamablePatch): void {
   const required = patch.prerequisites?.filter(({ testOnly }) => !testOnly) ?? [];
-  if (!required.length) return;
+  if (required.length === 0) return;
   const prerequisites = required
     .map(({ project, patch: file, reason }) => `${project}/${file}: ${reason}`)
     .join("\n");
@@ -138,7 +138,7 @@ export async function getSeries(id: string, repository = root): Promise<Series> 
     for (const prerequisite of patch.prerequisites ?? []) {
       if (
         !targets[prerequisite.project] ||
-        !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.patch$/.test(prerequisite.patch) ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.patch$/u.test(prerequisite.patch) ||
         !prerequisite.reason.trim() ||
         (prerequisite.testOnly !== undefined && typeof prerequisite.testOnly !== "boolean")
       ) {
@@ -166,5 +166,5 @@ export async function listArtifacts(dir: string): Promise<string[]> {
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".jar"))
     .map((entry) => join(libs, entry.name))
-    .filter((path) => !/-(?:dev|sources|javadoc)\.jar$|\+java8\.jar$/i.test(path));
+    .filter((path) => !/-(?:dev|sources|javadoc)\.jar$|\+java8\.jar$/iu.test(path));
 }

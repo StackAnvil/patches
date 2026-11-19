@@ -81,7 +81,7 @@ export function prerequisiteCycles(series: Record<string, Series>): string[][] {
 
 async function hasPrContext(path: string): Promise<boolean> {
   try {
-    return Boolean((await readFile(path.replace(/\.patch$/, ".pr.md"), "utf8")).trim());
+    return Boolean((await readFile(path.replace(/\.patch$/u, ".pr.md"), "utf8")).trim());
   } catch (error) {
     if (errorCode(error) === "ENOENT") return false;
     throw error;
@@ -152,7 +152,7 @@ export async function inspectUpstream(
     await runGit(["cat-file", "-e", `${target.baseSha}^{commit}`], directory);
     await runGit(["checkout", "--detach", target.baseSha], directory);
     for (const patch of report.patches) {
-      if (patch.group === "upstreamable" && !patch.prerequisites.length)
+      if (patch.group === "upstreamable" && patch.prerequisites.length === 0)
         patch.standalone = await standaloneApply(
           directory,
           patchPath(patch),
@@ -195,7 +195,7 @@ export async function inspectUpstream(
     for (const patch of report.patches) {
       if (
         patch.group === "upstreamable" &&
-        !patch.prerequisites.length &&
+        patch.prerequisites.length === 0 &&
         patch.upstreamEquivalent !== "present"
       )
         patch.upstreamStandalone = await standaloneApply(
@@ -305,7 +305,7 @@ export async function patchHealth(
 }
 
 export function healthFailed(report: HealthReport): boolean {
-  return Boolean(report.errors.length || report.projects.some((project) => project.errors.length));
+  return report.errors.length > 0 || report.projects.some((project) => project.errors.length > 0);
 }
 
 export function healthMarkdown(report: HealthReport): string {

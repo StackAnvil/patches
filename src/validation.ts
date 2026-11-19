@@ -186,7 +186,7 @@ export function requireReleaseEvidence(
     throw new Error("Release evidence has missing, changed, or unsuccessful checks.");
   const hashes = new Map(report.artifacts.map((entry) => [entry.file, entry.sha256]));
   if (
-    !artifacts.length ||
+    artifacts.length === 0 ||
     hashes.size !== report.artifacts.length ||
     hashes.size !== artifacts.length ||
     artifacts.some((entry) => hashes.get(entry.file) !== entry.sha256)
@@ -220,7 +220,7 @@ export function validationMarkdown(report: ValidationReport): string {
     "",
     "## Artifact checksums",
     "",
-    report.artifacts.length
+    report.artifacts.length > 0
       ? "JARs and build manifests are bound to this run. The release modpack is rebuilt from those verified JARs."
       : "No artifact checksums recorded.",
     "",
@@ -235,7 +235,7 @@ export async function writeReport(path: string, value: unknown, markdown: string
   const temporary = `${path}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
   await rename(temporary, path);
-  await writeFile(`${path.replace(/\.json$/, "")}.md`, markdown);
+  await writeFile(`${path.replace(/\.json$/u, "")}.md`, markdown);
 }
 
 async function validate(profile: ValidationProfile, cycles: number): Promise<ValidationReport> {

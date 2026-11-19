@@ -18,6 +18,8 @@ export async function writeReplayArtifactEvidence(
     const hash = createHash("sha256");
     let bytes = 0;
     for await (const chunk of createReadStream(file.path)) {
+      if (!Buffer.isBuffer(chunk))
+        throw new TypeError("File streams without an encoding yield Buffers.");
       hash.update(chunk);
       bytes += chunk.length;
     }

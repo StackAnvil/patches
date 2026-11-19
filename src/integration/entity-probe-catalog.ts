@@ -50,7 +50,6 @@ function values(definition: PropertyDefinition): unknown[] {
         ...new Set([range[0], definition.default, range.at(-1)].filter((value) => value != null)),
       ];
     }
-    case undefined:
     default:
       return [];
   }
@@ -77,10 +76,10 @@ export async function generateCatalog(
   version: string,
   output = catalogPath,
 ): Promise<CatalogEntry[]> {
-  if (!/^v\d+\.\d+\.\d+\.\d+$/.test(version))
+  if (!/^v\d+\.\d+\.\d+\.\d+$/u.test(version))
     throw new Error("Supply a Bedrock samples tag such as v1.26.40.05.");
   const files = (await readdir(entities)).filter((file) => file.endsWith(".json")).toSorted();
-  if (!files.length) throw new Error(`No entity JSON files found in ${entities}.`);
+  if (files.length === 0) throw new Error(`No entity JSON files found in ${entities}.`);
   const catalog: CatalogEntry[] = [];
   for (const file of files) {
     const source = JSON5.parse<EntityDefinition>(await readFile(join(entities, file), "utf8"));

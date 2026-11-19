@@ -7,32 +7,32 @@ interface ReleaseDownload {
 const downloads = [
   {
     title: "Bedrock client modpack",
-    pattern: /^StackAnvil-.+\.mrpack$/,
+    pattern: /^StackAnvil-.+\.mrpack$/u,
     description: "Import into a launcher that supports Modrinth modpacks.",
   },
   {
     title: "Bedrock add-on",
-    pattern: /^viafabricplus-bedrock-.+-StackAnvil\.jar$/,
+    pattern: /^viafabricplus-bedrock-.+-StackAnvil\.jar$/u,
     description: "Install in your Fabric client's mods folder alongside ViaFabricPlus.",
   },
   {
     title: "ViaFabricPlus",
-    pattern: /^ViaFabricPlus-.+\.jar$/,
+    pattern: /^ViaFabricPlus-.+\.jar$/u,
     description: "The pinned upstream mod, required by the Bedrock add-on.",
   },
   {
     title: "ViaProxy",
-    pattern: /^ViaProxy-.+-StackAnvil\.jar$/,
+    pattern: /^ViaProxy-.+-StackAnvil\.jar$/u,
     description: "Run as a separate proxy for an existing Java client.",
   },
   {
     title: "ViaBedrock",
-    pattern: /^ViaBedrock-.+-StackAnvil\.jar$/,
+    pattern: /^ViaBedrock-.+-StackAnvil\.jar$/u,
     description: "Library for developers who embed Bedrock protocol translation.",
   },
   {
     title: "CubeConverter",
-    pattern: /^cubeconverter-.+-StackAnvil\.jar$/,
+    pattern: /^cubeconverter-.+-StackAnvil\.jar$/u,
     description: "Library for developers who convert Bedrock resource packs.",
   },
 ];

@@ -11,9 +11,10 @@ interface Plane {
   point: Vector;
   normal: Vector;
 }
-const validVector = (vector: Vector) => [vector.x, vector.y, vector.z].every(Number.isFinite);
+const validVector = (vector: Vector) =>
+  [vector.x, vector.y, vector.z].every((value) => Number.isFinite(value));
 const validBounds = (bounds: Bounds) =>
-  [bounds.center, bounds.extent].every(validVector) &&
+  [bounds.center, bounds.extent].every((value) => validVector(value)) &&
   [bounds.extent.x, bounds.extent.y, bounds.extent.z].every((value) => value >= 0);
 
 function contactTime(target: Bounds, projectile: Bounds, velocity: Vector): number | undefined {
@@ -44,13 +45,17 @@ export function projectileThreatens(
   obstacles: readonly Bounds[] = [],
   clearancePlane?: Plane,
 ): boolean {
-  if (!validVector(velocity) || ![target, projectile, ...obstacles].every(validBounds))
+  if (
+    !validVector(velocity) ||
+    ![target, projectile, ...obstacles].every((value) => validBounds(value))
+  )
     return false;
   const targetTime = contactTime(target, projectile, velocity);
   if (targetTime === undefined) return false;
   let throughTime = targetTime;
   if (clearancePlane) {
-    if (![clearancePlane.point, clearancePlane.normal].every(validVector)) return false;
+    if (![clearancePlane.point, clearancePlane.normal].every((value) => validVector(value)))
+      return false;
     const normal = clearancePlane.normal;
     const speed = velocity.x * normal.x + velocity.y * normal.y + velocity.z * normal.z;
     const distance =
@@ -113,7 +118,7 @@ export function incomingProjectilePasses(
     !Number.isFinite(healthAfter) ||
     healthBefore <= 0 ||
     healthAfter <= 0 ||
-    ![start, end, forward].every(validVector) ||
+    ![start, end, forward].every((value) => validVector(value)) ||
     frames.length < 2 ||
     frames.some(
       (frame, index) =>

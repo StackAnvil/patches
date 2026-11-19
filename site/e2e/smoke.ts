@@ -8,18 +8,18 @@ test("shared download links hydrate, select a setup, and survive browser history
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("requestfailed", (request) => failed.push(request.url()));
   await page.goto("/releases/?setup=fabric");
-  await expect(page.getByRole("radio", { name: /Fabric mods/ })).toBeChecked();
+  await expect(page.getByRole("radio", { name: /Fabric mods/u })).toBeChecked();
   await expect(
     page.getByRole("heading", { name: "Two matching mods. One tested setup.", exact: true }),
   ).toBeVisible();
-  await page.getByRole("radio", { name: /Client modpack/ }).check();
+  await page.getByRole("radio", { name: /Client modpack/u }).check();
   await expect(
     page.getByRole("heading", { name: "A Fabric client, ready to import.", exact: true }),
   ).toBeVisible();
   await page.goBack();
-  await expect(page.getByRole("radio", { name: /Fabric mods/ })).toBeChecked();
+  await expect(page.getByRole("radio", { name: /Fabric mods/u })).toBeChecked();
   await page.reload();
-  await expect(page.getByRole("radio", { name: /Fabric mods/ })).toBeChecked();
+  await expect(page.getByRole("radio", { name: /Fabric mods/u })).toBeChecked();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
   expect(failed).toEqual([]);
@@ -35,7 +35,7 @@ test("static search opens the matching guide section without a server", async ({
     .getByRole("option")
     .filter({ hasText: "To join a friend, Realm, or LAN world" });
   await result.click();
-  await expect(page).toHaveURL(/\/getting-started\/#use-viafabricplus-and-the-bedrock-add-on$/);
+  await expect(page).toHaveURL(/\/getting-started\/#use-viafabricplus-and-the-bedrock-add-on$/u);
   await expect(
     page.getByRole("heading", { name: "Play on Bedrock from Java Edition", exact: true }),
   ).toBeVisible();
@@ -47,10 +47,10 @@ test("theme preferences persist and missing pages remain useful", async ({ page 
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await expect(page.locator("html")).toHaveClass("dark");
-  await page.getByRole("radio", { name: /Client modpack/ }).check();
+  await page.getByRole("radio", { name: /Client modpack/u }).check();
   await expect(page.getByRole("link", { name: "Download Client modpack" })).toHaveAttribute(
     "href",
-    /\.mrpack$/,
+    /\.mrpack$/u,
   );
   await page.getByRole("button", { name: "Toggle color theme", exact: true }).click();
   await expect(page.locator("html")).toHaveClass("light");

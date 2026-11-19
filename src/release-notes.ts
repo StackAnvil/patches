@@ -23,7 +23,7 @@ if (!tag)
 const assets = await readdir(process.argv[3] ?? join(root, "release"));
 
 function patchUrl(id: string, group: string, file: string): string {
-  const path = ["patches", id, group, file].map(encodeURIComponent).join("/");
+  const path = ["patches", id, group, file].map((value) => encodeURIComponent(value)).join("/");
   return `https://github.com/${repository}/blob/${commit}/${path}`;
 }
 
@@ -86,7 +86,7 @@ for (const id of await targetIds()) {
   for (const group of ["setup", "upstreamable", "deferred"] as const) {
     const patches: readonly { file: string; title?: string; reason?: string }[] =
       group === "setup" ? series.setup.map((file) => ({ file })) : series[group];
-    if (!patches.length) continue;
+    if (patches.length === 0) continue;
     lines.push(`### ${groupTitles[group]}`, "");
     for (const patch of patches) {
       const title = patch.title ?? (await patchTitle(id, group, patch.file));

@@ -28,21 +28,23 @@ function entry(pid: number): ProcessEntry | undefined {
   }
 }
 
+const procfsSystem: ProcessSystem = {
+  read: entry,
+  ids: () =>
+    readdirSync("/proc")
+      .filter((name) => /^\d+$/u.test(name))
+      .map(Number),
+  signal: (pid, signal) => {
+    process.kill(pid, signal);
+  },
+};
+
 /** Records real process birth identities and refuses signals after PID reuse. */
 export class OwnedProcesses {
   private readonly identities = new Map<number, ProcessIdentity>();
   private readonly excluded = new Set<number>();
 
-  constructor(
-    private readonly system: ProcessSystem = {
-      read: entry,
-      ids: () =>
-        readdirSync("/proc")
-          .filter((name) => /^\d+$/.test(name))
-          .map(Number),
-      signal: (pid, signal) => process.kill(pid, signal),
-    },
-  ) {}
+  constructor(private readonly system: ProcessSystem = procfsSystem) {}
 
   exclude(pid: number): void {
     this.excluded.add(pid);

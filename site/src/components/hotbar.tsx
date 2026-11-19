@@ -108,7 +108,9 @@ export function FeatureHotbar() {
               aria-controls="feature-panel"
               tabIndex={selected === index ? 0 : -1}
               className="slot"
-              onClick={() => setSelected(index)}
+              onClick={() => {
+                setSelected(index);
+              }}
               onKeyDown={onKeyDown}
             >
               <SlotIcon size={26} strokeWidth={1.8} aria-hidden="true" />

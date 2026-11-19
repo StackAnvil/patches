@@ -212,7 +212,7 @@ async function javaWindow(ui: Ui): Promise<{ width: number; height: number }> {
     ),
     await ui(["ui", "list"]),
   );
-  const window = windows.find((entry) => /^minecraft\*?\s/i.test(entry.title));
+  const window = windows.find((entry) => /^minecraft\*?\s/iu.test(entry.title));
   if (!window) throw new Error("Java client window is unavailable.");
   return window;
 }
@@ -251,7 +251,7 @@ export async function waitForJavaWorldHud(
             ])
           )
             .trim()
-            .split(/\s+/)
+            .split(/\s+/u)
             .map(Number),
         ),
       );
@@ -276,7 +276,7 @@ async function javaDeathScreenVisible(ui: Ui): Promise<boolean> {
   const pixel = async (x: number, y: number) =>
     (await ui(["ui", "pixel", String(x), String(y), "--client", "java"]))
       .trim()
-      .split(/\s+/)
+      .split(/\s+/u)
       .map(Number);
   const heading = await pixel(0.5, 0.275);
   const button = await pixel(0.5, 0.59);
@@ -444,7 +444,7 @@ async function rejectIneligibleOffhandBlock(ui: Ui): Promise<void> {
           ])
         )
           .trim()
-          .split(/\s+/)
+          .split(/\s+/u)
           .map(Number);
       }),
     );
@@ -527,7 +527,7 @@ async function openChest(ui: Ui, sneak = false): Promise<ContainerWindow> {
   const viewport = await chestViewport(window, async (x, y) =>
     (await ui(["ui", "pixel", String(x), String(y), "--client", "java"]))
       .trim()
-      .split(/\s+/)
+      .split(/\s+/u)
       .map(Number),
   );
   if (!viewport) {
@@ -609,7 +609,7 @@ async function cookFromBook(ui: Ui, id: GameplayCaseId): Promise<void> {
           ])
         )
           .trim()
-          .split(/\s+/)
+          .split(/\s+/u)
           .map(Number);
       }),
     );
@@ -744,7 +744,7 @@ async function brewingStand(ui: Ui): Promise<void> {
         const point = containerPoint(native, 176, 166, x, y);
         return (await ui(["ui", "pixel", String(point[0]), String(point[1]), "--client", "java"]))
           .trim()
-          .split(/\s+/)
+          .split(/\s+/u)
           .map(Number);
       }),
     );
@@ -1282,7 +1282,6 @@ export async function driveGameplay(
       return;
     case "complex-world":
       await ui(["ui", "key-hold", "w", "9000", "--client", "java"]);
-      return;
   }
 }
 
@@ -1419,7 +1418,7 @@ export async function runGameplayCases(
         screenshots,
       });
       printError(
-        `FAIL gameplay ${id}: ${message}${screenshots.length ? ` Screenshots: ${screenshots.join(", ")}.` : ""}`,
+        `FAIL gameplay ${id}: ${message}${screenshots.length > 0 ? ` Screenshots: ${screenshots.join(", ")}.` : ""}`,
       );
       stopped = !alive() || Boolean(connectionError);
     }
@@ -1450,8 +1449,8 @@ export async function runGameplayCases(
 export async function installProbeGuiScale(instance: string): Promise<void> {
   const file = join(instance, "minecraft", "options.txt");
   let content = (await Bun.file(file).exists()) ? await Bun.file(file).text() : "";
-  content = /^guiScale:.*$/m.test(content)
-    ? content.replace(/^guiScale:.*$/m, "guiScale:2")
+  content = /^guiScale:.*$/mu.test(content)
+    ? content.replace(/^guiScale:.*$/mu, "guiScale:2")
     : `${content}guiScale:2\n`;
   await Bun.write(file, content);
 }

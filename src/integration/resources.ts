@@ -60,8 +60,10 @@ export const releaseIntegrationResources = Effect.fn("Integration.releaseResourc
     { concurrency: 4 },
   );
   const display = yield* labIO("stop integration display", stopDisplay).pipe(Effect.result);
-  const failures = [...results, display].filter(Result.isFailure).map((result) => result.failure);
-  if (failures.length)
+  const failures = [...results, display]
+    .filter((value) => Result.isFailure(value))
+    .map((result) => result.failure);
+  if (failures.length > 0)
     return yield* new LabError({
       operation: "release integration",
       message: "Integration cleanup failed.",
@@ -125,7 +127,7 @@ function makeRegistry() {
         Effect.uninterruptible,
       ),
     release: (stopDisplay: () => Promise<void>) =>
-      children.length || dependencies.length || ownsDisplay
+      children.length > 0 || dependencies.length > 0 || ownsDisplay
         ? releaseIntegrationResources(
             children,
             dependencies,

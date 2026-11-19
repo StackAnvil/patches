@@ -65,7 +65,7 @@ function Home() {
           <div>
             <p className="lead">
               StackAnvil translates between the two editions on your computer. Keep your Java client
-              and join Bedrock servers, Realms, and friends' worlds.
+              and join Bedrock servers, Realms, and friends&apos; worlds.
             </p>
             <ul className="hero-facts">
               <li>

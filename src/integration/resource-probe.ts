@@ -75,7 +75,7 @@ export async function installResourceProbe(
 }
 
 export function convertedPackCount(log: string): number {
-  return log.match(/Converted resource packs in \d+ms/g)?.length ?? 0;
+  return log.match(/Converted resource packs in \d+ms/gu)?.length ?? 0;
 }
 
 export async function convertedTextureMatches(

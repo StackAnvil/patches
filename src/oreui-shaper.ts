@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { Schema } from "effect";
 import { zipEntries } from "./zip.ts";
-import { isOneOf } from "./guards.ts";
+import { isOneOf, parseJson } from "./guards.ts";
 import { print } from "./output.ts";
 
 export const oreUiShaperResource = "assets/viafabricplus-bedrock/oreui-shaper";
@@ -17,8 +17,23 @@ export const oreUiShaperPlatforms = [
 ] as const;
 export type OreUiShaperPlatform = (typeof oreUiShaperPlatforms)[number];
 
-const repository = dirname(dirname(fileURLToPath(import.meta.url)));
+const repository = dirname(import.meta.dirname);
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+const ShaperManifestSchema = Schema.Struct({
+  format: Schema.Finite,
+  engine: Schema.String,
+  version: Schema.String,
+  target: Schema.String,
+  platform: Schema.String,
+  architecture: Schema.String,
+  sourceSha256: Schema.String,
+  patchSha256: Schema.String,
+  library: Schema.String,
+  sha256: Schema.String,
+});
+const isShaperManifest = Schema.is(ShaperManifestSchema);
+const ShaperSourceSchema = Schema.Struct({ version: Schema.String, sha256: Schema.String });
 
 /** Check the native file itself so a mislabeled resource cannot select another architecture. */
 export function verifyOreUiShaperBinary(bytes: Buffer, target: OreUiShaperPlatform): void {
@@ -64,8 +79,11 @@ export async function verifyOreUiShaper(
   const resource = join(directory, oreUiShaperResource, target);
   const manifestPath = join(resource, "manifest.json");
   if ((await stat(manifestPath)).size > 8192) throw new Error("Oversized OreUI shaper manifest");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  const source = JSON.parse(await readFile(join(sourceDirectory, "source.json"), "utf8"));
+  const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+  const source = parseJson(
+    ShaperSourceSchema,
+    await readFile(join(sourceDirectory, "source.json"), "utf8"),
+  );
   const [platform, architecture] = target.split("-");
   const library =
     platform === "windows"
@@ -74,7 +92,8 @@ export async function verifyOreUiShaper(
         ? "libstackanvil_oreui_harfbuzz.dylib"
         : "libstackanvil_oreui_harfbuzz.so";
   if (
-    manifest?.format !== 1 ||
+    !isShaperManifest(manifest) ||
+    manifest.format !== 1 ||
     manifest.engine !== "HarfBuzz" ||
     manifest.version !== source.version ||
     manifest.target !== "Bedrock 1.26.60.5 OreUI" ||
@@ -83,7 +102,7 @@ export async function verifyOreUiShaper(
     manifest.sourceSha256 !== source.sha256 ||
     manifest.patchSha256 !== sha256(await readFile(join(sourceDirectory, "compatibility.patch"))) ||
     manifest.library !== library ||
-    !/^[0-9a-f]{64}$/.test(manifest.sha256)
+    !/^[0-9a-f]{64}$/u.test(manifest.sha256)
   )
     throw new Error(`Invalid OreUI shaper identity for ${target}`);
   const libraryPath = join(resource, library);
@@ -125,7 +144,10 @@ export async function verifyEmbeddedOreUiShaper(
   const expected = new Set<string>();
   for (const target of oreUiShaperPlatforms) {
     const resource = `${oreUiShaperResource}/${target}`;
-    const manifest = JSON.parse(await readFile(join(directory, resource, "manifest.json"), "utf8"));
+    const manifest = parseJson(
+      ShaperManifestSchema,
+      await readFile(join(directory, resource, "manifest.json"), "utf8"),
+    );
     for (const file of ["manifest.json", "COPYING", manifest.library]) {
       const name = `${resource}/${file}`;
       expected.add(name);

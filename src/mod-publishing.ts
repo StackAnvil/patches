@@ -51,7 +51,7 @@ export function validatePublishArtifact(
     throw new Error("Expected one VFP Bedrock add-on artifact");
   if (
     basename(artifact.file) !== artifact.file ||
-    !/^viafabricplus-bedrock-.+-StackAnvil\.jar$/.test(artifact.file)
+    !/^viafabricplus-bedrock-.+-StackAnvil\.jar$/u.test(artifact.file)
   ) {
     throw new Error("Invalid VFP Bedrock add-on JAR name");
   }
@@ -71,7 +71,7 @@ export function validatePublishArtifact(
   }
   if (
     metadata.environment !== "client" ||
-    !/^\d+\.\d+(?:\.\d+)?$/.test(metadata.depends.minecraft) ||
+    !/^\d+\.\d+(?:\.\d+)?$/u.test(metadata.depends.minecraft) ||
     metadata.depends.java !== ">=25" ||
     !metadata.depends.viafabricplus
   ) {
@@ -106,7 +106,7 @@ export async function readPublishArtifact(manifestPath: string): Promise<Publish
 }
 
 export function publishVersion(artifact: PublishArtifact, tag: string): string {
-  if (!/^stack-v[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(tag))
+  if (!/^stack-v[a-zA-Z0-9][a-zA-Z0-9._-]*$/u.test(tag))
     throw new Error("Expected a StackAnvil release tag");
   return `${artifact.version}+${tag}`;
 }
@@ -195,7 +195,7 @@ export async function publishCurseForge(
   projectId: string,
   token: string,
 ): Promise<unknown> {
-  if (!/^\d+$/.test(projectId) || !token)
+  if (!/^\d+$/u.test(projectId) || !token)
     throw new Error("Set CURSEFORGE_PROJECT_ID and CURSEFORGE_TOKEN");
   if (projectId !== stackAnvilCurseForgeId)
     throw new Error(`Expected the StackAnvil CurseForge project ID ${stackAnvilCurseForgeId}`);

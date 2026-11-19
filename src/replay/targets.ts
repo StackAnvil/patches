@@ -12,7 +12,7 @@ export function publicTarget(address: string | undefined): string {
   if (
     !["nethernet:", "nethernet-xbox-json-rpc:"].includes(parsed.protocol) ||
     !parsed.hostname ||
-    !/^[a-zA-Z0-9.[\]:-]+$/.test(parsed.hostname) ||
+    !/^[a-zA-Z0-9.[\]:-]+$/u.test(parsed.hostname) ||
     (networkId ? !!parsed.port : !parsed.port || Number(parsed.port) < 1) ||
     parsed.username ||
     parsed.password ||

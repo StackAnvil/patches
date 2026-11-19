@@ -1,17 +1,15 @@
-import { execFile } from "node:child_process";
 import { constants, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { promisify } from "node:util";
 import { Schema } from "effect";
 import { parseJson } from "./guards.ts";
 import { root } from "./model.ts";
 
 const InstalledModsSchema = Schema.Struct({ files: Schema.Array(Schema.String) });
 import { clientArtifacts } from "./client-artifacts.ts";
+import { execFileAsync as execute } from "./process.ts";
 
-const execute = promisify(execFile);
 const bundleRoot = join(root, ".stackanvil", "prism-bundle");
 const prismHome = join(
   homedir(),
@@ -91,7 +89,7 @@ export async function bundlePrism(): Promise<string> {
 export async function prismProcess(instanceName: string): Promise<number | undefined> {
   const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
   for (const line of stdout.split("\n")) {
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
     if (match?.[2]?.includes("org.prismlauncher.EntryPoint") && match[2].includes(instanceName))
       return Number(match[1]);
   }
@@ -117,7 +115,7 @@ export async function installPrism(instanceName = prismInstance): Promise<string
     ? parseJson(InstalledModsSchema, await readFile(marker, "utf8"))
     : { files: [] };
   for (const file of previous.files) {
-    if (/^[A-Za-z0-9.+-]+\.jar$/.test(file)) await rm(join(mods, file), { force: true });
+    if (/^[A-Za-z0-9.+-]+\.jar$/u.test(file)) await rm(join(mods, file), { force: true });
   }
   const files = (await readdir(join(directory, "minecraft", "mods"))).filter((file) =>
     file.endsWith(".jar"),
@@ -134,8 +132,8 @@ export async function installPrism(instanceName = prismInstance): Promise<string
   const options = existsSync(optionsFile) ? await readFile(optionsFile, "utf8") : "";
   await writeFile(
     optionsFile,
-    /^soundCategory_master:.*$/m.test(options)
-      ? options.replace(/^soundCategory_master:.*$/m, "soundCategory_master:0.0")
+    /^soundCategory_master:.*$/mu.test(options)
+      ? options.replace(/^soundCategory_master:.*$/mu, "soundCategory_master:0.0")
       : `${options}${options.endsWith("\n") || !options ? "" : "\n"}soundCategory_master:0.0\n`,
   );
   await writeFile(marker, `${JSON.stringify({ version, files }, null, 2)}\n`);

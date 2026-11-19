@@ -1,3 +1,6 @@
+import { Schema } from "effect";
+import { parseJson } from "./guards.ts";
+
 interface FilteredLines {
   lines: string[];
   removed: string[];
@@ -10,27 +13,27 @@ export interface PrPatch {
 
 function isTestPath(path: string): boolean {
   return (
-    /(?:^|\/)(?:tests?|__tests__|testFixtures|integrationTest|functionalTest|fixtures|__snapshots__)(?:\/|$)/.test(
+    /(?:^|\/)(?:tests?|__tests__|testFixtures|integrationTest|functionalTest|fixtures|__snapshots__)(?:\/|$)/u.test(
       path,
     ) ||
-    /(?:^|\/)(?:junit-platform\.properties|\.codecov\.ya?ml|codecov\.ya?ml)$/.test(path) ||
-    /\.(?:test|spec)\.[^/]+$/.test(path)
+    /(?:^|\/)(?:junit-platform\.properties|\.codecov\.ya?ml|codecov\.ya?ml)$/u.test(path) ||
+    /\.(?:test|spec)\.[^/]+$/u.test(path)
   );
 }
 
 function diffPaths(section: string): string[] {
   const header = section.split("\n", 1)[0] ?? "";
-  const match = /^diff --git ("a\/.*"|a\/.*) ("b\/.*"|b\/.*)$/.exec(header);
+  const match = /^diff --git ("a\/.*"|a\/.*) ("b\/.*"|b\/.*)$/u.exec(header);
   if (!match) throw new Error(`Unsupported PR diff header: ${header}`);
   return match.slice(1).map((path) => {
-    const decoded: string = path.startsWith('"') ? JSON.parse(path) : path;
+    const decoded = path.startsWith('"') ? parseJson(Schema.String, path) : path;
     return decoded.slice(2);
   });
 }
 
 // Count delimiters outside ordinary Gradle strings and line comments.
 function delimiterBalance(line: string): number {
-  const code = line.replaceAll(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/.*$/g, "");
+  const code = line.replaceAll(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/.*$/gu, "");
   let balance = 0;
   for (const character of code) {
     if ("{([".includes(character)) balance++;
@@ -42,11 +45,11 @@ function delimiterBalance(line: string): number {
 function testConfiguration(line: string): boolean {
   const code = line.trim();
   return (
-    /^(?:test(?:Implementation|RuntimeOnly|CompileOnly|Compile|Runtime|AnnotationProcessor|Fixtures\w*)\b|sourceSets[.(]test\b|configurations[.(]test\w*\b|test\s*\{|testing\b|tasks\.test\b|tasks\.(?:named|register)(?:<Test>)?\(\s*["']test["']|tasks\.withType(?:<Test>|\(Test\)))/.test(
+    /^(?:test(?:Implementation|RuntimeOnly|CompileOnly|Compile|Runtime|AnnotationProcessor|Fixtures\w*)\b|sourceSets[.(]test\b|configurations[.(]test\w*\b|test\s*\{|testing\b|tasks\.test\b|tasks\.(?:named|register)(?:<Test>)?\(\s*["']test["']|tasks\.withType(?:<Test>|\(Test\)))/u.test(
       code,
     ) ||
-    /\b(?:mockitoAgent|MockitoAgentArgumentProvider)\b/.test(code) ||
-    /^(?:import\s+.*\b(?:junit|mockito)\b|\/\/.*\b(?:JUnit|Mockito)\b)/i.test(code)
+    /\b(?:mockitoAgent|MockitoAgentArgumentProvider)\b/u.test(code) ||
+    /^(?:import\s+.*\b(?:junit|mockito)\b|\/\/.*\b(?:JUnit|Mockito)\b)/iu.test(code)
   );
 }
 
@@ -74,7 +77,7 @@ function stripTestConfiguration(lines: string[], changed: Set<number>): Filtered
   }
   // Test-only dependency and configuration blocks must not leave empty scaffolding.
   for (let index = 0; index < lines.length; index++) {
-    if (!/^\s*(?:dependencies|configurations|sourceSets)\s*\{\s*$/.test(lines[index] ?? ""))
+    if (!/^\s*(?:dependencies|configurations|sourceSets)\s*\{\s*$/u.test(lines[index] ?? ""))
       continue;
     let end = index;
     let balance = 1;
@@ -95,15 +98,15 @@ function stripTestConfiguration(lines: string[], changed: Set<number>): Filtered
 }
 
 function filterGradleDiff(section: string): { diff: string; omittedTests: boolean } {
-  const parts = section.split(/(?=^@@ )/m);
+  const parts = section.split(/(?=^@@ )/mu);
   const header = parts.shift() ?? "";
-  if (!parts.length) return { diff: section, omittedTests: false };
+  if (parts.length === 0) return { diff: section, omittedTests: false };
   const hunks: string[] = [];
   let offset = 0;
   let omittedTests = false;
   for (const part of parts) {
     const lines = part.trimEnd().split("\n");
-    const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/.exec(lines.shift() ?? "");
+    const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/u.exec(lines.shift() ?? "");
     const [, oldStartText, hunkContext] = match ?? [];
     if (oldStartText === undefined || hunkContext === undefined)
       throw new Error("Unsupported Gradle hunk in PR patch");
@@ -128,7 +131,7 @@ function filterGradleDiff(section: string): { diff: string; omittedTests: boolea
     const after = side("+");
     omittedTests ||= before.removed.join("\n") !== after.removed.join("\n");
     if (before.lines.join("\n") === after.lines.join("\n")) continue;
-    if (!before.lines.length && before.removed.length && after.lines.length) {
+    if (before.lines.length === 0 && before.removed.length > 0 && after.lines.length > 0) {
       throw new Error(
         "Gradle production changes need non-test context before PR export. Expand the patch context or separate the test configuration.",
       );
@@ -160,7 +163,7 @@ function filterGradleDiff(section: string): { diff: string; omittedTests: boolea
     offset += after.lines.length - before.lines.length;
   }
   return {
-    diff: hunks.length ? header.replace(/^index .*\n/m, "") + hunks.join("") : "",
+    diff: hunks.length > 0 ? header.replace(/^index .*\n/mu, "") + hunks.join("") : "",
     omittedTests,
   };
 }
@@ -168,7 +171,7 @@ function filterGradleDiff(section: string): { diff: string; omittedTests: boolea
 /** CubeConverter publishes its complete feature; other projects retain tests locally. */
 export function projectPrPatch(patch: string, project?: string): PrPatch {
   const normalized = patch.replaceAll("\r\n", "\n");
-  const start = normalized.search(/^diff --git /m);
+  const start = normalized.search(/^diff --git /mu);
   if (start < 0) throw new Error("Patch has no file changes");
   if (project === "cubeconverter") return { patch: normalized, omittedTests: false };
   const separator = normalized.lastIndexOf("\n---\n", start);
@@ -178,25 +181,26 @@ export function projectPrPatch(patch: string, project?: string): PrPatch {
       : normalized.slice(0, separator + "\n---\n".length) + "\n";
   const sections = normalized
     .slice(start)
-    .replace(/\n-- \n[^\n]+\n?$/, "\n")
-    .split(/(?=^diff --git )/m);
+    .replace(/\n-- \n[^\n]+\n?$/u, "\n")
+    .split(/(?=^diff --git )/mu);
   const retained: string[] = [];
   let omittedTests = false;
   for (const section of sections) {
     if (!section) continue;
     const paths = diffPaths(section);
-    if (paths.some(isTestPath)) {
-      if (!paths.every(isTestPath))
+    if (paths.some((value) => isTestPath(value))) {
+      if (!paths.every((value) => isTestPath(value)))
         throw new Error("Separate renames between production and test paths before preparing a PR");
       omittedTests = true;
       continue;
     }
-    if (paths.some((path) => /\.gradle(?:\.kts)?$/.test(path))) {
+    if (paths.some((path) => /\.gradle(?:\.kts)?$/u.test(path))) {
       const filtered = filterGradleDiff(section);
       omittedTests ||= filtered.omittedTests;
       if (filtered.diff) retained.push(filtered.diff);
     } else retained.push(section);
   }
-  if (!retained.length) throw new Error("No production changes remain after excluding local tests");
+  if (retained.length === 0)
+    throw new Error("No production changes remain after excluding local tests");
   return { patch: prefix + retained.join(""), omittedTests };
 }

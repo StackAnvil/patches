@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { Schema } from "effect";
 import { parseJson } from "../guards.ts";
 import { printError } from "../output.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const identity = Bun.argv[2];
 const sink = "stackanvil_silent";
 
@@ -32,7 +30,7 @@ async function mute(): Promise<void> {
       .find((line) => line.split("\t")[1] === sink)
       ?.split("\t")[0],
   );
-  if (!Number.isInteger(sinkId)) throw new Error("StackAnvil silent sink is missing.");
+  if (!Number.isInteger(sinkId)) throw new TypeError("StackAnvil silent sink is missing.");
   const inputs = parseJson(InputsSchema, await pactl(["-f", "json", "list", "sink-inputs"]));
   for (const input of inputs) {
     const properties = input.properties;

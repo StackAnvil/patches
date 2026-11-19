@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import type { Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
@@ -15,11 +14,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
 import { requirePrivateCopySpace } from "../copy-space.ts";
 import { errorCode, isRecord } from "../guards.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const ownerFile = ".stackanvil-source";
 const gameSourceFile = ".stackanvil-game-source";
 const sharedState = new Set([
@@ -75,7 +73,7 @@ async function requireAbsent(path: string): Promise<void> {
 export async function requireNativeProfileIdle(profile: string): Promise<void> {
   const expected = `BOL_HOME=${profile}`;
   for (const name of await readdir("/proc")) {
-    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+    if (!/^\d+$/u.test(name) || Number(name) === process.pid) continue;
     let environment: Buffer;
     try {
       environment = await readFile(`/proc/${name}/environ`);
@@ -141,9 +139,8 @@ async function sharedGames(
 ): Promise<void> {
   const games = join(runtime, "games");
   await validate();
-  const metadata = await lstat(games).catch((error) => {
+  const metadata = await lstat(games).catch((error: unknown): undefined => {
     if (errorCode(error) !== "ENOENT") throw error;
-    return undefined;
   });
   if (metadata?.isSymbolicLink()) {
     if ((await realpath(games)) !== sourceGames)
@@ -225,7 +222,7 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
   if (
     !isRecord(original) ||
     typeof original["mc_version"] !== "string" ||
-    !/^1\.26\.60(?:\.|$)/.test(original["mc_version"])
+    !/^1\.26\.60(?:\.|$)/u.test(original["mc_version"])
   ) {
     throw new Error("Native recording requires the official Bedrock 1.26.60 client.");
   }
@@ -234,7 +231,8 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
     throw new Error("The native games path is not a directory.");
   const sourcePath = async (key: "game_dir" | "proton") => {
     const configured = original[key];
-    if (typeof configured !== "string") throw new Error("The native installation path is missing.");
+    if (typeof configured !== "string")
+      throw new TypeError("The native installation path is missing.");
     const path = await realpath(configured);
     if (
       !(inside(source, path) || (key === "game_dir" && inside(sourceGames, path))) ||
@@ -315,9 +313,9 @@ export async function prepareNativeProfile(options: NativeProfileOptions): Promi
       // The loop below maps both installation paths into the private profile.
       game_dir: "",
       proton: "",
+      input_backend: "wayland",
+      gamescope: "0",
     };
-    settings["input_backend"] = "wayland";
-    settings["gamescope"] = "0";
     for (const key of ["game_dir", "proton"] as const) {
       const mapped =
         key === "game_dir" && inside(sourceGames, sourcePaths[key])

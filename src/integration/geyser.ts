@@ -1,14 +1,12 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { delimiter, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { isRecord } from "../guards.ts";
 import { root } from "../model.ts";
 import pins from "../../integration/geyser.json";
 import { print, printError } from "../output.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const source = join(root, "test-packs", "java-probe");
 const cache = join(root, ".stackanvil", "integration", "geyser-build");
 export const geyserBedrockVersion = pins.bedrock;
@@ -27,7 +25,7 @@ export function geyserEntityUpdatesMatch(id: string, observed: unknown, log: str
   const value = observed;
   const updates = [
     ...log.matchAll(
-      /\[StackAnvil Geyser Probe\] entity=([0-9a-f-]{36}) phase=(\d+) health=([\d.]+)/g,
+      /\[StackAnvil Geyser Probe\] entity=([0-9a-f-]{36}) phase=(\d+) health=([\d.]+)/gu,
     ),
   ].map((match) => ({ uuid: match[1], phase: Number(match[2]), health: Number(match[3]) }));
   if (id === "complex-world") {
@@ -81,7 +79,7 @@ export async function convertedGeyserTexturesMatch(proxyHome: string): Promise<b
     const item = "assets/viabedrock/textures/item/item_textures/items/probe_token.png";
     const entity = "assets/viabedrock/textures/item/entities/entity/probe.png";
     const blocks = entries.filter((name) =>
-      /^assets\/viabedrock\/textures\/block\/custom\/slot_\d+\.png$/.test(name),
+      /^assets\/viabedrock\/textures\/block\/custom\/slot_\d+\.png$/u.test(name),
     );
     if (
       !entries.includes(item) ||
@@ -103,7 +101,7 @@ export async function convertedGeyserTexturesMatch(proxyHome: string): Promise<b
     for (const block of blocks) {
       if (
         (await read(block)).equals(expectedBlock) &&
-        entries.includes(block.replace("/textures/", "/models/").replace(/\.png$/, ".json"))
+        entries.includes(block.replace("/textures/", "/models/").replace(/\.png$/u, ".json"))
       )
         return true;
     }

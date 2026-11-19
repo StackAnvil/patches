@@ -64,8 +64,8 @@ export default defineConfig({
                   typeof entry !== "string" && entry.title
                     ? entry.title
                     : (typeof entry === "string" ? entry : entry.file)
-                        .replace(/^\d+-/, "")
-                        .replace(/\.patch$/, "")
+                        .replace(/^\d+-/u, "")
+                        .replace(/\.patch$/u, "")
                         .replaceAll("-", " "),
               })),
             );

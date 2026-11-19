@@ -32,7 +32,7 @@ export function fishingRetrievalPasses(
     observation.error ||
     observation.uses.length !== 2 ||
     observation.hooks.length !== 1 ||
-    observation.remainingHooks.length ||
+    observation.remainingHooks.length > 0 ||
     observation.rodCount !== 1 ||
     observation.rewards !== 0 ||
     observation.rodDamage !== (mode === "entity" ? 3 : 0)
@@ -68,7 +68,7 @@ export function fishingRetrievalPasses(
       (frame) =>
         !Number.isInteger(frame.tick) ||
         [frame.position, frame.velocity, frame.player].some(
-          (vector) => !Object.values(vector).every(Number.isFinite),
+          (vector) => !Object.values(vector).every((value) => Number.isFinite(value)),
         ),
     )
   )

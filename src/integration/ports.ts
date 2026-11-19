@@ -12,14 +12,20 @@ export const tcpPortEffect = Effect.scoped(
         Effect.promise(
           () =>
             new Promise<void>((resolve) => {
-              opened.close(() => resolve());
+              opened.close(() => {
+                resolve();
+              });
             }),
         ),
     );
     yield* Effect.callback<void, ReturnType<typeof labError>>((resume) => {
-      const error = (cause: Error) => resume(Effect.fail(labError("reserve TCP port", cause)));
+      const error = (cause: Error) => {
+        resume(Effect.fail(labError("reserve TCP port", cause)));
+      };
       server.once("error", error);
-      server.listen(0, "127.0.0.1", () => resume(Effect.void));
+      server.listen(0, "127.0.0.1", () => {
+        resume(Effect.void);
+      });
       return Effect.sync(() => {
         server.off("error", error);
       });
@@ -40,7 +46,9 @@ export const udpPortEffect = Effect.scoped(
           () =>
             new Promise<void>((resolve) => {
               try {
-                opened.close(() => resolve());
+                opened.close(() => {
+                  resolve();
+                });
               } catch {
                 resolve();
               }
@@ -48,9 +56,13 @@ export const udpPortEffect = Effect.scoped(
         ),
     );
     yield* Effect.callback<void, ReturnType<typeof labError>>((resume) => {
-      const error = (cause: Error) => resume(Effect.fail(labError("reserve UDP port", cause)));
+      const error = (cause: Error) => {
+        resume(Effect.fail(labError("reserve UDP port", cause)));
+      };
       socket.once("error", error);
-      socket.bind(0, "127.0.0.1", () => resume(Effect.void));
+      socket.bind(0, "127.0.0.1", () => {
+        resume(Effect.void);
+      });
       return Effect.sync(() => {
         socket.off("error", error);
       });

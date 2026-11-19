@@ -2,15 +2,21 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, link, unlink, stat, writeFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { builtinUiManifest, verifyBuiltinUiContents } from "../src/bedrock-ui.ts";
-import { assetZip, readBedrockArchive } from "./bundle-bedrock-assets.ts";
+import {
+  assetZip,
+  readBedrockArchive,
+  ResourcePackManifestSchema,
+} from "./bundle-bedrock-assets.ts";
+import { parseJson } from "../src/guards.ts";
 import { print } from "../src/output.ts";
 
 /** Build-time inputs come from an acquired package. Runtime consumers use the resulting JAR resource. */
 export async function planBedrockUi(game: string, version: string, output: string) {
-  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version))
+  if (!/^\d+\.\d+\.\d+\.\d+$/u.test(version))
     throw new Error("Expected a four-part Bedrock version");
   const protocol = version.split(".").slice(0, 3).join(".");
-  const manifest = JSON.parse(
+  const manifest = parseJson(
+    ResourcePackManifestSchema,
     await readFile(
       join(game, "data", "resource_packs", `vanilla_${protocol}`, "manifest.json"),
       "utf8",
@@ -21,20 +27,20 @@ export async function planBedrockUi(game: string, version: string, output: strin
   const files = new Map<string, Uint8Array>();
   const sources: { path: string; sha256: string; entries: number }[] = [];
   const categories = [
-    { path: "ui", formats: /\.json$/, limit: 1024 * 1024, required: true },
+    { path: "ui", formats: /\.json$/u, limit: 1024 * 1024, required: true },
     {
       path: "textures/ui",
-      formats: /\.(png|jpg|tga|json)$/,
+      formats: /\.(png|jpg|tga|json)$/u,
       limit: 16 * 1024 * 1024,
       required: true,
     },
-    { path: "font", formats: /\.(ttf|png|json)$/, limit: 16 * 1024 * 1024, required: false },
+    { path: "font", formats: /\.(ttf|png|json)$/u, limit: 16 * 1024 * 1024, required: false },
   ];
   for (const pack of ["vanilla_base", "vanilla"]) {
     const root = join(game, "data", "resource_packs", pack);
     for (const category of categories) {
-      function add(path: string, contents: Uint8Array): void {
-        if (!contents.length || !category.formats.test(path)) return;
+      const add = (path: string, contents: Uint8Array): void => {
+        if (contents.length === 0 || !category.formats.test(path)) return;
         // Native MSDF atlases are not consumed by the current TTF UI renderer.
         if (category.path === "font" && path.startsWith("font/smooth/") && path.endsWith(".png"))
           return;
@@ -48,8 +54,12 @@ export async function planBedrockUi(game: string, version: string, output: strin
             throw new Error("Invalid UI definition");
         }
         files.set(path, contents);
-      }
-      async function readArchive(path: string, prefix: string, required: boolean): Promise<void> {
+      };
+      const readArchive = async (
+        path: string,
+        prefix: string,
+        required: boolean,
+      ): Promise<void> => {
         const original = `${path}.bol-orig`;
         const selected = await stat(original)
           .then((info) => (info.isFile() ? original : path))
@@ -57,9 +67,8 @@ export async function planBedrockUi(game: string, version: string, output: strin
             if (error.code !== "ENOENT") throw error;
             return path;
           });
-        const bytes = await readFile(selected).catch((error: NodeJS.ErrnoException) => {
+        const bytes = await readFile(selected).catch((error: NodeJS.ErrnoException): undefined => {
           if (required || error.code !== "ENOENT") throw error;
-          return undefined;
         });
         if (!bytes) return;
         const entries = readBedrockArchive(bytes);
@@ -69,8 +78,8 @@ export async function planBedrockUi(game: string, version: string, output: strin
           entries: entries.size,
         });
         for (const [name, contents] of entries) add(`${prefix}/${name}`, contents);
-      }
-      async function walk(directory: string, prefix: string, archives: boolean): Promise<void> {
+      };
+      const walk = async (directory: string, prefix: string, archives: boolean): Promise<void> => {
         const entries = await readdir(directory, { withFileTypes: true }).catch(
           (error: NodeJS.ErrnoException) => {
             if (error.code !== "ENOENT") throw error;
@@ -79,15 +88,15 @@ export async function planBedrockUi(game: string, version: string, output: strin
         );
         for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name, "en"))) {
           if (entry.isSymbolicLink()) throw new Error("UI assets contain a symbolic link");
-          const selected = join(directory, entry.name),
-            path = `${prefix}/${entry.name}`;
+          const selected = join(directory, entry.name);
+          const path = `${prefix}/${entry.name}`;
           if (entry.isDirectory()) await walk(selected, path, archives);
           else if (entry.isFile() && archives && entry.name.endsWith(".brarchive")) {
             await readArchive(selected, path.slice(0, -".brarchive".length), true);
           } else if (entry.isFile() && !archives && category.formats.test(entry.name)) {
             const bytes = await readFile(selected);
             add(path, bytes);
-            if (bytes.length)
+            if (bytes.length > 0)
               sources.push({
                 path: selected,
                 sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -95,7 +104,7 @@ export async function planBedrockUi(game: string, version: string, output: strin
               });
           }
         }
-      }
+      };
       // Subdirectories have their own native archives, including settings templates and font atlases.
       await readArchive(
         join(root, "__brarchive", `${category.path}.brarchive`),

@@ -91,10 +91,10 @@ export async function rebindReplayJavaConfig(
   target: string,
 ): Promise<void> {
   const cfg = await readFile(path, "utf8");
-  const configured = /^JavaPath=(.+)$/m.exec(cfg)?.[1];
+  const configured = /^JavaPath=(.+)$/mu.exec(cfg)?.[1];
   if (!configured) return;
   const java = await privateReplayJavaPath(source, target, configured);
-  await writeFile(path, cfg.replace(/^JavaPath=.+$/m, `JavaPath=${java}`), { mode: 0o600 });
+  await writeFile(path, cfg.replace(/^JavaPath=.+$/mu, `JavaPath=${java}`), { mode: 0o600 });
 }
 
 /** Register only a newly created private game; call its release after owned processes stop. */

@@ -1,14 +1,14 @@
 import { waylandToolEnvironment } from "../lab/wayland.ts";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { chmod, link, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { Schema } from "effect";
 import { errorCode, parseJson } from "../guards.ts";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
 import { createCaptureWaylandBuilder } from "./native.ts";
+import { execFileAsync as execute } from "../process.ts";
 
 export interface WindowInfo {
   id: string;
@@ -18,7 +18,7 @@ export interface WindowInfo {
   width: number;
   height: number;
 }
-const bedrockTitle = /^minecraft(?: for windows| bedrock)?$/i;
+const bedrockTitle = /^minecraft(?: for windows| bedrock)?$/iu;
 const WindowListSchema = Schema.mutable(
   Schema.Array(
     Schema.Struct({
@@ -42,7 +42,6 @@ export type UiExecutor = (
   cwd: string,
   env: NodeJS.ProcessEnv,
 ) => Promise<string>;
-const execute = promisify(execFile);
 const executeUi: UiExecutor = async (program, args, cwd, env) => {
   const { stdout } = await execute(program, args, { cwd, env, maxBuffer: 16 * 1024 * 1024 });
   return stdout.trimEnd();
@@ -58,9 +57,13 @@ export type UiRecorder = (
 const spawnRecorder: UiRecorder = (program, args, env) => {
   const child = spawn(program, args, { cwd: root, env, stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
-  child.stderr.on("data", (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-4000)));
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr = (stderr + chunk.toString()).slice(-4000);
+  });
   const exited = new Promise<number | null>((done) => {
-    child.once("exit", (code) => done(code));
+    child.once("exit", (code) => {
+      done(code);
+    });
   });
   return {
     stop: async () => {
@@ -72,7 +75,7 @@ const spawnRecorder: UiRecorder = (program, args, env) => {
 };
 
 const checkId = (id: string) => {
-  if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id))
+  if (!/^[a-z0-9][a-z0-9-]{0,90}$/u.test(id))
     throw new Error("Use lowercase letters, digits, and hyphens for a screenshot name.");
 };
 
@@ -136,7 +139,7 @@ export function createCaptureUi(
     const matches = available.filter((window) =>
       client === "bedrock"
         ? bedrockTitle.test(window.title)
-        : /^minecraft\*?\s/i.test(window.title),
+        : /^minecraft\*?\s/iu.test(window.title),
     );
     const [match] = matches;
     if (match && matches.length === 1) return match;
@@ -327,7 +330,7 @@ export function createCaptureUi(
     durationMs?: number,
     doubleTap = false,
   ): Promise<void> {
-    if (!/^[A-Za-z0-9_+]{1,32}$/.test(name))
+    if (!/^[A-Za-z0-9_+]{1,32}$/u.test(name))
       throw new Error("Use a key name such as Escape, Return, Tab, or Control+b.");
     if (
       durationMs !== undefined &&
@@ -382,13 +385,10 @@ export function createCaptureUi(
     allowFocus = false,
   ): Promise<void> {
     if (
-      !Array.isArray(points) ||
       points.length < 2 ||
       points.length > 64 ||
-      !points.every(
-        (point) =>
-          point &&
-          [point.x, point.y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1),
+      !points.every((point) =>
+        [point.x, point.y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1),
       )
     ) {
       throw new Error("Drag needs 2 to 64 points with coordinates between 0 and 1.");
@@ -427,7 +427,7 @@ export function createCaptureUi(
     client?: Client,
     allowFocus = false,
   ): Promise<void> {
-    if (!/^[a-z0-9 .-]{1,120}$/.test(value))
+    if (!/^[a-z0-9 .-]{1,120}$/u.test(value))
       throw new Error(
         "Text must contain 1 to 120 lowercase ASCII letters, digits, spaces, periods, or hyphens.",
       );
@@ -444,18 +444,21 @@ export function createCaptureUi(
   async function command(args: string[]): Promise<string> {
     const [prefix, action, ...input] = args;
     if (prefix !== "ui") throw new Error("Expected a capture UI command.");
-    const windowId =
-      input.indexOf("--window-id") >= 0 ? input[input.indexOf("--window-id") + 1] : undefined;
+    const windowId = input.includes("--window-id")
+      ? input[input.indexOf("--window-id") + 1]
+      : undefined;
     if (input.includes("--window-id") && (!windowId || windowId.startsWith("--")))
       throw new Error("--window-id needs an ID.");
-    const clientInput =
-      input.indexOf("--client") >= 0 ? input[input.indexOf("--client") + 1] : "bedrock";
+    const clientInput = input.includes("--client")
+      ? input[input.indexOf("--client") + 1]
+      : "bedrock";
     if (clientInput !== "bedrock" && clientInput !== "java")
       throw new Error("--client must be bedrock or java.");
     const client: Client = clientInput;
     const allowFocus = input.includes("--allow-focus");
-    const outputDir =
-      input.indexOf("--output-dir") >= 0 ? input[input.indexOf("--output-dir") + 1] : undefined;
+    const outputDir = input.includes("--output-dir")
+      ? input[input.indexOf("--output-dir") + 1]
+      : undefined;
     if (input.includes("--output-dir") && (!outputDir || outputDir.startsWith("--")))
       throw new Error("--output-dir needs a directory.");
     switch (action) {

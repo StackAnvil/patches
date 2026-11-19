@@ -1,12 +1,11 @@
 import { nativeWaylandEnvironment, waylandTool, waylandToolEnvironment } from "../lab/wayland.ts";
 import { createCaptureWaylandBuilder } from "./native.ts";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { existsSync, openSync, closeSync, statSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { Schema } from "effect";
 import { parseJson } from "../guards.ts";
 import { root } from "../model.ts";
@@ -14,8 +13,8 @@ import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
 import { createCaptureUi, type Client } from "./ui.ts";
 import { print, printError } from "../output.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const uiEnvironment = captureUiEnvironment(() => displayEnv(), process.env);
 const captureRoot = join(root, ".stackanvil", "captures");
 const currentPath = join(captureRoot, "current.json");
@@ -51,12 +50,12 @@ async function muteBedrockSettings(): Promise<void> {
   );
   if (!existsSync(users)) return;
   for (const entry of await readdir(users, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
     const file = join(users, entry.name, "games", "com.mojang", "minecraftpe", "options.txt");
     if (!existsSync(file)) continue;
     const options = await readFile(file, "utf8");
-    const muted = /^audio_main:.*$/m.test(options)
-      ? options.replace(/^audio_main:.*$/m, "audio_main:0")
+    const muted = /^audio_main:.*$/mu.test(options)
+      ? options.replace(/^audio_main:.*$/mu, "audio_main:0")
       : `${options}\naudio_main:0\n`;
     if (muted !== options) await writeFile(file, muted);
   }
@@ -154,7 +153,7 @@ const capturePath = (id: string) => join(captureRoot, id);
 const sessionFile = (id: string) => join(capturePath(id), "session.json");
 
 function checkId(id: string): string {
-  if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id))
+  if (!/^[a-z0-9][a-z0-9-]{0,90}$/u.test(id))
     throw new Error("Use lowercase letters, digits, and hyphens for a session name.");
   return id;
 }
@@ -201,7 +200,9 @@ async function waitForPort(port: number, pid: number): Promise<void> {
         socket.destroy();
         resolveReady(true);
       });
-      socket.once("error", () => resolveReady(false));
+      socket.once("error", () => {
+        resolveReady(false);
+      });
       socket.setTimeout(250, () => {
         socket.destroy();
         resolveReady(false);
@@ -223,7 +224,11 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
     if (!old.stoppedAt && alive(old.proxyPid))
       throw new Error(`Capture ${old.id} is active. Stop it first.`);
   }
-  const stamp = new Date().toISOString().replaceAll(/[-:]/g, "").replace(/\..*$/, "").toLowerCase();
+  const stamp = new Date()
+    .toISOString()
+    .replaceAll(/[-:]/gu, "")
+    .replace(/\..*$/u, "")
+    .toLowerCase();
   const id = checkId(`${stamp}-${name}`);
   const dir = capturePath(id);
   await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -300,7 +305,7 @@ async function launchGame(): Promise<void> {
     "/etc/ssl/certs/ca-certificates.crt",
     "/etc/pki/tls/cert.pem",
     join(homedir(), ".local", "share", "bedrock-on-linux", "cache", "cacert.pem"),
-  ].find(existsSync);
+  ].find((value) => existsSync(value));
   if (!systemCa)
     throw new Error("No system CA bundle was found for an isolated proxy trust bundle.");
   await writeFile(bundle, `${await readFile(systemCa, "utf8")}\n${await readFile(ca, "utf8")}`, {
@@ -418,7 +423,7 @@ async function prepareLauncher(): Promise<string> {
 async function mark(label: string): Promise<void> {
   const session = await load();
   if (session.stoppedAt) throw new Error("This capture is stopped.");
-  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]{0,80}$/.test(label))
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]{0,80}$/u.test(label))
     throw new Error("Use a short marker with letters, digits, spaces, or hyphens.");
   await appendFile(
     join(capturePath(session.id), "markers.jsonl"),
@@ -719,7 +724,7 @@ async function report(id?: string): Promise<string> {
       "",
     );
   }
-  if (!events.length)
+  if (events.length === 0)
     lines.push(
       "No HTTPS responses were captured. Check proxy routing and certificate trust before using this report.",
       "",
@@ -818,13 +823,15 @@ async function main(): Promise<void> {
       return compare(args[0], args[1]);
     case "video": {
       const [action, ...input] = args;
-      const clientInput =
-        input.indexOf("--client") >= 0 ? input[input.indexOf("--client") + 1] : "bedrock";
+      const clientInput = input.includes("--client")
+        ? input[input.indexOf("--client") + 1]
+        : "bedrock";
       if (clientInput !== "bedrock" && clientInput !== "java")
         throw new Error("--client must be bedrock or java.");
       const client: Client = clientInput;
-      const windowId =
-        input.indexOf("--window-id") >= 0 ? input[input.indexOf("--window-id") + 1] : undefined;
+      const windowId = input.includes("--window-id")
+        ? input[input.indexOf("--window-id") + 1]
+        : undefined;
       if (action === "start" && input[0]) {
         const fpsIndex = input.indexOf("--fps");
         return startVideo(
@@ -844,10 +851,10 @@ async function main(): Promise<void> {
     case "ui": {
       if (args[0] === "run") {
         if (!args[1]) throw new Error("Supply a scenario JSON file.");
-        const windowId =
-          args.indexOf("--window-id") >= 0 ? args[args.indexOf("--window-id") + 1] : undefined;
-        const client =
-          args.indexOf("--client") >= 0 ? args[args.indexOf("--client") + 1] : "bedrock";
+        const windowId = args.includes("--window-id")
+          ? args[args.indexOf("--window-id") + 1]
+          : undefined;
+        const client = args.includes("--client") ? args[args.indexOf("--client") + 1] : "bedrock";
         if (client !== "bedrock" && client !== "java")
           throw new Error("--client must be bedrock or java.");
         return scenario(args[1], windowId, client, args.includes("--allow-focus"));

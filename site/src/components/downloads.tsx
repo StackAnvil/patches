@@ -35,7 +35,9 @@ export function SetupSwitch({
               name={name}
               value={id}
               checked={setup === id}
-              onChange={() => onChange(id)}
+              onChange={() => {
+                onChange(id);
+              }}
             />
             <Icon size={20} aria-hidden="true" />
             <span>

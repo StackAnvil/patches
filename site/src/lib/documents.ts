@@ -30,9 +30,9 @@ export const pageTree: Root = {
   name: "Documentation",
   children: [
     { type: "separator", name: "Play" },
-    ...play.map(item),
+    ...play.map((value) => item(value)),
     { type: "separator", name: "Develop" },
-    ...develop.map(item),
+    ...develop.map((value) => item(value)),
   ],
 };
 

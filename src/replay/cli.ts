@@ -1,5 +1,5 @@
 import { flatpakWaylandArguments } from "../lab/wayland.ts";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import {
   chmod,
@@ -18,9 +18,8 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve, delimiter } from "node:path";
 import { createServer, isIP } from "node:net";
 import { createSocket } from "node:dgram";
-import { promisify } from "node:util";
 import { Effect, Schema } from "effect";
-import { isRecord, parseJson, required } from "../guards.ts";
+import { isRecord, JsonObjectSchema, parseJson, required } from "../guards.ts";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
@@ -63,8 +62,8 @@ import {
   verifyRendering,
 } from "./verification.ts";
 import { print, printError } from "../output.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "replay");
 const servers = new Map(
   Object.entries({
@@ -135,7 +134,9 @@ async function port(udp = false): Promise<number> {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Could not reserve a port.");
   await new Promise<void>((done) => {
-    server.close(() => done());
+    server.close(() => {
+      done();
+    });
   });
   return address.port;
 }
@@ -312,7 +313,7 @@ async function launchJava(
         isRecord(manifest) && isRecord(manifest["ICD"])
           ? manifest["ICD"]["library_path"]
           : undefined;
-      if (typeof library !== "string" || !/(?:^|\/)libvulkan_lvp\.so(?:\.\d+)*$/.test(library)) {
+      if (typeof library !== "string" || !/(?:^|\/)libvulkan_lvp\.so(?:\.\d+)*$/u.test(library)) {
         throw new Error("Unexpected software Vulkan driver.");
       }
     } catch {
@@ -366,12 +367,16 @@ async function launchJava(
     );
     const minecraft = pack.components.find((component) => component.uid === "net.minecraft");
     if (!minecraft) throw new Error("The integration instance has no Minecraft component.");
-    const component = JSON.parse(
+    const component = parseJson(
+      Schema.Struct({ minecraftArguments: Schema.String }),
       await readFile(join(prismData, "meta/net.minecraft", `${minecraft.version}.json`), "utf8"),
     );
-    component.minecraftArguments += ` --quickPlayMultiplayer ${address}`;
+    const patched = {
+      ...component,
+      minecraftArguments: `${component.minecraftArguments} --quickPlayMultiplayer ${address}`,
+    };
     await mkdir(join(instance, "patches"), { mode: 0o700 });
-    await writeFile(join(instance, "patches/net.minecraft.json"), JSON.stringify(component), {
+    await writeFile(join(instance, "patches/net.minecraft.json"), JSON.stringify(patched), {
       mode: 0o600,
     });
   }
@@ -383,8 +388,8 @@ async function launchJava(
     const results = await Promise.allSettled([releaseGame(), releasePrism()]);
     const errors = results
       .filter((result) => result.status === "rejected")
-      .map((result) => result.reason);
-    if (errors.length) throw new AggregateError(errors, "Replay dependency cleanup failed.");
+      .map((result): unknown => result.reason);
+    if (errors.length > 0) throw new AggregateError(errors, "Replay dependency cleanup failed.");
   };
   for (const file of ["config", "options.txt"])
     if (existsSync(join(source, "minecraft", file)))
@@ -401,7 +406,7 @@ async function launchJava(
       // The lab window starts unfocused; pausing on that would open the game menu on the first input.
       ["pauseOnLostFocus", "false"],
     ]) {
-      const line = new RegExp(`^${key}:.*$`, "m");
+      const line = new RegExp(`^${key}:.*$`, "mu");
       options = line.test(options)
         ? options.replace(line, `${key}:${value}`)
         : `${options.trimEnd()}\n${key}:${value}\n`;
@@ -411,9 +416,17 @@ async function launchJava(
   const config = join(game, "config/viafabricplus");
   await mkdir(config, { recursive: true, mode: 0o700 });
   const settingsFile = join(config, "settings.json");
-  const settings = existsSync(settingsFile) ? JSON.parse(await readFile(settingsFile, "utf8")) : {};
-  settings.selected_protocol_version = client === "addon" ? "Bedrock 1.26.60" : "26.3";
-  await writeFile(settingsFile, JSON.stringify(settings), { mode: 0o600 });
+  const settings = existsSync(settingsFile)
+    ? parseJson(JsonObjectSchema, await readFile(settingsFile, "utf8"))
+    : {};
+  await writeFile(
+    settingsFile,
+    JSON.stringify({
+      ...settings,
+      selected_protocol_version: client === "addon" ? "Bedrock 1.26.60" : "26.3",
+    }),
+    { mode: 0o600 },
+  );
   await rm(join(config, "bedrock.json"), { force: true });
   if (account)
     await writeFile(join(config, "bedrock.json"), await readFile(account), { mode: 0o600 });
@@ -505,7 +518,7 @@ async function launchJava(
       .find((entry) => entry.includes("org.prismlauncher.EntryPoint") && entry.includes(name));
     javaCleanup?.captureDescendants();
     if (line) {
-      const pid = Number(line.trim().split(/\s/)[0]);
+      const pid = Number(line.trim().split(/\s/u)[0]);
       if (basename(await readlink(`/proc/${pid}/exe`)) !== "java" || !javaCleanup?.owns(pid)) {
         throw new Error("Matching Java process is not a captured private launcher descendant.");
       }
@@ -641,7 +654,7 @@ async function launchNative(
     [join(root, "src/capture/cli.ts"), "ui", "pixel", "0.6", contentY(0.28), "--client", "bedrock"],
     { cwd: root },
   );
-  const rgb = pixel.stdout.trim().split(/\s+/).map(Number);
+  const rgb = pixel.stdout.trim().split(/\s+/u).map(Number);
   if (rgb.length === 3 && rgb.every((value) => value > 150)) await click(0.5, 0.59);
   return { pid: child.pid, log };
 }
@@ -673,7 +686,7 @@ async function stopAll(directory: string, gamePid?: number): Promise<void> {
     const proxyLog = join(nativeClient.directory, "proxy.log");
     while (Date.now() < until && children.some((child) => alive(child.pid))) {
       if (
-        /StackAnvil native capture connection closed|Native connection failed:|Native capture failed:/.test(
+        /StackAnvil native capture connection closed|Native connection failed:|Native capture failed:/u.test(
           await logText(proxyLog),
         )
       )
@@ -737,7 +750,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     }
     const reviewedAt = args.indexOf("--reviewed-preview");
     const reviewed = reviewedAt < 0 ? undefined : args[reviewedAt + 1];
-    if (args.includes("--apply") && (!reviewed || !/^[0-9a-f]{64}$/.test(reviewed))) {
+    if (args.includes("--apply") && (!reviewed || !/^[0-9a-f]{64}$/u.test(reviewed))) {
       throw new Error("Fixture creation requires --apply --reviewed-preview <preview-sha256>.");
     }
     if (!args.includes("--apply") && reviewed !== undefined)
@@ -806,7 +819,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     );
   if (mode === "record" && input === "local") {
     target = option("--target");
-    if (!/^(?:nethernet:\/\/)?127\.0\.0\.1:\d+$/.test(target ?? ""))
+    if (!/^(?:nethernet:\/\/)?127\.0\.0\.1:\d+$/u.test(target ?? ""))
       throw new Error(
         "Local recordings require --target 127.0.0.1:port or nethernet://127.0.0.1:port.",
       );
@@ -845,17 +858,17 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     { role: "transport", path: jar },
     { role: "proxy-recorder", path: join(proxyHome, "plugins/recorder.jar") },
   ]);
-  if (mode === "record") {
-    if (client === "proxy" && (input !== "local" || option("--account"))) {
-      const authPath = resolve(
-        option("--account") ?? process.env["STACKANVIL_BEDROCK_ACCOUNT"] ?? accountDefault,
-      );
-      const auth = JSON.parse(await readFile(authPath, "utf8"));
-      auth.accountType = "net.raphimc.viaproxy.saves.impl.accounts.BedrockAccount";
-      await writeFile(join(proxyHome, "saves.json"), JSON.stringify({ accountsV4: [auth] }), {
-        mode: 0o600,
-      });
-    }
+  if (mode === "record" && client === "proxy" && (input !== "local" || option("--account"))) {
+    const authPath = resolve(
+      option("--account") ?? process.env["STACKANVIL_BEDROCK_ACCOUNT"] ?? accountDefault,
+    );
+    const auth = {
+      ...parseJson(JsonObjectSchema, await readFile(authPath, "utf8")),
+      accountType: "net.raphimc.viaproxy.saves.impl.accounts.BedrockAccount",
+    };
+    await writeFile(join(proxyHome, "saves.json"), JSON.stringify({ accountsV4: [auth] }), {
+      mode: 0o600,
+    });
   }
   const ownedDisplay = !(await activeDisplay());
   let gamePid: number | undefined;
@@ -908,7 +921,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         directory,
         log,
       );
-      await ready(child, log, /StackAnvil replay ready/);
+      await ready(child, log, /StackAnvil replay ready/u);
       target = `nethernet://127.0.0.1:${replayPort}`;
     }
     if (target === undefined) throw new Error("Unknown server.");
@@ -943,7 +956,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         proxyHome,
         proxyLog,
       );
-      await ready(child, proxyLog, /ViaProxy started successfully/);
+      await ready(child, proxyLog, /ViaProxy started successfully/u);
     } else if (client === "native") {
       const destination = viaProxyTarget(target);
       const separator = destination.lastIndexOf(":");
@@ -970,7 +983,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         directory,
         proxyLog,
       );
-      await ready(child, proxyLog, /StackAnvil native capture ready/);
+      await ready(child, proxyLog, /StackAnvil native capture ready/u);
     }
     const assetAccount =
       client === "addon"
@@ -1025,7 +1038,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       const log = await logText(game.log);
       if (
         client === "native" &&
-        /Native connection failed:|Native capture failed:|StackAnvil native capture connection closed/.test(
+        /Native connection failed:|Native capture failed:|StackAnvil native capture connection closed/u.test(
           await logText(proxyLog),
         )
       )
@@ -1102,7 +1115,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   }
   if (
     client === "native" &&
-    /Native connection failed:|Native capture failed:/.test(
+    /Native connection failed:|Native capture failed:/u.test(
       await logText(join(directory, "proxy.log")),
     )
   )
@@ -1111,14 +1124,16 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     );
   if (
     client === "native" &&
-    /Native pack observation failed:/.test(await logText(join(directory, "proxy.log")))
+    /Native pack observation failed:/u.test(await logText(join(directory, "proxy.log")))
   )
     throw new Error(
       "Native pack reconstruction failed. The raw recording is preserved for offline repair; read its private proxy log.",
     );
   if (
     client === "native" &&
-    !/StackAnvil native pack observation complete/.test(await logText(join(directory, "proxy.log")))
+    !/StackAnvil native pack observation complete/u.test(
+      await logText(join(directory, "proxy.log")),
+    )
   )
     throw new Error(
       "Native pack reconstruction did not finish before shutdown. The raw recording is preserved; read its private proxy log.",
@@ -1137,7 +1152,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       await logText(join(directory, "client.log")),
       (await readGraphicsLock()).shader.filename,
     );
-    if (failures.length) throw new Error(`${failures.join(" ")} Read the private client log.`);
+    if (failures.length > 0) throw new Error(`${failures.join(" ")} Read the private client log.`);
   }
   if (!existsSync(join(directory, "packets.sbr")))
     throw new Error(
@@ -1147,7 +1162,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   const connections = [];
   if (allowTransfers) {
     const names = (await readdir(directory))
-      .filter((name) => /^connection-[1-9]\d*$/.test(name) && Number(name.slice(11)) >= 2)
+      .filter((name) => /^connection-[1-9]\d*$/u.test(name) && Number(name.slice(11)) >= 2)
       .toSorted((left, right) => Number(left.slice(11)) - Number(right.slice(11)));
     for (const name of names) {
       const connection = await inspectJournal(join(directory, name, "packets.sbr"));
@@ -1175,7 +1190,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     );
   if (
     mode === "replay" &&
-    !/StackAnvil replay scene complete/.test(await logText(join(directory, "replay.log")))
+    !/StackAnvil replay scene complete/u.test(await logText(join(directory, "replay.log")))
   )
     throw new Error("The replay stopped before the complete scene was sent.");
   if (mode === "replay") {
@@ -1217,7 +1232,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       return;
     }
     const clientLog = await logText(join(directory, "client.log"));
-    if (!/Reloading ResourceManager:.*server\//.test(clientLog))
+    if (!/Reloading ResourceManager:.*server\//u.test(clientLog))
       throw new Error("Java did not load the replay resource pack.");
     const { stdout } = await execute("java", [
       `-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`,
@@ -1259,7 +1274,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
       JSON.stringify(
         {
           transport: "pass",
-          rendering: failures.length ? "fail" : "pass",
+          rendering: failures.length > 0 ? "fail" : "pass",
           failures,
           unregisteredActors: expected.unregisteredActorIdentifiers ?? [],
           expected,
@@ -1273,7 +1288,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     print(
       "PASS offline scene transport: playable spawn, complete payloads, and Java resource pack load.",
     );
-    if (failures.length) {
+    if (failures.length > 0) {
       print(`Rendering checks: ${failures.join(" ")}`);
       if (!transportOnly)
         throw new Error(

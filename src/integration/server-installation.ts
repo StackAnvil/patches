@@ -1,13 +1,11 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, type Stats } from "node:fs";
 import { lstat, mkdir, readdir, realpath, rm, statfs } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { requirePrivateCopySpace } from "../copy-space.ts";
 import { errorCode } from "../guards.ts";
+import { execFileAsync as execute } from "../process.ts";
 
-const execute = promisify(execFile);
 const dependencyEntries = ["bedrock_server", "definitions"];
 const installationEntries = [
   "bedrock_server",
@@ -65,7 +63,11 @@ async function treeDigest(tree: string): Promise<string> {
       digest.update("end-directory\0");
     } else if (state.isFile()) {
       digest.update(`file:${state.size}\0`);
-      for await (const chunk of createReadStream(path)) digest.update(chunk);
+      for await (const chunk of createReadStream(path)) {
+        if (!Buffer.isBuffer(chunk))
+          throw new TypeError("File streams without an encoding yield Buffers.");
+        digest.update(chunk);
+      }
     } else throw new Error("Server dependency cleanup refuses unsupported inputs.");
   }
   await visit(tree);

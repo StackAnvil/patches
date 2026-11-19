@@ -1,14 +1,12 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { promisify } from "node:util";
 import { Schema } from "effect";
 import { parseJson } from "./guards.ts";
 import { root } from "./model.ts";
 import { verifyPinnedManifest, type ViaFabricPlusPin } from "./viafabricplus.ts";
+import { execFileAsync as execute } from "./process.ts";
 
-const execute = promisify(execFile);
 const fabricLoader = "0.19.5";
 
 const ArtifactManifestSchema = Schema.Struct({
@@ -80,7 +78,7 @@ export async function clientArtifacts(artifactsDir = join(root, "dist"), pin?: V
     }
   }
   const version = base.depends.minecraft;
-  if (!/^[A-Za-z0-9][A-Za-z0-9.+_-]*$/.test(version))
+  if (!/^[A-Za-z0-9][A-Za-z0-9.+_-]*$/u.test(version))
     throw new Error("The client must target one exact Minecraft version");
   return { baseJar, addonJar, version, loader: fabricLoader };
 }
