@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -27,6 +27,8 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1, zwlr_virtual_pointer_v1,
 };
 use xkbcommon::xkb;
+
+mod decode;
 
 use crate::{
     ContextError, Result,
@@ -124,18 +126,7 @@ fn ipc(kind: u32, payload: &str) -> Result<Value> {
     connection.write_all(&(u32::try_from(payload.len())?).to_le_bytes())?;
     connection.write_all(&kind.to_le_bytes())?;
     connection.write_all(payload.as_bytes())?;
-    let mut header = [0; 14];
-    connection.read_exact(&mut header)?;
-    let size = u32::from_le_bytes(header[6..10].try_into()?);
-    if &header[..6] != b"i3-ipc"
-        || size > 16 * 1024 * 1024
-        || u32::from_le_bytes(header[10..14].try_into()?) != kind
-    {
-        return Err("Invalid Sway IPC response".into());
-    }
-    let mut response = vec![0; size as usize];
-    connection.read_exact(&mut response)?;
-    Ok(serde_json::from_slice(&response)?)
+    decode::sway_reply(&mut connection, kind)
 }
 
 fn sway(command: &str) -> Result<()> {
@@ -182,42 +173,7 @@ impl WindowInfo {
 }
 
 fn windows() -> Result<Vec<WindowInfo>> {
-    fn visit(node: &Value, output: &str, result: &mut Vec<WindowInfo>) -> Result<()> {
-        let output = if node["type"] == "output" {
-            node["name"].as_str().unwrap_or("")
-        } else {
-            output
-        };
-        if node["shell"] == "xdg_shell" && node["visible"] == true {
-            let rect = &node["rect"];
-            let content = &node["window_rect"];
-            let number = |value: &Value| value.as_i64().ok_or("Invalid Sway window geometry");
-            result.push(WindowInfo {
-                id: node["id"]
-                    .as_u64()
-                    .ok_or("Invalid Sway container ID")?
-                    .to_string(),
-                title: node["name"].as_str().unwrap_or("").to_string(),
-                x: i32::try_from(number(&rect["x"])? + number(&content["x"])?)?,
-                y: i32::try_from(number(&rect["y"])? + number(&content["y"])?)?,
-                width: u16::try_from(number(&content["width"])?)?,
-                height: u16::try_from(number(&content["height"])?)?,
-                focused: node["focused"] == true,
-                output: output.to_string(),
-            });
-        }
-        for field in ["nodes", "floating_nodes"] {
-            if let Some(children) = node[field].as_array() {
-                for child in children {
-                    visit(child, output, result)?;
-                }
-            }
-        }
-        Ok(())
-    }
-    let mut result = Vec::new();
-    visit(&ipc(4, "")?, "", &mut result)?;
-    Ok(result)
+    decode::windows(&ipc(4, "")?)
 }
 
 fn window(id: u64) -> Result<WindowInfo> {
@@ -566,40 +522,6 @@ fn with_input(
     signals.check()
 }
 
-fn pixel(bytes: &[u8], point: Point) -> Result<[u8; 3]> {
-    // grim emits P6 with a single whitespace byte after the max sample value.
-    let mut index = 0;
-    let mut token = || -> Result<&[u8]> {
-        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
-            index += 1;
-        }
-        let begin = index;
-        while bytes
-            .get(index)
-            .is_some_and(|byte| !byte.is_ascii_whitespace())
-        {
-            index += 1;
-        }
-        if begin == index {
-            return Err("Truncated PPM header".into());
-        }
-        Ok(&bytes[begin..index])
-    };
-    if token()? != b"P6" {
-        return Err("Invalid PPM image".into());
-    }
-    let width: u16 = std::str::from_utf8(token()?)?.parse()?;
-    let height: u16 = std::str::from_utf8(token()?)?.parse()?;
-    if token()? != b"255" || !point.fits(width, height) {
-        return Err("Invalid pixel bounds or image depth".into());
-    }
-    let begin = index + 1 + (usize::from(point.y) * usize::from(width) + usize::from(point.x)) * 3;
-    Ok(bytes
-        .get(begin..begin + 3)
-        .ok_or("Truncated PPM pixels")?
-        .try_into()?)
-}
-
 fn record(id: u64, fps: u16, path: &std::path::Path, signals: &Signals) -> Result<()> {
     if std::env::var("STACKANVIL_UI_ISOLATED").as_deref() != Ok("1") {
         return Err("Recording requires the private Wayland display".into());
@@ -714,12 +636,8 @@ fn serve(path: &std::path::Path) -> Result<()> {
                 Err(error) => return Err(error.into()),
             };
             stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-            let mut request = String::new();
-            let read = BufReader::new((&stream).take(16384)).read_line(&mut request);
             let result = (|| {
-                read?;
-                let args: Vec<String> = serde_json::from_str(&request)?;
-                let command = Command::parse(&args)?;
+                let command = decode::input_request(&stream)?;
                 if !is_input(&command) {
                     return Err("The input service accepts only input commands".into());
                 }
@@ -759,32 +677,7 @@ fn remote_input(socket: &std::path::Path, signals: &Signals) -> Result<()> {
         serde_json::to_string(&std::env::args().skip(1).collect::<Vec<_>>())?
     )?;
     stream.set_read_timeout(Some(Duration::from_millis(50)))?;
-    let mut response = Vec::new();
-    loop {
-        signals.check()?;
-        let mut buffer = [0; 1024];
-        match stream.read(&mut buffer) {
-            Ok(0) => return Err("The Wayland input service disconnected".into()),
-            Ok(count) => {
-                response.extend_from_slice(&buffer[..count]);
-                if response.len() > 16384 {
-                    return Err("Invalid input service response".into());
-                }
-                if response.ends_with(b"\n") {
-                    break;
-                }
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::TimedOut
-                        | std::io::ErrorKind::WouldBlock
-                        | std::io::ErrorKind::Interrupted
-                ) => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    let reply: Reply = serde_json::from_slice(&response)?;
+    let reply = decode::input_reply(&mut stream, signals)?;
     if reply.code != 0 {
         return Err(reply
             .error
@@ -836,7 +729,7 @@ fn execute(command: Command, signals: &Signals, device: &mut Option<Input>) -> R
             focus(window)?;
         }
         Command::Pixel { window, point } => {
-            let rgb = pixel(&capture(window)?, point)?;
+            let rgb = decode::pixel(&capture(window)?, point)?;
             println!("{} {} {}", rgb[0], rgb[1], rgb[2]);
         }
         Command::Screenshot { window, path } => {

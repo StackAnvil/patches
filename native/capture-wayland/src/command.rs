@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#![warn(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+
 use std::path::PathBuf;
 
 use crate::Result;
@@ -115,11 +117,12 @@ fn look_delta(value: &str) -> Result<i16> {
     if delta > 2000 {
         return Err(format!("Look delta must be within 2000 pixels: {value}").into());
     }
-    Ok(if value.starts_with('-') {
-        -delta
-    } else {
-        delta
-    })
+    if value.starts_with('-') {
+        return delta
+            .checked_neg()
+            .ok_or_else(|| "Look delta is out of range".into());
+    }
+    Ok(delta)
 }
 
 fn decimal<T: std::str::FromStr>(value: &str) -> Result<T>
@@ -269,15 +272,21 @@ impl Command {
             }
             ["drag", id, button, dwell, coordinates @ ..] => {
                 let dwell = duration(dwell, 1000)?;
-                if coordinates.len() % 2 != 0
-                    || !(4..=128).contains(&coordinates.len())
-                    || coordinates.len() as u64 / 2 * dwell > 10000
+                let chunks = coordinates.chunks_exact(2);
+                let point_count = u64::try_from(chunks.len())?;
+                if !chunks.remainder().is_empty()
+                    || !(2..=64).contains(&point_count)
+                    || point_count
+                        .checked_mul(dwell)
+                        .is_none_or(|total| total > 10000)
                 {
                     return Err("Drag needs 2 to 64 points totaling at most 10000 ms".into());
                 }
-                let points = coordinates
-                    .chunks_exact(2)
-                    .map(|xy| Point::parse(xy[0], xy[1]))
+                let points = chunks
+                    .map(|xy| match xy {
+                        [x, y] => Point::parse(x, y),
+                        _ => Err("Incomplete drag point".into()),
+                    })
                     .collect::<Result<_>>()?;
                 Self::Drag {
                     window: window(id)?,
@@ -343,7 +352,7 @@ mod tests {
                 .expect_err("parser accepted an invalid drag coordinate");
         }
         for (count, dwell, valid) in [
-            (1, 1, false),
+            (1_usize, 1, false),
             (64, 1, true),
             (65, 1, false),
             (10, 1000, true),
@@ -355,7 +364,10 @@ mod tests {
                 "right".into(),
                 dwell.to_string(),
             ];
-            args.extend(std::iter::repeat_n("0".to_string(), count * 2));
+            args.extend(std::iter::repeat_n(
+                "0".to_string(),
+                count.checked_mul(2).unwrap(),
+            ));
             let result = Command::parse(&args);
             assert_eq!(
                 result.is_ok(),
