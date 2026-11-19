@@ -4,6 +4,33 @@ mod wayland;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+#[derive(Debug)]
+struct ContextError {
+    message: String,
+    source: Box<dyn std::error::Error>,
+}
+
+impl ContextError {
+    fn new(message: impl Into<String>, source: impl Into<Box<dyn std::error::Error>>) -> Self {
+        Self {
+            message: message.into(),
+            source: source.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ContextError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.message, self.source)
+    }
+}
+
+impl std::error::Error for ContextError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(args.as_slice(), [arg] if arg == "--help" || arg == "help") {
@@ -23,7 +50,7 @@ fn main() -> std::process::ExitCode {
             eprintln!("{error}");
             let code = error
                 .downcast_ref::<wayland::Interrupted>()
-                .map_or(1, |error| 128 + error.0 as u8);
+                .map_or(1, wayland::Interrupted::exit_code);
             std::process::ExitCode::from(code)
         }
     }

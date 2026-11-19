@@ -29,12 +29,18 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 use xkbcommon::xkb;
 
 use crate::{
-    Result,
+    ContextError, Result,
     command::{Button, Command, Point},
 };
 
 #[derive(Debug)]
-pub struct Interrupted(pub usize);
+pub struct Interrupted(usize);
+
+impl Interrupted {
+    pub fn exit_code(&self) -> u8 {
+        u8::try_from(self.0.saturating_add(128)).unwrap_or(1)
+    }
+}
 
 impl std::fmt::Display for Interrupted {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -61,7 +67,7 @@ impl Signals {
             signals.handlers.push(signal_hook::flag::register_usize(
                 signal,
                 Arc::clone(&signals.signal),
-                signal as usize,
+                usize::try_from(signal)?,
             )?);
         }
         Ok(signals)
@@ -105,14 +111,17 @@ impl Drop for Signals {
 
 /// Sway's IPC supplies window geometry and focus, which core Wayland intentionally omits.
 fn ipc(kind: u32, payload: &str) -> Result<Value> {
-    let socket = std::env::var("SWAYSOCK").map_err(
-        |_| "Native capture requires Sway IPC (SWAYSOCK). Start the private lab display.",
-    )?;
+    let socket = std::env::var("SWAYSOCK").map_err(|error| {
+        ContextError::new(
+            "Native capture requires Sway IPC (SWAYSOCK). Start the private lab display",
+            error,
+        )
+    })?;
     let mut connection = UnixStream::connect(socket)?;
     connection.set_read_timeout(Some(Duration::from_secs(2)))?;
     connection.set_write_timeout(Some(Duration::from_secs(2)))?;
     connection.write_all(b"i3-ipc")?;
-    connection.write_all(&(payload.len() as u32).to_le_bytes())?;
+    connection.write_all(&(u32::try_from(payload.len())?).to_le_bytes())?;
     connection.write_all(&kind.to_le_bytes())?;
     connection.write_all(payload.as_bytes())?;
     let mut header = [0; 14];
@@ -340,15 +349,23 @@ impl Input {
             .map_err(|error| format!("Cannot connect to the native Wayland display: {error}"))?;
         let (globals, mut queue) = registry_queue_init::<InputState>(&connection)?;
         let qh = queue.handle();
-        let seat: wl_seat::WlSeat = globals
-            .bind(&qh, 1..=7, ())
-            .map_err(|_| "The compositor does not expose a Wayland seat")?;
+        let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=7, ()).map_err(|error| {
+            ContextError::new("The compositor does not expose a Wayland seat", error)
+        })?;
         let pointers: zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 =
-            globals.bind(&qh, 1..=2, ())
-                .map_err(|_| "The compositor does not support the Wayland virtual-pointer protocol. Use the private lab display.")?;
+            globals.bind(&qh, 1..=2, ()).map_err(|error| {
+                ContextError::new(
+                    "The compositor does not support the Wayland virtual-pointer protocol. Use the private lab display",
+                    error,
+                )
+            })?;
         let keyboards: zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1 =
-            globals.bind(&qh, 1..=1, ())
-                .map_err(|_| "The compositor does not support the Wayland virtual-keyboard protocol. Use the private lab display.")?;
+            globals.bind(&qh, 1..=1, ()).map_err(|error| {
+                ContextError::new(
+                    "The compositor does not support the Wayland virtual-keyboard protocol. Use the private lab display",
+                    error,
+                )
+            })?;
         let pointer = pointers.create_virtual_pointer(Some(&seat), &qh, ());
         let keyboard = keyboards.create_virtual_keyboard(&seat, &qh, ());
         let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
@@ -382,6 +399,10 @@ impl Input {
         })
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Wayland timestamps wrap at 32 bits"
+    )]
     fn time(&self) -> u32 {
         self.start.elapsed().as_millis() as u32
     }
@@ -435,7 +456,7 @@ impl Input {
         self.sync()
     }
 
-    fn hold(&self, signals: &Signals, selected: &WindowInfo, duration: u64) -> Result<()> {
+    fn hold(signals: &Signals, selected: &WindowInfo, duration: u64) -> Result<()> {
         let deadline = Instant::now() + Duration::from_millis(duration);
         loop {
             signals.check()?;
@@ -710,7 +731,7 @@ fn serve(path: &std::path::Path) -> Result<()> {
                 Err(error) => Reply {
                     code: error
                         .downcast_ref::<Interrupted>()
-                        .map_or(1, |error| 128 + error.0 as u8),
+                        .map_or(1, Interrupted::exit_code),
                     error: Some(error.to_string()),
                 },
             };
@@ -789,6 +810,10 @@ pub fn run(command: Command) -> Result<()> {
     execute(command, &signals, &mut None)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep command dispatch and the input cleanup paths together"
+)]
 fn execute(command: Command, signals: &Signals, device: &mut Option<Input>) -> Result<()> {
     match command {
         Command::Serve { .. } => return Err("Cannot nest an input service".into()),
@@ -861,7 +886,7 @@ fn execute(command: Command, signals: &Signals, device: &mut Option<Input>) -> R
             for _ in 0..repeats {
                 input.position(window, point)?;
                 input.button(button)?;
-                input.hold(signals, window, duration)?;
+                Input::hold(signals, window, duration)?;
                 input.release()?;
                 if repeats > 1 {
                     signals.wait(70)?;
@@ -875,7 +900,7 @@ fn execute(command: Command, signals: &Signals, device: &mut Option<Input>) -> R
             duration,
         } => with_input(window, signals, device, |input, window| {
             input.button(button)?;
-            input.hold(signals, window, duration)
+            Input::hold(signals, window, duration)
         })?,
         Command::Key {
             window,
@@ -891,7 +916,7 @@ fn execute(command: Command, signals: &Signals, device: &mut Option<Input>) -> R
                 for code in &codes {
                     input.press_key(*code)?;
                 }
-                input.hold(signals, window, duration)?;
+                Input::hold(signals, window, duration)?;
                 input.release()?;
                 if repeats > 1 {
                     signals.wait(70)?;

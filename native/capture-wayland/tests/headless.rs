@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#![cfg(test)]
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsFd;
@@ -72,6 +73,10 @@ impl Drop for Lab {
 }
 
 impl Lab {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep compositor startup and fixture setup in lifecycle order"
+    )]
     fn new() -> Self {
         let parent =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.stackanvil/tools/wayland-tests");
@@ -80,9 +85,7 @@ impl Lab {
         let runtime = tempfile::Builder::new()
             .prefix("sa-wl-")
             .tempdir_in(
-                std::env::var_os("XDG_RUNTIME_DIR")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(std::env::temp_dir),
+                std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from),
             )
             .unwrap();
         std::fs::set_permissions(runtime.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -224,6 +227,10 @@ impl Lab {
 
 #[test]
 #[ignore = "requires Sway and grim; run bun run test:capture:native"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The test verifies capture, input, and cleanup in the same compositor session"
+)]
 fn native_input_capture_and_interrupt_cleanup() {
     let lab = Lab::new();
     assert_eq!(lab.run(&["active"]).trim(), lab.id);
@@ -445,19 +452,20 @@ struct App {
     log: Option<File>,
 }
 impl App {
-    fn event(&mut self, event: Value) {
+    fn event(&mut self, event: &Value) {
         writeln!(self.log.as_mut().unwrap(), "{event}").unwrap();
     }
     fn draw(&mut self, qh: &QueueHandle<Self>) {
         let mut file = tempfile::tempfile().unwrap();
-        let size = (self.width * self.height * 4) as usize;
+        let size = (self.width * self.height * 4).try_into().unwrap();
         let pixels: Vec<u8> = [160, 96, 32, 255].into_iter().cycle().take(size).collect();
         file.write_all(&pixels).unwrap();
-        let pool = self
-            .shm
-            .as_ref()
-            .unwrap()
-            .create_pool(file.as_fd(), size as i32, qh, ());
+        let pool = self.shm.as_ref().unwrap().create_pool(
+            file.as_fd(),
+            i32::try_from(size).unwrap(),
+            qh,
+            (),
+        );
         let buffer = pool.create_buffer(
             0,
             self.width,
@@ -495,7 +503,7 @@ impl Dispatch<wl_callback::WlCallback, bool> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        state.event(json!({"frame":activated}));
+        state.event(&json!({"frame":activated}));
     }
 }
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for App {
@@ -503,7 +511,7 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for App {
         _: &mut Self,
         base: &xdg_wm_base::XdgWmBase,
         event: xdg_wm_base::Event,
-        _: &(),
+        (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
@@ -517,7 +525,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for App {
         state: &mut Self,
         _: &xdg_toplevel::XdgToplevel,
         event: xdg_toplevel::Event,
-        _: &(),
+        (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
@@ -544,7 +552,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for App {
         state: &mut Self,
         surface: &xdg_surface::XdgSurface,
         event: xdg_surface::Event,
-        _: &(),
+        (): &(),
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
@@ -559,7 +567,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
         state: &mut Self,
         _: &wl_pointer::WlPointer,
         event: wl_pointer::Event,
-        _: &(),
+        (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
@@ -568,7 +576,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 button,
                 state: key_state,
                 ..
-            } => state.event(json!({"button":button,"state":u32::from(key_state)})),
+            } => state.event(&json!({"button":button,"state":u32::from(key_state)})),
             wl_pointer::Event::Motion {
                 surface_x,
                 surface_y,
@@ -578,7 +586,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 surface_x,
                 surface_y,
                 ..
-            } => state.event(json!({"x":surface_x,"y":surface_y})),
+            } => state.event(&json!({"x":surface_x,"y":surface_y})),
             _ => {}
         }
     }
@@ -588,7 +596,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         state: &mut Self,
         _: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event,
-        _: &(),
+        (): &(),
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
@@ -598,7 +606,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 state: key_state,
                 ..
             } => {
-                state.event(json!({"key":key,"state":u32::from(key_state)}));
+                state.event(&json!({"key":key,"state":u32::from(key_state)}));
                 if key == 38 && u32::from(key_state) == 1 {
                     if let Some(lock) = state.lock.take() {
                         lock.destroy();
@@ -615,7 +623,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 }
             }
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
-                state.event(json!({"modifiers":mods_depressed}))
+                state.event(&json!({"modifiers":mods_depressed}));
             }
             _ => {}
         }
@@ -626,12 +634,12 @@ impl Dispatch<zwp_locked_pointer_v1::ZwpLockedPointerV1, ()> for App {
         state: &mut Self,
         _: &zwp_locked_pointer_v1::ZwpLockedPointerV1,
         event: zwp_locked_pointer_v1::Event,
-        _: &(),
+        (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if let zwp_locked_pointer_v1::Event::Locked = event {
-            state.event(json!({"locked": true}));
+            state.event(&json!({"locked": true}));
         }
     }
 }
@@ -640,12 +648,12 @@ impl Dispatch<zwp_relative_pointer_v1::ZwpRelativePointerV1, ()> for App {
         state: &mut Self,
         _: &zwp_relative_pointer_v1::ZwpRelativePointerV1,
         event: zwp_relative_pointer_v1::Event,
-        _: &(),
+        (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if let zwp_relative_pointer_v1::Event::RelativeMotion { dx, dy, .. } = event {
-            state.event(json!({"dx":dx,"dy":dy}));
+            state.event(&json!({"dx":dx,"dy":dy}));
         }
     }
 }

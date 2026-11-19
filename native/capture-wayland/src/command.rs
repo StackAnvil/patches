@@ -122,13 +122,16 @@ fn look_delta(value: &str) -> Result<i16> {
     })
 }
 
-fn decimal<T: std::str::FromStr>(value: &str) -> Result<T> {
+fn decimal<T: std::str::FromStr>(value: &str) -> Result<T>
+where
+    T::Err: std::error::Error + 'static,
+{
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(format!("Invalid nonnegative integer: {value}").into());
     }
-    value
-        .parse()
-        .map_err(|_| format!("Integer is out of range: {value}").into())
+    value.parse().map_err(|error| {
+        crate::ContextError::new(format!("Integer is out of range: {value}"), error).into()
+    })
 }
 
 fn window(value: &str) -> Result<u64> {
@@ -136,7 +139,8 @@ fn window(value: &str) -> Result<u64> {
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
     {
-        u64::from_str_radix(hex, 16).map_err(|_| "Invalid window ID")?
+        u64::from_str_radix(hex, 16)
+            .map_err(|error| crate::ContextError::new("Invalid window ID", error))?
     } else {
         decimal(value)?
     };
@@ -155,6 +159,10 @@ fn duration(value: &str, maximum: u64) -> Result<u64> {
 }
 
 impl Command {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep command syntax and argument validation together in one match"
+    )]
     pub fn parse(args: &[String]) -> Result<Self> {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         Ok(match args.as_slice() {
@@ -180,7 +188,7 @@ impl Command {
             },
             ["record", id, fps, path] => Self::Record {
                 window: window(id)?,
-                fps: duration(fps, 120)? as u16,
+                fps: u16::try_from(duration(fps, 120)?)?,
                 path: path.into(),
             },
             ["focus", id] => Self::Focus {
@@ -233,7 +241,7 @@ impl Command {
                 }
                 Self::Type {
                     window: window(id)?,
-                    text: text.to_string(),
+                    text: (*text).to_string(),
                 }
             }
             [
@@ -288,12 +296,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Command> {
-        Command::parse(
-            &args
-                .iter()
-                .map(|value| value.to_string())
-                .collect::<Vec<_>>(),
-        )
+        Command::parse(&args.iter().map(ToString::to_string).collect::<Vec<_>>())
     }
 
     #[test]
@@ -367,6 +370,13 @@ mod tests {
             parse(&["focus", "0x123"]).unwrap(),
             Command::Focus { window: 291 }
         );
+    }
+
+    #[test]
+    fn reports_invalid_hex_window_id_with_its_parse_error() {
+        let error = parse(&["focus", "0x123junk"]).unwrap_err();
+        assert!(error.to_string().starts_with("Invalid window ID: "));
+        assert!(error.source().unwrap().is::<std::num::ParseIntError>());
     }
 
     #[test]
