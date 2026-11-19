@@ -538,18 +538,12 @@ impl Input {
 
 impl Drop for Input {
     fn drop(&mut self) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "The compositor may already be disconnected during input cleanup"
-        )]
-        let _ = self.release();
+        // The compositor may already be disconnected during input cleanup.
+        drop(self.release());
         self.keyboard.destroy();
         self.pointer.destroy();
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "The final flush is best effort because the compositor may already be disconnected"
-        )]
-        let _ = self.connection.flush();
+        // The final flush is best effort because the compositor may already be disconnected.
+        drop(self.connection.flush());
     }
 }
 
@@ -662,13 +656,12 @@ fn record(id: u64, fps: u16, path: &std::path::Path, signals: &Signals) -> Resul
         }
     })();
     // Ask the encoder to finalize its container even when the window disappears.
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "The encoder may have already exited, and the wait below handles shutdown"
-    )]
-    let _ = ProcessCommand::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status();
+    // The encoder may have already exited, and the wait below handles shutdown.
+    drop(
+        ProcessCommand::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status(),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while child.try_wait()?.is_none() {
         if Instant::now() >= deadline {
@@ -747,11 +740,8 @@ fn serve(path: &std::path::Path) -> Result<()> {
                     error: Some(error.to_string()),
                 },
             };
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "The client may disconnect before receiving its reply, and the service must keep accepting requests"
-            )]
-            let _ = writeln!(stream, "{}", serde_json::to_string(&reply)?);
+            // The client may disconnect before receiving its reply, and the service must keep accepting requests.
+            let _reply_result = writeln!(stream, "{}", serde_json::to_string(&reply)?);
         }
     })();
     drop(device);

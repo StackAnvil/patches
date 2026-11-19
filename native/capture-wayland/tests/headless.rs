@@ -27,16 +27,10 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 struct Process(Child);
 impl Drop for Process {
     fn drop(&mut self) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "The fixture process may have already exited during cleanup"
-        )]
-        let _ = self.0.kill();
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Fixture cleanup must not panic if waiting fails"
-        )]
-        let _ = self.0.wait();
+        // The fixture process may have already exited during cleanup.
+        drop(self.0.kill());
+        // Fixture cleanup must not panic if waiting fails.
+        drop(self.0.wait());
     }
 }
 
@@ -463,7 +457,7 @@ impl App {
     fn event(&mut self, event: &Value) {
         writeln!(self.log.as_mut().unwrap(), "{event}").unwrap();
     }
-    fn draw(&mut self, qh: &QueueHandle<Self>) {
+    fn draw(&self, qh: &QueueHandle<Self>) {
         let mut file = tempfile::tempfile().unwrap();
         let size = (self.width * self.height * 4).try_into().unwrap();
         let pixels: Vec<u8> = [160, 96, 32, 255].into_iter().cycle().take(size).collect();
@@ -579,6 +573,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "The fixture records selected events and ignores other events from this non-exhaustive Wayland enum"
+        )]
         match event {
             wl_pointer::Event::Button {
                 button,
@@ -608,6 +606,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "The fixture records selected events and ignores other events from this non-exhaustive Wayland enum"
+        )]
         match event {
             wl_keyboard::Event::Key {
                 key,
@@ -646,7 +648,7 @@ impl Dispatch<zwp_locked_pointer_v1::ZwpLockedPointerV1, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let zwp_locked_pointer_v1::Event::Locked = event {
+        if matches!(event, zwp_locked_pointer_v1::Event::Locked) {
             state.event(&json!({"locked": true}));
         }
     }
