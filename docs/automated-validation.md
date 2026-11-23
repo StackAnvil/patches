@@ -35,7 +35,7 @@ It performs these checks:
 A failed pinned replay or invalid metadata produces a nonzero exit status.
 An upstream replay conflict is advisory because the configured base remains pinned.
 Independent application failures appear in the report. They do not establish whether a patch compiles.
-Independent checks use the same three-way Git application as `pr check` and reset the temporary source tree after each patch.
+Independent checks use the same three-way Git application as `pr check`. After each patch, they reset the temporary source tree and discard the objects that the check wrote, so a later check cannot merge against an earlier patch's result.
 Missing PR context remains advisory until a maintainer prepares that PR.
 
 Git patch equivalence detects matching changes. It cannot recognize every upstream rewrite or prove semantic equivalence.

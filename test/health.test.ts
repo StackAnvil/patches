@@ -97,6 +97,97 @@ test("offline health rejects a prerequisite file that is not in its project's se
   }
 });
 
+test("standalone checks report a patch that needs an earlier patch's lines as failed", async () => {
+  const globalConfig = process.env["GIT_CONFIG_GLOBAL"];
+  process.env["GIT_CONFIG_GLOBAL"] = "/dev/null";
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-health-standalone-"));
+  try {
+    const upstream = join(directory, "upstream");
+    const work = join(directory, "work");
+    await mkdir(upstream);
+    await runGit(["init", "-b", "main"], upstream);
+    await writeFile(join(upstream, "note.txt"), "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+    await runGit(["add", "note.txt"], upstream);
+    await runGit(
+      [
+        "-c",
+        "user.name=Health Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "base",
+      ],
+      upstream,
+    );
+    const baseSha = await runGit(["rev-parse", "HEAD"], upstream);
+    // Create the patches outside the upstream clone source, as a pr check clone never has their blobs.
+    await runGit(["clone", "-q", "--no-local", upstream, work], directory);
+    const patchDir = join(directory, "patches", "fixture", "upstreamable");
+    await mkdir(patchDir, { recursive: true });
+    const commit = async (content: string, file: string) => {
+      await writeFile(join(work, "note.txt"), content);
+      await runGit(
+        [
+          "-c",
+          "user.name=Health Test",
+          "-c",
+          "user.email=test@example.invalid",
+          "commit",
+          "-am",
+          "fix(test): update fixture",
+          "-m",
+          "Exercise standalone checks.",
+        ],
+        work,
+      );
+      await writeFile(join(patchDir, file), await runGit(["format-patch", "-1", "--stdout"], work));
+    };
+    await commit("ONE\ntwo\nthree\nfour\nfive\nsix\nseven\n", "first.patch");
+    // Its context includes the first patch's line, but a three-way merge would not conflict.
+    await commit("ONE\ntwo\nthree\nFOUR\nfive\nsix\nseven\n", "second.patch");
+    const report: ProjectHealth = {
+      project: "fixture",
+      baseSha,
+      pinnedReplay: "not-run",
+      upstreamReplay: "not-run",
+      errors: [],
+      advisories: [],
+      patches: ["first.patch", "second.patch"].map((file) => ({
+        file,
+        group: "upstreamable",
+        prerequisites: [],
+        prContext: true,
+        standalone: "not-run",
+        upstreamStandalone: "not-run",
+        upstreamEquivalent: "not-checked",
+      })),
+    };
+    await inspectUpstream(
+      report,
+      {
+        dependsOn: [],
+        upstream: "unused/fixture",
+        fork: "unused/fixture",
+        prAssignees: [],
+        baseBranch: "main",
+        baseSha,
+        java: "17",
+        publication: "Maven",
+        buildTask: "build",
+      },
+      directory,
+      upstream,
+    );
+    expect(report.patches.map((patch) => patch.standalone)).toEqual(["passed", "failed"]);
+    expect(report.pinnedReplay).toBe("passed");
+  } finally {
+    if (globalConfig === undefined) delete process.env["GIT_CONFIG_GLOBAL"];
+    else process.env["GIT_CONFIG_GLOBAL"] = globalConfig;
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
 // Four upstream inspections run about 80 git commands. A loaded machine can need over 30 seconds.
 test("upstream inspection recognizes equivalent patches and rehearses updates without touching editing checkouts", async () => {
   const globalConfig = process.env["GIT_CONFIG_GLOBAL"];

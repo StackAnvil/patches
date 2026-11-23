@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,7 @@ import {
   type Target,
   type UpstreamablePatch,
 } from "./model.ts";
-import { git } from "./process.ts";
+import { command, git } from "./process.ts";
 import { projectPrPatch } from "./pr-patch.ts";
 import { errorCode } from "./guards.ts";
 
@@ -113,19 +113,34 @@ async function standaloneApply(
   base: string,
   project: string,
 ): Promise<Check> {
+  // Earlier checks must not leave blobs behind. A fresh pr check clone lacks them, so a three-way
+  // fallback that uses another patch's result would report a dependent patch as standalone.
+  const objects = join(directory, ".git", "stackanvil-standalone-objects");
+  await mkdir(objects);
+  const isolated = (args: string[]) =>
+    Effect.runPromise(
+      command("git", args, directory, {
+        ...process.env,
+        GIT_OBJECT_DIRECTORY: objects,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: join(directory, ".git", "objects"),
+      }),
+    );
   try {
     const projected = projectPrPatch(await readFile(patch, "utf8"), project);
     const prPatch = join(directory, ".git", "stackanvil-pr.patch");
     await writeFile(prPatch, projected.patch);
     // Match pr check's three-way application, with no setup or preceding patch in the source tree.
-    await runGit(["am", "--3way", "--committer-date-is-author-date", prPatch], directory);
+    await isolated(["am", "--3way", "--committer-date-is-author-date", prPatch]);
     return "passed";
   } catch {
     return "failed";
   } finally {
-    if (existsSync(join(directory, ".git", "rebase-apply")))
-      await runGit(["am", "--abort"], directory);
-    await runGit(["reset", "--hard", base], directory);
+    if (existsSync(join(directory, ".git", "rebase-apply"))) await isolated(["am", "--abort"]);
+    await isolated(["reset", "--hard", base]);
+    // Drop references to the discarded commit before its objects disappear.
+    await isolated(["update-ref", "-d", "ORIG_HEAD"]);
+    await isolated(["reflog", "expire", "--expire=now", "--all"]);
+    await rm(objects, { recursive: true, force: true });
   }
 }
 
