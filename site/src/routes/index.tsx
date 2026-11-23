@@ -147,7 +147,7 @@ function Home() {
           <p>
             StackAnvil carries {patchCount} changes to the projects it builds on, one patch each.
             Every patch goes to its original project for review, so fixes reach everyone who uses
-            them. Point at a block to read its patch.
+            them. Tap or point at a block to read its patch.
           </p>
           <ul className="patch-legend" aria-label="Legend">
             <li data-kind="feat">Feature</li>
