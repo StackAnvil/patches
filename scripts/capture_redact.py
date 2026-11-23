@@ -66,10 +66,18 @@ SAFE_HEADERS = frozenset(
         "x-realms-version",
     }
 )
+# Keep field names without digits, spaces, or inner @ signs.
+# XUIDs, UUIDs, and emails used as map keys must not reach a report.
+FIELD_NAME = re.compile(r"[@$]?[A-Za-z_][A-Za-z_.-]{0,63}")
+
+
+def redact_key(key: str) -> str:
+    return key if FIELD_NAME.fullmatch(key) else "<key>"
 
 
 def redact_path(path: str) -> str:
     parsed = urlsplit(path)
+    keys = re.findall(r"(?:^|&)([^=&]+)=", parsed.query)
     segments = []
     for segment in parsed.path.split("/"):
         lowered = segment.casefold()
@@ -79,8 +87,7 @@ def redact_path(path: str) -> str:
     query = (
         "?"
         + "&".join(
-            f"{key}=<value>"
-            for key in sorted(set(re.findall(r"(?:^|&)([^=&]+)=", parsed.query)))
+            f"{key}=<value>" for key in sorted({redact_key(key) for key in keys})
         )
         if parsed.query
         else ""
@@ -92,10 +99,13 @@ def redact_json(value: object, key: str = "", depth: int = 0) -> object:
     if depth >= 12:
         return "<nested>"
     if isinstance(value, dict):
-        return {
-            str(field): redact_json(item, str(field), depth + 1)
-            for field, item in value.items()
-        }
+        # Maps keyed by XUIDs or other IDs collapse to one redacted entry.
+        fields: dict[str, object] = {}
+        for field, item in value.items():
+            name = redact_key(str(field))
+            if name not in fields:
+                fields[name] = redact_json(item, name, depth + 1)
+        return fields
     if isinstance(value, list):
         return {
             "count": len(value),

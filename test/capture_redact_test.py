@@ -31,6 +31,23 @@ class CaptureRedactionTest(unittest.TestCase):
             {"content-type": "application/json"},
         )
 
+    def test_id_keyed_maps_and_query_keys_hide_account_values(self):
+        source = (
+            b'{"result":{"2535412345678901":{"state":"online"},'
+            b'"someone@example.com":[]},"@odata.context":"https://example.com"}'
+        )
+        self.assertEqual(
+            redact_body(source, "application/json"),
+            {
+                "result": {"<key>": {"state": "online"}},
+                "@odata.context": "<string>",
+            },
+        )
+        self.assertEqual(
+            redact_path("/users?2535412345678901=1&max=2"),
+            "/users?<key>=<value>&max=<value>",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
