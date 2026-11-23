@@ -125,7 +125,7 @@ The test modpack is the official Fabulously Optimized 15.0.0 alpha.3 `.mrpack` f
 Install Flatpak PrismLauncher and sign in to a Java account in PrismLauncher. Install BedrockOnLinux and sign in to a Bedrock account for the native case. Run `bun run build all` to build ViaProxy with the stack. Point the test at compatible Bedrock server installations:
 
 ```bash
-BEDROCK_SERVER_HOME=/path/to/bedrock-1.26.51 \
+BEDROCK_SERVER_HOME=/path/to/bedrock-1.26.60 \
 STACKANVIL_JAVA_BEDROCK_SERVER_HOME=/path/to/bedrock-supported-by-viaproxy \
 bun run test:integration
 ```

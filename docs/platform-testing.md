@@ -211,7 +211,7 @@ For guest ViaProxy, run with the guest JDK:
 
 ```bash
 java -jar ViaProxy.jar cli --bind-address 127.0.0.1:25568 \
-  --target-address 10.0.2.2:19132 --target-version "Bedrock 1.26.51" --auth-method NONE
+  --target-address 10.0.2.2:19132 --target-version "Bedrock 1.26.60" --auth-method NONE
 ```
 
 This command targets the local test server. Online servers need their normal account authentication configuration.
