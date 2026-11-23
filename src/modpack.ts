@@ -1,4 +1,4 @@
-import { encodeJson, encodeIndentedJson } from "./guards.ts";
+import { encodeJson, encodeIndentedJson, parseJson } from "./guards.ts";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -7,6 +7,7 @@ import { clientArtifacts } from "./client-artifacts.ts";
 import { root } from "./model.ts";
 import type { ViaFabricPlusPin } from "./viafabricplus.ts";
 import { execFileAsync as execute } from "./process.ts";
+import { zipEntries } from "./zip.ts";
 
 // Client overrides keep the verified Jenkins and StackAnvil JARs in the pack.
 // Importing does not require a modpack project or URLs for unpublished builds.
@@ -19,6 +20,26 @@ class ModpackError extends Schema.TaggedError<ModpackError, { readonly brand: un
     cause: Schema.Unknown,
   },
 ) {}
+
+const ModpackIndexSchema = Schema.Struct({
+  dependencies: Schema.Struct({ minecraft: Schema.String, "fabric-loader": Schema.String }),
+});
+
+/** Reads the game versions from a bundled pack, so release notes describe the file they link. */
+export async function modpackTarget(file: string) {
+  const index = zipEntries(await readFile(file)).get("modrinth.index.json");
+  if (!index) throw new Error(`${basename(file)} has no modrinth.index.json`);
+  const { dependencies } = parseJson(ModpackIndexSchema, index().toString("utf8"));
+  if (basename(file) !== `StackAnvil-${dependencies.minecraft}.mrpack`)
+    throw new Error(
+      `${basename(file)} does not name its Minecraft ${dependencies.minecraft} target`,
+    );
+  return {
+    file: basename(file),
+    minecraft: dependencies.minecraft,
+    loader: dependencies["fabric-loader"],
+  };
+}
 
 export const bundleModpack = Effect.fn("bundleModpack")(function* (
   artifactsPath: string = join(root, "dist"),

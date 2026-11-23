@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getSeries, getTarget, root, targetIds } from "./model.ts";
+import { modpackTarget } from "./modpack.ts";
 import { parsePatchMessage } from "./patch-message.ts";
 import { releaseDownloadSection } from "./release-downloads.ts";
 import { readViaFabricPlusPin } from "./viafabricplus.ts";
@@ -20,7 +21,12 @@ const tag =
       : undefined);
 if (!tag)
   throw new Error("Usage: bun src/release-notes.ts <release-tag> [release-assets-directory]");
-const assets = await readdir(process.argv[3] ?? join(root, "release"));
+const assetsDir = process.argv[3] ?? join(root, "release");
+const assets = await readdir(assetsDir);
+const downloads = releaseDownloadSection(repository, tag, assets);
+const [packFile, ...otherPacks] = assets.filter((file) => file.endsWith(".mrpack"));
+if (packFile === undefined || otherPacks.length > 0) throw new Error("Expected one modpack");
+const pack = await modpackTarget(join(assetsDir, packFile));
 
 function patchUrl(id: string, group: string, file: string): string {
   const path = ["patches", id, group, file].map((value) => encodeURIComponent(value)).join("/");
@@ -35,7 +41,7 @@ async function patchTitle(id: string, group: string, file: string): Promise<stri
 const lines = [
   "# StackAnvil builds",
   "",
-  ...releaseDownloadSection(repository, tag, assets),
+  ...downloads,
   "Validation results and coverage limits are attached as `validation.json` and `validation.md`. These reports do not establish native Bedrock parity.",
   "",
   "The StackAnvil JARs contain experimental patch stacks. The ViaFabricPlus JAR is an unchanged, pinned upstream Jenkins build.",
@@ -46,7 +52,7 @@ const lines = [
   "",
   "### Bedrock client modpack",
   "",
-  "Import `StackAnvil-26.3.mrpack` into a launcher that supports Modrinth modpacks, such as Modrinth App, Prism Launcher, or ATLauncher. The pack contains this release's exact ViaFabricPlus and Bedrock add-on JARs. It selects Minecraft 26.3 with Fabric Loader 0.19.5. Sign in with your own Java Edition account.",
+  `Import \`${pack.file}\` into a launcher that supports Modrinth modpacks, such as Modrinth App, Prism Launcher, or ATLauncher. The pack contains this release's exact ViaFabricPlus and Bedrock add-on JARs. It selects Minecraft ${pack.minecraft} with Fabric Loader ${pack.loader}. Sign in with your own Java Edition account.`,
   "",
   "### ViaProxy",
   "",
@@ -56,7 +62,7 @@ const lines = [
   "",
   "**Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).",
   "",
-  "For Minecraft Java Edition 26.3 with Fabric Loader 0.19.5, install the `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar` files from this release in the same client's mods folder. The ViaFabricPlus JAR is a copy of the pinned upstream Jenkins artifact. The add-on includes the patched ViaBedrock and CubeConverter libraries, so do not install those JARs as separate Fabric mods.",
+  `For Minecraft Java Edition ${pack.minecraft} with Fabric Loader ${pack.loader}, install the \`ViaFabricPlus-...jar\` and \`viafabricplus-bedrock-...-StackAnvil.jar\` files from this release in the same client's mods folder. The ViaFabricPlus JAR is a copy of the pinned upstream Jenkins artifact. The add-on includes the patched ViaBedrock and CubeConverter libraries, so do not install those JARs as separate Fabric mods.`,
   "",
   "See the [player guide](https://stackanvil.pistonmaster.net/getting-started/) for connection and sign-in steps for both setups.",
   "",

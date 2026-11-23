@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { expect, test } from "bun:test";
 import { Effect } from "effect";
-import { bundleModpack } from "../src/modpack.ts";
+import { assetZip } from "../scripts/bundle-bedrock-assets.ts";
+import { bundleModpack, modpackTarget } from "../src/modpack.ts";
 import { root } from "../src/model.ts";
 import type { ViaFabricPlusPin } from "../src/viafabricplus.ts";
 import { writeClientJar } from "./helpers/client-artifacts.ts";
@@ -49,6 +50,7 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
     );
     expect(index.dependencies.minecraft).toBe("26.3");
     expect(index.dependencies["fabric-loader"]).toBe("0.19.5");
+    expect(await modpackTarget(pack)).toMatchObject({ minecraft: "26.3", loader: "0.19.5" });
     expect(index.files).toEqual([]);
     const entries = execFileSync("unzip", ["-Z1", pack], { encoding: "utf8" }).trim().split("\n");
     expect(entries.filter((entry) => !entry.endsWith("/"))).toHaveLength(3);
@@ -75,6 +77,27 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
     await writeFile(addon, "Corrupted build");
     await rejects(Effect.runPromise(bundleModpack(artifacts, output, pin)), /checksum/);
     expect(await readFile(pack)).toEqual(legacy);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("release notes read the game versions from the bundled pack they link", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-modpack-target-"));
+  try {
+    const index = Buffer.from(
+      JSON.stringify({ dependencies: { minecraft: "26.4", "fabric-loader": "0.20.1" } }),
+    );
+    const pack = join(directory, "StackAnvil-26.4.mrpack");
+    await writeFile(pack, assetZip(new Map([["modrinth.index.json", index]])));
+    expect(await modpackTarget(pack)).toEqual({
+      file: "StackAnvil-26.4.mrpack",
+      minecraft: "26.4",
+      loader: "0.20.1",
+    });
+    const renamed = join(directory, "StackAnvil-26.3.mrpack");
+    await writeFile(renamed, await readFile(pack));
+    await rejects(modpackTarget(renamed), /does not name its Minecraft 26.4 target/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
