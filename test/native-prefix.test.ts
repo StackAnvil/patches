@@ -22,7 +22,9 @@ async function fixture() {
     await writeFile(join(sourcePrefix, folder, "external_servers.txt.bol-seeded"), original);
     await writeFile(join(sourcePrefix, folder, "options.txt"), "graphics_mode:1\ngfx_gamma:0.5\n");
   }
-  return { root, privateRoot, directory, sourcePrefix, folders, original, port: 32123 };
+  // Scanning every /proc/*/environ is slow on a busy host. Only the live test below needs it.
+  const assertIdle = async () => {};
+  return { root, privateRoot, directory, sourcePrefix, folders, original, port: 32123, assertIdle };
 }
 
 test("serializes exactly one loopback row with validated port and integer timestamp", () => {
@@ -126,7 +128,11 @@ test.skipIf(process.platform !== "linux")("detects a live exact WINEPREFIX witho
   try {
     const reader = child.stdout.getReader();
     await reader.read(); reader.releaseLock();
-    await expect(requireNativePrefixIdle(input.sourcePrefix)).rejects.toThrow();
+    // Match the child's live environment directly, then scan the host once for unreadable entries.
+    const processes = join(input.root, "proc");
+    await mkdir(processes); await symlink(`/proc/${child.pid}`, join(processes, String(child.pid)));
+    await expect(requireNativePrefixIdle(input.sourcePrefix, processes)).rejects.toThrow();
+    await requireNativePrefixIdle(join(input.root, "another-prefix"), processes);
     await requireNativePrefixIdle(join(input.root, "another-prefix"));
   } finally { child.kill(); await child.exited; }
 });

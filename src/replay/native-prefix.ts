@@ -97,13 +97,13 @@ export async function validateNativeReplayPrefix(
 }
 
 /** Match the launcher's exact NUL-delimited WINEPREFIX entry without logging it. */
-export async function requireNativePrefixIdle(prefix: string): Promise<void> {
+export async function requireNativePrefixIdle(prefix: string, processes = "/proc"): Promise<void> {
   const expected = `WINEPREFIX=${prefix}`;
-  for (const name of await readdir("/proc")) {
+  for (const name of await readdir(processes)) {
     if (!/^\d+$/u.test(name) || Number(name) === process.pid) continue;
     let environment: Buffer;
     try {
-      environment = await readFile(`/proc/${name}/environ`);
+      environment = await readFile(join(processes, name, "environ"));
     } catch (error) {
       if (["ENOENT", "ESRCH", "EACCES", "EPERM"].includes(errorCode(error) ?? "")) continue;
       throw error;
