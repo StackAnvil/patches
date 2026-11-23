@@ -193,8 +193,6 @@ The `epochMillis` timestamp aligns those observations with external input marker
 Use the item and slot fields to distinguish a changed selection from a missing movement impulse.
 Check the packet journal for the actual teleport, correction, and motion commands before judging a combined-mechanics trial.
 
-The native Hive recording sends `SetTime` 12445, then `GameRulesChanged` with `dodaylightcycle=false`. Java previously stored that rule without updating its running clock rate. The clock patch now sends the pause to Java. This fixes the lobby's drift into night. Legacy `SetTime` still advances while daylight is enabled.
-
 Use `--client proxy --transport-only` to check the separate Java → ViaProxy route. An accepted converted server pack carries versioned Bedrock rendering metadata. The add-on uses this metadata to activate the native lightmap and disable Java's low-light vignette on the proxy route. Local packs and unsupported metadata cannot activate this context. Resource reload and disconnect clear it. Stale reload completion cannot restore it.
 
 The proxy route still does not support native actor and player geometry. It therefore requires `--transport-only`. This flag preserves rendering failures in the report while allowing a transport check to finish.
@@ -205,33 +203,7 @@ The [live lobby survey](lobby-survey.md) records the scenes reached, interaction
 
 Native recording and `--client native` replay screenshots show the official Bedrock client. Default replay screenshots show ViaFabricPlus with the Bedrock add-on.
 
-Private regression recordings cover CubeCraft, Hive, the public Geyser test server, and Minehut. CubeCraft exercises 240 skin updates, 37 advertised custom actor types, and actual native actor and player submissions. The Geyser scene exercises supplied player geometry and custom block packs.
-
-Minehut reaches its age-selection form. This does not verify admission beyond that form. An official-client Hive recording reaches playable lobby spawn and includes all 24 advertised resource packs, 49 supplied geometry skin updates, and 36 registered custom actor types. Hive omits the local-player skin. Local replay passes complete-payload transport checks and the skin and model rendering checks. All 49 geometry skins retain their recorded pixels. Actual remote-player and custom actor draws are verified. The 36 registered custom actor types resolve, and all 11 referenced vanilla item images load from the private licensed cache.
-
-Custom block mapping and model checks cover the captured definitions. They do not prove every state or animation matches the official client. Legacy plain texture-array variation selection, nonuniform scaling of rotated cubes, and double-sided alpha-test back faces remain limitations. Custom blocks using carriers without fluid support also lose a second water layer. The Hive recording includes wet and dry `hive:cat_tail` plants, so a future fluid fix must preserve water by position.
-
-Custom light filters use the runtime network components. The Hive recording exposed 12,098 placements whose transparent or partial filters previously became fully opaque. This input error is fixed. The converter also preserves explicit `face_dimming: false` material settings. The Hive capture contains 136 such material instances across 131 custom block definitions.
-
-Native Bedrock 1.26.51.1 server measurements distinguish slab states. Single slabs reduce skylight, while double slabs block it. Stairs transmit skylight regardless of their upper or lower orientation. The light engine uses these native results rather than Java face-occlusion rules. The saved Hive world contains 17,078 half slabs and 11,795 double slabs.
-
-Water filtering also follows the native measurements. Waterlogged stairs, fences, and chains filter one skylight level. Secondary water uses the greater of water’s filter and the primary block’s filter. Light snapshots retain water by position, including custom carriers whose Java states cannot hold water. Fluid rendering remains a separate limitation.
-
-The existing Bedrock lightmap port records findings from the licensed Windows 1.26.51.1 executable. That earlier work used PistonDecompiler and local Ghidra analysis. Treat its binary claims as historical until they are re-established through the [REA workflow](bedrock-development-sources.md#analyze-a-native-artifact-with-rea). Do not reuse the old analysis files for new changes.
-
-The port changes the Overworld day angle, sunrise tint, weather response, block-light color, Nether brightness offset, and per-channel brightness correction. It also includes two ambient bias stages and reads `gfx_gamma` directly, with a default of 0.5. The separate fullscreen gamma calibration does not define this slider.
-
-The lightmap applies to supported vanilla dimensions on direct Bedrock connections or proxy sessions with accepted converted server packs. Ordinary Java connections retain Java lighting.
-
-Biome air fog inherits the effective `minecraft:fog_default` color when the selected fog defines only other media. Explicit biome colors and server-pack defaults keep precedence. The native last-resort air color is `#ABD2FF`, rather than Java's `#C0D8FF`.
-
-Java's low-light vignette also darkened the world and held items toward the screen edges. A fit across 18,140 white-item pixels explains this extra overlay within 0.33 encoded RGB bytes. Native Hive reference surfaces have uniform texture colors. Supported Bedrock sessions now omit the Java vignette. This fit identifies the overlay. It does not establish complete image parity.
-
-Actor controllers preserve `ignore_lighting`, their floating `light_color_multiplier`, and ordered bone material overrides. Supported alpha-test materials retain texture alpha only when it exceeds 0.5. Unlit actors bypass block and sky light but retain native directional shading in world space. These rules come from the target native CPU code and ENTITY shaders.
-
-Emissive-alpha materials and ordinary lit directional shading retain the existing fallback. Native shader binaries, decompiler output, and licensed assets remain private. This port does not establish pixel-identical ambient occlusion, Vibrant Visuals, ray tracing, or custom world lighting. The End retains Java’s lightmap until its animated native brightness input is verified.
-
-The saved Hive comparison still shows differences in sky gradients, clouds, and held-item shading. Java's final compass color matches its measured eye-block light and quad normal. Native held-item sample position and shader selection remain unresolved. Native clouds are enabled; removing them is not a supported parity fix.
+Private regression recordings cover CubeCraft, Hive, the public Geyser test server, and Minehut. Current behavior and known gaps are in the [coverage reference](bedrock-coverage.md).
 
 Check graphics mode before comparing colors. The isolated official client can
 select Vibrant Visuals, which uses a different lighting path from this classic
