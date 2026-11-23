@@ -251,16 +251,34 @@ async function requireHost(): Promise<void> {
   }
 }
 
-async function running(spec: VmSpec): Promise<boolean> {
-  if (!existsSync(pidPath(spec))) return false;
-  const pid = Number((await readFile(pidPath(spec), "utf8")).trim());
-  if (!Number.isInteger(pid) || pid <= 0) throw new Error("Invalid Quickemu PID file.");
+async function processArguments(pid: number): Promise<string[] | undefined> {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    return (await readFile(`/proc/${pid}/cmdline`, "utf8")).split("\0");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT" || errorCode(error) === "ESRCH") return undefined;
+    throw error;
   }
+}
+
+/**
+ * Quickemu leaves its PID file behind after a crash or host reboot, and the kernel then reuses the
+ * PID. Treat the PID as the guest only while it is QEMU started with this VM's -name option.
+ */
+export async function quickemuRunning(
+  pidFile: string,
+  name: string,
+  readArguments: (pid: number) => Promise<string[] | undefined> = processArguments,
+): Promise<boolean> {
+  if (!existsSync(pidFile)) return false;
+  const pid = Number((await readFile(pidFile, "utf8")).trim());
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error("Invalid Quickemu PID file.");
+  const args = await readArguments(pid);
+  const option = args?.indexOf("-name") ?? -1;
+  return option >= 0 && args?.[option + 1]?.split(",")[0] === name;
+}
+
+async function running(spec: VmSpec): Promise<boolean> {
+  return quickemuRunning(pidPath(spec), spec.name);
 }
 
 async function control<T>(
@@ -512,6 +530,8 @@ export async function vmMain(args: string[]): Promise<void> {
         print(`${selected} is already running.`);
         return;
       }
+      // Quickemu also trusts any live process with the saved PID and would skip the boot.
+      await rm(pidPath(spec), { force: true });
       await rm(controlPath(selected), { force: true });
       await runQuickemu(spec);
       await control(spec, (command) => command("query-status"));

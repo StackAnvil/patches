@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
-import { guestAnswers, prepareVm, shareResponse, validateInstallMedia, validateSpec, type VmSpec } from "../src/lab/vm.ts";
+import { guestAnswers, prepareVm, quickemuRunning, shareResponse, validateInstallMedia, validateSpec, type VmSpec } from "../src/lab/vm.ts";
 import { keyEvents, pointerEvents } from "../src/lab/qmp.ts";
 
 const spec: VmSpec = { version: 1, guest: "windows", release: "11", name: "sa-windows-0123456789ab", cores: 4, ramGiB: 8, diskGiB: 128 };
@@ -112,4 +112,18 @@ test("VM start replaces a control socket left by a crashed guest but still detec
   } finally {
     await new Promise<void>((settle) => server.close(() => settle()));
   }
+}));
+
+test("a Quickemu PID file whose PID now belongs to another process does not report the guest as running", async () => temporary(async (path) => {
+  const pidFile = join(path, `${spec.name}.pid`);
+  await writeFile(pidFile, "4242\n");
+  const processes = new Map<number, string[]>([[4242, ["/usr/bin/bash", "-l", ""]]]);
+  const read = async (pid: number) => processes.get(pid);
+  expect(await quickemuRunning(pidFile, spec.name, read)).toBe(false);
+  processes.set(4242, ["qemu-system-x86_64", "-name", "sa-windows-ba9876543210,process=sa-windows-ba9876543210", ""]);
+  expect(await quickemuRunning(pidFile, spec.name, read)).toBe(false);
+  processes.set(4242, ["qemu-system-x86_64", "-name", `${spec.name},process=${spec.name},debug-threads=on`, ""]);
+  expect(await quickemuRunning(pidFile, spec.name, read)).toBe(true);
+  processes.delete(4242);
+  expect(await quickemuRunning(pidFile, spec.name, read)).toBe(false);
 }));
