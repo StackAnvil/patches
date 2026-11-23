@@ -183,7 +183,7 @@ test("reference scans support an image base above the signed 64-bit range", asyn
   });
 });
 
-test("malformed PE directories fail before a slice is written", async () => {
+test("a malformed exception directory blocks declared spans but not manual ranges", async () => {
   const bytes = image();
   bytes.writeUInt32LE(13, 0x98 + 116 + 3 * 8);
   const f = await fixture(bytes);
@@ -193,6 +193,21 @@ test("malformed PE directories fail before a slice is written", async () => {
     "exception directory length",
   );
   expect(await Bun.file(output).exists()).toBe(false);
+  const manual = join(f.directory, "manual.bin");
+  const result = await pe(
+    f.manifest,
+    "extract",
+    "--va",
+    "140001000",
+    "--end",
+    "140001010",
+    "--output",
+    manual,
+  );
+  expect(result.scope).toContain("no function-boundary claim");
+  expect((await readFile(manual)).toString("hex")).toBe(
+    f.bytes.subarray(0x200, 0x210).toString("hex"),
+  );
 });
 
 test("REA Evidence must bind to both the extracted bytes and requested procedure", () => {

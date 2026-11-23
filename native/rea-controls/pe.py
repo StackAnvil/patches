@@ -174,8 +174,10 @@ class PE:
         )
 
     def extract(self, va, end=None):
-        declared = self.function(va)
+        # A manual range makes no function-boundary claim, so it does not need
+        # the AMD64 exception table. ARM64 or malformed tables still allow it.
         if end is None:
+            declared = self.function(va)
             if declared is None:
                 raise ValueError(
                     "No RUNTIME_FUNCTION covers this address; "
