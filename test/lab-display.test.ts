@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { unloadSilentModule } from "../src/lab/display.ts";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { releaseDisplay, unloadSilentModule } from "../src/lab/display.ts";
 
 const silent = "sink_name=stackanvil_silent sink_properties=device.description=StackAnvil-Silent";
 
@@ -17,6 +21,15 @@ function fakePactl(modules: string) {
   };
 }
 
+function running(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 test("display stop skips a saved audio module ID that a restarted sound server dropped or reused", async () => {
   const id = 536870916;
   for (const modules of [
@@ -31,3 +44,29 @@ test("display stop skips a saved audio module ID that a restarted sound server d
   await unloadSilentModule(id, pactl.run);
   expect(pactl.calls.at(-1)).toEqual(["unload-module", String(id)]);
 });
+
+test("display stop leaves unrelated processes that reuse saved display PIDs running", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sa-display-"));
+  const sleeper = join(directory, "sleeper.ts");
+  await writeFile(sleeper, "await Bun.sleep(60_000);\n");
+  const runtime = join(directory, "runtime");
+  const unrelated = spawn(process.execPath, [sleeper], { stdio: "ignore" });
+  const input = spawn(process.execPath, [sleeper, "serve", join(runtime, "input.sock")], { stdio: "ignore" });
+  const inputExit = new Promise((settle) => input.on("exit", settle));
+  try {
+    await Bun.sleep(500);
+    const pactl = fakePactl("");
+    await releaseDisplay(
+      { backend: "wayland", pid: unrelated.pid!, display: "", runtime, socket: "", inputPid: input.pid!, audioPid: unrelated.pid! },
+      undefined,
+      pactl.run,
+    );
+    await inputExit;
+    expect(running(unrelated.pid!)).toBe(true);
+    expect(input.exitCode ?? input.signalCode).not.toBeNull();
+  } finally {
+    unrelated.kill();
+    input.kill();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 20_000);

@@ -1,7 +1,7 @@
 import { createCaptureWaylandBuilder } from "../capture/native.ts";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, openSync, closeSync } from "node:fs";
+import { existsSync, openSync, closeSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "../model.ts";
@@ -13,6 +13,8 @@ import { execFileAsync as execute } from "../process.ts";
 
 const privateRoot = join(root, ".stackanvil", "lab");
 const stateFile = join(privateRoot, "display.json");
+const swayConfig = join(privateRoot, "sway.conf");
+const audioGuard = join(root, "src", "lab", "audio-guard.ts");
 const identity = createHash("sha256").update(root).digest("hex").slice(0, 12);
 const sway = waylandTool("sway");
 const swaymsg = waylandTool("swaymsg");
@@ -60,20 +62,42 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * display.json outlives reboots, and the kernel then reuses its PIDs. Treat a saved PID as a lab
+ * process only while its arguments still contain the lab's private paths.
+ */
+function owned(pid: number, markers: readonly string[]): boolean {
+  let args: string[];
+  try {
+    args = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT" || errorCode(error) === "ESRCH") return false;
+    throw error;
+  }
+  return markers.every((marker) => args.includes(marker));
+}
+const swayMarkers = ["--config", swayConfig];
+const audioMarkers = [audioGuard, identity];
+function inputMarkers(state: DisplayState): string[] {
+  return ["serve", join(state.runtime, "input.sock")];
+}
+
 async function stopProcess(
   pid: number,
   name: string,
+  markers: readonly string[],
   guard?: (pid: number) => void,
 ): Promise<void> {
-  if (!alive(pid)) return;
+  if (!owned(pid, markers)) return;
   guard?.(pid);
   try {
     process.kill(pid, "SIGINT");
   } catch (error) {
     if (errorCode(error) !== "ESRCH") throw error;
   }
-  for (let attempt = 0; attempt < 50 && alive(pid); attempt++) await Bun.sleep(100);
-  if (alive(pid)) throw new Error(`${name} ${pid} did not stop. Its resources were retained.`);
+  for (let attempt = 0; attempt < 50 && owned(pid, markers); attempt++) await Bun.sleep(100);
+  if (owned(pid, markers))
+    throw new Error(`${name} ${pid} did not stop. Its resources were retained.`);
 }
 
 async function savedDisplay(): Promise<DisplayState | undefined> {
@@ -92,7 +116,7 @@ async function savedDisplay(): Promise<DisplayState | undefined> {
 export async function activeDisplay(): Promise<DisplayState | undefined> {
   const state = await savedDisplay();
   if (!state) return undefined;
-  if (!alive(state.pid)) {
+  if (!owned(state.pid, swayMarkers)) {
     throw new Error(
       "The private Wayland compositor stopped unexpectedly. Run bun run lab display stop to clean up its input and audio services.",
     );
@@ -107,11 +131,11 @@ export async function activeDisplay(): Promise<DisplayState | undefined> {
 export async function ensureDisplay(): Promise<DisplayState> {
   const current = await activeDisplay();
   if (current) {
-    if (!current.inputPid || !alive(current.inputPid)) {
+    if (!current.inputPid || !owned(current.inputPid, inputMarkers(current))) {
       await startInput(current);
       await writeFile(stateFile, `${JSON.stringify(current, null, 2)}\n`, { mode: 0o600 });
     }
-    if (!current.audioPid || !alive(current.audioPid)) {
+    if (!current.audioPid || !owned(current.audioPid, audioMarkers)) {
       await startAudio(current);
       await writeFile(stateFile, `${JSON.stringify(current, null, 2)}\n`, { mode: 0o600 });
     }
@@ -144,9 +168,8 @@ export async function ensureDisplay(): Promise<DisplayState> {
     const socket = join(runtime, "sway.sock");
     if (Buffer.byteLength(socket) >= 104)
       throw new Error("XDG_RUNTIME_DIR is too long for Wayland sockets.");
-    const config = join(privateRoot, "sway.conf");
     await writeFile(
-      config,
+      swayConfig,
       [
         "xwayland disable",
         "swaybg_command -",
@@ -166,7 +189,7 @@ export async function ensureDisplay(): Promise<DisplayState> {
       { mode: 0o600 },
     );
     const log = openSync(join(privateRoot, "display.log"), "a", 0o600);
-    const child = spawn(sway, ["--unsupported-gpu", "--config", config], {
+    const child = spawn(sway, ["--unsupported-gpu", ...swayMarkers], {
       cwd: root,
       detached: true,
       stdio: ["ignore", log, log],
@@ -223,9 +246,10 @@ export async function ensureDisplay(): Promise<DisplayState> {
     return state;
   } catch (error) {
     try {
-      if (state?.inputPid) await stopProcess(state.inputPid, "Wayland input service");
-      if (state?.audioPid) await stopProcess(state.audioPid, "Lab audio guard");
-      if (state) await stopProcess(state.pid, "Sway");
+      if (state?.inputPid)
+        await stopProcess(state.inputPid, "Wayland input service", inputMarkers(state));
+      if (state?.audioPid) await stopProcess(state.audioPid, "Lab audio guard", audioMarkers);
+      if (state) await stopProcess(state.pid, "Sway", swayMarkers);
       if (state?.audioModuleId) await unloadSilentModule(state.audioModuleId);
     } catch (cleanupError) {
       // Retain a receipt for recovery if a failed startup leaves a process alive.
@@ -281,7 +305,7 @@ async function startAudio(state: DisplayState): Promise<void> {
     state.audioModuleId = Number(loaded.stdout.trim());
   }
   const log = openSync(join(privateRoot, "audio.log"), "a", 0o600);
-  const guard = spawn(process.execPath, [join(root, "src", "lab", "audio-guard.ts"), identity], {
+  const guard = spawn(process.execPath, audioMarkers, {
     cwd: root,
     detached: true,
     stdio: ["ignore", log, log],
@@ -306,6 +330,23 @@ export async function unloadSilentModule(id: number, run: Pactl = pactl): Promis
   if (loaded) await run(["unload-module", String(id)]);
 }
 
+/** Stops the saved display's services and silent sink that still belong to this lab. */
+export async function releaseDisplay(
+  state: DisplayState,
+  guard?: DisplayGuard,
+  run: Pactl = pactl,
+): Promise<void> {
+  if (state.inputPid)
+    await stopProcess(state.inputPid, "Wayland input service", inputMarkers(state), guard?.process);
+  await stopProcess(state.pid, "Sway", swayMarkers, guard?.process);
+  if (state.audioPid)
+    await stopProcess(state.audioPid, "Lab audio guard", audioMarkers, guard?.process);
+  if (state.audioModuleId) {
+    await guard?.audioModule(state.audioModuleId);
+    await unloadSilentModule(state.audioModuleId, run);
+  }
+}
+
 export async function displayEnv(start = false): Promise<NodeJS.ProcessEnv | undefined> {
   if (process.env["STACKANVIL_USE_DESKTOP"] === "1") return undefined;
   const state = start ? await ensureDisplay() : await activeDisplay();
@@ -322,22 +363,18 @@ export async function displayEnv(start = false): Promise<NodeJS.ProcessEnv | und
   });
 }
 
-export async function stopDisplay(guard?: {
+interface DisplayGuard {
   process: (pid: number) => void;
   audioModule: (id: number) => Promise<void>;
-}): Promise<void> {
+}
+
+export async function stopDisplay(guard?: DisplayGuard): Promise<void> {
   const state = await savedDisplay();
   if (!state) {
     print("Private Wayland display is stopped.");
     return;
   }
-  if (state.inputPid) await stopProcess(state.inputPid, "Wayland input service", guard?.process);
-  await stopProcess(state.pid, "Sway", guard?.process);
-  if (state.audioPid) await stopProcess(state.audioPid, "Lab audio guard", guard?.process);
-  if (state.audioModuleId) {
-    await guard?.audioModule(state.audioModuleId);
-    await unloadSilentModule(state.audioModuleId);
-  }
+  await releaseDisplay(state, guard);
   await rm(state.runtime, { recursive: true, force: true });
   await rm(stateFile, { force: true });
   print(`Stopped private Wayland display ${state.display}.`);
