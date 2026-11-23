@@ -171,6 +171,17 @@ test("PE helpers resolve import slots and label reference patterns as tentative"
   expect(refs.candidates).toContainEqual({ kind: "absolute-u64", address: "0x140002020" });
 });
 
+test("import names longer than 512 bytes resolve to their full symbol", async () => {
+  const bytes = Buffer.concat([image(), Buffer.alloc(0x400)]);
+  bytes.writeUInt32LE(0x800, 0x1b0 + 8);
+  bytes.writeUInt32LE(0x800, 0x1b0 + 16);
+  const symbol = `?${"Long".repeat(200)}@@`;
+  bytes.writeBigUInt64LE(0x23fen, 0x5c0);
+  bytes.write(`${symbol}\0`, 0x800);
+  const f = await fixture(bytes);
+  expect((await pe(f.manifest, "imports", "--va", "1400021d0")).symbol).toBe(symbol);
+});
+
 test("reference scans support an image base above the signed 64-bit range", async () => {
   const bytes = image();
   bytes.writeBigUInt64LE(0xffff800000000000n, 0x98 + 24);

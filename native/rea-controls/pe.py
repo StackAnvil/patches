@@ -129,12 +129,12 @@ class PE:
     def f32(self, va):
         return struct.unpack("<f", self.read(va, 4))[0]
 
-    def cstr(self, va, limit=512):
+    def cstr(self, va):
+        """Return a NUL-terminated string, or None if the file bytes end first."""
         section = self._section(va - self.image_base)
-        remaining = section[4] - (va - self.image_base - section[1])
-        raw = self.read(va, min(limit, remaining))
-        end = raw.find(b"\0")
-        return None if end < 0 else raw[:end].decode("utf-8", "replace")
+        offset = section[3] + va - self.image_base - section[1]
+        end = self.b.find(b"\0", offset, section[3] + section[4])
+        return None if end < 0 else self.b[offset:end].decode("utf-8", "replace")
 
     def start(self, name):
         return self.image_base + next(s[1] for s in self.sections if s[0] == name)
