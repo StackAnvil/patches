@@ -11,7 +11,7 @@ For an offline metadata report, run:
 bun run stack health all --output dist/patch-health.json
 ```
 
-The report lists prerequisites and missing PR context. It rejects dependency cycles and prerequisites absent from their project's series.
+The report lists prerequisites and missing PR context. It rejects production prerequisite cycles and prerequisites absent from their project's series. A test-only prerequisite may point to a later patch.
 It also verifies the patch subjects, commit bodies, and files through the existing series loader.
 The `--output` path must end in `.json`. The command writes a Markdown summary beside it, such as `dist/patch-health.md`.
 Without `--output`, the command writes JSON to standard output.

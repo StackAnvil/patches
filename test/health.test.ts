@@ -42,6 +42,33 @@ test("reports cycles across projects and preserves independent prerequisites", (
   ).toEqual([]);
 });
 
+test("allows a later patch to supply test-only setup for a production prerequisite", () => {
+  const series: Series = {
+    setup: [],
+    deferred: [],
+    upstreamable: [
+      {
+        file: "feature.patch",
+        title: "feat(test): add feature",
+        prerequisites: [
+          {
+            project: "core",
+            patch: "agent.patch",
+            reason: "Install the test agent.",
+            testOnly: true,
+          },
+        ],
+      },
+      {
+        file: "agent.patch",
+        title: "feat(test): extend feature",
+        prerequisites: [{ project: "core", patch: "feature.patch", reason: "Edit the feature." }],
+      },
+    ],
+  };
+  expect(prerequisiteCycles({ core: series })).toEqual([]);
+});
+
 test("offline health rejects a prerequisite file that is not in its project's series", async () => {
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-health-metadata-"));
   try {

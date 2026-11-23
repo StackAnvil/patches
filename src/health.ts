@@ -47,15 +47,16 @@ export interface HealthReport {
 }
 
 export function prerequisiteCycles(series: Record<string, Series>): string[][] {
+  // Test-only prerequisites never block PR preparation, so a later patch may supply a patch's local test setup.
   const graph = new Map<string, readonly string[]>(
     Object.entries(series).flatMap(([project, stack]) =>
       stack.upstreamable.map(
         (patch) =>
           [
             `${project}/${patch.file}`,
-            (patch.prerequisites ?? []).map(
-              (dependency) => `${dependency.project}/${dependency.patch}`,
-            ),
+            (patch.prerequisites ?? [])
+              .filter(({ testOnly }) => !testOnly)
+              .map((dependency) => `${dependency.project}/${dependency.patch}`),
           ] as const,
       ),
     ),
