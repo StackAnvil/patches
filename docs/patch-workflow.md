@@ -118,7 +118,7 @@ Draft PRs receive assignees. Review requests wait until the PR is ready; then ru
 
 ## Conflict recovery
 
-During `stack sync`, Git may stop in the middle of `git am`. Inspect `git status` in `.worktrees/<project>`, resolve the files, stage them, and run `bun run stack continue <project>`. The tool finishes the stopped patch, then applies the remaining entries. For a PR-only checkout, use `bun run stack continue <project> --pr`. If the attempt should be discarded, use `stack abort` with the same project and optional `--pr`, then run `stack sync` again. Do not delete the apply session by hand.
+During `stack sync`, Git may stop in the middle of `git am`. Inspect `git status` in `.worktrees/<project>`, resolve the files, stage them, and run `bun run stack continue <project>`. The tool finishes the stopped patch, then applies the remaining entries. For a PR-only checkout, use `bun run stack continue <project> --pr`. If the attempt should be discarded, use `stack abort` with the same project and optional `--pr`, then run `stack sync` again. Do not delete the apply session by hand. If the base already contains a patch's changes, `git am` adds no commit, and `stack sync` stops and names that patch. Run `stack abort`, then remove or rework the patch.
 
 During `stack rebuild`, a later commit can conflict with an edited earlier patch. Resolve and stage it in the full checkout, then rerun `bun run stack rebuild <project>`. The edit session tracks how many later commits have replayed. Its backup ref keeps the pre-edit stack reachable until the rebuild succeeds.
 

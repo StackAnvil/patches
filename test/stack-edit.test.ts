@@ -204,3 +204,31 @@ test("rebuild refuses to export an empty commit as a patch", async () => {
   expect(await stack(["rebuild", "fixture"], true)).toContain("has no file changes");
   expect(await readFile(setup, "utf8")).toBe(saved);
 }, 600_000);
+
+/** Lists a copy of the setup patch as a deferred patch, which the base stack already contains. */
+async function deferSetupCopy(patches: string) {
+  await cp(
+    join(patches, "setup", "0001-setup.patch"),
+    join(patches, "deferred", "0001-setup.patch"),
+  );
+  await writeFile(
+    join(patches, "series.json"),
+    JSON.stringify({
+      setup: ["0001-setup.patch"],
+      upstreamable: [
+        { file: "0001-first.patch", title: "feat(test): first" },
+        { file: "0002-second.patch", title: "feat(test): second" },
+      ],
+      deferred: [{ file: "0001-setup.patch", reason: "Covered by an upstream PR." }],
+    }),
+  );
+}
+
+test("stack sync names a patch whose changes the stack already contains", async () => {
+  const { patches, stack } = await stackFixture();
+  await deferSetupCopy(patches);
+
+  expect(await stack(["sync", "fixture"], true)).toContain(
+    "deferred/0001-setup.patch added no commit",
+  );
+}, 600_000);

@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { Clock, Effect, Schema } from "effect";
 import { parseJson, required, encodeJson, encodeIndentedJson } from "./guards.ts";
 import {
@@ -123,6 +123,12 @@ const applyRemaining = Effect.fn("applyRemaining")(function* (
         }),
       ),
     );
+    // With --3way, git am skips a patch whose changes the base already has and still succeeds.
+    const applied = yield* commitIds(dir, session.baseSha);
+    if (applied.length !== index + 1)
+      return yield* StackError.make({
+        message: `${relative(root, file)} added no commit because the base already contains its changes. Run ${abortCommand(id, mode, patchFile)}, then remove the patch and its series.json entry or rework it against the base.`,
+      });
     session.nextIndex = index + 1;
     yield* Effect.promise(() => writeFile(path, encodeIndentedJson(session)));
   }
