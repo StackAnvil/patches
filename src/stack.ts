@@ -175,6 +175,12 @@ const resetToBase = Effect.fn("resetToBase")(function* (dir: string, target: Tar
       message: `Unexported commits exist at ${dir}. Use stack rebuild or save them before sync.`,
     });
   }
+  // Without the sync record, only a checkout whose HEAD is already upstream is safe to replace.
+  if (!saved && (yield* git(["rev-list", "-n", "1", "HEAD", "--not", "--remotes"], dir))) {
+    return yield* StackError.make({
+      message: `${dir} has commits that are not upstream, and its ${syncedRef(mode)} sync record is missing. Use stack rebuild or save them first. If HEAD only holds the exported stack, run git -C ${dir} update-ref ${syncedRef(mode)} HEAD, then sync again.`,
+    });
+  }
   yield* git(["fetch", "origin", target.baseBranch], dir);
   yield* git(["cat-file", "-e", `${target.baseSha}^{commit}`], dir);
   yield* git(["checkout", "--detach", "--force", target.baseSha], dir);

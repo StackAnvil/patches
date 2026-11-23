@@ -234,6 +234,17 @@ test("stack sync names a patch whose changes the stack already contains", async 
   );
 }, 600_000);
 
+test("stack sync keeps unexported commits when the sync record was deleted", async () => {
+  const { checkout, stack } = await stackFixture();
+  await stack(["sync", "fixture"]);
+  await commit(checkout, "local.txt", "local\n", "feat(test): unexported");
+  const head = await git(["rev-parse", "HEAD"], checkout);
+  await git(["update-ref", "-d", "refs/stackanvil/last-synced-full"], checkout);
+
+  expect(await stack(["sync", "fixture"], true)).toContain("sync record is missing");
+  expect(await git(["rev-parse", "HEAD"], checkout)).toBe(head);
+}, 600_000);
+
 test("stack edit refuses a filename that names patches in two groups", async () => {
   const { patches, stack } = await stackFixture();
   await deferSetupCopy(patches);
