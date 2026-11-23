@@ -44,6 +44,8 @@ The output must use scale 1 with no rotation. Absolute input requires one active
 | `record`                | `ID FPS FILE`                        | Private H.264 recording at 1 to 120 FPS                               |
 | `serve`                 | `SOCKET`                             | Keep one virtual keyboard and pointer available for private lab input |
 | `focus`                 | `ID`                                 | Focus the selected native window                                      |
+| `move`                  | `ID X Y`                             | Move the pointer without pressing a button                            |
+| `look`                  | `ID DX DY`                           | Send one relative pointer motion of up to 2000 pixels on each axis    |
 | `resize`                | `ID WIDTH HEIGHT [X Y]`              | Resize, with optional placement on an isolated display                |
 | `click`, `double-click` | `ID X Y [left\|right]`               | One or two clicks                                                     |
 | `mouse-hold`            | `ID X Y BUTTON MS`                   | Move, press, hold, and release                                        |

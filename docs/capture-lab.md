@@ -68,7 +68,6 @@ Set `STACKANVIL_WAYLAND_RENDERER=pixman` for compositor tests without GPU render
 
 If you set `STACKANVIL_USE_DESKTOP=1`, the games launch on your native Wayland desktop.
 Desktop automation requires Sway IPC through `SWAYSOCK` and the virtual keyboard, virtual pointer, and screencopy protocols.
-GNOME desktop automation is no longer supported.
 Desktop input requires `--allow-focus` on each supported input command.
 Absolute pointer input and capture require an unrotated output at scale 1.
 Absolute input also requires exactly one active output.
@@ -110,7 +109,7 @@ Choose points from observed slot positions and allow enough dwell for the client
 
 One native call presses the button, visits the points in order, and releases the button.
 SIGINT, SIGTERM, and detected window failures also release the button.
-SIGKILL and an X server failure cannot guarantee cleanup.
+A compositor failure can prevent the release. The [helper reference](../native/capture-wayland/README.md#commands) describes signal handling.
 Desktop input requires `--allow-focus`.
 
 A scenario uses the same bounds and input handling:
@@ -136,8 +135,6 @@ It shares the CLI's command handling without starting another Bun process for ea
 One UI session binds its display once and checks the selected window on every command.
 The input service focuses the private window before emitting input, so the runner omits a separate focus process there.
 Desktop input still requires explicit permission.
-
-Projectile controls still require movement before the shot passes, attributed damage for contact, and changed ownership and outgoing motion for reflection.
 
 ## Record before and after video
 
@@ -216,7 +213,7 @@ Use `bun run lab jvm list` to find a running Java process. `bun run lab jvm thre
 
 The UI command can send input to both Bedrock and Java clients without taking focus from your desktop. This lets you compare the same menu or connection step without hardcoding account tokens or packet contents in tests. Gameplay packets over UDP need separate protocol logs or packet capture. The HTTPS proxy covers only traffic that the launched process routes through it.
 
-For skin behavior, see [the Bedrock skin flow](skin-flow.md). It explains what HTTPS captures show, what gameplay packets carry, and why Character Creator skins still need renderer work.
+For skin ownership and validation limits, see [Skins and Character Creator](skin-flow.md).
 
 ### Observe local movement phases
 
