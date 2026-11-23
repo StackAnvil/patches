@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { Schema } from "effect";
-import { zipEntries } from "./zip.ts";
+import { nestedJarLimit, zipEntries } from "./zip.ts";
 import { isRecord } from "./guards.ts";
 
 export const builtinUiResource = "assets/viabedrock/builtin_ui.zip";
@@ -92,7 +92,7 @@ export async function verifyEmbeddedBuiltinUi(
     );
     if (!core || otherCores.length > 0)
       throw new Error("The Bedrock add-on must embed exactly one ViaBedrock JAR");
-    entries = zipEntries(core[1]());
+    entries = zipEntries(core[1](nestedJarLimit));
   }
   const embedded = entries.get(builtinUiResource)?.();
   if (!embedded || !embedded.equals(await readFile(bundle))) {

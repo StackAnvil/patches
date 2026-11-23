@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { assetZip } from "../scripts/bundle-bedrock-assets.ts";
 import { verifyBuiltinAssets } from "./bedrock-assets.ts";
-import { zipEntries } from "./zip.ts";
+import { nestedJarLimit, zipEntries } from "./zip.ts";
 
 export const builtinImagesResource = "assets/viabedrock/builtin_images.zip";
 export const preparedUiImagesResource = "assets/viabedrock/builtin_ui_images.zip";
@@ -101,7 +101,7 @@ export async function verifyEmbeddedBuiltinImages(
     );
     if (!core || otherCores.length > 0)
       throw new Error("The Bedrock add-on must embed exactly one core JAR");
-    entries = zipEntries(core[1]());
+    entries = zipEntries(core[1](nestedJarLimit));
   }
   const nativeImages = await readFile(bundle);
   if (!entries.get(builtinImagesResource)?.().equals(nativeImages))
