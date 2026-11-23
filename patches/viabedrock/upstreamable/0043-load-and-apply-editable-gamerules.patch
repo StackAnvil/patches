@@ -5,11 +5,19 @@ Subject: [PATCH] fix(world): load and apply editable gamerules in Java options
 
 Java 26.3 waits for a GAME_RULE_VALUES response before showing its in-world rules screen. Return the matching rules received from Bedrock and translate validated edits into Bedrock command requests. Omit rules whose behavior or value type differs between editions, and respect the Bedrock editable flag.
 
+Map Java's locator_bar to Bedrock's playerWaypoints rule. Bedrock 1.26.60.5
+game rule registration 0x14070a550 has no locatorBar rule. It registers
+playerWaypoints as an int rule with default 1 that accepts values below 2,
+and lambda 0x140729570 migrates a stored legacy locatorbar value (false to
+0, true or absent to 1). The old locatorbar mapping never matched a
+current server rule. Translate 0 and 1 to Java false and true, skip other
+values, and send Java edits as 0 or 1.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 91164873873c33f968ae2bbdc898f727509a249e..04601af5058c1f8b10c2f172995bd416ad76c40a 100644
+index 023f6fafe0de5919cd94ecc6f959fe17861fc82d..964a58da2e14b081e5c6c8de2b385f37da39bdda 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -335,7 +335,11 @@ public final class ClientPlayerPackets {
+@@ -346,7 +346,11 @@ public final class ClientPlayerPackets {
                      wrapper.write(Types.BYTE, (byte) PlayerRespawnState.ClientReadyToSpawn.getValue()); // state
                      wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
                  }
@@ -103,10 +111,10 @@ index 651642da87cfcd4fd0c5b8533baac1b7435cea73..ad56b55e11396801a5c2cedda363f6a7
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappings.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappings.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4df37f9f1892cabd3359043681c32d914f717ee
+index 0000000000000000000000000000000000000000..cd8255caf918bb34dcff82052d2131e80dc3dfd0
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappings.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,113 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -143,10 +151,10 @@ index 0000000000000000000000000000000000000000..f4df37f9f1892cabd3359043681c32d9
 +            Map.entry("doimmediaterespawn", "immediate_respawn"),
 +            Map.entry("keepinventory", "keep_inventory"),
 +            Map.entry("dolimitedcrafting", "limited_crafting"),
-+            Map.entry("locatorbar", "locator_bar"),
 +            Map.entry("mobgriefing", "mob_griefing"),
 +            Map.entry("naturalregeneration", "natural_health_regeneration"),
 +            Map.entry("playerssleepingpercentage", "players_sleeping_percentage"),
++            Map.entry("playerwaypoints", "locator_bar"),
 +            Map.entry("projectilescanbreakblocks", "projectiles_can_break_blocks"),
 +            Map.entry("pvp", "pvp"),
 +            Map.entry("randomtickspeed", "random_tick_speed"),
@@ -157,14 +165,26 @@ index 0000000000000000000000000000000000000000..f4df37f9f1892cabd3359043681c32d9
 +            Map.entry("tntexplosiondropdecay", "tnt_explosion_drop_decay")
 +    );
 +
++    // Bedrock 1.26.60.5 registers playerWaypoints as an int rule that accepts only 0 (off) and 1 (on).
++    // It replaced the legacy locatorBar boolean, which the game rule registry migrates on load.
++    private static final String PLAYER_WAYPOINTS = "playerwaypoints";
++
 +    private static final Map<String, String> JAVA_TO_BEDROCK = BEDROCK_TO_JAVA.entrySet().stream()
 +            .collect(java.util.stream.Collectors.toUnmodifiableMap(entry -> "minecraft:" + entry.getValue(), Map.Entry::getKey));
 +
 +    static Map<String, String> toJavaValues(final Collection<GameRule> gameRules) {
 +        final Map<String, String> values = new HashMap<>();
 +        for (GameRule rule : gameRules) {
-+            final String javaName = BEDROCK_TO_JAVA.get(rule.name().toLowerCase(Locale.ROOT));
-+            if (javaName != null && rule.editable() && (rule.value() instanceof Boolean || rule.value() instanceof Integer)) {
++            final String bedrockName = rule.name().toLowerCase(Locale.ROOT);
++            final String javaName = BEDROCK_TO_JAVA.get(bedrockName);
++            if (javaName == null || !rule.editable()) {
++                continue;
++            }
++            if (bedrockName.equals(PLAYER_WAYPOINTS)) {
++                if (rule.value() instanceof Integer enabled && (enabled == 0 || enabled == 1)) {
++                    values.put("minecraft:" + javaName, Boolean.toString(enabled == 1));
++                }
++            } else if (rule.value() instanceof Boolean || rule.value() instanceof Integer) {
 +                values.put("minecraft:" + javaName, rule.value().toString());
 +            }
 +        }
@@ -174,7 +194,16 @@ index 0000000000000000000000000000000000000000..f4df37f9f1892cabd3359043681c32d9
 +    static String command(final Map<String, GameRule> gameRules, final String javaName, final String value) {
 +        final String bedrockName = JAVA_TO_BEDROCK.get(javaName);
 +        final GameRule rule = gameRules.get(bedrockName);
-+        if (rule == null || !rule.editable() || !validValue(rule.value(), value)) {
++        if (rule == null || !rule.editable()) {
++            return null;
++        }
++        if (PLAYER_WAYPOINTS.equals(bedrockName)) {
++            if (!(rule.value() instanceof Integer) || !validValue(Boolean.FALSE, value)) {
++                return null;
++            }
++            return "/gamerule " + rule.name() + " " + ("true".equals(value) ? 1 : 0);
++        }
++        if (!validValue(rule.value(), value)) {
 +            return null;
 +        }
 +        return "/gamerule " + rule.name() + " " + value;
@@ -284,10 +313,10 @@ index 0000000000000000000000000000000000000000..6ac6def789653fea3a1e2d3fd86090e8
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappingsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappingsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ceaf77fb556250a4bc8f93f2cd68d632962d9f99
+index 0000000000000000000000000000000000000000..9f0643907db31c74720a966ec7cfce6dc5e5d553
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappingsTest.java
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,62 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -333,6 +362,20 @@ index 0000000000000000000000000000000000000000..ceaf77fb556250a4bc8f93f2cd68d632
 +        assertNull(GameRuleMappings.command(rules, "minecraft:keep_inventory", "false"));
 +        assertNull(GameRuleMappings.command(Map.of("dodaylightcycle", new GameRule("doDayLightCycle", false, true)),
 +                "minecraft:advance_time", "false"));
++    }
++
++    @Test
++    void playerWaypointsIntRuleBacksTheJavaLocatorBarSwitch() {
++        assertEquals(Map.of("minecraft:locator_bar", "false"),
++                GameRuleMappings.toJavaValues(List.of(new GameRule("playerWaypoints", true, 0), new GameRule("locatorBar", true, true))));
++        assertEquals(Map.of("minecraft:locator_bar", "true"),
++                GameRuleMappings.toJavaValues(List.of(new GameRule("playerWaypoints", true, 1))));
++        assertEquals(Map.of(), GameRuleMappings.toJavaValues(List.of(new GameRule("playerWaypoints", true, 2))));
++
++        final Map<String, GameRule> rules = Map.of("playerwaypoints", new GameRule("playerWaypoints", true, 1));
++        assertEquals("/gamerule playerWaypoints 0", GameRuleMappings.command(rules, "minecraft:locator_bar", "false"));
++        assertEquals("/gamerule playerWaypoints 1", GameRuleMappings.command(rules, "minecraft:locator_bar", "true"));
++        assertNull(GameRuleMappings.command(rules, "minecraft:locator_bar", "1"));
 +    }
 +
 +}

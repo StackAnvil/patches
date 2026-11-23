@@ -166,6 +166,12 @@ Without a stored scale the actor spawns no part for that model. A
 regression gives the test entity cube widths of 3e38 and checks that
 no scale is stored.
 
+Attachables follow the same rule. Their item models wrote Infinity
+into every display transform of the Java model. Such a model is now
+skipped before its readiness flag is set, so the item keeps its mapped
+Java model. A regression checks the flag and the exported models for
+a 3e38 attachable cube.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 index 4e87e6acb64959a57107788013245c8a7caf630d..ed84a7aebe626036f4b66ada6bf08f69b4947558 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
@@ -435,10 +441,10 @@ index de4633e5a08f391df07a052c8a8e6e7ef459b574..b78f8e516e3b04ec9da8678819c6e68c
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-index 40083952199718da35b75d191b00130764a43712..736e2ada4f709e08536acb22f5a3f8502fb78b3c 100644
+index 40083952199718da35b75d191b00130764a43712..0254bd86d27475bb3cd8ffd17919df07854cdaf8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-@@ -17,92 +17,172 @@
+@@ -17,92 +17,176 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
  
@@ -495,20 +501,20 @@ index 40083952199718da35b75d191b00130764a43712..736e2ada4f709e08536acb22f5a3f850
          for (AttachableDefinitions.AttachableDefinition attachableDefinition : resourcePackStorage.getAttachables().attachables().values()) {
 -            submitter.accept(() -> this.handleAttachableDefinition(resourcePackStorage, attachableDefinition));
 +            submitter.accept(() -> this.handleAttachableDefinition(resourcePackStorage, attachableDefinition, geometries));
-+        }
-+    }
-+
+         }
+     }
+ 
+-    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition) {
 +    private static JsonObject inventoryIcon(final ResourcePackStorage packs, final String identifier) {
 +        final var definition = packs.getItems().get(identifier);
 +        if (definition != null && definition.iconComponent() != null) {
 +            return atlasIcon(packs, definition.iconComponent());
-         }
++        }
 +        final String vanillaIcon = VanillaItemIcons.icon(identifier);
 +        final JsonObject icon = atlasIcon(packs, vanillaIcon != null ? vanillaIcon : Key.stripMinecraftNamespace(identifier));
 +        return icon == null && BOW.equals(identifier) ? atlasIcon(packs, "bow_standby") : icon;
-     }
- 
--    private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition) {
++    }
++
 +    private static JsonObject atlasIcon(final ResourcePackStorage packs, final String icon) {
 +        final var textures = packs.getTextures().itemTextures().get(icon);
 +        if (textures == null || textures.isEmpty()) {
@@ -571,6 +577,10 @@ index 40083952199718da35b75d191b00130764a43712..736e2ada4f709e08536acb22f5a3f850
 +                sprite.addProperty("layer0", "viabedrock:" + javaTexturePath);
 +                itemModel.add("textures", sprite);
 +            } else {
++                if (!Float.isFinite(geometry.scale())) {
++                    // Cubes near the float limit overflow the fitted bounds. Java cannot load an infinite display scale.
++                    continue;
++                }
 +                javaContent.putGeometry(geometry);
 +                itemModel = geometry.withTexture("viabedrock:" + javaTexturePath);
 +                final JsonArray scaling = new JsonArray();
@@ -1516,10 +1526,10 @@ index 0000000000000000000000000000000000000000..5eb876a05e9cd09fb2675864136e92bb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..7a28eabd599adf2615aad2aa085eb7dc039f0c10
+index 0000000000000000000000000000000000000000..aeb60727cf58747f829d590cfc0963555ead1141
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,444 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1638,6 +1648,31 @@ index 0000000000000000000000000000000000000000..7a28eabd599adf2615aad2aa085eb7dc
 +                assertTrue(Float.isFinite(((Number) value).floatValue()), key);
 +            }
 +        });
++    }
++
++    @Test
++    void omitsAttachableModelsWhoseFittedScaleOverflowsAndKeepsTheJavaItemModel() throws ReflectiveOperationException {
++        final String identifier = "example:wings";
++        final ResourcePack pack = pack(identifier, true);
++        pack.content().put("textures/omitted.png", pack.content().get("textures/present.png"));
++        final JsonObject source = pack.content().getJson("models/entity/test.json");
++        final var size = source.getAsJsonArray("minecraft:geometry").get(0).getAsJsonObject().getAsJsonArray("bones").get(0).getAsJsonObject()
++                .getAsJsonArray("cubes").get(0).getAsJsonObject().getAsJsonArray("size");
++        size.set(0, new JsonPrimitive(3e38));
++        size.set(2, new JsonPrimitive(3e38));
++        pack.content().putJson("models/entity/test.json", source);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack));
++
++        final Content result = convert(storage, new CustomAttachableResourceRewriter());
++
++        assertFalse(storage.getConverterData().containsKey("ca_" + identifier + "_default"));
++        for (final String path : result.getFilesDeep("assets/viabedrock/models/", ".json")) {
++            assertFalse(result.getString(path).contains("Infinity"), path);
++        }
++        storage.setLoadedOnJavaClient();
++        final var item = new StructuredItem(312, 1, components());
++        CustomAttachableResourceRewriter.applyItemModel(storage, identifier, item);
++        assertNull(item.dataContainer().get(StructuredDataKey.ITEM_MODEL));
 +    }
 +
 +    @Test

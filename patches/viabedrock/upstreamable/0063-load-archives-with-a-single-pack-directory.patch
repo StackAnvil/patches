@@ -41,6 +41,14 @@ pack size limit to match. Regressions cover the expanded limit, the
 shared budget with replaced and invalid packs, and a chunked response
 longer than expected.
 
+Request the archive without content coding. The downloader asked for
+gzip and deflate, but HttpURLConnection does not decode them, so a CDN
+that compressed its response returned bytes that failed the length check
+or the ZIP parse, and the pack fell back to the slower game-protocol
+download. Pack archives are already compressed, so identity coding keeps
+the HEAD length equal to the bytes read and costs little bandwidth. The
+regression serves gzip only to clients that accept it.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
 index ebab0034b6df6b92e05c0f09547245d7ac5c1680..e4632f65fdbf2fa7735b06769edbdff059d46cc6 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
@@ -152,7 +160,7 @@ index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..234d22c9e82d7880befc3cb91c9773b0
              }
          }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloader.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloader.java
-index 001e7eaf96874faa181603bf4b5761b9591be321..5db6a9f34ccf7f41c74996cdc7ab50dc82a1348d 100644
+index 001e7eaf96874faa181603bf4b5761b9591be321..f759af781317e701d72a351d8cfd372c12c605c8 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloader.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloader.java
 @@ -42,12 +42,19 @@ public class BedrockPackDownloader {
@@ -177,6 +185,16 @@ index 001e7eaf96874faa181603bf4b5761b9591be321..5db6a9f34ccf7f41c74996cdc7ab50dc
      }
  
      private HttpURLConnection createConnection() throws IOException {
+@@ -57,7 +64,8 @@ public class BedrockPackDownloader {
+         connection.setDoInput(true);
+         connection.setDoOutput(false);
+         connection.setInstanceFollowRedirects(true);
+-        connection.setRequestProperty("Accept-Encoding", "gzip, deflate");
++        // HttpURLConnection does not decode gzip, and a ZIP archive gains little from it.
++        connection.setRequestProperty("Accept-Encoding", "identity");
+         connection.setRequestProperty("Accept", "*/*");
+         connection.setRequestProperty("User-Agent", "libhttpclient/1.0.0.0");
+         connection.setRequestProperty("Cache-Control", "no-cache");
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java
 index 62030195fdb659bd6dc25b2306c7714ddc99542e..7b4e26f739a060d6f2b5887145e10335f6d0f128 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java
@@ -502,10 +520,10 @@ index 0000000000000000000000000000000000000000..5199c0446fe0b9e4038e14d281848e6e
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloaderTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloaderTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c811c0eb1c9876249ef8306ef837ebfd2a1706e8
+index 0000000000000000000000000000000000000000..819333f3e8e5d66d677b7701f1a21c5d63015806
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloaderTest.java
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,72 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -516,10 +534,12 @@ index 0000000000000000000000000000000000000000..c811c0eb1c9876249ef8306ef837ebfd
 +import com.sun.net.httpserver.HttpServer;
 +import org.junit.jupiter.api.Test;
 +
++import java.io.ByteArrayOutputStream;
 +import java.io.IOException;
 +import java.net.InetAddress;
 +import java.net.InetSocketAddress;
 +import java.net.URI;
++import java.util.zip.GZIPOutputStream;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -540,6 +560,36 @@ index 0000000000000000000000000000000000000000..c811c0eb1c9876249ef8306ef837ebfd
 +            final var downloader = new BedrockPackDownloader(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/pack.zip").toURL());
 +            assertThrows(IOException.class, () -> downloader.download(7));
 +            assertArrayEquals(new byte[]{1, 2, 3, 4, 5, 6, 7, 8}, downloader.download(8));
++        } finally {
++            server.stop(0);
++        }
++    }
++
++    @Test
++    void downloadsTheUnencodedArchiveFromServersThatCompressAcceptedResponses() throws Exception {
++        final byte[] archive = {'P', 'K', 3, 4, 5, 6, 7, 8};
++        final HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
++        server.createContext("/pack.zip", exchange -> {
++            // Like a CDN, compress only when the client accepts gzip.
++            final String accepted = exchange.getRequestHeaders().getFirst("Accept-Encoding");
++            byte[] body = archive;
++            if (accepted != null && accepted.contains("gzip")) {
++                final ByteArrayOutputStream compressed = new ByteArrayOutputStream();
++                try (var gzip = new GZIPOutputStream(compressed)) {
++                    gzip.write(archive);
++                }
++                body = compressed.toByteArray();
++                exchange.getResponseHeaders().set("Content-Encoding", "gzip");
++            }
++            exchange.sendResponseHeaders(200, body.length);
++            try (var output = exchange.getResponseBody()) {
++                output.write(body);
++            }
++        });
++        server.start();
++        try {
++            final var downloader = new BedrockPackDownloader(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/pack.zip").toURL());
++            assertArrayEquals(archive, downloader.download(archive.length));
 +        } finally {
 +            server.stop(0);
 +        }

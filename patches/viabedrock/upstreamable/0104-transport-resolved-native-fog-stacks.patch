@@ -27,14 +27,19 @@ immutable ownership, command removal, codec bounds, and late registration.
 Biome-boundary blending, remote legacy name cutoffs, engine-specific
 vanilla rules, and other render modes remain separate acceptance work.
 
+The snapshot carries layers, biome settings and defaults without a
+resolver. Native 1.26.60.5 blends commands, biome samples and defaults by
+weight (0x142148a80), so a first-match lookup here would disagree with the
+client. Consumers resolve the weighted stack themselves.
+
 BREAKING CHANGE: FogDefinition includes distances; FogState requires biome/default settings and the negotiated fog payload uses version 2.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FogState.java b/src/main/java/net/raphimc/viabedrock/api/model/FogState.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..be1a7538966b688f7d27c428ef0b0a5f8bf44663
+index 0000000000000000000000000000000000000000..1f7d2dcb67d3773e98df94d73e3896bd4547a86a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/FogState.java
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,163 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -157,19 +162,6 @@ index 0000000000000000000000000000000000000000..be1a7538966b688f7d27c428ef0b0a5f
 +        }
 +        biomes = Map.copyOf(canonical);
 +        defaults = immutableDistances(defaults);
-+    }
-+
-+    /** Native stack precedence applies independently to each medium, not to individual fields. */
-+    public Distance resolve(final String medium, final String biome) {
-+        for (int i = this.layers.size() - 1; i >= 0; i--) {
-+            final Distance distance = this.layers.get(i).distances.get(medium);
-+            if (distance != null) {
-+                return distance;
-+            }
-+        }
-+        final Layer layer = biome == null ? null : this.biomes.get(Key.namespaced(biome));
-+        final Distance distance = layer == null ? null : layer.distances.get(medium);
-+        return distance == null ? this.defaults.get(medium) : distance;
 +    }
 +
 +    private static Map<String, Distance> immutableDistances(final Map<String, Distance> distances) {
@@ -476,10 +468,10 @@ index 0000000000000000000000000000000000000000..13a918f75f79e68adabd68b4c5890549
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/FogStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/FogStateTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..4be4bc92baf3d94bbc169a12c2b050fbeddcfc4e
+index 0000000000000000000000000000000000000000..2bf0b902a8be95dee514177bfb04fc1327e74aa4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/FogStateTest.java
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,109 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -501,23 +493,6 @@ index 0000000000000000000000000000000000000000..4be4bc92baf3d94bbc169a12c2b050fb
 +class FogStateTest {
 +
 +    @Test
-+    void resolvesTheLastDefinedMediumWithoutDiscardingLowerAir() {
-+        final var air = new FogState.Distance(0, 16, 0xFFFFFF, false);
-+        final var water = new FogState.Distance(0, 4, 0x00FF00, false);
-+        final var red = new FogState.Distance(0, 32, 0xFF0000, false);
-+        final var layers = new ArrayList<FogState.Layer>();
-+        layers.add(new FogState.Layer("test:air", Map.of("air", air)));
-+        layers.add(new FogState.Layer("test:water", Map.of("water", water)));
-+        final var state = new FogState(layers, Map.of(), Map.of());
-+        layers.add(new FogState.Layer("test:red", Map.of("air", red)));
-+        assertSame(air, state.resolve("air", null));
-+        assertSame(water, state.resolve("water", null));
-+        assertSame(red, new FogState(layers, Map.of(), Map.of()).resolve("air", null));
-+        assertNull(state.resolve("lava", null));
-+        assertNull(FogState.EMPTY.resolve("air", null));
-+    }
-+
-+    @Test
 +    void retainsAtomicImmutableLayersAndIndependentDistanceUnits() {
 +        final var settings = new HashMap<String, FogState.Distance>();
 +        final var relative = new FogState.Distance(-0.25F, 0.75F, 0, true);
@@ -529,6 +504,10 @@ index 0000000000000000000000000000000000000000..4be4bc92baf3d94bbc169a12c2b050fb
 +        assertEquals(72, relative.end(96));
 +        assertEquals(16, new FogState.Distance(0, 16, 0, false).end(192));
 +        assertThrows(UnsupportedOperationException.class, () -> layer.distances().clear());
++        final var layers = new ArrayList<>(List.of(layer));
++        final var state = new FogState(layers, Map.of(), Map.of());
++        layers.clear();
++        assertEquals(List.of(layer), state.layers());
 +    }
 +
 +    @Test
@@ -554,28 +533,6 @@ index 0000000000000000000000000000000000000000..4be4bc92baf3d94bbc169a12c2b050fb
 +    }
 +
 +    @Test
-+    void commandsOverrideBiomesAndDefaultsIndependentlyForEachMedium() {
-+        final var base = new FogState.Distance(0.25F, 0.75F, 0x123456, true);
-+        final var biome = new FogState.Distance(0, 32, 0xFF0000, false);
-+        final var water = new FogState.Distance(0, 4, 0x00FF00, false);
-+        final var command = new FogState.Distance(0, 16, 0xFFFFFF, false);
-+        final var bindings = Map.of("the_end", new FogState.Layer("test:biome", Map.of("air", biome)));
-+        final var defaults = Map.of("air", base);
-+        final var state = new FogState(List.of(new FogState.Layer("test:water", Map.of("water", water))), bindings, defaults);
-+        assertSame(biome, state.resolve("air", "minecraft:the_end"));
-+        assertSame(biome, state.resolve("air", "the_end"));
-+        assertSame(base, state.resolve("air", "test:unknown"));
-+        assertSame(base, state.resolve("air", null));
-+        assertSame(water, state.resolve("water", "the_end"));
-+        final var overridden = new FogState(List.of(new FogState.Layer("test:command", Map.of("air", command))), bindings, defaults);
-+        assertSame(command, overridden.resolve("air", "the_end"));
-+        final var reset = new FogState(List.of(), bindings, defaults);
-+        assertSame(biome, reset.resolve("air", "the_end"));
-+        assertNull(reset.resolve("water", "the_end"));
-+        assertSame(base, reset.resolve("air", "test:the_end"));
-+    }
-+
-+    @Test
 +    void roundTripsImmutableWorldSettingsAndRejectsAmbiguousBiomeAliases() {
 +        final var distance = new FogState.Distance(0, 32, 0xFF0000, false);
 +        final var biomes = new HashMap<String, FogState.Layer>();
@@ -590,8 +547,8 @@ index 0000000000000000000000000000000000000000..4be4bc92baf3d94bbc169a12c2b050fb
 +            FogState.TYPE.write(buffer, state);
 +            final var decoded = FogState.TYPE.read(buffer);
 +            assertEquals(state, decoded);
-+            assertEquals(distance, decoded.resolve("air", "the_end"));
-+            assertEquals(8, decoded.resolve("water", "the_end").end(192));
++            assertEquals(distance, decoded.biomes().get("minecraft:the_end").distances().get("air"));
++            assertEquals(8, decoded.defaults().get("water").end(192));
 +            biomes.put("the_end", state.biomes().get("minecraft:the_end"));
 +            biomes.put("minecraft:the_end", state.biomes().get("minecraft:the_end"));
 +            assertThrows(IllegalArgumentException.class, () -> new FogState(List.of(), biomes, Map.of()));
@@ -735,10 +692,10 @@ index 05383c57dc6afc18acd154b90f6b6939781bdbdf..658e165229284dae6b49bd3a2330c4e5
  
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..228a91e4d628631ab54d882c1b08203b588eb795
+index 0000000000000000000000000000000000000000..c12eba15d5bd9311724793e213b5b5bd2b147ff3
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/FogStorageTest.java
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,154 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -780,10 +737,10 @@ index 0000000000000000000000000000000000000000..228a91e4d628631ab54d882c1b08203b
 +        when(definitions.get(identifier)).thenReturn(new FogDefinitions.FogDefinition(identifier, Map.of(), Map.of("air", current)));
 +        final var first = storage.snapshot(resources);
 +        when(definitions.get(identifier)).thenReturn(new FogDefinitions.FogDefinition(identifier, Map.of(), Map.of("air", older)));
-+        assertSame(older, storage.snapshot(resources).resolve("air", null));
-+        assertSame(current, first.resolve("air", null));
++        assertSame(older, command(storage.snapshot(resources), "air"));
++        assertSame(current, command(first, "air"));
 +        storage.update(new String[]{"test:missing"});
-+        assertNull(storage.snapshot(resources).resolve("air", null));
++        assertNull(command(storage.snapshot(resources), "air"));
 +        storage.update(new String[0]);
 +        assertEquals(FogState.EMPTY, storage.snapshot(resources));
 +    }
@@ -836,13 +793,22 @@ index 0000000000000000000000000000000000000000..228a91e4d628631ab54d882c1b08203b
 +        final var clear = pack("{\"default\":{\"remove_all_prior_fog\":true}}");
 +        final var storage = new FogStorage(mock(UserConnection.class));
 +        final var first = storage.snapshot(resources(lower, upper));
-+        assertEquals(new FogState.Distance(0, 48, 0x0000FF, false), first.resolve("air", "the_end"));
-+        assertEquals(new FogState.Distance(0, 8, 0x00FF00, false), first.resolve("water", "the_end"));
-+        assertEquals(new FogState.Distance(0, 24, 0x00FF00, false), first.resolve("air", "test:unknown"));
++        assertEquals(new FogState.Distance(0, 48, 0x0000FF, false), biome(first, "air"));
++        assertEquals(new FogState.Distance(0, 8, 0x00FF00, false), biome(first, "water"));
++        assertEquals(new FogState.Distance(0, 24, 0x00FF00, false), first.defaults().get("air"));
 +        final var replaced = storage.snapshot(resources(lower, upper, clear));
-+        assertEquals(new FogState.Distance(0, 32, 0xFF0000, false), replaced.resolve("air", "the_end"));
-+        assertNull(replaced.resolve("air", "test:unknown"));
-+        assertEquals(48, first.resolve("air", "the_end").end());
++        assertEquals(new FogState.Distance(0, 32, 0xFF0000, false), biome(replaced, "air"));
++        assertNull(replaced.defaults().get("air"));
++        assertEquals(48, biome(first, "air").end());
++    }
++
++    private static FogState.Distance command(final FogState state, final String medium) {
++        assertEquals(1, state.layers().size());
++        return state.layers().get(0).distances().get(medium);
++    }
++
++    private static FogState.Distance biome(final FogState state, final String medium) {
++        return state.biomes().get("minecraft:the_end").distances().get(medium);
 +    }
 +
 +    private static String fog(final String identifier, final String medium, final int end, final String color) {

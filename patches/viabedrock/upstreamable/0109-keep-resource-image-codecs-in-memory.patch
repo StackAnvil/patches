@@ -10,15 +10,19 @@ Use memory-backed input and output streams for Content images without changing g
 Read the image header with the same in-memory reader before decoding.
 A few compressed PNG or JPEG bytes can declare dimensions that make
 ImageIO allocate gigabytes, for example while item model conversion
-copies pack textures. Reject images above 4096 x 4096 pixels, the bound
-that TGA decoding uses. The native 1.26.60.5 client initializes
-libpng's default 1,000,000-pixel side limits (store at 0x14e985fb7,
-IHDR check at 0x14e987000), and no limit setter appears in its libpng
-code, so there is no lower native bound to match. A regression rejects
-a header one pixel row and column past the limit without decoding it.
+copies pack textures. The native 1.26.60.5 client initializes libpng's
+default 1,000,000-pixel side limits (store at 0x14e985fb7, IHDR check at
+0x14e987000), and no limit setter appears in its libpng code, so a fixed
+low bound would reject textures that native loads and kick the player
+when conversion fails. Bound the decoded four-byte pixels by an eighth
+of the heap instead, and by the largest Java array. Conversion holds a
+decoded image and usually one ARGB copy on each of two converter
+threads, so accepted images stay within half of the heap. A 2 GiB heap
+accepts 8192 x 8192 textures. Regressions cover the heap scaling and a
+header past the array bound that is rejected without decoding.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e97a8c62883d5333a26fd368ae333bfe..68836e0dcb13be825303e4a494ba913e0a928544 100644
+index 622e99d2e97a8c62883d5333a26fd368ae333bfe..fc0af980a3f6e375095fc471edc89d5a25e738b3 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 @@ -22,6 +22,9 @@ import com.viaversion.viaversion.util.GsonUtil;
@@ -42,16 +46,7 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..68836e0dcb13be825303e4a494ba913e
          } catch (final IOException e) {
              throw new UncheckedIOException(e);
          }
-@@ -177,6 +180,8 @@ public abstract class Content {
- 
-     public static class LazyImage {
- 
-+        private static final long MAX_PIXELS = 4096L * 4096;
-+
-         private final byte[] bytes;
-         private final String format;
-         private BufferedImage image;
-@@ -188,8 +193,24 @@ public abstract class Content {
+@@ -188,8 +191,22 @@ public abstract class Content {
  
          public BufferedImage getImage() {
              if (this.image == null) {
@@ -68,9 +63,7 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..68836e0dcb13be825303e4a494ba913e
 +                        // A few compressed bytes can declare dimensions that need gigabytes once decoded.
 +                        final int width = reader.getWidth(0);
 +                        final int height = reader.getHeight(0);
-+                        if ((long) width * height > MAX_PIXELS) {
-+                            throw new IllegalArgumentException("Image dimensions " + width + "x" + height + " exceed the decoding limit");
-+                        }
++                        ImageDecodingLimit.require(width, height);
 +                        this.image = reader.read(0);
 +                    } finally {
 +                        reader.dispose();
@@ -78,7 +71,7 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..68836e0dcb13be825303e4a494ba913e
                  } catch (final IOException e) {
                      throw new RuntimeException(e);
                  }
-@@ -207,8 +228,8 @@ public abstract class Content {
+@@ -207,8 +224,8 @@ public abstract class Content {
              } else {
                  final BufferedImage image = this.getImage();
                  final ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -89,12 +82,54 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..68836e0dcb13be825303e4a494ba913e
                  } catch (final IOException e) {
                      throw new RuntimeException(e);
                  }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ImageDecodingLimit.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ImageDecodingLimit.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0813669e3c6e8042cbdc115b27f5d9fb85c78575
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ImageDecodingLimit.java
+@@ -0,0 +1,36 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++/**
++ * Bounds decoded resource images by the heap instead of a fixed size. The native client accepts each PNG side up to
++ * libpng's 1,000,000-pixel default, so a fixed low bound would reject textures that native loads.
++ */
++final class ImageDecodingLimit {
++
++    // The largest pixel count whose four-byte samples still fit in one Java array.
++    private static final long MAX_ARRAY_PIXELS = (Integer.MAX_VALUE - 8) / 4;
++
++    private ImageDecodingLimit() {
++    }
++
++    static void require(final long width, final long height) {
++        require(width, height, Runtime.getRuntime().maxMemory());
++    }
++
++    /**
++     * Rejects dimensions whose decoded four-byte pixels would need more than an eighth of the heap or exceed a Java
++     * array. Conversion holds a decoded image and usually one ARGB copy, and two converter threads can decode at once,
++     * so the accepted images stay within half of the heap. A 2 GiB heap accepts 8192 x 8192 textures.
++     */
++    static void require(final long width, final long height, final long maxMemory) {
++        final long pixels = width * height;
++        if (width <= 0 || height <= 0 || pixels > MAX_ARRAY_PIXELS || pixels * 4 > maxMemory / 8) {
++            throw new IllegalArgumentException("Image dimensions " + width + "x" + height + " exceed the decoding limit");
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..90834da47fa12b77789fd0cfd20316ec0812c192
+index 0000000000000000000000000000000000000000..877e97f27981f3728a3abe831114b7386cea08f0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,96 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -156,14 +191,23 @@ index 0000000000000000000000000000000000000000..90834da47fa12b77789fd0cfd20316ec
 +    }
 +
 +    @Test
-+    void rejectsImageHeadersDeclaringMorePixelsThanTheDecodingLimitBeforeAllocating() {
++    void rejectsImageHeadersDeclaringMorePixelsThanJavaArraysHoldBeforeAllocating() {
 +        final var content = new InMemoryContent();
-+        content.put("oversized.png", pngHeader(4097, 4097));
-+        content.put("bounded.png", pngHeader(4096, 4096));
++        content.put("oversized.png", pngHeader(23171, 23171));
++        content.put("bounded.png", pngHeader(1024, 1024));
 +        assertThrows(IllegalArgumentException.class, () -> content.getImage("oversized.png").getImage());
 +        // The bounded header passes the limit and fails only on its missing pixel data.
 +        final RuntimeException missingPixels = assertThrows(RuntimeException.class, () -> content.getImage("bounded.png").getImage());
 +        assertFalse(missingPixels instanceof IllegalArgumentException);
++    }
++
++    @Test
++    void decodingLimitScalesWithTheHeapAndAccepts8192PixelTexturesOnA2GibHeap() {
++        final long heap = 2L << 30;
++        assertDoesNotThrow(() -> ImageDecodingLimit.require(8192, 8192, heap));
++        assertThrows(IllegalArgumentException.class, () -> ImageDecodingLimit.require(8192, 8193, heap));
++        assertDoesNotThrow(() -> ImageDecodingLimit.require(16384, 16384, 8L << 30));
++        assertThrows(IllegalArgumentException.class, () -> ImageDecodingLimit.require(23171, 23171, Long.MAX_VALUE));
 +    }
 +
 +    private static byte[] pngHeader(final int width, final int height) {

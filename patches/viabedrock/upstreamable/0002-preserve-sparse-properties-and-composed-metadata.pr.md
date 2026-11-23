@@ -16,6 +16,8 @@ Prerequisites:
 
 Regression coverage includes `EntityPropertyRenderTest`, `PlayerCrawlingPoseTest`, `EntityPropertyListTest`, `ActorFlagsMappingTest`.
 
+`EntityMetadataRewriterTest` covers the hurt, direction and damage metadata that make hit boats and minecarts wobble. The vanilla minecart animation establishes the damage formula. The boat formula and the first wobble direction have no native capture yet.
+
 Physical dimensions use the [shared native scale calculation](0064-evaluate-named-actor-properties.pr.md#validation-and-remaining-limits), including its collapsed-box behavior.
 
 Remote player updates emit their resolved Java pose even without an earlier crawling transition. Name-only updates do not synthesize posture before native flags arrive. The local player retains prediction outside the existing crawling correction. Regressions cover sneak/stand, sparse flag words, other established posture mappings, and local ownership.

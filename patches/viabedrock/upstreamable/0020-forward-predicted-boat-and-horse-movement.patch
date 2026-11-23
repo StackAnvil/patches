@@ -34,6 +34,16 @@ the predicted byte, and the horse system adds the tame and saddle
 checks. A player in a boat's rear seat sent IsInClientPredictedVehicle,
 the vehicle ID and the boat's position although native sends none.
 
+Correct the rider's view of every other vehicle it steers. Java 26.3
+simulates any mount whose controlling passenger is the local player and
+ignores ENTITY_POSITION_SYNC and MOVE_ENTITY for it. With a saddle, a
+plain Java client therefore drove pigs, striders, camels and nautili
+locally while the Bedrock server moved them, and the two positions
+drifted apart. Server moves of the player's root vehicle now also send
+a Java MOVE_VEHICLE when the player holds the controlling seat and the
+vehicle is not predicted. Java applies that packet only to a vehicle it
+simulates, so it changes nothing for unsaddled or uncontrolled mounts.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/AbstractHorseEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/AbstractHorseEntity.java
 index da9098d1c7a13b7407a47209c4f586947bd2d111..007fd297cc960830c6ffb54325da400e6737ab6c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/AbstractHorseEntity.java
@@ -242,7 +252,7 @@ index 75115fb67dc48c9f29212bebbeec02ba3c33a1f5..200aebf94a29517cdda3ff9ab32d2fae
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e493bdb71a2 100644
+index 50758f1964069de60ea2b2513fe0f3c506cd6194..8bf82ee6147b871f0d2fb4063171a12d74af33ad 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -261,7 +271,7 @@ index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e49
  import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
  import net.raphimc.viabedrock.api.model.entity.Entity;
  import net.raphimc.viabedrock.api.util.BitSets;
-@@ -89,6 +91,17 @@ public final class ClientPlayerPackets {
+@@ -89,6 +91,28 @@ public final class ClientPlayerPackets {
          }
      }
  
@@ -276,10 +286,21 @@ index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e49
 +        return vehicle;
 +    }
 +
++    /**
++     * Java simulates any mount its local player controls and then ignores entity moves for it. Bedrock moves every
++     * vehicle except predicted boats and horses on the server, so the server's position must reach Java as a
++     * vehicle correction instead.
++     */
++    static boolean isServerMovedVehicle(final EntityTracker entityTracker, final ClientPlayerEntity clientPlayer, final Entity vehicle) {
++        return clientPlayer != null && vehicle.runtimeId() == clientPlayer.mountEntityRuntimeId() && vehicle.mountEntityRuntimeId() == -1
++                && !vehicle.passengers().isEmpty() && vehicle.passengers().getFirst() == clientPlayer.uniqueId()
++                && predictedVehicle(entityTracker, clientPlayer) == null;
++    }
++
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_3.RESPAWN, wrapper -> {
              final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
-@@ -187,25 +200,40 @@ public final class ClientPlayerPackets {
+@@ -187,25 +211,40 @@ public final class ClientPlayerPackets {
              }
              final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
              wrapper.read(BedrockTypes.POSITION_3F); // position delta
@@ -330,7 +351,7 @@ index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e49
                  default -> throw new IllegalStateException("Unhandled RewindType: " + rewindType);
              }
          });
-@@ -493,6 +521,34 @@ public final class ClientPlayerPackets {
+@@ -493,6 +532,34 @@ public final class ClientPlayerPackets {
              final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
              clientPlayer.updatePlayerPosition(MathUtil.wrapDegrees(wrapper.read(Types.FLOAT)), wrapper.read(Types.FLOAT), wrapper.read(Types.UNSIGNED_BYTE));
          });
@@ -365,7 +386,7 @@ index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e49
          protocol.registerServerbound(ServerboundPackets26_3.ACCEPT_TELEPORTATION, null, wrapper -> {
              wrapper.cancel();
              final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
-@@ -505,7 +561,8 @@ public final class ClientPlayerPackets {
+@@ -505,7 +572,8 @@ public final class ClientPlayerPackets {
              clientPlayer.setInputFlags(inputFlags);
          });
          protocol.registerServerbound(ServerboundPackets26_3.CLIENT_TICK_END, ServerboundBedrockPackets.PLAYER_AUTH_INPUT, wrapper -> {
@@ -375,7 +396,7 @@ index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e49
              final Position3f prevPosition = clientPlayer.prevPosition();
              final boolean prevOnGround = clientPlayer.prevOnGround();
              final Set<InputFlag> prevInputFlags = clientPlayer.prevInputFlags();
-@@ -581,9 +638,21 @@ public final class ClientPlayerPackets {
+@@ -581,9 +649,21 @@ public final class ClientPlayerPackets {
              }
              clientPlayer.updateBedrockSneakingInput();
  
@@ -399,7 +420,7 @@ index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e49
                  velocity = positionDelta;
              } else {
                  float dx = positionDelta.x() * 0.98F;
-@@ -605,7 +674,7 @@ public final class ClientPlayerPackets {
+@@ -605,7 +685,7 @@ public final class ClientPlayerPackets {
  
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
@@ -408,7 +429,7 @@ index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e49
              wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isBedrockSneaking())); // move vector
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
              wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, clientPlayer.authInputData().size()); // input flags count
-@@ -633,9 +702,17 @@ public final class ClientPlayerPackets {
+@@ -633,9 +713,17 @@ public final class ClientPlayerPackets {
                      wrapper.write(BedrockTypes.VAR_INT, blockAction.direction()); // facing
                  }
              }
@@ -430,10 +451,30 @@ index 50758f1964069de60ea2b2513fe0f3c506cd6194..99eaef669a00117d0dfd1896e5625e49
              wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index 3fdd0baf7d2315e3401acdf5ed3c1e1134de3919..9b14925948b2356a4b9c7ed78869aec3e085d1fb 100644
+index 3fdd0baf7d2315e3401acdf5ed3c1e1134de3919..5f0d9e3d7a0d56d87623a3969aa1d1cc6183cc06 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-@@ -133,12 +133,12 @@ public final class EntityPackets {
+@@ -77,6 +77,19 @@ public final class EntityPackets {
+         return new Position3f(hasX ? x : current.x(), hasY ? y : current.y(), hasZ ? z : current.z());
+     }
+ 
++    private static void sendServerVehiclePosition(final PacketWrapper wrapper, final EntityTracker entityTracker, final Entity vehicle) {
++        if (!ClientPlayerPackets.isServerMovedVehicle(entityTracker, entityTracker.getClientPlayer(), vehicle)) {
++            return;
++        }
++        final PacketWrapper moveVehicle = PacketWrapper.create(ClientboundPackets26_3.MOVE_VEHICLE, wrapper.user());
++        moveVehicle.write(Types.DOUBLE, (double) vehicle.position().x()); // x
++        moveVehicle.write(Types.DOUBLE, (double) vehicle.javaPosition().y()); // y
++        moveVehicle.write(Types.DOUBLE, (double) vehicle.position().z()); // z
++        moveVehicle.write(Types.FLOAT, vehicle.javaRotation().y()); // yaw
++        moveVehicle.write(Types.FLOAT, vehicle.javaRotation().x()); // pitch
++        moveVehicle.send(BedrockProtocol.class);
++    }
++
+     public static void register(final BedrockProtocol protocol) {
+         protocol.registerClientbound(ClientboundBedrockPackets.ADD_ENTITY, ClientboundPackets26_3.ADD_ENTITY, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+@@ -133,12 +146,12 @@ public final class EntityPackets {
              wrapper.write(Types.UUID, entity.javaUuid()); // uuid
              wrapper.write(Types.VAR_INT, entity.javaType().getId()); // type id
              wrapper.write(Types.DOUBLE, (double) position.x()); // x
@@ -450,7 +491,7 @@ index 3fdd0baf7d2315e3401acdf5ed3c1e1134de3919..9b14925948b2356a4b9c7ed78869aec3
              wrapper.write(Types.VAR_INT, 0); // data
              wrapper.send(BedrockProtocol.class);
              wrapper.cancel();
-@@ -225,11 +225,11 @@ public final class EntityPackets {
+@@ -225,11 +238,11 @@ public final class EntityPackets {
                      wrapper.write(Types.VAR_INT, 1); // Stepped
                      wrapper.write(Types.VAR_INT, 1); // 1 step
                      wrapper.write(Types.DOUBLE, (double) entity.position().x()); // x
@@ -465,7 +506,7 @@ index 3fdd0baf7d2315e3401acdf5ed3c1e1134de3919..9b14925948b2356a4b9c7ed78869aec3
                      wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
                  }
                  return;
-@@ -243,10 +243,10 @@ public final class EntityPackets {
+@@ -243,14 +256,15 @@ public final class EntityPackets {
              wrapper.write(Types.VAR_INT, 1); // Stepped
              wrapper.write(Types.VAR_INT, 1); // 1 step
              wrapper.write(Types.DOUBLE, (double) position.x()); // x
@@ -478,7 +519,12 @@ index 3fdd0baf7d2315e3401acdf5ed3c1e1134de3919..9b14925948b2356a4b9c7ed78869aec3
              wrapper.write(Types.FLOAT, pitch); // pitch
              wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
  
-@@ -305,11 +305,11 @@ public final class EntityPackets {
+             PacketFactory.sendJavaRotateHead(wrapper.user(), entity);
++            sendServerVehiclePosition(wrapper, entityTracker, entity);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.MOVE_ENTITY_DELTA, ClientboundPackets26_3.ENTITY_POSITION_SYNC, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+@@ -305,11 +319,11 @@ public final class EntityPackets {
                      wrapper.write(Types.VAR_INT, 1); // Stepped
                      wrapper.write(Types.VAR_INT, 1); // 1 step
                      wrapper.write(Types.DOUBLE, (double) entity.position().x()); // x
@@ -493,7 +539,7 @@ index 3fdd0baf7d2315e3401acdf5ed3c1e1134de3919..9b14925948b2356a4b9c7ed78869aec3
                      wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
                  }
                  return;
-@@ -326,11 +326,11 @@ public final class EntityPackets {
+@@ -326,12 +340,13 @@ public final class EntityPackets {
              wrapper.write(Types.VAR_INT, 1); // Stepped
              wrapper.write(Types.VAR_INT, 1); // 1 step
              wrapper.write(Types.DOUBLE, (double) entity.position().x()); // x
@@ -506,8 +552,10 @@ index 3fdd0baf7d2315e3401acdf5ed3c1e1134de3919..9b14925948b2356a4b9c7ed78869aec3
 +            wrapper.write(Types.FLOAT, entity.javaRotation().y()); // yaw
 +            wrapper.write(Types.FLOAT, entity.javaRotation().x()); // pitch
              wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
++            sendServerVehiclePosition(wrapper, entityTracker, entity);
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_MOTION, ClientboundPackets26_3.SET_ENTITY_MOTION, wrapper -> {
+             final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 index 45e37c5a8aee9259e2349717eec3cdf32e49d4d2..e9e24e517427d68bb49a0f72e4e3c0c8a8b8e032 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
@@ -641,10 +689,10 @@ index 19032ac274ef4d19a2031db5e956e80ff7585354..ad55fc55c2a9392ac5a62cda0a30c066
                  new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PredictedVehicleTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PredictedVehicleTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fc622b23d72d693d01b6912de7f45c9b29823fe4
+index 0000000000000000000000000000000000000000..d5c7a36f39835faed765e11f3e57542b0cc5aa14
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PredictedVehicleTest.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,116 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -672,7 +720,9 @@ index 0000000000000000000000000000000000000000..fc622b23d72d693d01b6912de7f45c9b
 +import java.util.UUID;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
 +import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
 +import static org.mockito.Mockito.mock;
 +import static org.mockito.Mockito.when;
 +
@@ -718,6 +768,35 @@ index 0000000000000000000000000000000000000000..fc622b23d72d693d01b6912de7f45c9b
 +        assertNull(predictedVehicle(boat));
 +        boat.addPrimaryPassenger(PLAYER_UNIQUE_ID);
 +        assertEquals(boat, predictedVehicle(boat));
++    }
++
++    @Test
++    void javaSteeredServerMovedMountsReceiveVehicleCorrections() {
++        final Entity pig = new Entity(null, 12, VEHICLE_RUNTIME_ID, "minecraft:pig", 14, UUID.randomUUID(), EntityTypes26_3.PIG);
++        pig.addPassenger(PLAYER_UNIQUE_ID);
++        assertTrue(isServerMovedVehicle(pig, pig));
++
++        final Entity boat = new BoatEntity(null, 12, VEHICLE_RUNTIME_ID, "minecraft:boat", 14, UUID.randomUUID(), EntityTypes26_3.OAK_BOAT);
++        boat.addPassenger(PLAYER_UNIQUE_ID);
++        assertFalse(isServerMovedVehicle(boat, boat), "predicted boats keep the rider's movement");
++
++        final Entity otherPig = new Entity(null, 15, 16, "minecraft:pig", 17, UUID.randomUUID(), EntityTypes26_3.PIG);
++        otherPig.addPassenger(PLAYER_UNIQUE_ID);
++        assertFalse(isServerMovedVehicle(pig, otherPig), "only the rider's own vehicle is corrected");
++
++        final Entity sharedPig = new Entity(null, 12, VEHICLE_RUNTIME_ID, "minecraft:pig", 14, UUID.randomUUID(), EntityTypes26_3.PIG);
++        sharedPig.addPassenger(DRIVER_UNIQUE_ID);
++        sharedPig.addPassenger(PLAYER_UNIQUE_ID);
++        assertFalse(isServerMovedVehicle(sharedPig, sharedPig), "Java does not steer from a rear seat");
++    }
++
++    private static boolean isServerMovedVehicle(final Entity mount, final Entity moved) {
++        final EntityTracker tracker = mock(EntityTracker.class);
++        final ClientPlayerEntity player = mock(ClientPlayerEntity.class);
++        when(player.mountEntityRuntimeId()).thenReturn(VEHICLE_RUNTIME_ID);
++        when(player.uniqueId()).thenReturn(PLAYER_UNIQUE_ID);
++        when(tracker.getEntityByRid(VEHICLE_RUNTIME_ID)).thenReturn(mount);
++        return ClientPlayerPackets.isServerMovedVehicle(tracker, player, moved);
 +    }
 +
 +    private static Entity predictedVehicle(final Entity mount) {

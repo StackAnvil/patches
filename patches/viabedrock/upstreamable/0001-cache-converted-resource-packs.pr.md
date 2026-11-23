@@ -34,11 +34,13 @@ This ordering prevents oversized results from remaining reusable through the pen
 
 The disk cache keeps at most 1 GiB of converted archives and indexes.
 A disk miss removes the least recently used files, except the new archive, archives in the memory cache and files used in the last hour.
+The downloaded server packs, saved by content and by key, share the same eviction with their own 1 GiB budget.
+Each save keeps only the archives it just wrote, because loaded packs stay in memory and an evicted archive costs only another download.
 
 ## Validation
 
 The standalone patch builds and passes its tests and both Checkstyle tasks on the pinned upstream base.
-Tests cover concurrent reuse, eviction ordering, disk eviction, source changes, metadata restoration, damaged archives, partial writes, transfer order, stale publication and shutdown.
+Tests cover concurrent reuse, eviction ordering, converted and source disk eviction, source changes, metadata restoration, damaged archives, partial writes, transfer order, stale publication and shutdown.
 The first patch still uses Java 17; the full stack adopts Java 25 separately.
 
 Historical full-stack joins against BDS 1.26.51.1 verified reconnect reuse and refreshed output after texture and version changes.

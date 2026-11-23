@@ -15,11 +15,12 @@ Read each entry only up to its declared size, so a forged size cannot inflate a 
 Reject archives whose declared entries expand beyond 1 GiB before inflating any entry.
 Count every pack of a connection, from the game protocol or HTTP, against a shared 1 GiB download budget before allocating it.
 Read an HTTP response only up to the length that its HEAD request reported.
+Request the archive without gzip or deflate coding, because `HttpURLConnection` does not decode them and a compressed CDN response previously failed and fell back to the game protocol.
 The largest recorded server pack is a 65 MB archive, so these limits stay far above real packs.
 
 The regression includes a stored entry whose payload is another ZIP, with embedded header and descriptor signatures.
 It also rejects changed payload bytes.
-Further regressions cover the expanded archive limit, the shared download budget and a chunked HTTP response longer than expected.
+Further regressions cover the expanded archive limit, the shared download budget, a chunked HTTP response longer than expected and a server that compresses accepted responses.
 The private server archive reproduces the original exception and loads all 58 files with the new reader.
 All four projects build successfully, with 2,133 passing tests and 152 optional skips.
 A fresh live Enchanted run loads the pack and reaches its authored hub UI.

@@ -13,8 +13,14 @@ vehicle textures as type 9 color-mapped TGAs, and the true-color-only
 decoder failed the whole pack conversion and disconnected the player.
 Like stb_image, an index outside the palette uses the first entry.
 
+stb_image accepts each TGA side up to its 16-bit field, so a fixed
+4096 x 4096 bound rejected textures that native loads. Use the
+heap-relative image decoding bound that PNG and JPEG textures share.
+A few run-length packets can still declare a 65535 x 65535 image, and
+the regression rejects it before allocating pixels.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index f07c23319d304630404bd1c79625b2c98f45ce8b..d28a2e44983573db84b4753d3ff13374532c7350 100644
+index 4082f7618d0edc0bc9736cb1c22e3028055085d5..36fc389cde022557f8fa95228d04e492df793159 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 @@ -141,7 +141,7 @@ public abstract class Content {
@@ -41,7 +47,7 @@ index f07c23319d304630404bd1c79625b2c98f45ce8b..d28a2e44983573db84b4753d3ff13374
      }
  
      public boolean putPngImage(final String path, final LazyImage image) {
-@@ -214,6 +215,10 @@ public abstract class Content {
+@@ -212,6 +213,10 @@ public abstract class Content {
  
          public BufferedImage getImage() {
              if (this.image == null) {
@@ -54,10 +60,10 @@ index f07c23319d304630404bd1c79625b2c98f45ce8b..d28a2e44983573db84b4753d3ff13374
                      if (!readers.hasNext()) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..64f8bce586771b5b457aa744a1751d4aaf2b8aed
+index 0000000000000000000000000000000000000000..51e0b21cebac3821b7dd43daeb4fed2556a31051
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,154 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -74,7 +80,6 @@ index 0000000000000000000000000000000000000000..64f8bce586771b5b457aa744a1751d4a
 +final class TgaImage {
 +
 +    private static final int HEADER_SIZE = 18;
-+    private static final int MAX_PIXELS = 4096 * 4096;
 +
 +    private TgaImage() {
 +    }
@@ -95,10 +100,12 @@ index 0000000000000000000000000000000000000000..64f8bce586771b5b457aa744a1751d4a
 +        final int width = word(data, 12);
 +        final int height = word(data, 14);
 +        final int bitsPerPixel = unsigned(data[16]);
-+        if (width == 0 || height == 0 || (long) width * height > MAX_PIXELS
++        if (width == 0 || height == 0
 +            || !(indexed ? bitsPerPixel == 8 || bitsPerPixel == 16 : supportedDepth(bitsPerPixel, grey))) {
 +            throw new IllegalArgumentException("Unsupported TGA dimensions or pixel depth");
 +        }
++        // A few run-length packets can declare the largest 65535 x 65535 image.
++        ImageDecodingLimit.require(width, height);
 +        final int descriptor = unsigned(data[17]);
 +        if ((descriptor & 0xC0) != 0) {
 +            throw new IllegalArgumentException("Unsupported TGA interleaving");
@@ -213,10 +220,10 @@ index 0000000000000000000000000000000000000000..64f8bce586771b5b457aa744a1751d4a
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..7edf5848985b338eeb071a1e8442dcf8d22808d9
+index 0000000000000000000000000000000000000000..8341d8a2377654d4886dd2c2f7fecc0100cf4b38
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,117 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -305,6 +312,16 @@ index 0000000000000000000000000000000000000000..7edf5848985b338eeb071a1e8442dcf8
 +        final Content.LazyImage texture = content.getShortnameImage("textures/entity/example");
 +        assertNotNull(texture);
 +        assertThrows(IllegalArgumentException.class, texture::getImage);
++    }
++
++    @Test
++    void rejectsTheLargestTgaDimensionsBeforeAllocatingPixels() {
++        final InMemoryContent content = new InMemoryContent();
++        content.put("textures/entity/example.tga", tga(65535, 65535, 32, 0x28, 10, 0xFF, 0, 0, 255, 255));
++
++        final IllegalArgumentException rejected = assertThrows(IllegalArgumentException.class,
++                content.getShortnameImage("textures/entity/example")::getImage);
++        assertEquals("Image dimensions 65535x65535 exceed the decoding limit", rejected.getMessage());
 +    }
 +
 +    private static byte[] tga(final int width, final int height, final int bitsPerPixel,

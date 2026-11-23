@@ -622,6 +622,15 @@ byte cap. Their former 4,096-state caps predated the reserved carrier
 pool, and OPBlocks now assigns more custom visuals than that, which
 failed the whole conversion. The number of states stays bounded by the carrier pool.
 
+Light faces that fail the per-vertex test like the fallback branch of
+callback 0x146acea60 in Bedrock 1.26.60.5. A face with AO exponent 0 or
+a first/third vertex diagonal squared above 3.515625 gets one light for
+all four vertices: the per-channel maximum of the cache cell
+floor(centroid + 0.01 * normal) and the cell one normal further. The
+callback writes AO 1 for these faces, so only directional dimming shades
+them. The corner sampler and its interpolation had no counterpart in
+that callback and gave such faces per-corner light and AO.
+
 diff --git a/Data Asset Sources.md b/Data Asset Sources.md
 index 10ba092ad4db400b3b150ec6c2036297e373ecd0..9d80118af27145d4aa7f2098434e7c1fdf0afad7 100644
 --- a/Data Asset Sources.md	
@@ -1506,10 +1515,10 @@ index 0000000000000000000000000000000000000000..d1123705dba1e4b4694c348e09857752
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2e11c0878a55146c8b6999831f5f2aefa8dee63
+index 0000000000000000000000000000000000000000..c3e395d373d19e1f687b3826d43387c6117e8934
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,181 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1517,27 +1526,12 @@ index 0000000000000000000000000000000000000000..a2e11c0878a55146c8b6999831f5f2ae
 + */
 +package net.raphimc.viabedrock.api.model;
 +
-+import net.raphimc.viabedrock.api.model.CustomBlockCulling.Direction;
-+
 +/** Native terrain neighborhood selection, independent of the client renderer and world storage. */
 +public final class CustomBlockFaceLighting {
 +
-+    // Side order follows the native corner winding, including the face's orientation.
-+    private static final Direction[][] SIDES = {
-+            {Direction.NORTH, Direction.WEST, Direction.SOUTH, Direction.EAST},
-+            {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST},
-+            {Direction.UP, Direction.WEST, Direction.DOWN, Direction.EAST},
-+            {Direction.UP, Direction.EAST, Direction.DOWN, Direction.WEST},
-+            {Direction.UP, Direction.SOUTH, Direction.DOWN, Direction.NORTH},
-+            {Direction.UP, Direction.NORTH, Direction.DOWN, Direction.SOUTH}
-+    };
++    private static final float CELL_BIAS = 0.01F;
 +
 +    private CustomBlockFaceLighting() {
-+    }
-+
-+    /** Native bounds use a half-thousandth tolerance, independently of source block solidity. */
-+    public static boolean outerPlane(final Direction direction, final float bound) {
-+        return direction.positive() ? bound >= 0.9995F : bound <= 0.0005F;
 +    }
 +
 +    /** Apply authored emission only to block light. Emission does not create skylight. */
@@ -1545,43 +1539,9 @@ index 0000000000000000000000000000000000000000..a2e11c0878a55146c8b6999831f5f2ae
 +        return (light & 0xFF0000) | Math.max(light & 0xFF, Math.clamp(emission, 0, 15) << 4);
 +    }
 +
-+    public static Face sample(final Direction direction, final boolean outer, final boolean sourceOpaque,
-+                              final int sourceLight, final CustomBlockLighting material, final float directional,
-+                              final Neighborhood neighborhood) {
-+        final int nx = step(direction, 0);
-+        final int ny = step(direction, 1);
-+        final int nz = step(direction, 2);
-+        final Sample normal = neighborhood.sample(nx, ny, nz);
-+        final int baseLight = outer && sourceOpaque ? normal.light() : sourceLight;
-+        final int px = outer ? nx : 0;
-+        final int py = outer ? ny : 0;
-+        final int pz = outer ? nz : 0;
-+        final Direction[] directions = SIDES[direction.ordinal()];
-+        final Sample[] sides = new Sample[4];
-+        for (int i = 0; i < 4; i++) {
-+            sides[i] = neighborhood.sample(px + step(directions[i], 0), py + step(directions[i], 1), pz + step(directions[i], 2));
-+        }
-+        final Corner[] corners = new Corner[4];
-+        for (int i = 0; i < 4; i++) {
-+            final int next = (i + 1) & 3;
-+            final int x = step(directions[i], 0) + step(directions[next], 0);
-+            final int y = step(directions[i], 1) + step(directions[next], 1);
-+            final int z = step(directions[i], 2) + step(directions[next], 2);
-+            // Native diagonal blockers are the sampled sides, without an additional outward step.
-+            final Sample diagonal = sides[i].opaque() && sides[next].opaque() ? sides[next] : neighborhood.sample(px + x, py + y, pz + z);
-+            final float ambient = (normal.ambient() + sides[i].ambient() + sides[next].ambient() + diagonal.ambient()) * 0.25F;
-+            final int inner = direction.axis() == 0 ? z : x;
-+            final int outerAxis = direction.axis() == 1 ? z : y;
-+            final int index = (inner > 0 ? 1 : 0) | (outerAxis > 0 ? 2 : 0);
-+            corners[index] = new Corner(CustomBlockLighting.maximumLight(sides[i].light(), sides[next].light(), diagonal.light(), baseLight),
-+                    material.shade(ambient, directional));
-+        }
-+        return new Face(corners[0], corners[1], corners[2], corners[3]);
-+    }
-+
 +    /**
 +     * Native classic terrain uses the per-vertex sampler of callback 0x146acea60 when the material has an AO
-+     * exponent and the first/third vertex diagonal squared is at most 3.515625. Other faces use the per-face path.
++     * exponent and the first/third vertex diagonal squared is at most 3.515625. Other faces use {@link #faceLight}.
 +     */
 +    public static boolean perVertex(final CustomBlockLighting material, final float[][] positions) {
 +        final float x = positions[0][0] - positions[2][0];
@@ -1598,10 +1558,9 @@ index 0000000000000000000000000000000000000000..a2e11c0878a55146c8b6999831f5f2ae
 +     * 1 / (distance^2 + 0.001) and keeps the per-channel light maximum.
 +     */
 +    public static Vertex[] sampleVertices(final float[][] positions, final float[] normal, final Neighborhood neighborhood) {
-+        final float bias = 0.01F;
-+        final int ox = (int) Math.floor(((positions[0][0] + positions[1][0] + positions[2][0] + positions[3][0]) * 0.25F) + normal[0] * bias);
-+        final int oy = (int) Math.floor(((positions[0][1] + positions[1][1] + positions[2][1] + positions[3][1]) * 0.25F) + normal[1] * bias);
-+        final int oz = (int) Math.floor(((positions[0][2] + positions[1][2] + positions[2][2] + positions[3][2]) * 0.25F) + normal[2] * bias);
++        final int ox = (int) Math.floor(center(positions, normal, 0));
++        final int oy = (int) Math.floor(center(positions, normal, 1));
++        final int oz = (int) Math.floor(center(positions, normal, 2));
 +        final Cache cache = Cache.build(ox, oy, oz, neighborhood);
 +        final Vertex[] vertices = new Vertex[4];
 +        for (int i = 0; i < 4; i++) {
@@ -1610,8 +1569,23 @@ index 0000000000000000000000000000000000000000..a2e11c0878a55146c8b6999831f5f2ae
 +        return vertices;
 +    }
 +
-+    private static int step(final Direction direction, final int axis) {
-+        return direction.axis() == axis ? (direction.positive() ? 1 : -1) : 0;
++    /**
++     * Light a face that fails {@link #perVertex} like the fallback branch of native callback 0x146acea60.
++     * The whole face gets one light: the per-channel maximum of the cache cell and the next cell along the
++     * normal. The callback writes AO 1 to all four vertices of such a face.
++     */
++    public static int faceLight(final float[][] positions, final float[] normal, final Neighborhood neighborhood) {
++        final float x = center(positions, normal, 0);
++        final float y = center(positions, normal, 1);
++        final float z = center(positions, normal, 2);
++        final Sample cell = neighborhood.sample((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
++        final Sample next = neighborhood.sample((int) Math.floor(normal[0] + x), (int) Math.floor(normal[1] + y), (int) Math.floor(normal[2] + z));
++        return CustomBlockLighting.maximumLight(cell.light(), next.light(), 0, 0);
++    }
++
++    /** Face centroid biased along the normal; its floor is the native cache cell. */
++    private static float center(final float[][] positions, final float[] normal, final int axis) {
++        return normal[axis] * CELL_BIAS + (positions[0][axis] + positions[1][axis] + positions[2][axis] + positions[3][axis]) * 0.25F;
 +    }
 +
 +    /** One sampled vertex: Java-packed light and the AO value before the material exponent. */
@@ -1721,32 +1695,17 @@ index 0000000000000000000000000000000000000000..a2e11c0878a55146c8b6999831f5f2ae
 +        Sample sample(int x, int y, int z);
 +    }
 +
-+    /** Opacity controls the diagonal fallback; ambient brightness is a separate native property. */
++    /** Opaque cells give no light to per-vertex samples; ambient brightness is a separate native property. */
 +    public record Sample(int light, float ambient, boolean opaque) {
-+    }
-+
-+    public record Corner(int light, float shade) {
-+    }
-+
-+    /** Inner axis is X for horizontal/North/South faces and Z for West/East faces. */
-+    public record Face(Corner lowerLower, Corner upperLower, Corner lowerUpper, Corner upperUpper) {
-+
-+        public Corner corner(final boolean upperInner, final boolean upperOuter) {
-+            return upperOuter ? (upperInner ? this.upperUpper : this.lowerUpper) : (upperInner ? this.upperLower : this.lowerLower);
-+        }
-+
-+        public float shade(final float inner, final float outer) {
-+            return CustomBlockLighting.interpolate(this.lowerLower.shade(), this.upperLower.shade(), this.lowerUpper.shade(), this.upperUpper.shade(), inner, outer);
-+        }
 +    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..acbc867c55694c6293bec2da57c3b3efb2459ce9
+index 0000000000000000000000000000000000000000..5b06fb7cb8bc79a1a9e0a20ac6956ff0033bb24f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,65 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1788,16 +1747,6 @@ index 0000000000000000000000000000000000000000..acbc867c55694c6293bec2da57c3b3ef
 +        final int block = Math.max(Math.max(first & 0xFF, second & 0xFF), Math.max(third & 0xFF, fourth & 0xFF));
 +        final int sky = Math.max(Math.max((first >>> 16) & 0xFF, (second >>> 16) & 0xFF), Math.max((third >>> 16) & 0xFF, (fourth >>> 16) & 0xFF));
 +        return block | (sky << 16);
-+    }
-+
-+    /** Interpolate shaded corners along the inner axis first, preserving native float operation order. */
-+    public static float interpolate(final float lowerLower, final float upperLower,
-+                                    final float lowerUpper, final float upperUpper,
-+                                    final float inner, final float outer) {
-+        final float inverseInner = 1F - inner;
-+        final float lower = lowerLower * inverseInner + upperLower * inner;
-+        final float upper = lowerUpper * inverseInner + upperUpper * inner;
-+        return lower * (1F - outer) + upper * outer;
 +    }
 +
 +    /**
@@ -2983,7 +2932,7 @@ index ba8c2db574e5b5775afd14a77dec57a085b573d6..5c6717bea766b5774534a515039df5e7
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index de1edc0d7988556a19757c9248ece131277a8d17..615c1736cf52a998420f5a056e3dbea1fe1629d6 100644
+index 8ec50c1c5008294ef85aa5c4f4f1423371ff7707..42faa00cefcb7d59d2bb4f2c3f705b90cfc2360d 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -17,7 +17,9 @@
@@ -2996,7 +2945,7 @@ index de1edc0d7988556a19757c9248ece131277a8d17..615c1736cf52a998420f5a056e3dbea1
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePackExecutor;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
-@@ -85,7 +87,8 @@ public class ConvertedResourcePackCache {
+@@ -83,7 +85,8 @@ public class ConvertedResourcePackCache {
          this(directory, mode, storage -> {
              try {
                  final long start = System.nanoTime();
@@ -3006,7 +2955,7 @@ index de1edc0d7988556a19757c9248ece131277a8d17..615c1736cf52a998420f5a056e3dbea1
                  ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Converted resource packs in " + ((System.nanoTime() - start) / 1_000_000L) + "ms");
                  return content;
              } catch (final Exception e) {
-@@ -111,7 +114,7 @@ public class ConvertedResourcePackCache {
+@@ -109,7 +112,7 @@ public class ConvertedResourcePackCache {
          if (this.mode == ViaBedrockConfig.PackCacheMode.DISABLED) {
              return this.executor.submit(() -> this.convert(storage));
          }
@@ -3015,7 +2964,7 @@ index de1edc0d7988556a19757c9248ece131277a8d17..615c1736cf52a998420f5a056e3dbea1
                  this.prepare(key, storage).thenApply(pack -> {
                      storage.getConverterData().putAll(pack.converterData());
                      return pack;
-@@ -296,7 +299,8 @@ public class ConvertedResourcePackCache {
+@@ -280,7 +283,8 @@ public class ConvertedResourcePackCache {
          return new Pack(null, bytes, bytes.length, sha1, id, converterData);
      }
  
@@ -3025,7 +2974,7 @@ index de1edc0d7988556a19757c9248ece131277a8d17..615c1736cf52a998420f5a056e3dbea1
          final MessageDigest digest = digest("SHA-256");
          try (var output = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
              writeString(output, ViaBedrock.IMPL_VERSION);
-@@ -323,6 +327,29 @@ public class ConvertedResourcePackCache {
+@@ -307,6 +311,29 @@ public class ConvertedResourcePackCache {
          return HexFormat.of().formatHex(digest.digest());
      }
  
@@ -10405,10 +10354,10 @@ index 0000000000000000000000000000000000000000..44c7e38bfab3c86b75ddbb49cd4aac41
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..53c27a564888ebf0a2c96509d1b6bb97eab7fcbe
+index 0000000000000000000000000000000000000000..e0c1e19507ed10aefe0c8884b5adc657b9f77ddb
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,166 @@
 +package net.raphimc.viabedrock.api.model;
 +
 +import com.viaversion.viaversion.libs.gson.JsonParser;
@@ -10417,8 +10366,6 @@ index 0000000000000000000000000000000000000000..53c27a564888ebf0a2c96509d1b6bb97
 +
 +import java.nio.file.Files;
 +import java.nio.file.Path;
-+import java.util.HashMap;
-+import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -10496,56 +10443,31 @@ index 0000000000000000000000000000000000000000..53c27a564888ebf0a2c96509d1b6bb97
 +    }
 +
 +    @Test
-+    void emissionPreservesSkylightAndFacePlaneUsesNativeTolerance() {
++    void emissionPreservesSkylight() {
 +        assertEquals(0x003000F0, CustomBlockFaceLighting.withBlockEmission(0x00300020, 15));
 +        assertEquals(0x00F00080, CustomBlockFaceLighting.withBlockEmission(0x00F00080, 7));
-+        for (final var direction : CustomBlockCulling.Direction.values()) {
-+            final float boundary = direction.positive() ? 0.9995F : 0.0005F;
-+            assertTrue(CustomBlockFaceLighting.outerPlane(direction, boundary));
-+            assertFalse(CustomBlockFaceLighting.outerPlane(direction, direction.positive() ? Math.nextDown(boundary) : Math.nextUp(boundary)));
-+            assertTrue(CustomBlockFaceLighting.outerPlane(direction, direction.positive() ? Math.nextUp(boundary) : Math.nextDown(boundary)));
-+        }
 +    }
 +
 +    @Test
-+    void insetFaceUsesSourceLightAndOutsideAmbientSample() {
-+        final var face = CustomBlockFaceLighting.sample(CustomBlockCulling.Direction.UP, false, true, 0x003000E0,
-+                new CustomBlockLighting(1F, false), 0.5F, (x, y, z) -> new CustomBlockFaceLighting.Sample(
-+                        y == 0 ? 0x00600040 : 0x00F000F0, y == 0 ? 1F : 0.2F, false));
-+        for (boolean inner : new boolean[]{false, true}) {
-+            for (boolean outer : new boolean[]{false, true}) {
-+                assertEquals(0x006000E0, face.corner(inner, outer).light());
-+                assertEquals(0.8F, face.corner(inner, outer).shade());
-+            }
-+        }
-+    }
-+
-+    @Test
-+    void interpolationKeepsNativeFloatGroupingAndCornerEndpoints() {
-+        assertEquals(0.2F, CustomBlockLighting.interpolate(0.2F, 0.4F, 0.6F, 0.8F, 0F, 0F));
-+        assertEquals(0.4F, CustomBlockLighting.interpolate(0.2F, 0.4F, 0.6F, 0.8F, 1F, 0F));
-+        assertEquals(0.6F, CustomBlockLighting.interpolate(0.2F, 0.4F, 0.6F, 0.8F, 0F, 1F));
-+        assertEquals(0.8F, CustomBlockLighting.interpolate(0.2F, 0.4F, 0.6F, 0.8F, 1F, 1F));
-+        // A four-term weighted sum packs this native 0.6 corner blend one color level darker.
-+        assertEquals(153, (int) (CustomBlockLighting.interpolate(0.6F, 0.8F, 0.4F, 0.6F, 0.875F, 0.875F) * 255F));
-+        assertEquals(101, (int) (CustomBlockLighting.interpolate(0.4F, 0.3F, 0.5F, 0.4F, 0.125F, 0.125F) * 255F));
-+        // Authored bounds can extend outside a unit block. Interpolation precedes color clamping.
-+        assertEquals(1.5F, CustomBlockLighting.interpolate(0F, 1F, 0F, 1F, 1.5F, 0.5F));
-+    }
-+
-+    @Test
-+    void nativeFaceSubmissionsMatchInterpolation() throws Exception {
-+        final String fixture = System.getProperty("stackanvil.test.nativeFaceColors");
-+        Assumptions.assumeTrue(fixture != null);
-+        final var cases = JsonParser.parseString(Files.readString(Path.of(fixture))).getAsJsonObject().getAsJsonArray("cases");
-+        assertFalse(cases.isEmpty());
-+        for (final var value : cases) {
-+            final var sample = value.getAsJsonObject();
-+            final var corners = sample.getAsJsonArray("corners");
-+            final float actual = CustomBlockLighting.interpolate(corners.get(0).getAsFloat(), corners.get(1).getAsFloat(),
-+                    corners.get(2).getAsFloat(), corners.get(3).getAsFloat(), sample.get("inner").getAsFloat(), sample.get("outer").getAsFloat());
-+            assertEquals(sample.get("nativeColor").getAsInt() & 0xFF, Math.clamp((int) (actual * 255F), 0, 255));
-+        }
++    void fallbackFacesTakeOneLightFromTheFaceCellAndTheNextCellAlongTheNormal() {
++        // Native callback 0x146acea60 fallback: max per channel of floor(centroid + 0.01 * normal) and the cell
++        // one normal further. Every other cell is bright to show that the face ignores its corners' neighbors.
++        // Column x = z = 0 from y = -2 to 2: block 7 sky 2, block 1 sky 5, block 6 sky 1, block 3 sky 12, block 9 sky 4.
++        final int[] column = {0x00200070, 0x00500010, 0x00100060, 0x00C00030, 0x00400090};
++        final CustomBlockFaceLighting.Neighborhood neighborhood = (x, y, z) -> new CustomBlockFaceLighting.Sample(
++                x == 0 && z == 0 && y >= -2 && y <= 2 ? column[y + 2] : 0x00F000F0, 1F, false);
++        final float[] up = {0F, 1F, 0F};
++        // An outer top face larger than the per-vertex diagonal limit samples the two cells above the block.
++        final float[][] large = {{-0.5F, 1F, -0.5F}, {1.5F, 1F, -0.5F}, {1.5F, 1F, 1.5F}, {-0.5F, 1F, 1.5F}};
++        assertFalse(CustomBlockFaceLighting.perVertex(new CustomBlockLighting(1F, true), large));
++        assertEquals(0x00C00090, CustomBlockFaceLighting.faceLight(large, up, neighborhood));
++        // An inset face without an AO exponent samples its own cell and the one above it.
++        final float[][] inset = {{0F, 0.5F, 0F}, {1F, 0.5F, 0F}, {1F, 0.5F, 1F}, {0F, 0.5F, 1F}};
++        assertFalse(CustomBlockFaceLighting.perVertex(new CustomBlockLighting(0F, true), inset));
++        assertEquals(0x00C00060, CustomBlockFaceLighting.faceLight(inset, up, neighborhood));
++        // A bottom face biases below the block and steps further down.
++        final float[][] bottom = {{0F, 0F, 0F}, {0F, 0F, 1F}, {1F, 0F, 1F}, {1F, 0F, 0F}};
++        assertEquals(0x00500070, CustomBlockFaceLighting.faceLight(bottom, new float[]{0F, -1F, 0F}, neighborhood));
 +    }
 +
 +    @Test
@@ -10561,37 +10483,6 @@ index 0000000000000000000000000000000000000000..53c27a564888ebf0a2c96509d1b6bb97
 +                assertEquals(javaLight(sample.get("light").getAsInt()), CustomBlockLighting.maximumLight(
 +                        javaLight(inputs.get(0).getAsInt()), javaLight(inputs.get(1).getAsInt()),
 +                        javaLight(inputs.get(2).getAsInt()), javaLight(inputs.get(3).getAsInt())));
-+            }
-+        }
-+    }
-+
-+    @Test
-+    void nativeNeighborhoodSelectionMatchesAllFacesAndBlockers() throws Exception {
-+        final String fixture = System.getProperty("stackanvil.test.nativeNeighborhood");
-+        Assumptions.assumeTrue(fixture != null);
-+        final var cases = JsonParser.parseString(Files.readString(Path.of(fixture))).getAsJsonObject().getAsJsonArray("cases");
-+        assertFalse(cases.isEmpty());
-+        for (final var value : cases) {
-+            final var row = value.getAsJsonObject();
-+            final var direction = CustomBlockCulling.Direction.values()[row.get("face").getAsInt()];
-+            final var samples = new HashMap<List<Integer>, CustomBlockFaceLighting.Sample>();
-+            for (final var element : row.getAsJsonArray("samples")) {
-+                final var sample = element.getAsJsonObject();
-+                final var offset = sample.getAsJsonArray("offset");
-+                samples.put(List.of(offset.get(0).getAsInt(), offset.get(1).getAsInt(), offset.get(2).getAsInt()),
-+                        new CustomBlockFaceLighting.Sample(javaLight(sample.get("light").getAsInt()), sample.get("ambient").getAsFloat(), sample.get("opaque").getAsBoolean()));
-+            }
-+            final var actual = CustomBlockFaceLighting.sample(direction, row.get("outer").getAsInt() != 0, row.get("ownSolid").getAsInt() != 0,
-+                    javaLight(row.get("sourceLight").getAsInt()), new CustomBlockLighting(1F, true), 0.8F,
-+                    (x, y, z) -> samples.get(List.of(x, y, z)));
-+            // Physical native vertex order, independently recorded by the original face emitters.
-+            final int[][] cornerOrder = {{0, 2, 3, 1}, {1, 3, 2, 0}, {2, 0, 1, 3}, {3, 1, 0, 2}, {3, 1, 0, 2}, {2, 0, 1, 3}};
-+            for (int i = 0; i < 4; i++) {
-+                final int index = cornerOrder[direction.ordinal()][i];
-+                final var corner = actual.corner((index & 1) != 0, (index & 2) != 0);
-+                final var expected = row.getAsJsonArray("corners").get(i).getAsJsonObject();
-+                assertEquals(javaLight(expected.get("light").getAsInt()), corner.light());
-+                assertEquals(expected.get("color").getAsFloat(), corner.shade(), 2E-7F);
 +            }
 +        }
 +    }
@@ -11009,7 +10900,7 @@ index 0000000000000000000000000000000000000000..9b0790e12c3bdec63c947c1fdb11be18
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-index 1774253b2233aceb0d68fda796ae12b43a4600ea..302da208041a7fcbbf3a73600fdfa4cb98ccd165 100644
+index d996bcf2b0ebf60d3d924aeb1fffba4be10e5c27..8fe994c7eb35019fc8ff64c0d557a0289602250b 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 @@ -17,7 +17,10 @@

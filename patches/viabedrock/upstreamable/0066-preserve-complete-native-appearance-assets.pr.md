@@ -24,4 +24,4 @@ Reduced tests cover paired properties, independent queries, random expressions, 
 A private conversion fixture processes all 867 captured actors within a 2 GiB heap.
 It emits 4,068 model selections. Each preview emits 719 models and reports one unresolved source pair from the captured packs.
 The rebuilt live retry loses NetherNet transport before conversion. Live admission and complete native actor appearance remain unverified.
-Entity models whose fitted scale overflows to infinity are omitted, so converter metadata stays finite; a regression covers cube widths of 3e38 in the full stack.
+Entity and attachable models whose fitted scale overflows to infinity are omitted, so converter metadata and Java display transforms stay finite; regressions cover cube widths of 3e38 in the full stack.

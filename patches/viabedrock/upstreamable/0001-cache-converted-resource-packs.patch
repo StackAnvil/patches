@@ -173,6 +173,19 @@ a later pack joins the stack. Minehut disconnected one join with "Illegal
 duplicate resource pack response packet received!" after two
 ResourcePackStackFinished replies 5.4 seconds apart.
 
+Bound the downloaded source archives like the converted ones. Every
+saved pack was kept twice, by content and by key, without a limit, so a
+proxy that joins many servers filled its disk. Keep both layouts within
+1 GiB, evict the least recently saved or loaded archives first, and keep
+the archives just written. Loaded packs stay in memory, so an evicted
+archive only costs another download on a later join. The converted and
+source caches share one eviction helper.
+
+Refresh both modification times on memory hits as well. A popular pack
+that every join served from memory kept the times of its conversion, so
+once newer packs pushed it out of memory, eviction removed its index and
+archive first and its next join converted it again.
+
 diff --git a/build.gradle b/build.gradle
 index 4e1d8d4a11330f47db9e360dc51d887bebdd53ca..6c6a6fefd0c0741a4a52dac09fe1926706fb70b0 100644
 --- a/build.gradle
@@ -275,7 +288,7 @@ index 0000000000000000000000000000000000000000..abc19f6cba0ca3e96cbd95862c3b6341
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 68836e0dcb13be825303e4a494ba913e0a928544..c7fea8d5e7fa650f55e5467c652bbbfaa275db97 100644
+index fc0af980a3f6e375095fc471edc89d5a25e738b3..35925846f5d74cbb1a5b14936d638e1fbf6a1e39 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 @@ -21,6 +21,8 @@ import com.viaversion.viaversion.libs.gson.JsonObject;
@@ -622,10 +635,10 @@ index 4264b66bc87997e443e3ac7dc426ce4d962e6d43..d16e08e63d7e68c91043c71bb5874fe4
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e5918129b8e3f0e4c2ac22d3e5dca9445a426094
+index 0000000000000000000000000000000000000000..5e7de2c0677dcb327faab28a50822ede08bf7ae3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-@@ -0,0 +1,355 @@
+@@ -0,0 +1,328 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -661,13 +674,11 @@ index 0000000000000000000000000000000000000000..e5918129b8e3f0e4c2ac22d3e5dca944
 +import java.nio.charset.StandardCharsets;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
-+import java.nio.file.attribute.FileTime;
 +import java.security.DigestOutputStream;
 +import java.security.MessageDigest;
 +import java.security.NoSuchAlgorithmException;
 +import java.util.ArrayList;
 +import java.util.Collection;
-+import java.util.Comparator;
 +import java.util.HashSet;
 +import java.util.HexFormat;
 +import java.util.List;
@@ -748,6 +759,11 @@ index 0000000000000000000000000000000000000000..e5918129b8e3f0e4c2ac22d3e5dca944
 +    synchronized CompletableFuture<Pack> prepare(final String key, final ResourcePackStorage storage) {
 +        final Pack cached = this.completed.get(key);
 +        if (cached != null) {
++            if (cached.path() != null) {
++                // A memory hit is a use too; otherwise a popular archive is the first to leave the disk after memory.
++                touch(this.directory.resolve(key + ConverterDataManifest.SUFFIX));
++                touch(cached.path());
++            }
 +            return CompletableFuture.completedFuture(cached);
 +        }
 +        final CompletableFuture<Pack> existing = this.pending.get(key);
@@ -820,8 +836,8 @@ index 0000000000000000000000000000000000000000..e5918129b8e3f0e4c2ac22d3e5dca944
 +                    if (Files.isRegularFile(cachedPath)) {
 +                        final Pack pack = describe(cachedPath, cached.converterData());
 +                        if (pack.sha1().equals(cached.sha1())) {
-+                            touch(index);
-+                            touch(cachedPath);
++                            FileSystemUtil.touch(index);
++                            FileSystemUtil.touch(cachedPath);
 +                            return pack;
 +                        }
 +                    }
@@ -865,32 +881,13 @@ index 0000000000000000000000000000000000000000..e5918129b8e3f0e4c2ac22d3e5dca944
 +        synchronized (this) {
 +            this.completed.values().forEach(pack -> retained.add(pack.path()));
 +        }
-+        final long recent = System.currentTimeMillis() - RECENT_USE_MILLIS;
 +        try (var paths = Files.list(this.directory)) {
-+            final List<DiskEntry> entries = paths.filter(path -> {
++            FileSystemUtil.evictLeastRecentlyUsed(paths.filter(path -> {
 +                final String name = path.getFileName().toString();
 +                return name.endsWith(".zip") || name.endsWith(ConverterDataManifest.SUFFIX);
-+            }).map(DiskEntry::of).sorted(Comparator.comparingLong(DiskEntry::modified)).toList();
-+            long bytes = entries.stream().mapToLong(DiskEntry::bytes).sum();
-+            for (final DiskEntry entry : entries) {
-+                if (bytes <= this.maxDiskBytes) {
-+                    break;
-+                }
-+                if (entry.modified() < recent && !retained.contains(entry.path())) {
-+                    Files.deleteIfExists(entry.path());
-+                    bytes -= entry.bytes();
-+                }
-+            }
++            }).toList(), this.maxDiskBytes, retained, System.currentTimeMillis() - RECENT_USE_MILLIS);
 +        } catch (final IOException | RuntimeException unavailable) {
 +            // Eviction cannot fail a completed conversion.
-+        }
-+    }
-+
-+    private static void touch(final Path path) {
-+        try {
-+            Files.setLastModifiedTime(path, FileTime.fromMillis(System.currentTimeMillis()));
-+        } catch (final IOException readOnly) {
-+            // A read-only cache still serves its verified archive.
 +        }
 +    }
 +
@@ -959,17 +956,6 @@ index 0000000000000000000000000000000000000000..e5918129b8e3f0e4c2ac22d3e5dca944
 +            return MessageDigest.getInstance(algorithm);
 +        } catch (final NoSuchAlgorithmException e) {
 +            throw new IllegalStateException(algorithm + " is not available", e);
-+        }
-+    }
-+
-+    private record DiskEntry(Path path, long bytes, long modified) {
-+
-+        private static DiskEntry of(final Path path) {
-+            try {
-+                return new DiskEntry(path, Files.size(path), Files.getLastModifiedTime(path).toMillis());
-+            } catch (final IOException missing) {
-+                return new DiskEntry(path, 0, Long.MAX_VALUE);
-+            }
 +        }
 +    }
 +
@@ -1285,10 +1271,23 @@ index c769f6781bbe5bbaaba65cd766d95ebc3d38c590..7d7e895fccf35af0496df629733f1b01
              this.channelFuture.channel().close();
          }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/FileSystemUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/FileSystemUtil.java
-index ac3b469c87ecf23526e4391eda1d4336dba45439..34fa74686a8503faa57706744f0e83c5af3bfb35 100644
+index ac3b469c87ecf23526e4391eda1d4336dba45439..38f638e5a723b967bc9c5840f0604e4254ce9974 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/FileSystemUtil.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/FileSystemUtil.java
-@@ -31,6 +31,24 @@ import java.util.stream.Stream;
+@@ -22,15 +22,68 @@ import java.io.UncheckedIOException;
+ import java.net.URI;
+ import java.net.URISyntaxException;
+ import java.nio.file.*;
++import java.nio.file.attribute.FileTime;
++import java.util.Collection;
+ import java.util.Collections;
+ import java.util.Comparator;
+ import java.util.LinkedHashMap;
++import java.util.List;
+ import java.util.Map;
++import java.util.Set;
+ import java.util.stream.Collectors;
+ import java.util.stream.Stream;
  
  public final class FileSystemUtil {
  
@@ -1310,9 +1309,56 @@ index ac3b469c87ecf23526e4391eda1d4336dba45439..34fa74686a8503faa57706744f0e83c5
 +        }
 +    }
 +
++    /** Marks a cache file as used now. A read-only cache keeps serving the file with its previous time. */
++    public static void touch(final Path path) {
++        try {
++            Files.setLastModifiedTime(path, FileTime.fromMillis(System.currentTimeMillis()));
++        } catch (final IOException readOnly) {
++            // The file stays usable, only its eviction order is older.
++        }
++    }
++
++    /**
++     * Deletes the least recently modified files until the given files fit in the byte budget. Retained files and files
++     * modified at or after {@code keepModifiedSince} stay even above the budget. Eviction errors never fail the caller.
++     */
++    public static void evictLeastRecentlyUsed(final Collection<Path> files, final long maxBytes, final Set<Path> retained, final long keepModifiedSince) {
++        final List<CacheFile> entries = files.stream().map(CacheFile::of).sorted(Comparator.comparingLong(CacheFile::modified)).toList();
++        long bytes = entries.stream().mapToLong(CacheFile::bytes).sum();
++        for (final CacheFile entry : entries) {
++            if (bytes <= maxBytes) {
++                break;
++            }
++            if (entry.modified() < keepModifiedSince && !retained.contains(entry.path())) {
++                try {
++                    Files.deleteIfExists(entry.path());
++                    bytes -= entry.bytes();
++                } catch (final IOException | RuntimeException unavailable) {
++                    // Another process may hold or have removed the file.
++                }
++            }
++        }
++    }
++
      public static Map<Path, byte[]> getFilesInDirectory(final String assetPath) throws IOException, URISyntaxException {
          final Path path = getPath(FileSystemUtil.class.getClassLoader().getResource(assetPath).toURI());
          return getFilesInPath(path);
+@@ -66,4 +119,15 @@ public final class FileSystemUtil {
+     private FileSystemUtil() {
+     }
+ 
++    private record CacheFile(Path path, long bytes, long modified) {
++
++        private static CacheFile of(final Path path) {
++            try {
++                return new CacheFile(path, Files.size(path), Files.getLastModifiedTime(path).toMillis());
++            } catch (final IOException missing) {
++                return new CacheFile(path, 0, Long.MAX_VALUE);
++            }
++        }
++    }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletion.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackDownloadCompletion.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..a6f6e14a23bb00692b96ae248ed4d78f1b9beae0
@@ -1869,10 +1915,10 @@ index 8bd1ae7b13d57ec9ccfa3d278b76762e3e0fdae0..dfcf0d64ae68eec9da7cb58ae7513c9a
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/impl/DiskResourcePackProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/impl/DiskResourcePackProvider.java
-index b220b2ffa9ed4d792adc9c94e99c9c95d806dee2..d4bb863200993505b4e1aacf7e01bba0a7afdd1f 100644
+index b220b2ffa9ed4d792adc9c94e99c9c95d806dee2..c18f3b11c0ac7ed1ef64e5162b7260878b98f761 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/provider/impl/DiskResourcePackProvider.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/impl/DiskResourcePackProvider.java
-@@ -20,33 +20,64 @@ package net.raphimc.viabedrock.protocol.provider.impl;
+@@ -20,34 +20,111 @@ package net.raphimc.viabedrock.protocol.provider.impl;
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
  import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
@@ -1885,10 +1931,28 @@ index b220b2ffa9ed4d792adc9c94e99c9c95d806dee2..d4bb863200993505b4e1aacf7e01bba0
  import java.nio.file.Path;
 +import java.security.MessageDigest;
 +import java.security.NoSuchAlgorithmException;
++import java.util.ArrayList;
 +import java.util.HexFormat;
++import java.util.List;
++import java.util.Set;
++import java.util.function.Supplier;
  
  public class DiskResourcePackProvider extends ResourcePackProvider {
  
++    // Keep about eight of the largest recorded server packs, about 65 MB each, in both the source and key layouts.
++    private static final long MAX_DISK_BYTES = 1L << 30;
++
++    private final Supplier<Path> folder;
++    long maxDiskBytes = MAX_DISK_BYTES;
++
++    public DiskResourcePackProvider() {
++        this(() -> ViaBedrock.getPlatform().getServerPacksFolder().toPath());
++    }
++
++    DiskResourcePackProvider(final Supplier<Path> folder) {
++        this.folder = folder;
++    }
++
      @Override
 -    public boolean has(final ResourcePack.Key key) {
 -        return Files.isRegularFile(this.getPath(key));
@@ -1904,25 +1968,52 @@ index b220b2ffa9ed4d792adc9c94e99c9c95d806dee2..d4bb863200993505b4e1aacf7e01bba0
              throw new IOException("Resource pack not found");
          }
 -        return new ResourcePack(new ZipContent(Files.readAllBytes(this.getPath(key))));
-+        return new ResourcePack(new ZipContent(Files.readAllBytes(this.getPath(key, contentIdentity))));
++        return read(this.getPath(key, contentIdentity));
      }
  
      @Override
 -    public void save(final ResourcePack resourcePack) throws IOException {
 -        Files.write(this.getPath(resourcePack.key()), resourcePack.content().toZip());
 +    public ResourcePack loadAny(final ResourcePack.Key key) throws IOException {
-+        return new ResourcePack(new ZipContent(Files.readAllBytes(this.getLegacyPath(key))));
-     }
- 
--    private Path getPath(final ResourcePack.Key key) {
++        return read(this.getLegacyPath(key));
++    }
++
 +    @Override
 +    public void save(final ResourcePack resourcePack, final String contentIdentity) throws IOException {
 +        final byte[] bytes = resourcePack.content().toZip();
++        final List<Path> written = new ArrayList<>(2);
 +        if (contentIdentity != null) {
 +            Files.createDirectories(this.getSourcePath());
-+            FileSystemUtil.writeAtomically(this.getPath(resourcePack.key(), contentIdentity), bytes);
++            written.add(this.getPath(resourcePack.key(), contentIdentity));
 +        }
-+        FileSystemUtil.writeAtomically(this.getLegacyPath(resourcePack.key()), bytes);
++        written.add(this.getLegacyPath(resourcePack.key()));
++        for (final Path path : written) {
++            FileSystemUtil.writeAtomically(path, bytes);
++        }
++        this.evict(Set.copyOf(written));
++    }
++
++    private static ResourcePack read(final Path path) throws IOException {
++        final ResourcePack pack = new ResourcePack(new ZipContent(Files.readAllBytes(path)));
++        FileSystemUtil.touch(path);
++        return pack;
++    }
++
++    /** Removes the least recently used archives of both layouts above the disk budget, keeping the archives just written. */
++    private void evict(final Set<Path> written) {
++        final List<Path> archives = new ArrayList<>();
++        for (final Path directory : List.of(this.folder.get(), this.getSourcePath())) {
++            if (!Files.isDirectory(directory)) {
++                continue;
++            }
++            try (var paths = Files.list(directory)) {
++                paths.filter(path -> path.getFileName().toString().endsWith(".mcpack") && Files.isRegularFile(path)).forEach(archives::add);
++            } catch (final IOException | RuntimeException unavailable) {
++                return;
++            }
++        }
++        // Loaded packs stay in memory, so an evicted archive only costs another download on a later join.
++        FileSystemUtil.evictLeastRecentlyUsed(archives, this.maxDiskBytes, written, Long.MAX_VALUE);
 +    }
 +
 +    private Path getPath(final ResourcePack.Key key, final String contentIdentity) {
@@ -1938,13 +2029,16 @@ index b220b2ffa9ed4d792adc9c94e99c9c95d806dee2..d4bb863200993505b4e1aacf7e01bba0
 +    }
 +
 +    private Path getSourcePath() {
-+        return ViaBedrock.getPlatform().getServerPacksFolder().toPath().resolve("source");
-+    }
-+
++        return this.folder.get().resolve("source");
+     }
+ 
+-    private Path getPath(final ResourcePack.Key key) {
+-        final Path basePath = ViaBedrock.getPlatform().getServerPacksFolder().toPath();
 +    private Path getLegacyPath(final ResourcePack.Key key) {
-         final Path basePath = ViaBedrock.getPlatform().getServerPacksFolder().toPath();
++        final Path basePath = this.folder.get();
          final Path resolvedPath = basePath.resolve(key.toString() + ".mcpack").normalize();
          if (!resolvedPath.startsWith(basePath)) {
+             throw new IllegalArgumentException("Path traversal attempt: " + key);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/impl/InMemoryResourcePackProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/impl/InMemoryResourcePackProvider.java
 index af36010c21657dde7375cad3885651353a7937c7..df1f4a9727a49722a5e83524da61469ec41793e7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/provider/impl/InMemoryResourcePackProvider.java
@@ -2794,10 +2888,10 @@ index 0000000000000000000000000000000000000000..d3f917b7b17673b4d9153b0bbbf331a1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..5fda15a68870bb1d047e1467e14be2697a2b10b3
+index 0000000000000000000000000000000000000000..7a1f20fe1aed5c2c649f164348a91f6ad0e12123
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-@@ -0,0 +1,478 @@
+@@ -0,0 +1,512 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -3263,6 +3357,40 @@ index 0000000000000000000000000000000000000000..5fda15a68870bb1d047e1467e14be269
 +
 +            cache.prepare(sources.get(0)).join();
 +            assertEquals(4, conversions.get());
++        } finally {
++            cache.stop();
++        }
++    }
++
++    @Test
++    void memoryHitsKeepAnArchiveOnDiskAfterItLeavesMemory() throws Exception {
++        final AtomicInteger conversions = new AtomicInteger();
++        final ConvertedResourcePackCache cache = new ConvertedResourcePackCache(this.directory, ViaBedrockConfig.PackCacheMode.DISK, storage -> {
++            final InMemoryContent content = new InMemoryContent();
++            final byte[] data = new byte[4096];
++            new Random(conversions.incrementAndGet()).nextBytes(data);
++            content.put("data", data);
++            return content;
++        }, 1, Long.MAX_VALUE);
++        cache.maxDiskBytes = 1;
++        try {
++            final var sources = java.util.stream.IntStream.range(0, 3)
++                    .mapToObj(index -> new ResourcePackStorage(List.of(pack(UUID.randomUUID(), new byte[]{(byte) index}))))
++                    .toList();
++            final Path popular = cache.prepare(sources.get(0)).join().path();
++            try (var paths = Files.list(this.directory)) {
++                for (final Path path : paths.toList()) {
++                    Files.setLastModifiedTime(path, FileTime.fromMillis(System.currentTimeMillis() - TimeUnit.HOURS.toMillis(2)));
++                }
++            }
++            // A join served from memory uses the archive now, although its files were written two hours ago.
++            cache.prepare(sources.get(0)).join();
++            cache.prepare(sources.get(1)).join();
++            cache.prepare(sources.get(2)).join();
++
++            assertTrue(Files.isRegularFile(popular), "a pack used from memory a moment ago must stay on disk");
++            cache.prepare(sources.get(0)).join();
++            assertEquals(3, conversions.get(), "the next join reads the archive from disk instead of converting again");
 +        } finally {
 +            cache.stop();
 +        }
@@ -3778,6 +3906,77 @@ index 0000000000000000000000000000000000000000..69ccd109e1fd367cc69d361d535666ae
 +            workers.stop();
 +            loop.shutdownGracefully(0, 5, TimeUnit.SECONDS).sync();
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/provider/impl/DiskResourcePackProviderTest.java b/src/test/java/net/raphimc/viabedrock/protocol/provider/impl/DiskResourcePackProviderTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..b21f5cc04b44b2826a1baa76458e2c457888099c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/provider/impl/DiskResourcePackProviderTest.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.provider.impl;
++
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.attribute.FileTime;
++import java.util.UUID;
++import java.util.concurrent.TimeUnit;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class DiskResourcePackProviderTest {
++
++    @TempDir
++    Path directory;
++
++    @Test
++    void savingAboveTheDiskBudgetEvictsLeastRecentlyUsedArchivesAndKeepsRecentlyLoadedOnes() throws Exception {
++        final DiskResourcePackProvider provider = new DiskResourcePackProvider(() -> this.directory);
++        final ResourcePack first = pack((byte) 1);
++        final ResourcePack second = pack((byte) 2);
++        final ResourcePack third = pack((byte) 3);
++        provider.save(first, "first");
++        provider.save(second, "second");
++        this.age(2);
++        provider.load(first.key(), "first");
++
++        // Room for the new archive in both layouts and one more archive.
++        provider.maxDiskBytes = 2L * third.content().toZip().length + first.content().toZip().length;
++        provider.save(third, "third");
++
++        assertTrue(provider.has(first.key(), "first"), "a source archive loaded since the older saves stays");
++        assertFalse(provider.has(second.key(), "second"));
++        assertThrows(Exception.class, () -> provider.loadAny(second.key()));
++        assertThrows(Exception.class, () -> provider.loadAny(first.key()), "the unused key archive of the loaded pack is older");
++        assertTrue(provider.has(third.key(), "third"));
++        assertEquals(third.key(), provider.loadAny(third.key()).key());
++    }
++
++    private void age(final int hours) throws Exception {
++        final FileTime old = FileTime.fromMillis(System.currentTimeMillis() - TimeUnit.HOURS.toMillis(hours));
++        try (var paths = Files.walk(this.directory)) {
++            for (final Path path : paths.filter(Files::isRegularFile).toList()) {
++                Files.setLastModifiedTime(path, old);
++            }
++        }
++    }
++
++    private static ResourcePack pack(final byte data) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        content.put("assets/example", new byte[]{data});
++        return new ResourcePack(content);
 +    }
 +
 +}
