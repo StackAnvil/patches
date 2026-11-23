@@ -75,11 +75,11 @@ export function SiteHeader() {
             onClick={() => {
               setOpenSearch(true);
             }}
-            aria-label="Search documentation"
+            aria-keyshortcuts="Control+K Meta+K"
           >
             <Search size={17} aria-hidden="true" />
             <span>Search docs</span>
-            <kbd>Ctrl K</kbd>
+            <kbd aria-hidden="true">Ctrl K</kbd>
           </button>
           <button
             type="button"

@@ -71,12 +71,15 @@ function DownloadFiles({ release, setup }: { release: Release | null; setup: Set
     <ul className="download-files">
       {downloads.map(({ title, asset }) => (
         <li key={asset.name}>
-          <a className="download-chip" href={asset.url} aria-label={`Download ${title}`}>
+          <a className="download-chip" href={asset.url}>
             <span className="chip-icon">
               <ArrowDownToLine size={20} aria-hidden="true" />
             </span>
             <span className="chip-text">
-              <strong>{title}</strong>
+              <strong>
+                <span className="sr-only">Download </span>
+                {title}
+              </strong>
               <span className="mono">{asset.name}</span>
             </span>
             <span className="chip-size">{formatSize(asset.size)}</span>

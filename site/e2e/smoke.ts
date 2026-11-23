@@ -44,7 +44,7 @@ test("static search opens the matching guide section without a server", async ({
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  await page.getByRole("button", { name: "Search documentation", exact: true }).click();
+  await page.getByRole("button", { name: "Search docs", exact: true }).click();
   await page.getByRole("combobox", { name: "Search", exact: true }).fill("Realms");
   const result = page
     .getByRole("option")
