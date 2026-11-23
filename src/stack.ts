@@ -537,26 +537,31 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
       message: `Expected ${paths.length} commits, found ${commits.length}. No patch files changed.${dropped}`,
     });
   }
+  const exports: { path: string; patch: string }[] = [];
   let titleChanged = false;
   for (const [index, path] of paths.entries()) {
     const patch = yield* exportCommit(dir, required(commits[index], `The commit for ${path}`));
+    if (!/^diff --git /mu.test(patch))
+      return yield* StackError.make({
+        message: `The commit for ${path} has no file changes. Remove the empty commit and its series.json entry. No patch files changed.`,
+      });
     const upstreamable = series.upstreamable[index - series.setup.length];
     if (upstreamable && index < series.setup.length + series.upstreamable.length) {
       const message = parsePatchMessage(patch);
       if (!message.description)
         return yield* StackError.make({
-          message: `${upstreamable.file} needs a commit body describing the change`,
+          message: `${upstreamable.file} needs a commit body describing the change. No patch files changed.`,
         });
       if (upstreamable.title !== message.title) {
         upstreamable.title = message.title;
         titleChanged = true;
       }
     }
+    exports.push({ path, patch });
+  }
+  for (const { path, patch } of exports) {
     const previous = yield* Effect.promise(() => readFile(path, "utf8"));
-    const rebuilt = patch;
-    if (previous !== rebuilt) {
-      yield* Effect.promise(() => writeFile(path, rebuilt));
-    }
+    if (previous !== patch) yield* Effect.promise(() => writeFile(path, patch));
   }
   if (titleChanged)
     yield* Effect.promise(() =>

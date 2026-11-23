@@ -192,3 +192,15 @@ test("stack continue and abort recover after git am finished by hand", async () 
   await rejects(readFile(apply, "utf8"));
   expect(await stack(["sync", "fixture"], true)).toContain("Patch apply stopped at");
 }, 600_000);
+
+test("rebuild refuses to export an empty commit as a patch", async () => {
+  const { checkout, patches, stack } = await stackFixture();
+  const setup = join(patches, "setup", "0001-setup.patch");
+  const saved = await readFile(setup, "utf8");
+  await stack(["edit", "fixture", "0001-setup.patch"]);
+  await git(["rm", "setup.txt"], checkout);
+  await git(["commit", "--amend", "--allow-empty", "--no-edit"], checkout);
+
+  expect(await stack(["rebuild", "fixture"], true)).toContain("has no file changes");
+  expect(await readFile(setup, "utf8")).toBe(saved);
+}, 600_000);
