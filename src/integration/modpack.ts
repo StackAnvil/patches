@@ -89,8 +89,13 @@ async function zipEntries(file: string): Promise<string[]> {
   return stdout.trimEnd().split("\n");
 }
 
+/** Info-ZIP unzip treats `*`, `?`, and `[` in member names as wildcards. Match one member literally. */
+function literalZipMember(entry: string): string {
+  return entry.replaceAll(/[[*?]/gu, "[$&]");
+}
+
 async function zipEntry(file: string, entry: string): Promise<Uint8Array> {
-  const { stdout } = await execute("unzip", ["-p", file, entry], {
+  const { stdout } = await execute("unzip", ["-p", file, literalZipMember(entry)], {
     encoding: "buffer",
     maxBuffer: 32 * 1024 * 1024,
   });
@@ -203,14 +208,17 @@ export async function inspectPinnedModpack(): Promise<{ files: number; overrides
   };
 }
 
-async function packOverrides(entries: string[]): Promise<Map<string, Uint8Array>> {
+export async function packOverrides(
+  file: string,
+  entries: readonly string[],
+): Promise<Map<string, Uint8Array>> {
   const overrides = new Map<string, Uint8Array>();
   for (const entry of entries) {
     const prefix = entry.startsWith("client-overrides/") ? "client-overrides/" : "overrides/";
     if (!entry.startsWith(prefix) || entry.endsWith("/")) continue;
     const path = entry.slice(prefix.length);
     if (!safePath(path)) throw new Error(`Unsafe modpack override path: ${entry}`);
-    overrides.set(path, await zipEntry(packFile, entry));
+    overrides.set(path, await zipEntry(file, entry));
   }
   return overrides;
 }
@@ -280,7 +288,7 @@ export async function installModpack(
   const files = replacePackFiles(index, replacements).files.filter(
     (file) => file.env?.client !== "unsupported",
   );
-  const overrides = await packOverrides(entries);
+  const overrides = await packOverrides(packFile, entries);
   const incoming = new Map<string, string | Uint8Array>();
   await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
   for (const file of files) {

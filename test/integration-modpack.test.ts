@@ -1,5 +1,14 @@
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { expect, test } from "bun:test";
-import { inspectPinnedModpack, replacePackFiles, validatePackIndex } from "../src/integration/modpack.ts";
+import {
+  inspectPinnedModpack,
+  packOverrides,
+  replacePackFiles,
+  validatePackIndex,
+} from "../src/integration/modpack.ts";
 
 const target = { minecraft: "26.3", fabricLoader: "0.19.5" };
 
@@ -39,4 +48,37 @@ test("replaces a pinned mod without keeping both versions or mutating the baseli
   expect(() => replacePackFiles(original, { "mods/example.jar": { ...replacement, path: "../escape.jar" } })).toThrow();
   original.files.push({ ...replacement });
   expect(() => replacePackFiles(original, { "mods/example.jar": replacement })).toThrow();
+});
+
+async function withPack(files: Record<string, string>, run: (pack: string, entries: string[]) => Promise<void>) {
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-mrpack-"));
+  try {
+    const staging = join(directory, "staging");
+    for (const [path, text] of Object.entries(files)) {
+      await mkdir(dirname(join(staging, path)), { recursive: true });
+      await writeFile(join(staging, path), text);
+    }
+    const pack = join(directory, "pack.mrpack");
+    execFileSync("zip", ["-q", pack, ...Object.keys(files)], { cwd: staging });
+    await run(pack, Object.keys(files));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test("extracts override names containing unzip wildcard characters literally", async () => {
+  await withPack(
+    {
+      "overrides/config/a[1].txt": "bracket",
+      "overrides/config/a1.txt": "plain",
+      "overrides/config/b*.txt": "star",
+      "overrides/config/bx.txt": "other",
+    },
+    async (pack, entries) => {
+      const overrides = await packOverrides(pack, entries);
+      const text = (path: string) => Buffer.from(overrides.get(path) ?? []).toString("utf8");
+      expect(text("config/a[1].txt")).toBe("bracket");
+      expect(text("config/b*.txt")).toBe("star");
+    },
+  );
 });
