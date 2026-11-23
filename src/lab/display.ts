@@ -162,6 +162,9 @@ export async function ensureDisplay(): Promise<DisplayState> {
   let runtime: string | undefined;
   let state: DisplayState | undefined;
   try {
+    // Another start can finish between the check above and this lock.
+    const started = await activeDisplay();
+    if (started) return started;
     // Unix socket paths have a small fixed limit. Keep sockets in the session
     // runtime directory even when the repository is in a deeply nested worktree.
     runtime = await mkdtemp(join(runtimeRoot, `stackanvil-${identity}-`));
