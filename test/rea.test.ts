@@ -296,7 +296,10 @@ test("a REA executable on PATH retains a byte-bound result without replacing ear
       digest: { sha256: createHash("sha256").update(f.bytes.subarray(0x200, 0x210)).digest("hex") },
     },
     analysis_profile: { digest: "fixture-profile" },
-    normalized_result: { procedure: { address: "0x140001000" } },
+    normalized_result: {
+      procedure: { address: "0x140001000" },
+      pseudocode: "void entry(void)\n{\n  return;\n}\n",
+    },
   };
   await writeFile(
     provider,
@@ -321,6 +324,13 @@ test("a REA executable on PATH retains a byte-bound result without replacing ear
     expect(result.profile).toBe("fixture-profile");
     expect(result.slice.sourceSha256).toBe(f.sha256);
     expect(JSON.parse(await readFile(result.evidence, "utf8"))).toEqual(evidence);
+    expect(result.pseudocode).toBe(first.pseudocode);
+    const pseudocode = await readFile(
+      required(first.pseudocode ?? undefined, "The pseudocode path"),
+      "utf8",
+    );
+    expect(pseudocode).toStartWith("/* REA Evidence ev_fixture\n   0x140001000-0x140001010 of ");
+    expect(pseudocode).toEndWith(`*/\n\n${evidence.normalized_result.pseudocode}`);
     expect((await readFile(join(second.directory, "function.bin"))).toString("hex")).toBe(
       f.bytes.subarray(0x200, 0x210).toString("hex"),
     );

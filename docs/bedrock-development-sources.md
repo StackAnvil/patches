@@ -116,6 +116,7 @@ Set `REA_CLI` to an existing REA executable, or let the command use its pinned p
 The command does not install an analysis provider or change MCP configuration.
 
 Each run keeps the full Evidence, source identity and stderr in a fresh private directory.
+The command prints that directory and the path of its `pseudocode.c`, which holds the decompiled code from the Evidence.
 Raw slices exclude external tables, globals and callees. Preserve those limits when interpreting pseudocode.
 For a leaf without an exception-table entry, supply `--end` explicitly. The output then makes no function-boundary claim.
 Use `bun run rea --help` for byte reads, import-slot lookup and tentative reference scans.

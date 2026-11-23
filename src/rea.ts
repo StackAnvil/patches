@@ -66,6 +66,10 @@ const isReaEvidence = Schema.is(
   }),
 );
 
+const hasPseudocode = Schema.is(
+  Schema.Struct({ normalized_result: Schema.Struct({ pseudocode: Schema.NonEmptyString }) }),
+);
+
 const isReaCapture = Schema.is(
   Schema.Struct({
     evidence_id: Schema.String,
@@ -359,7 +363,7 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
       try: () => independentPath(ghidra),
       catch: error,
     });
-  yield* Effect.tryPromise({
+  return yield* Effect.tryPromise({
     try: async (signal) => {
       const evidence = await invokeRea(reaArgs, run, signal);
       let identity: { id: string; profile: string };
@@ -368,15 +372,32 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
       } catch (cause) {
         throw new Error(`Invalid REA Evidence. Preserved its output in ${run}`, { cause });
       }
+      // Save the pseudocode beside the result so readers need not dig through the Evidence JSON.
+      let pseudocode: string | null = null;
+      if (hasPseudocode(evidence)) {
+        pseudocode = join(run, "pseudocode.c");
+        await writeFile(
+          pseudocode,
+          [
+            `/* REA Evidence ${identity.id}`,
+            `   ${slice.procedureAddress}-${slice.endExclusive} of ${slice.sourceSha256}`,
+            `   ${slice.scope} */`,
+            "",
+            evidence.normalized_result.pseudocode,
+          ].join("\n"),
+          { mode: 0o600, flag: "wx" },
+        );
+      }
       await privateJson(join(run, "result.json"), {
         ...identity,
         slice,
         evidence: join(run, "evidence.json"),
+        pseudocode,
       });
+      return { directory: run, result: join(run, "result.json"), pseudocode };
     },
     catch: error,
   });
-  return { directory: run, result: join(run, "result.json") };
 });
 
 export function validateReaCapture(value: unknown): {
@@ -489,7 +510,7 @@ Commands use .stackanvil/rea/current.json. Pass --target PATH for another manife
 Addresses are linked hexadecimal VAs. A manual --end makes no function-boundary claim.
 Analysis runs REA with Ghidra. Set GHIDRA_INSTALL_DIR for an existing Ghidra install.
 Set REA_CLI to an existing REA executable, or use the pinned rea-agents@${reaVersion} fallback.
-Each analysis saves complete Evidence, source hashes and stderr in a fresh private directory.
+Each analysis saves complete Evidence, source hashes, stderr and pseudocode.c in a fresh private directory.
 control runs a repository Python fixture through REA process capture, with a 60 s maximum.
 Reference scans report byte-pattern candidates. Check instruction alignment through REA.
 RIP candidates report the end of the displacement, not a validated instruction start.
