@@ -190,7 +190,7 @@ export const sync = Effect.fn("sync")(function* (
   const modeKey = mode === "pr" ? prMode(patchFile) : mode;
   if (mode === "full" && existsSync(sessionPath(id))) {
     return yield* StackError.make({
-      message: `Edit session active for ${id}; run stack rebuild first.`,
+      message: `Edit session active for ${id}. Run bun run stack rebuild ${id} to save it, or bun run stack abort ${id} to discard it.`,
     });
   }
   const path = applySessionPath(id, modeKey);
@@ -339,8 +339,12 @@ export const abortApply = Effect.fn("abortApply")(function* (
 ) {
   const modeKey = mode === "pr" ? prMode(patchFile) : mode;
   const path = applySessionPath(id, modeKey);
-  if (!existsSync(path))
-    return yield* StackError.make({ message: `No unfinished ${mode} patch apply for ${id}.` });
+  if (!existsSync(path)) {
+    if (mode === "full" && existsSync(sessionPath(id))) return yield* abortEdit(id);
+    return yield* StackError.make({
+      message: `No unfinished ${mode} patch apply${mode === "full" ? " or edit" : ""} for ${id}.`,
+    });
+  }
   const dir = workdir(id, modeKey);
   if (existsSync(join(dir, ".git", "rebase-apply"))) yield* git(["am", "--abort"], dir);
   else {
@@ -357,6 +361,19 @@ export const abortApply = Effect.fn("abortApply")(function* (
   yield* git(["update-ref", syncedRef(modeKey), "HEAD"], dir);
   yield* Effect.promise(() => rm(path));
   return `Aborted the patch apply in ${dir}. Run bun run ${mode === "pr" ? "pr check" : "stack sync"} ${id}${patchFile ? ` --patch ${patchFile}` : ""} to start again.`;
+});
+
+/** Discards an edit session and its uncommitted edits, and restores the stack from before the edit. */
+const abortEdit = Effect.fn("abortEdit")(function* (id: string) {
+  const sessionText = yield* Effect.promise(() => readFile(sessionPath(id), "utf8"));
+  const session: EditSession = parseJson(EditSessionSchema, sessionText);
+  const dir = workdir(id);
+  // Resetting also clears a stopped cherry-pick.
+  yield* git(["reset", "--hard", session.backupRef], dir);
+  yield* git(["update-ref", syncedRef("full"), "HEAD"], dir);
+  yield* git(["update-ref", "-d", session.backupRef], dir);
+  yield* Effect.promise(() => rm(sessionPath(id)));
+  return `Discarded the edit session and restored ${dir} to the stack from before the edit. No patch files changed.`;
 });
 
 function abortCommand(id: string, mode: "full" | "pr", patchFile?: string) {
@@ -600,7 +617,11 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
       writeFile(join(root, "patches", id, "series.json"), `${encodeIndentedJson(series)}\n`),
     );
   yield* git(["update-ref", syncedRef("full"), "HEAD"], dir);
-  if (session) yield* Effect.promise(() => rm(sessionPath(id)));
+  if (session) {
+    yield* Effect.promise(() => rm(sessionPath(id)));
+    // The exported patch files now hold the edit, and Git history holds the earlier files.
+    yield* git(["update-ref", "-d", session.backupRef], dir);
+  }
   return paths.length;
 });
 

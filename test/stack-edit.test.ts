@@ -130,6 +130,7 @@ test("rebuild resumes after a replay conflict was committed by hand", async () =
   const second = await readFile(join(patches, "upstreamable", "0002-second.patch"), "utf8");
   expect(second).toContain("\n-uno\n+two\n");
   await rejects(readFile(join(project, ".stackanvil", "fixture.json"), "utf8"));
+  expect(await git(["for-each-ref", "refs/stackanvil/backup"], checkout)).toBe("");
 }, 600_000);
 
 test("rebuild drops a later patch that the edited patch already contains", async () => {
@@ -271,4 +272,23 @@ test("rebuild saves a new subject for the patch under edit", async () => {
   expect(JSON.parse(await readFile(join(patches, "series.json"), "utf8"))).toMatchObject({
     upstreamable: [{ file: "0001-first.patch", title: "feat(test): renamed" }, {}],
   });
+}, 600_000);
+
+test("stack abort discards an edit session and restores the stack", async () => {
+  const { baseSha, checkout, project, stack } = await stackFixture();
+  await stack(["sync", "fixture"]);
+  const head = await git(["rev-parse", "HEAD"], checkout);
+  await stack(["edit", "fixture", "0001-first.patch"]);
+  await writeFile(join(checkout, "note.txt"), "uno\n");
+  await git(["add", "note.txt"], checkout);
+  await stack(["rebuild", "fixture"], true);
+
+  await stack(["abort", "fixture"]);
+
+  expect(await git(["rev-parse", "HEAD"], checkout)).toBe(head);
+  expect(await git(["status", "--porcelain"], checkout)).toBe("");
+  expect(await git(["for-each-ref", "refs/stackanvil/backup"], checkout)).toBe("");
+  await rejects(readFile(join(project, ".stackanvil", "fixture.json"), "utf8"));
+  await stack(["sync", "fixture"]);
+  expect(await git(["rev-list", "--count", `${baseSha}..HEAD`], checkout)).toBe("3");
 }, 600_000);
