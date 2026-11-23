@@ -21,6 +21,7 @@ import { Effect, Schema } from "effect";
 import { isRecord, JsonObjectSchema, parseJson, required } from "../guards.ts";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
+import { pause, trapCancellation } from "./cancellation.ts";
 import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
 import { installModpack } from "../integration/modpack.ts";
 import {
@@ -88,6 +89,10 @@ let javaCleanup: OwnedProcesses | undefined;
 let javaDisplayCleanup: OwnedProcesses | undefined;
 let javaDataCleanup: (() => Promise<void>) | undefined;
 const temporaryBuilds: string[] = [];
+// SIGINT and SIGTERM abort this controller. Startup waits end at once; the scene loop checks it.
+const stop = new AbortController();
+let releaseCancellation: (() => void) | undefined;
+const wait = (milliseconds: number) => pause(milliseconds, stop.signal);
 
 function alive(pid?: number): boolean {
   if (!pid) return false;
@@ -134,7 +139,7 @@ async function ready(child: ChildProcess, file: string, pattern: RegExp): Promis
   while (Date.now() < until) {
     if (pattern.test(await logText(file))) return;
     if (!alive(child.pid)) throw new Error(`Service exited. Read ${file}.`);
-    await Bun.sleep(250);
+    await wait(250);
   }
   throw new Error(`Service startup timed out. Read ${file}.`);
 }
@@ -513,7 +518,7 @@ async function launchJava(
       }
       return { pid, log: join(game, "logs/latest.log") };
     }
-    await Bun.sleep(500);
+    await wait(500);
   }
   throw new Error(`Minecraft startup timed out. Read ${launcherLog}.`);
 }
@@ -582,9 +587,9 @@ async function launchNative(
       { cwd: root },
     );
     if (state.stdout.includes('"title": "Minecraft"')) break;
-    await Bun.sleep(1000);
+    await wait(1000);
   }
-  await Bun.sleep(20_000);
+  await wait(20_000);
   await ui(["screenshot", "native-menu"], directory, "bedrock");
   if (offline)
     await requireNativeReplayProcessNamespaces(offline, [
@@ -612,30 +617,30 @@ async function launchNative(
   // Bedrock under winewayland ignores a press on a tab it has not seen the pointer hover first.
   const click = async (x: number, y: number) => {
     await ui(["move", String(x), contentY(y)], directory, "bedrock");
-    await Bun.sleep(400);
+    await wait(400);
     await ui(["mouse-hold", String(x), contentY(y), "left", "150"], directory, "bedrock");
   };
   await click(0.5, 0.5);
   // The Play screen opens several seconds later and ignores input while it animates in.
-  await Bun.sleep(12_000);
+  await wait(12_000);
   await click(0.82, 0.11);
-  await Bun.sleep(2500);
+  await wait(2500);
   await click(0.17, 0.22);
-  await Bun.sleep(2000);
+  await wait(2000);
   for (const [row, value] of [
     [0.17, "stackanvil-native-recording"],
     [0.31, "127.0.0.1"],
     [0.46, String(bind)],
   ] as const) {
     await click(0.25, row);
-    await Bun.sleep(250);
+    await wait(250);
     await ui(["key", "Control+a"], directory, "bedrock");
-    await Bun.sleep(250);
+    await wait(250);
     await ui(["type", value], directory, "bedrock");
-    await Bun.sleep(250);
+    await wait(250);
   }
   await click(0.69, 0.57);
-  await Bun.sleep(4000);
+  await wait(4000);
   await ui(["screenshot", "native-before-trust"], directory, "bedrock");
   // A first connection asks to trust the server. Sample its light header right of the title text.
   const pixel = await execute(
@@ -710,6 +715,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     return;
   }
   if (mode === "selftest") {
+    releaseCancellation = trapCancellation(stop);
     const jar = await artifact("viaproxy");
     const { classes } = await buildPlugin(jar);
     for (const test of [
@@ -823,6 +829,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     throw new Error(
       "ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
     );
+  releaseCancellation = trapCancellation(stop);
   const jar = await artifact("viaproxy");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   await chmod(privateRoot, 0o700);
@@ -862,14 +869,8 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   }
   const ownedDisplay = !(await activeDisplay());
   let gamePid: number | undefined;
-  // Signal handlers abort this controller between awaits.
-  const stop = new AbortController();
   let unexpectedClientExit = false;
-  const abort = () => {
-    stop.abort();
-  };
-  process.on("SIGINT", abort);
-  process.on("SIGTERM", abort);
+  stop.signal.throwIfAborted();
   try {
     if (mode === "replay") {
       const recording = resolve(input);
@@ -1097,8 +1098,6 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
         },
       });
     } finally {
-      process.off("SIGINT", abort);
-      process.off("SIGTERM", abort);
       // Proxy libraries write their own saves with default permissions.
       for (const name of ["saves.json", "viaproxy.yml"])
         if (existsSync(join(proxyHome, name))) await chmod(join(proxyHome, name), 0o600);
@@ -1308,7 +1307,11 @@ try {
   try {
     await main();
   } finally {
-    await removeTemporaryBuilds();
+    try {
+      await removeTemporaryBuilds();
+    } finally {
+      releaseCancellation?.();
+    }
   }
 } catch (error: unknown) {
   printError(error instanceof Error ? error.message : error);
