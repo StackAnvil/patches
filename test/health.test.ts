@@ -97,6 +97,7 @@ test("offline health rejects a prerequisite file that is not in its project's se
   }
 });
 
+// Four upstream inspections run about 80 git commands. A loaded machine can need over 30 seconds.
 test("upstream inspection recognizes equivalent patches and rehearses updates without touching editing checkouts", async () => {
   // Keep the developer's global Git config, such as commit signing, out of the fixture and clones.
   const globalConfig = process.env["GIT_CONFIG_GLOBAL"];
@@ -203,4 +204,4 @@ test("upstream inspection recognizes equivalent patches and rehearses updates wi
     else process.env["GIT_CONFIG_GLOBAL"] = globalConfig;
     await rm(directory, { recursive: true, force: true });
   }
-}, 30_000);
+}, 120_000);

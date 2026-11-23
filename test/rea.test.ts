@@ -341,6 +341,7 @@ test("process captures retain failed or timed-out exits and require owned cleanu
   expect(() => validateReaCapture({ code: "cancelled" })).toThrow("complete process capture");
 });
 
+// This starts the REA CLI twice as separate Bun processes. Each loads Effect and runs a provider.
 test("a signaled control fails the CLI and retains the original capture while a normal control succeeds", async () => {
   const f = await fixture();
   await mkdir(join(root, ".stackanvil"), { recursive: true, mode: 0o700 });
@@ -404,4 +405,4 @@ test("a signaled control fails the CLI and retains the original capture while a 
     );
     expect(source.target.artifact.sha256).toBe(f.sha256);
   }
-});
+}, 60_000);

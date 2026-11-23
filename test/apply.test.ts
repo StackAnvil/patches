@@ -45,6 +45,10 @@ const payload = (patch: string) =>
     .replaceAll(/^index .+$/gm, "")
     .trimEnd();
 
+// This drives the real stack CLI as 14 separate Bun processes, which run about 100 git commands.
+// Each process loads Effect, so the test needs about 4.5 seconds on an idle machine and several
+// minutes on a heavily loaded one. Like the stack-edit tests, it allows ten minutes. Running the
+// commands in this process would skip the CLI's argument handling and exit codes.
 test("an interrupted patch apply can continue or abort without losing the series", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "stackanvil-apply-"));
   fixtures.push(fixture);
@@ -287,4 +291,4 @@ test("an interrupted patch apply can continue or abort without losing the series
   await run("bun", [cli, "stack", "abort", "fixture"], project);
   expect(await git(["status", "--porcelain"], checkout)).toBe("");
   await rejects(readFile(join(project, ".stackanvil", "fixture-full-apply.json"), "utf8"));
-});
+}, 600_000);

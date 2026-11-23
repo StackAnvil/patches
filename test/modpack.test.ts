@@ -12,6 +12,7 @@ import { root } from "../src/model.ts";
 import type { ViaFabricPlusPin } from "../src/viafabricplus.ts";
 import { writeClientJar } from "./helpers/client-artifacts.ts";
 
+// This runs zip and unzip 13 times, which can exceed the default limit on a loaded machine.
 test("modpack preserves verified client bytes and refuses incompatible or corrupt rebuilds", async () => {
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-modpack-"));
   try {
@@ -80,7 +81,7 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-});
+}, 60_000);
 
 test("release notes read the game versions from the bundled pack they link", async () => {
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-modpack-target-"));
