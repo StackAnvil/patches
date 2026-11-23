@@ -250,6 +250,12 @@ restarts the timer, like a success. Previously the add-on used fixed
 every frame. The air or entity aim with an established line and the
 motion-face target before a line remain unported.
 
+Record a placement only when the local player placed the block. BlockItem.place
+also runs on the integrated server for a dispenser, which places a shulker box
+with no player. While the client has no player either, for example during a
+singleplayer join, the placer check matched null to null and reading the
+placer's sneaking state threw, which crashed the integrated server.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 3f71e4a8cc170259c2d0a0a8694bc58f95290f9e..03814c6c986fb6937210619a8b305fd81cce923a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -471,10 +477,10 @@ index 0000000000000000000000000000000000000000..d716321f252a384311b7478db22bcf9f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..0c4759aceb7f41a5124866960c05b814f33d0893
+index 0000000000000000000000000000000000000000..0080161fc14e90c49bbf1528b7f0ff7f04d2db01
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,23 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -483,7 +489,6 @@ index 0000000000000000000000000000000000000000..0c4759aceb7f41a5124866960c05b814
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.inventory;
 +
 +import com.viaversion.viafabricplus.bedrock.input.BedrockItemUse;
-+import net.minecraft.client.Minecraft;
 +import net.minecraft.world.InteractionResult;
 +import net.minecraft.world.item.BlockItem;
 +import net.minecraft.world.item.context.BlockPlaceContext;
@@ -496,15 +501,7 @@ index 0000000000000000000000000000000000000000..0c4759aceb7f41a5124866960c05b814
 +public abstract class MixinHeldBlockPlacement {
 +    @Inject(method = "place", at = @At("RETURN"))
 +    private void retainTrapdoorOrientation(final BlockPlaceContext context, final CallbackInfoReturnable<InteractionResult> cir) {
-+        if (context.getPlayer() == Minecraft.getInstance().player) {
-+            BedrockItemUse.buildAttempt(context.getClickedPos(), cir.getReturnValue().consumesAction(),
-+                    context.getLevel().isOutsideBuildHeight(context.getClickedPos()), context.getPlayer().isShiftKeyDown());
-+        }
-+        if (cir.getReturnValue().consumesAction() && context.getPlayer() == Minecraft.getInstance().player) {
-+            final var support = context.replacingClickedOnBlock() ? context.getClickedPos()
-+                : context.getClickedPos().relative(context.getClickedFace().getOpposite());
-+            BedrockItemUse.placed(context.getLevel().getBlockState(context.getClickedPos()), support, context.getClickLocation());
-+        }
++        BedrockItemUse.placementAttempt(context, cir.getReturnValue().consumesAction());
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockUse.java
@@ -580,10 +577,10 @@ index 0000000000000000000000000000000000000000..82b3509790da0035698376c2a8a9988e
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..71f65d5542639d97d430c291081ab0aa74faa217
+index 0000000000000000000000000000000000000000..3d8cc1210a041afe22ad0f3b52a26ce5a1943e28
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,336 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -602,8 +599,10 @@ index 0000000000000000000000000000000000000000..71f65d5542639d97d430c291081ab0aa
 +import net.minecraft.core.component.DataComponents;
 +import net.minecraft.world.InteractionHand;
 +import net.minecraft.world.InteractionResult;
++import net.minecraft.world.entity.player.Player;
 +import net.minecraft.world.item.ItemStack;
 +import net.minecraft.world.item.BlockItem;
++import net.minecraft.world.item.context.BlockPlaceContext;
 +import net.minecraft.world.level.GameType;
 +import net.minecraft.world.level.block.TrapDoorBlock;
 +import net.raphimc.viabedrock.api.model.BlockUsePrediction;
@@ -833,14 +832,31 @@ index 0000000000000000000000000000000000000000..71f65d5542639d97d430c291081ab0aa
 +                ? PATH.select(player.getEyePosition(1F), hit) : hit;
 +    }
 +
-+    public static void buildAttempt(final BlockPos position, final boolean success, final boolean outsideHeight, final boolean sneaking) {
++    /**
++     * Records a block item placement by the local player. Other placers are ignored, including a dispenser on the
++     * integrated server, which places without a player and can run while the client has no player either.
++     */
++    public static void placementAttempt(final BlockPlaceContext context, final boolean success) {
++        final Player placer = context.getPlayer();
++        if (placer == null || placer != Minecraft.getInstance().player) {
++            return;
++        }
++        final BlockPos position = context.getClickedPos();
++        buildAttempt(position, success, context.getLevel().isOutsideBuildHeight(position), placer.isShiftKeyDown());
++        if (success) {
++            final var support = context.replacingClickedOnBlock() ? position : position.relative(context.getClickedFace().getOpposite());
++            placed(context.getLevel().getBlockState(position), support, context.getClickLocation());
++        }
++    }
++
++    private static void buildAttempt(final BlockPos position, final boolean success, final boolean outsideHeight, final boolean sneaking) {
 +        if (held) {
 +            PATH.attempted(position, success, outsideHeight, sneaking);
 +            outsideHeightAttempt |= outsideHeight;
 +        }
 +    }
 +
-+    public static void placed(final BlockState state, final BlockPos support, final Vec3 hit) {
++    private static void placed(final BlockState state, final BlockPos support, final Vec3 hit) {
 +        placedBlock = true;
 +        if (held) {
 +            PLACEMENT.remember(state, support, hit);
@@ -1368,6 +1384,61 @@ index 912f25de4c2bf95f16f021d91991142db5601cee..57b1267c042fa2b628a9c81ff8285e5c
      "features.creative.MixinCreativeModeInventoryScreen",
      "features.creative.MixinCreativeModeTab_ItemDisplayBuilder",
      "features.creative.MixinCreativeModeTabs",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUsePlacementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUsePlacementTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d0cb8d5c5afd0fe307a35be5e3854115a5dcc46c
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUsePlacementTest.java
+@@ -0,0 +1,49 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Direction;
++import net.minecraft.core.component.DataComponentMap;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.item.ItemStack;
++import net.minecraft.world.item.Items;
++import net.minecraft.world.item.context.DirectionalPlaceContext;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.level.block.Blocks;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.*;
++
++final class BedrockItemUsePlacementTest {
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++        if (!Items.SHULKER_BOX.builtInRegistryHolder().areComponentsBound()) {
++            Items.SHULKER_BOX.builtInRegistryHolder().bindComponents(DataComponentMap.EMPTY);
++        }
++    }
++
++    @Test
++    void dispenserPlacementWithoutAnyPlayerIsIgnored() {
++        // The integrated server can tick a dispenser that places a shulker box before the client player exists.
++        final var level = mock(Level.class);
++        when(level.getBlockState(any())).thenReturn(Blocks.AIR.defaultBlockState());
++        final var context = new DirectionalPlaceContext(level, new BlockPos(0, 64, 0), Direction.DOWN,
++                new ItemStack(Items.SHULKER_BOX), Direction.UP);
++        try (final var singleton = mockStatic(Minecraft.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(mock(Minecraft.class));
++            assertDoesNotThrow(() -> BedrockItemUse.placementAttempt(context, true));
++            assertDoesNotThrow(() -> BedrockItemUse.placementAttempt(context, false));
++        }
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUseReleaseTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUseReleaseTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..cd2e709085df0afebb17eb59c9cc1da9be18e113

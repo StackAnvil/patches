@@ -1476,6 +1476,17 @@ A 16384-pixel header bound and the 4 MiB download limit still apply.
 Controllers can request a scene refresh outside input events, and menu
 images can be preloaded through the shared bounded cache.
 
+Scene input handlers route runtime failures to the controller fallback,
+as a failed frame does. Arrow navigation, scrolling and clicks can
+reflow the scene and reveal a state branch that cannot be drawn; the
+exception previously escaped the key or mouse handler and crashed the
+client. The handler consumes that event so it does not reach the world.
+
+A scene refresh remaps a held scrollbar drag to the replacement scroll
+view. Action forms refresh when a button image finishes downloading;
+the drag previously kept the retired node and stopped moving the view
+until the button was pressed again.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index f845830418399fccf82c2278f6ff73594b9082bf..7fbe6b1a7c3874cd9138b59460240b6038a0e641 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -11461,10 +11472,10 @@ index 0000000000000000000000000000000000000000..51acb31d4682490e2847a5206645e806
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94448736b5
+index 0000000000000000000000000000000000000000..df87b7f83d15c892a87943cd9bef066efb7f2877
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreen.java
-@@ -0,0 +1,1008 @@
+@@ -0,0 +1,1050 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11482,6 +11493,7 @@ index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94
 +import java.util.List;
 +import java.util.Map;
 +import java.util.Set;
++import java.util.function.BooleanSupplier;
 +import java.util.function.LongSupplier;
 +import net.minecraft.client.gui.ComponentPath;
 +import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -11778,6 +11790,52 @@ index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94
 +
 +    @Override
 +    public boolean mouseScrolled(final double x, final double y, final double horizontal, final double vertical) {
++        return this.guarded(() -> this.scrolled(x, y, horizontal, vertical));
++    }
++
++    @Override
++    public boolean mouseClicked(final MouseButtonEvent event, final boolean doubleClick) {
++        return this.guarded(() -> this.clicked(event, doubleClick));
++    }
++
++    @Override
++    public boolean mouseDragged(final MouseButtonEvent event, final double deltaX, final double deltaY) {
++        return this.guarded(() -> this.dragged(event, deltaX, deltaY));
++    }
++
++    @Override
++    public boolean mouseReleased(final MouseButtonEvent event) {
++        return this.guarded(() -> this.released(event));
++    }
++
++    @Override
++    public boolean keyPressed(final KeyEvent event) {
++        return this.guarded(() -> this.pressed(event));
++    }
++
++    @Override
++    public boolean charTyped(final CharacterEvent event) {
++        return this.guarded(() -> {
++            final boolean result = super.charTyped(event);
++            this.refreshFocusedControl();
++            return result;
++        });
++    }
++
++    /**
++     * Input can reflow the scene and reveal a state branch that cannot be drawn. Such a failure takes the same
++     * controller fallback as a failed frame, and the consumed event does not reach the world after the screen closes.
++     */
++    private boolean guarded(final BooleanSupplier input) {
++        try {
++            return input.getAsBoolean();
++        } catch (final RuntimeException error) {
++            this.controller.failed(error);
++            return true;
++        }
++    }
++
++    private boolean scrolled(final double x, final double y, final double horizontal, final double vertical) {
 +        for (final NativeInput input : this.inputs.values()) {
 +            if (input instanceof MultilineInput && input.widget().mouseScrolled(x, y, horizontal, vertical)) return true;
 +        }
@@ -11791,8 +11849,7 @@ index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94
 +        return true;
 +    }
 +
-+    @Override
-+    public boolean mouseClicked(final MouseButtonEvent event, final boolean doubleClick) {
++    private boolean clicked(final MouseButtonEvent event, final boolean doubleClick) {
 +        if (this.controller.inputs() != null && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 +            for (final var draw : this.draws((int) event.x(), (int) event.y()).reversed()) {
 +                final var box = draw.box();
@@ -11825,8 +11882,7 @@ index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94
 +        return super.mouseClicked(event, doubleClick);
 +    }
 +
-+    @Override
-+    public boolean mouseDragged(final MouseButtonEvent event, final double deltaX, final double deltaY) {
++    private boolean dragged(final MouseButtonEvent event, final double deltaX, final double deltaY) {
 +        if (this.inputDrag != null && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 +            final InputDrag current = this.inputDrag;
 +            this.slide(current, event.x(), event.y());
@@ -11848,8 +11904,7 @@ index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94
 +        return super.mouseDragged(event, deltaX, deltaY);
 +    }
 +
-+    @Override
-+    public boolean mouseReleased(final MouseButtonEvent event) {
++    private boolean released(final MouseButtonEvent event) {
 +        if (this.inputDrag != null && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 +            this.inputDrag = null;
 +            this.setDragging(false);
@@ -11967,8 +12022,7 @@ index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94
 +        this.focusHistory.select(this.focusTargets().stream().filter(target -> target.box().node() == selected).findFirst().orElse(null));
 +    }
 +
-+    @Override
-+    public boolean keyPressed(final KeyEvent event) {
++    private boolean pressed(final KeyEvent event) {
 +        // Screen handles Escape before its focused child. Native editors first
 +        // leave editing mode and retain their selection, without closing the form.
 +        if (event.isEscape() && this.getFocused() instanceof SingleLineInput input && input.endEditing()) {
@@ -12033,13 +12087,6 @@ index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94
 +        this.refreshPendingScene();
 +        if (this.getFocused() instanceof Action action) this.reveal(this.root, action.node);
 +        else if (this.getFocused() instanceof NativeInput input) this.reveal(this.root, input.node());
-+    }
-+
-+    @Override
-+    public boolean charTyped(final CharacterEvent event) {
-+        final boolean result = super.charTyped(event);
-+        this.refreshFocusedControl();
-+        return result;
 +    }
 +
 +    private NativeUiLayout.Box keyboardScroll(final NativeUiLayout.Box box, final NativeUiScene.Node focused) {
@@ -12173,6 +12220,12 @@ index 0000000000000000000000000000000000000000..650a10d38814c4409efda11c615dab94
 +            for (final var control : currentControls) {
 +                final var previous = previousNodes.get(control.key);
 +                if (previous != null) replacements.put(previous, control.box.node());
++            }
++            // A refresh, such as a finished menu image download, must not end a held scrollbar drag.
++            if (this.drag != null) {
++                final var node = replacements.get(this.drag.node);
++                this.drag = node == null ? null : new Drag(node, this.drag.grab);
++                if (this.drag == null) this.setDragging(false);
 +            }
 +            this.focusHistory.remap(replacements, this.focusTargets());
 +        } catch (final RuntimeException error) {
@@ -21364,10 +21417,10 @@ index 0000000000000000000000000000000000000000..36fc175cf5e7d3c64a436a1c897e3cc1
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..360934c2c4722d8dba947ca19fd6df2667f830b3
+index 0000000000000000000000000000000000000000..5daec9ab56e67728fec6125d9a110e5a0b2b9e34
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneScreenInteractionTest.java
-@@ -0,0 +1,773 @@
+@@ -0,0 +1,881 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -21938,6 +21991,109 @@ index 0000000000000000000000000000000000000000..360934c2c4722d8dba947ca19fd6df26
 +    }
 +
 +    @Test
++    void arrowRevealOfAnUnrenderableHoverBranchFallsBackInsteadOfEscapingTheKeyHandler() throws Exception {
++        final var root = control("scroll_view", 100, 50, 0);
++        root.addProperty("scroll_view_port", "viewport");
++        root.addProperty("scroll_content", "items");
++        final var viewport = control("panel", 100, 50, 0);
++        viewport.addProperty("name", "viewport");
++        final var items = control("stack_panel", 100, 80, 0);
++        items.addProperty("name", "items");
++        final var toggles = new JsonArray();
++        for (int index = 0; index < 2; index++) {
++            final var toggle = control("toggle", 100, 40, 0);
++            toggle.addProperty("action", index);
++            toggle.addProperty("focus_enabled", true);
++            toggle.addProperty("unchecked_hover_control", "over");
++            // A pack can hide a control the screen cannot draw until the toggle is hovered or selected.
++            final var hover = control("unsupported_widget", 100, 40, 0);
++            hover.addProperty("name", "over");
++            hover.addProperty("visible", false);
++            final var states = new JsonArray();
++            states.add(hover);
++            toggle.add("children", states);
++            toggles.add(toggle);
++        }
++        items.add("children", toggles);
++        final var content = new JsonArray();
++        content.add(items);
++        viewport.add("children", content);
++        final var children = new JsonArray();
++        children.add(viewport);
++        root.add("children", children);
++        final var envelope = new JsonObject();
++        envelope.addProperty("format", 1);
++        envelope.add("root", root);
++        final var controller = new Controller(NativeUiController.Activation.STAY, NativeUiScene.parse(envelope.toString(), Set.of()).root());
++        controller.recordFailures = true;
++        withScreen(controller, (game, screen) -> {
++            screen.setFocused(screen.getChildAt(10, 10).orElseThrow());
++            // Selecting the partly hidden second toggle scrolls it into view and reflows its hover branch.
++            assertTrue(assertDoesNotThrow(() -> screen.keyPressed(new KeyEvent(InputConstants.KEY_DOWN, 0, 0))));
++            assertEquals(1, controller.failures.size());
++            assertTrue(controller.failures.getFirst().getMessage().contains("unsupported_widget"));
++            assertTrue(controller.responses.isEmpty());
++        });
++    }
++
++    @Test
++    void scrollbarDragContinuesAcrossASceneRefresh() throws Exception {
++        final var items = named(control("stack_panel", 192, 400, 0), "items");
++        final var buttons = new JsonArray();
++        for (int index = 0; index < 4; index++) {
++            final var button = control("button", 192, 100, 0);
++            button.addProperty("action", index);
++            buttons.add(button);
++        }
++        items.add("children", buttons);
++        final var thumb = named(control("scrollbar_box", 8, 16, 0), "thumb");
++        thumb.addProperty("draggable", "vertical");
++        final var track = named(control("scroll_track", 8, 100, 0), "track");
++        track.add("children", children(thumb));
++        final var bar = named(control("panel", 8, 100, 0), "bar");
++        bar.add("children", children(track));
++        final var viewport = named(control("panel", 192, 100, 0), "viewport");
++        viewport.add("children", children(items));
++        final var stack = named(control("stack_panel", 200, 100, 0), "stack");
++        stack.addProperty("orientation", "horizontal");
++        stack.add("children", children(viewport, bar));
++        final var root = named(control("scroll_view", 200, 100, 0), "view");
++        root.addProperty("scroll_content", "items");
++        root.addProperty("scroll_view_port", "viewport");
++        root.addProperty("scrollbar_track", "track");
++        root.addProperty("scrollbar_box", "thumb");
++        root.add("children", children(stack));
++        final var envelope = new JsonObject();
++        envelope.addProperty("format", 1);
++        envelope.add("root", root);
++        final var controller = new Controller(NativeUiController.Activation.STAY, NativeUiScene.parse(envelope.toString(), Set.of()).root());
++        controller.replaceRootOnRefresh = true;
++        withScreen(controller, (game, screen) -> {
++            assertTrue(screen.mouseClicked(event(196, 10), false));
++            // A finished menu image download refreshes the scene while the pointer still holds the thumb.
++            final var refresh = NativeUiSceneScreen.class.getDeclaredMethod("refreshScene");
++            refresh.setAccessible(true);
++            refresh.invoke(screen);
++            assertEquals(1, controller.refreshes);
++            assertTrue(screen.mouseDragged(event(196, 90), 0, 80));
++            assertTrue(screen.mouseReleased(event(196, 90)));
++            assertTrue(screen.mouseClicked(event(50, 50), false));
++            assertEquals(List.of(3), controller.responses);
++        });
++    }
++
++    private static JsonObject named(final JsonObject control, final String name) {
++        control.addProperty("name", name);
++        return control;
++    }
++
++    private static JsonArray children(final JsonObject... controls) {
++        final var result = new JsonArray();
++        for (final var control : controls) result.add(control);
++        return result;
++    }
++
++    @Test
 +    void retainedFormRefreshKeepsMovingAndCompletedAnimationsButNewScreensStartFresh() throws Exception {
 +        final var animated = control("button", 20, 20, 0);
 +        animated.addProperty("name", "moving_action");
@@ -22108,6 +22264,8 @@ index 0000000000000000000000000000000000000000..360934c2c4722d8dba947ca19fd6df26
 +        private List<NativeUiScene.Node> validated = List.of();
 +        private int refreshes, cancels;
 +        private boolean current = true;
++        private boolean recordFailures;
++        private final List<RuntimeException> failures = new ArrayList<>();
 +
 +        private Controller(final Activation activation) { this(activation, NativeUiSceneScreenInteractionTest.root()); }
 +        private Controller(final Activation activation, final NativeUiScene.Node root) {
@@ -22126,7 +22284,10 @@ index 0000000000000000000000000000000000000000..360934c2c4722d8dba947ca19fd6df26
 +        }
 +        @Override public void cancel() { this.cancels++; }
 +        @Override public boolean clearDialog() { return this.dialog; }
-+        @Override public void failed(final RuntimeException error) { throw error; }
++        @Override public void failed(final RuntimeException error) {
++            if (!this.recordFailures) throw error;
++            this.failures.add(error);
++        }
 +        @Override public void refresh() {
 +            this.refreshes++;
 +            if (this.replaceRootOnRefresh) this.root = copy(this.root);
