@@ -1,31 +1,25 @@
 ## Evidence
 
-Mojang's [Player Auth Input changelog](https://mojang.github.io/bedrock-protocol-docs/changelog/legacy/entries/changelog-776-1-14-25/) defines local left as negative X and right as positive X. The existing `MathUtil` expression sends the opposite signs while setting the matching direction flags. This change makes the vector agree with those flags.
+Native Bedrock adds every held direction and then normalizes the move vector, so opposing keys cancel on each axis. The current `MathUtil` expression gives Left over Right and Up over Down precedence instead. This change replaces that precedence with cancellation and keeps the existing signs: Left is +X and Up is +Y.
 
-This was previously discussed in [ViaBedrock #429](https://github.com/ViaVersionAddons/ViaBedrock/pull/429). That PR's testing did not show that the sign change reduces server movement corrections, so this PR makes no such claim. It is a protocol consistency correction.
+The Bedrock 1.26.60.5 client (`Minecraft.Windows.exe`, SHA-256 `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`) shows both rules:
 
-Matching Bedrock 1.26.51.1 executable inspection identifies the native input calculator at `0x1404495e0`.
-It adds each physical direction independently, then normalizes the result before applying input slowdown.
-Opposing directions cancel on each axis.
-Core now follows that calculation instead of giving one direction precedence.
-The input flags retain both held keys.
+- The input calculator at `0x140493140` builds X as `bit15 - bit16` and Y as `bit13 - bit14` from the mask table at `0x14f07eb00`, then normalizes the sum.
+- Its diagonal table adds `(+1, +1)` for UpLeft and `(-1, +1)` for UpRight.
+- The auth-input fill helper at `0x147704a90` maps those MoveInput bits to wire flags 10 (Up), 11 (Down), 12 (Left) and 13 (Right).
+
+Java's raw input uses the same signs, so the move vector and the raw move vector agree.
+
+[ViaBedrock #429](https://github.com/ViaVersionAddons/ViaBedrock/pull/429) proposed inverting X, based on the 1.14.25 auth-input changelog. The 1.26.60.5 client does not invert it, so this PR keeps upstream's signs.
 
 ## Review focus
 
-Check the local X sign against Mojang's documented input vector convention.
-Check cancellation on both axes before normalization and scaling.
-The change does not alter input flag IDs.
+Check that opposing keys cancel on both axes before normalization and scaling. The signs and input flag IDs do not change.
 
 ## Testing
 
 The patch applies alone to the pinned upstream base with `bun run pr check viabedrock --patch 0004-correct-strafing-axes.patch`.
 
-The isolated checkout passed `./gradlew --no-daemon test checkstyleMain checkstyleTest`. Gradle reported `test NO-SOURCE`; this standalone patch adds no runnable test source.
+The full-stack `MathUtilMovementTest` covers all sixteen direction combinations and six input scales. It lives in patch 0092, which introduces the float input-scale API.
 
-The full-stack `MathUtilMovementTest` covers all sixteen physical direction combinations and six input scales.
-The test resides in patch 0092 because that patch introduces the float input-scale API.
-Live direct and ViaProxy captures verify eight combinations against the matching native calculation.
-All 318 comparable frames match exactly across both routes.
-Both recordings reach join and spawn with protocol 2193.
-The complete build passes 16 converter, 657 core, and 584 add-on test cases, with 133 skips and no failures or errors.
-Strict BDS also accepted the preceding incorrect vectors, so server acceptance alone does not prove this behavior.
+No native packet capture contains a strafing frame yet, so the sign rests on the static evidence above.
