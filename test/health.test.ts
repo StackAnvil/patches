@@ -98,6 +98,9 @@ test("offline health rejects a prerequisite file that is not in its project's se
 });
 
 test("upstream inspection recognizes equivalent patches and rehearses updates without touching editing checkouts", async () => {
+  // Keep the developer's global Git config, such as commit signing, out of the fixture and clones.
+  const globalConfig = process.env["GIT_CONFIG_GLOBAL"];
+  process.env["GIT_CONFIG_GLOBAL"] = "/dev/null";
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-health-git-"));
   try {
     const upstream = join(directory, "upstream");
@@ -196,6 +199,8 @@ test("upstream inspection recognizes equivalent patches and rehearses updates wi
     expect(invalid.pinnedReplay).toBe("failed");
     expect(invalid.errors).toHaveLength(1);
   } finally {
+    if (globalConfig === undefined) delete process.env["GIT_CONFIG_GLOBAL"];
+    else process.env["GIT_CONFIG_GLOBAL"] = globalConfig;
     await rm(directory, { recursive: true, force: true });
   }
 }, 30_000);
