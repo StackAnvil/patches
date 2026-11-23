@@ -62,6 +62,7 @@ It reads the real cached crafting grid, hotbar, inventory, and cursor.
 The acknowledgment retains this model and its captured search policy.
 Item requests still require the acknowledged container and its generation.
 A workbench model belongs to its exact container generation.
+An unpositioned player inventory uses the fallback crafting context.
 
 `NativePlayerRecipeState` advances the retained collections and refreshes them when sources, recipes, unlocks, rules, or preferences change.
 Catalog replacement refreshes source collections without reconstructing the backend or replacing its query and selected output.
@@ -81,6 +82,19 @@ Keep the complete creative catalog, player search source, and category collectio
 Search admission uses the connection's native item definitions and category membership.
 Preserve runtime identity, variants, duplicates, and order.
 Do not substitute Java fallback items or an empty catalog.
+
+In Bedrock 1.26.60.5, primary click on a Creative catalog item takes a full stack into an empty cursor or discards the entire held stack.
+Secondary click takes one item into an empty cursor or discards one held item.
+Shift-left-click and Shift-right-click place a full stack in inventory without changing the cursor.
+Bulk placement merges existing stacks before filling empty hotbar and main-inventory slots, then stops at the available capacity.
+A full inventory accepts the input without an inventory request.
+Unchanged Java Creative slot echoes preserve the existing native stack and network ID.
+Tab and layout controls use the target inventory indices.
+
+The Creative catalog-only toolbar binds Shift-left-click and Shift-right-click to full-stack destruction.
+The action preserves the cursor, requires a current acknowledged opening, and leaves empty slots unchanged.
+Inventory-only and recipe-book layouts use the authored quick-move command to preserve an occupied cursor during stack transfer.
+Backends without the separate destruction capability restore ordinary controls before item changes or requests.
 
 Retain recipes that require a crafting table in the player catalog.
 Evaluate search, unlocks, ingredient availability, and output availability in their owning stages.
@@ -115,12 +129,26 @@ The add-on owns input delivery and presentation over authoritative slots and cur
 Keep player destinations, offhand permissions, item locks, and creative actions explicit.
 A fallback acknowledgment must not consume a newer menu's request.
 
+Storage bars read a native weight snapshot independently of Java bundle contents.
+Unknown storage snapshots restore ordinary controls.
+Player and workbench screens route desktop bundle insertion and default extraction through the native input transport, with the bundle in either the cursor or the clicked slot.
+Retained bundle navigation uses padded display cells. Directional callbacks stop at row edges, while previous and next callbacks wrap over item cells.
+A separate optional channel carries selected-cell extraction against the published source snapshot. Core resolves the physical slot and rejects padding, overflow labels, and stale contents.
+Bundle hover survives temporary source removal and returns when the source becomes available, without another pointer event.
+Operation sounds follow local prediction through current native resources and captions. Each attempt plays once.
+Stale commands, locally unsuccessful extraction, and a later server error play nothing.
+BDS rejects a bundle command with status 49 and no container data. Batch reconciliation restores the predicted state without disconnecting.
+Cooking uses the same transfer owner with its [complete source contract](native-cooking-actions.md).
+
 Retain the latest local search edit within its connection before waiting for a command reply.
 Closing a screen retires its commands but preserves unsent text and explicit clearing.
 A replacement presentation submits that text with its own opening, generation, revision, and request sequence.
 Disconnect clears the client's retained edit.
+Each opening starts with a fresh recipe model and no selected output.
+Creative search survives Overworld and Nether transitions and clears after a disconnect.
 In Bedrock 1.26.60.5, Escape first removes the search highlight. A second Escape closes the inventory.
 Typing after Escape or a blank-area click resumes editing. Selecting another recipe or inventory slot stops search input.
+Returning to search restores text input without closing the inventory.
 Retain the editor and its selection through screen rebuilds, viewport changes, and GUI-scale changes.
 An inactive editor must stay inactive after opening or resizing.
 An authored search hover temporarily admits text without selecting the editor.
@@ -153,7 +181,6 @@ The previews cover empty crafting slots. Real items and active drag previews tak
 Search edits preserve the previews. Closing and reopening clears them.
 Candidate selection uses current ingredient allocations and the native priority order.
 Tagged ingredient previews prefer a wood family from the hotbar and inventory, with oak as the default.
-Exact fallback variant order and complete native pixels remain unverified.
 A workbench recipe Shift-click uses `CraftRecipeAuto` with explicit ingredient descriptors, followed by results, consumption, and placement actions.
 Core plans this request for shaped and shapeless recipes from their server-supplied results.
 The planner uses the first eligible ingredient allocation.
@@ -205,6 +232,11 @@ Installed direct and ViaProxy controls match the native craft requests and their
 The controls cover right-click, linked Shift-click requests, returned containers, full inventory, partial bottle stacks, and retained output after reopening.
 
 Admit an authored player screen only when its required collections and controls are available.
+The default player and workbench graphs resolve real slots, recipe rows, and local Help views.
+Survival Help opens Your First Craft. Creative Help opens the Encyclopedia at Creative Mode.
+Back and Escape from Help retain the opening, search, recipe sources, and carried stack.
+Inactive item icons use separate lighting and opacity. The default disabled light multiplier is 0.25.
+Text channels use native byte truncation and clamping, including opacity.
 The shared UI renderer supports the local player portrait and separate body/head rotations.
 Portrait rendering alone does not establish a complete native inventory.
 Keep controller callbacks, recipe availability, and installed-model publication separate from catalog construction.
@@ -219,82 +251,12 @@ Use the [source guide](bedrock-development-sources.md) for versioned native refe
 
 ## Remaining limits
 
-Core publishes the retained player/workbench rows and full item previews in compressed snapshots.
-Commands bind to the opening, container generation, snapshot revision, and request sequence.
-The add-on buffers search edits while a command awaits its reply.
-Returning to search after a recipe click restores text input without closing the inventory.
-Search text survives player and workbench reopenings within a connection, including an explicit clear.
-Each opening starts with a fresh model and no selected output.
-Installed direct and ViaProxy controls cover retained text and matching rows, replacement queries, explicit clearing, and a server-accepted player craft.
-
-The default player and workbench graphs resolve real slots, recipe rows, and local Help views.
-Survival Help opens Your First Craft. Creative Help opens the Encyclopedia at Creative Mode.
-Screen tests retain the opening, search, recipe sources, and carried stack across Back and Escape.
-Installed direct and ViaProxy checks retain the Survival recipe layout, including unavailable rows, after reopening.
-Both routes return from Help with a carried stack and confirm its placement through server responses.
-Inactive item icons use separate lighting and opacity. The default disabled light multiplier is 0.25.
-Typed overrides and RGB conversion match selected native instruction controls. Complete material and pixel parity remain unverified.
-Storage bars read a native weight snapshot independently of Java bundle contents.
-Unknown storage snapshots restore ordinary controls.
-Player and workbench screens route selected desktop bundle gestures through the native input transport. Local regressions cover insertion and default extraction with either cursor or clicked roots, filled hover views, moved sources, stale snapshots, rejection rollback, and serialized search edits. Matching bundle replies route operation sounds through current native resources and captions. Stale commands and locally unsuccessful extraction attempts stay silent.
-Retained bundle navigation uses padded display cells. Directional callbacks stop at row edges, while previous and next callbacks wrap over item cells.
-A separate optional channel carries selected-cell extraction against the published source snapshot. Core resolves the physical slot and rejects padding, overflow labels, and stale contents.
-Physical input bindings remain unfinished. Installed selected-cell extraction remains unverified.
-Cooking uses the same transfer owner with its [complete source contract](native-cooking-actions.md).
-Installed direct and ViaProxy controls insert and extract iron ingots with the bundle in either the clicked slot or the cursor, retain a filled bundle after reopening, and reject insertion into a full bundle without an item request. Screen audits distinguish native commands from ordinary Java clicks. Sound audits observe matching level events and decoded PCM channel starts on each route.
-Bundle hover survives temporary source removal and returns when the source becomes available, without another pointer event.
-Source regressions cover independent selection and touch behavior. Screen regressions retain hover while a pending command blocks duplicate actions.
-Installed direct and ViaProxy controls each reject one ordinary pickup of a filled bundle through a loopback fault relay.
-The tooltip returns with the cursor still. An accepted retry and extraction retain all five ingots and the bundle.
-The native reference covers source validation and retained-hover update blocks in Bedrock 1.26.60.5, rather than its complete rejection path.
-Installed direct and ViaProxy controls also induce BDS rejection of native insertion and extraction commands.
-Each route accepts both retries and retains five ingots and the bundle. The cursor stays still through both rollbacks.
-BDS status 49 omits container data. Batch reconciliation preserves this error shape and restores predicted state without disconnecting.
-Wire-decoded regressions also cover crafting rejection and accepted predecessors in a partially rejected batch.
-Operation sounds follow local prediction. Each attempt plays once, and the later server error adds no playback.
-Native wire grouping, larger rejected bundle plans, audible comparison, exact timing, touch and retained detail gestures remain unfinished.
-The official client's complete rejection path also remains unverified.
-Complete bundle controller and rendering parity also remain unfinished.
-Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands also restore ordinary controls.
-The Creative catalog-only toolbar binds Shift-left-click and Shift-right-click to full-stack destruction.
-The action preserves the cursor, requires a current acknowledged opening, and leaves empty slots unchanged.
-Inventory-only and recipe-book layouts use the authored quick-move command to preserve an occupied cursor during stack transfer.
-Backends without the separate destruction capability restore ordinary controls before item changes or requests.
-Installed direct and ViaProxy controls confirm destruction and occupied-cursor transfer through successful server responses and retained inventory after reopening.
-Installed direct and ViaProxy controls retain the complete 1,980-item catalog from a local protocol-2225 server.
-Tab and layout controls use the target inventory indices.
-Both routes search for rails and place a server-accepted stack of 64 in the hotbar.
-
-Official Bedrock 1.26.60.5 controls establish the Creative catalog pointer actions.
-Primary click takes a full stack into an empty cursor or discards the entire held stack.
-Secondary click takes one item into an empty cursor or discards one held item.
-Shift-left-click and Shift-right-click place a full stack in inventory without changing the cursor.
-Bulk placement merges existing stacks before filling empty hotbar and main-inventory slots, then stops at the available capacity.
-A full inventory accepts the input without an inventory request.
-
-Unchanged Java Creative slot echoes preserve the existing native stack and network ID.
-Installed direct and ViaProxy controls confirm these pointer, capacity, and reopening cases through successful server responses.
-
-Recipe families beyond the captured plank, cake, and honey controls, recipes with more than two outputs, and complete installed native parity remain unfinished.
-Bedrock 1.26.60.5 controls retain Creative search through Overworld/Nether transitions in local worlds and on an owned BDS 1.26.60.6 server.
-Installed direct and ViaProxy controls match this multiplayer retention.
-Native and both Java routes clear search after disconnecting and reconnecting in the same game process. Local Bedrock also clears it after world exit and re-entry.
-The native multiplayer control uses a transport/authentication relay with blob caching disabled. Inventory and movement packets remain unchanged. The proxy control enters its query through normal UI paste.
-Server transfers, other world changes, and complete search input parity remain unverified.
-Official Bedrock 1.26.60.5/BDS 1.26.60.6 controls delay the initial open acknowledgment by four seconds on protocol 2225.
-They establish visible admission, repeated input, movement, and cancellation through Escape or chat.
-Rebuilt direct and ViaProxy controls retain the world during that same delay in Survival, Creative, and workbench openings.
-Both routes preserve the pending opening through repeated E and close abandoned native containers after cancellation.
-Native model constructor timing and frame-level population timing remain unverified.
-An unpositioned player inventory uses the fallback crafting context.
-Native model-position initialization and arbitrary custom component admission remain unverified.
-The original inventory-background, rollback, food-use, and locator-bar reports remain unresolved.
-Native registry probes and local model tests do not establish complete live inventory parity.
-Installed direct and ViaProxy controls cover complete chest, hopper, brewing, and large-chest hosts, including exits and the close button.
-Both routes retain 64 logs after server-accepted pickup and return requests.
-Damage controls cover accepted and excluded causes, gated events, a false inventory policy, and remote actors.
-Native Bedrock 1.26.60.5 runtime controls establish the pending-state and counter order for server-delivered hurt events.
-Client-predicted damage, the live producer for actor event 81, and exact frame timing remain unverified.
-The historic hurt-and-heal nonclosure with a 5.6-millisecond packet gap remains unexplained.
-Text channels use native byte truncation and clamping, including opacity.
-Complete screen pixels remain unverified.
+- Complete E-key and workbench screen pixels, inactive item materials, and the exact fallback ingredient variant order are unverified.
+- Recipe families beyond the captured plank, cake, and honey controls, and recipes with more than two outputs, are unverified.
+- Unsupported visible Help glyphs, recipe auxiliary actions, and held-selection commands restore ordinary controls.
+- Selected-cell bundle extraction has no physical input binding and no installed control.
+- Native bundle wire grouping, larger rejected bundle plans, touch and retained detail gestures, audible output, exact timing, and complete controller and rendering parity are unfinished. The official client's complete bundle rejection path is unverified.
+- Search retention across server transfers and other world changes, and complete search input parity, are unverified.
+- Native model constructor timing, frame-level population, model-position initialization, and arbitrary custom component admission are unverified.
+- Client-predicted damage, the live producer for actor event 81, and exact hurt-policy frame timing are unverified. A historic hurt-and-heal case with a 5.6-millisecond packet gap that did not close the screen is unexplained.
+- Native registry probes and local model tests do not establish complete live inventory parity.
