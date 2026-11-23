@@ -38,6 +38,17 @@ medium boundaries and the observed dragon cap. Spatial biome blending,
 directional sunrise tint, engine-specific vanilla rules, exact transitions,
 End sky motion/sampling, fluids and weather still need native comparisons.
 
+Native 1.26.60.5 caps final fog by a distance D = R - margin, where R is
+the render distance in blocks (chunks << 4 at 0x144e097c3 and 0x1453ba2ff)
+and the margin is R/16 up to 64 blocks, 8 up to 80 and 16 above
+(0x14535f070). Its scale factor is the frame constant 1.0 written at
+0x144e0981b and 0x144e098d8. Render-relative settings multiply D, the end
+is clamped to 0..D and the start to D - clamp((D - 40) / 2, 4, 96)
+(0x1453714a0, applied at 0x1453743c7). The End dragon's 0..100 override
+(0x145390137) passes the same clamp, so a 5-chunk view ends at 72 blocks.
+A stricter end cap at 0x1453714a0 depends on a camera-block flag set at
+0x1453762e4, likely a submerged camera, and remains unmodeled.
+
 BREAKING CHANGE: The fog receiver requires the matching core payload version 2.
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -327,10 +338,10 @@ index 0000000000000000000000000000000000000000..09d62f3ed404ff047bfef746a6e22559
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..729644bf7b7bbe0208dbb53ad3331a9ec85288f5
+index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba34d2c5340
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,137 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -446,10 +457,23 @@ index 0000000000000000000000000000000000000000..729644bf7b7bbe0208dbb53ad3331a9e
 +    static @Nullable Range range(final @Nullable Dimension dimension, final boolean livingDragon,
 +                                 final @Nullable FogState.Distance setting, final float renderDistance) {
 +        if (dimension == null) return null;
-+        // Native 1.26.60.5 uniforms establish 0..100 blocks, capped by the effective render distance.
-+        // The dragon replaces distances even without a command, while the ordinary color path remains intact.
-+        if (dimension == Dimension.END && livingDragon) return new Range(0, Math.min(100, renderDistance));
-+        return setting == null ? null : new Range(setting.start(renderDistance), setting.end(renderDistance));
++        final float distance = fogDistance(renderDistance);
++        // The dragon replaces distances with 0..100 even without a command, before the render distance cap.
++        // The ordinary color path remains intact.
++        if (dimension == Dimension.END && livingDragon) return cap(0, 100, distance);
++        return setting == null ? null : cap(setting.start(distance), setting.end(distance), distance);
++    }
++
++    /** Native fog reaches the render distance in blocks less a margin of 1/16, 8 or 16 blocks. */
++    static float fogDistance(final float renderDistance) {
++        final float margin = renderDistance <= 64 ? renderDistance / 16F : renderDistance <= 80 ? 8F : 16F;
++        return renderDistance - margin;
++    }
++
++    /** Native final fog keeps the end within 0..distance and starts at least 4 to 96 blocks before it. */
++    private static Range cap(final float start, final float end, final float distance) {
++        final float startLimit = distance - Mth.clamp((distance - 40F) * 0.5F, 4F, 96F);
++        return new Range(Math.min(start, startLimit), Mth.clamp(end, 0F, distance));
 +    }
 +
 +    record Range(float start, float end) {
@@ -578,10 +602,10 @@ index 57b1267c042fa2b628a9c81ff8285e5c74a3dae1..01cc7b0a07dbf3cf785a80d1c2de5801
      "features.render.MixinEntityRenderDispatcher",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..cee16d46e0ce999b56140ec2a8af8fe60cce97c5
+index 0000000000000000000000000000000000000000..f4589e76f0237b57d3161ca4ac15ab487d99ac21
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,97 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -632,7 +656,8 @@ index 0000000000000000000000000000000000000000..cee16d46e0ce999b56140ec2a8af8fe6
 +
 +    @Test
 +    void livingEndDragonCapsDistanceWithOrWithoutFogCommands() {
-+        for (final var observed : Map.of(80F, 80F, 192F, 100F).entrySet()) {
++        // A 5-chunk view leaves 72 fog blocks, below the dragon's 100-block end.
++        for (final var observed : Map.of(80F, 72F, 192F, 100F).entrySet()) {
 +            final float renderDistance = observed.getKey();
 +            final var expected = new BedrockFog.Range(0, observed.getValue());
 +            assertEquals(expected, BedrockFog.range(Dimension.END, true, null, renderDistance));
@@ -642,10 +667,29 @@ index 0000000000000000000000000000000000000000..cee16d46e0ce999b56140ec2a8af8fe6
 +                new FogState.Distance(-0.25F, 0.75F, 0, true)
 +            }) {
 +                assertEquals(expected, BedrockFog.range(Dimension.END, true, command, renderDistance));
-+                assertEquals(new BedrockFog.Range(command.start(renderDistance), command.end(renderDistance)),
-+                    BedrockFog.range(Dimension.END, false, command, renderDistance));
 +            }
 +            assertNull(BedrockFog.range(Dimension.END, false, null, renderDistance));
++        }
++    }
++
++    @Test
++    void fogSettingsScaleByAndStayWithinTheNativeFogDistance() {
++        final var relative = new FogState.Distance(0.5F, 1, 0, true);
++        final var farFixed = new FogState.Distance(300, 1024, 0, false);
++        final var nearFixed = new FogState.Distance(0, 32, 0, false);
++        // Render distance in blocks -> {relative, far fixed} ranges; margins are 1/16, 8 and 16 blocks.
++        final Map<Float, BedrockFog.Range[]> observed = Map.of(
++            32F, new BedrockFog.Range[]{new BedrockFog.Range(15, 30), new BedrockFog.Range(26, 30)},
++            64F, new BedrockFog.Range[]{new BedrockFog.Range(30, 60), new BedrockFog.Range(50, 60)},
++            80F, new BedrockFog.Range[]{new BedrockFog.Range(36, 72), new BedrockFog.Range(56, 72)},
++            192F, new BedrockFog.Range[]{new BedrockFog.Range(88, 176), new BedrockFog.Range(108, 176)},
++            512F, new BedrockFog.Range[]{new BedrockFog.Range(248, 496), new BedrockFog.Range(300, 496)});
++        for (final var entry : observed.entrySet()) {
++            final float renderDistance = entry.getKey();
++            assertEquals(entry.getValue()[0], BedrockFog.range(Dimension.OVERWORLD, false, relative, renderDistance));
++            assertEquals(entry.getValue()[1], BedrockFog.range(Dimension.OVERWORLD, false, farFixed, renderDistance));
++            assertEquals(new BedrockFog.Range(0, Math.min(32, entry.getValue()[1].end())),
++                BedrockFog.range(Dimension.END, false, nearFixed, renderDistance));
 +        }
 +    }
 +

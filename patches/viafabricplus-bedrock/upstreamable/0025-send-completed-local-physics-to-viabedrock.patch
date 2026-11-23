@@ -1081,6 +1081,42 @@ while the old add-on reported -0.0098. BDS then corrected the add-on
 correction after such a teleport to both clients, because it applies
 gravity one tick earlier; that correction is unchanged.
 
+Apply the ground state of a near MovePlayer command. Native 1.26.60.5 command apply 0x1410ea600 always passes the packet onGround (0x1410ea691 movzx edx,[cmd+0x59]) to OnGround set/erase 0x1410e9680, so the replayed frame starts from the server's ground state instead of the frame's own value. ViaBedrock now sends that value with the teleport correction.
+
+Push with one liquid per tick. Native 1.26.60.5 push function 14ad2c200
+first collects lava cells from the lava body, inset 0.1 on X and Z and
+0.4 on Y. It collects water from the 0.001/0.401 body only when no lava
+cell matched, then applies one current: 0.014 for water or 0.0035 for
+lava (table 14f0a86e0). Java collected both liquids from the water body
+and pushed twice. The push also needs liquid_depth != 0 in a collected
+cell, or in a same-liquid outward neighbor of an edge cell (collector
+14ad354e0 edge flags), so still liquid alone does not push. The collector
+visits Y, then Z, then X, and the add-on sums flows in that order.
+
+End local use when the used hand's inventory slot changes, even to an
+identical stack. Native 1.26.60.5 Actor::tick (0x1402c09b0) compares the
+container and slot recorded at the start of use (+0x7f0, +0x7f4) with the
+carried container and selected slot at 0x1402c197b..0x1402c1993 and calls
+stopUsingItem 0x1402c3f70 on a mismatch; the offhand keeps container 0x77.
+Comparing only the native definition let Java continue its eating animation
+from another slot that holds the same food while the server never fed the
+player. Record the slot where use starts and stop on a change. Holding use
+then starts a fresh cycle from the new slot.
+
+Ride a client-predicted Bedrock horse, donkey, mule, skeleton horse or
+zombie horse with native step height and yaw. Native 1.26.60.5 horse
+setup 0x149a835a0 stores step heights {0.5625, 1.0625, 0.5625}.
+Selector 0x142d1b310 picks 1.0625 for a WASD-controlled ridden horse and
+0.5625 on a block with legacy flag 0x40000000. The native jump factor
+0x142c2db70 uses the same block probe and flag for its 0.6 multiplier,
+so map the flag to Java's reduced jump factor (honey). Java used the
+attribute raised to at least 1.0. Native ground rotation 0x1484edbc0,
+gated by SetVehicleInputIntent 0x14b31e950 for a locally simulated
+rider, adds wrap(riderYaw - yaw) * max((45 - min(|d|, 45)) / 90, 0.18)
+* 0.7 to the horse yaw each tick instead of snapping to the rider yaw.
+Both changes use the same gate as the vehicle prediction sample, so
+camels, llamas and server-driven horses keep Java behavior.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index adde34af196c0411209255d462328f77b0125752..92d333c40059b2d490dde8ef7a39c24c8e3375f0 100644
 --- a/build.gradle.kts
@@ -1860,26 +1896,40 @@ index 0000000000000000000000000000000000000000..aaf488739cc705c0fbb069ecdd3518b5
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java
-index c6448537b3ed73a75c06df4c0da72a4c1e041a47..62bc850daf50603063281f1843afa08ef444e618 100644
+index c6448537b3ed73a75c06df4c0da72a4c1e041a47..977226eec9b9598b369a4c349d166a81b609e021 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java
-@@ -26,8 +26,12 @@ import com.llamalad7.mixinextras.expression.Expression;
+@@ -26,18 +26,45 @@ import com.llamalad7.mixinextras.expression.Expression;
  import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
  import com.llamalad7.mixinextras.sugar.Local;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
++import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
++import net.minecraft.core.BlockPos;
 +import net.minecraft.tags.FluidTags;
 +import net.minecraft.tags.TagKey;
++import net.minecraft.world.entity.Entity;
  import net.minecraft.world.entity.EntityFluidInteraction;
++import net.minecraft.world.level.Level;
 +import net.minecraft.world.level.material.Fluid;
  import net.minecraft.world.phys.AABB;
 +import net.raphimc.viabedrock.api.model.FluidCurrent;
++import org.spongepowered.asm.mixin.Final;
  import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
  import org.spongepowered.asm.mixin.injection.At;
  import org.spongepowered.asm.mixin.injection.Constant;
-@@ -38,6 +42,18 @@ import org.spongepowered.asm.mixin.injection.ModifyVariable;
++import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.ModifyConstant;
+ import org.spongepowered.asm.mixin.injection.ModifyVariable;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+ 
+ // Bedrock uses the pre 1.13 fluid handling, ViaFabricPlus' own injections already claim its targets so other ones are used
  @Mixin(EntityFluidInteraction.class)
  public abstract class MixinEntityFluidInteraction {
  
++    @Shadow @Final private Reference2ObjectMap<TagKey<Fluid>, EntityFluidInteraction.CurrentAccumulator> currentAccumulators;
++
 +    @ModifyVariable(method = "applyCurrentTo", at = @At("HEAD"), argsOnly = true, ordinal = 0)
 +    private double bedrockCurrentStrength(final double strength, @Local(argsOnly = true) final TagKey<Fluid> tag) {
 +        if (BedrockInputPermissions.isBedrockConnection()) {
@@ -1895,6 +1945,32 @@ index c6448537b3ed73a75c06df4c0da72a4c1e041a47..62bc850daf50603063281f1843afa08e
      @Definition(id = "fluidTop", local = @Local(type = double.class, name = "fluidTop"))
      @Definition(id = "box", local = @Local(type = AABB.class, name = "box"))
      @Definition(id = "minY", field = "Lnet/minecraft/world/phys/AABB;minY:D")
+@@ -61,6 +88,25 @@ public abstract class MixinEntityFluidInteraction {
+         }
+     }
+ 
++    // Native pushes with one liquid only: lava from its narrower body wins, and water flow is then ignored.
++    @Inject(method = "update", at = @At("RETURN"))
++    private void collectNativeCurrent(final Entity entity, final boolean ignoreCurrent, final CallbackInfoReturnable<Boolean> cir) {
++        final AABB waterBox;
++        if (!BedrockInputPermissions.isBedrockConnection() || ignoreCurrent || !cir.getReturnValueZ()
++                || (waterBox = entity.getFluidInteractionBox()) == null) {
++            return;
++        }
++        this.currentAccumulators.values().forEach(EntityFluidInteraction.CurrentAccumulator::reset);
++        final Level level = entity.level();
++        final BedrockFluidPhysics.CurrentContact contact = BedrockFluidPhysics.currentContact(level, entity.getBoundingBox(), waterBox);
++        final EntityFluidInteraction.CurrentAccumulator current = contact != null ? this.currentAccumulators.get(contact.fluid()) : null;
++        if (current != null) {
++            for (final BlockPos position : contact.cells()) {
++                current.accumulate(level.getFluidState(position).getFlow(level, position));
++            }
++        }
++    }
++
+     // Dropping the threshold skips the scaling of the current in shallow fluids
+     @ModifyConstant(method = "update", constant = @Constant(doubleValue = 0.4))
+     private double dontScaleCurrent(final double constant) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction_CurrentAccumulator.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction_CurrentAccumulator.java
 index b3be043116868c14f6234c9b62830cdb1a575eec..b81adbe91357a6602ef742feea22b2760268e5f7 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction_CurrentAccumulator.java
@@ -2364,10 +2440,10 @@ index 0000000000000000000000000000000000000000..32666b0656016d3e566f166c863c6621
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinHorsePhysicsState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinHorsePhysicsState.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fcfb1957355aacdba0496011a50b938d1343a6d2
+index 0000000000000000000000000000000000000000..9d9d3e418a8278e23388c799bef4177654fb5ff6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinHorsePhysicsState.java
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,76 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2375,13 +2451,19 @@ index 0000000000000000000000000000000000000000..fcfb1957355aacdba0496011a50b938d
 + */
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
 +
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.input.BedrockHorseMovement;
 +import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalState;
 +import com.viaversion.viafabricplus.bedrock.movement.replay.PhysicalStateAccess;
 +import net.minecraft.network.syncher.EntityDataAccessor;
++import net.minecraft.world.entity.LivingEntity;
 +import net.minecraft.world.entity.animal.equine.AbstractHorse;
++import net.minecraft.world.phys.Vec2;
 +import org.spongepowered.asm.mixin.Final;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
 +
 +import java.util.Objects;
 +import java.util.function.UnaryOperator;
@@ -2402,6 +2484,13 @@ index 0000000000000000000000000000000000000000..fcfb1957355aacdba0496011a50b938d
 +    @Shadow private float mouthAnim;
 +    @Shadow private float mouthAnimO;
 +    @Shadow @Final private static EntityDataAccessor<Byte> DATA_ID_FLAGS;
++
++    @WrapOperation(method = "tickRidden", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/animal/equine/AbstractHorse;getRiddenRotation(Lnet/minecraft/world/entity/LivingEntity;)Lnet/minecraft/world/phys/Vec2;"), require = 1, allow = 1)
++    private Vec2 easeNativeRiddenYaw(final AbstractHorse horse, final LivingEntity controller, final Operation<Vec2> original) {
++        final Vec2 rotation = original.call(horse, controller);
++        // Native eases a locally simulated rider's horse toward the rider yaw instead of snapping to it.
++        return BedrockHorseMovement.applies(horse) ? new Vec2(rotation.x, BedrockHorseMovement.easeYaw(horse.getYRot(), rotation.y)) : rotation;
++    }
 +
 +    @Override
 +    public void captureHorsePhysics(final PhysicalState.Builder state) {
@@ -2463,10 +2552,10 @@ index 0000000000000000000000000000000000000000..b6ee81c530ac895e371010e4b62107b5
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index cb89991c2e1cfb5c6714517e78994f7390d03fee..51d7940b9d0c8055a71003b7b7907f400d6bcf5d 100644
+index cb89991c2e1cfb5c6714517e78994f7390d03fee..94d5b1a256c0be4866a4b66c51d10eb86d9b77de 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,283 @@
+@@ -21,27 +21,298 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -2479,6 +2568,7 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..51d7940b9d0c8055a71003b7b7907f40
 +import com.llamalad7.mixinextras.sugar.Local;
 +import com.llamalad7.mixinextras.sugar.Share;
 +import com.llamalad7.mixinextras.sugar.ref.LocalDoubleRef;
++import com.viaversion.viafabricplus.bedrock.input.BedrockHorseMovement;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockUsedItem;
@@ -2493,11 +2583,13 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..51d7940b9d0c8055a71003b7b7907f40
 +import net.minecraft.client.player.LocalPlayer;
  import net.minecraft.core.Holder;
 +import net.minecraft.core.registries.Registries;
++import net.minecraft.world.InteractionHand;
  import net.minecraft.world.effect.MobEffect;
  import net.minecraft.world.effect.MobEffectInstance;
  import net.minecraft.world.effect.MobEffects;
 +import net.minecraft.world.entity.EquipmentSlot;
  import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.entity.animal.equine.AbstractHorse;
 +import net.minecraft.world.item.ItemStack;
 +import net.minecraft.world.item.enchantment.EnchantmentHelper;
 +import net.minecraft.world.item.enchantment.Enchantments;
@@ -2692,10 +2784,22 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..51d7940b9d0c8055a71003b7b7907f40
 +        cir.setReturnValue(new Vec3(nativeMotion.x(), nativeMotion.y(), nativeMotion.z()));
 +    }
 +
++    @Unique
++    private int viaFabricPlusBedrock$useSlot = -1;
++
++    @Inject(method = "startUsingItem", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/LivingEntity;useItem:Lnet/minecraft/world/item/ItemStack;", opcode = Opcodes.PUTFIELD), require = 1, allow = 1)
++    private void recordNativeUseSlot(final InteractionHand hand, final CallbackInfo ci) {
++        if ((Object) this instanceof LocalPlayer player) {
++            this.viaFabricPlusBedrock$useSlot = BedrockUsedItem.slot(hand, player.getInventory().getSelectedSlot());
++        }
++    }
++
 +    @WrapOperation(method = {"updatingUsingItem", "releaseUsingItem"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/world/item/ItemStack;isSameItem(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/ItemStack;)Z"))
 +    private boolean retainNativeUseIdentity(final ItemStack held, final ItemStack active, final Operation<Boolean> original) {
-+        return (Object) this instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()
-+                ? BedrockUsedItem.matches(held, active) : original.call(held, active);
++        return (Object) this instanceof LocalPlayer player && BedrockInputPermissions.isBedrockConnection()
++                ? BedrockUsedItem.continues(held, active, this.viaFabricPlusBedrock$useSlot,
++                        BedrockUsedItem.slot(player.getUsedItemHand(), player.getInventory().getSelectedSlot()))
++                : original.call(held, active);
 +    }
 +
 +    @WrapOperation(method = "completeUsingItem", at = @At(value = "INVOKE", target = "Ljava/lang/Object;equals(Ljava/lang/Object;)Z"))
@@ -2750,6 +2854,18 @@ index cb89991c2e1cfb5c6714517e78994f7390d03fee..51d7940b9d0c8055a71003b7b7907f40
      @Redirect(method = "getFluidFallingAdjustedMovement", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;isSprinting()Z"))
      private boolean changeFluidGravityCondition(final LivingEntity instance) {
          return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
+@@ -55,4 +326,11 @@ public abstract class MixinLivingEntity {
+         }
+     }
+ 
++    @ModifyReturnValue(method = "maxUpStep", at = @At("RETURN"))
++    private float useNativeRiddenHorseStep(final float original) {
++        // Java raises a player-ridden horse to at least one block. Native selects its own ridden step height.
++        return (Object) this instanceof AbstractHorse horse && BedrockHorseMovement.applies(horse)
++                ? BedrockHorseMovement.maxUpStep(horse) : original;
++    }
++
+ }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingPhysicsState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingPhysicsState.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..3cad3f3a81e545446723cd6b9af1d702e99bdb5d
@@ -4137,6 +4253,63 @@ index 0000000000000000000000000000000000000000..dceb8cc4a10b223f928d573844d18c63
 +        return true;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovement.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..48b336a3b7f6ead133c71a4418351df7f7c19529
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovement.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.world.entity.animal.equine.AbstractHorse;
++import net.minecraft.world.entity.animal.equine.Donkey;
++import net.minecraft.world.entity.animal.equine.Horse;
++import net.minecraft.world.entity.animal.equine.Mule;
++import net.minecraft.world.entity.animal.equine.SkeletonHorse;
++import net.minecraft.world.entity.animal.equine.ZombieHorse;
++
++/** Native ridden movement for a horse that the local player controls as a client-predicted Bedrock vehicle. */
++public final class BedrockHorseMovement {
++    static final float JUMP_REDUCED_STEP = 0.5625F;
++    static final float RIDDEN_STEP = 1.0625F;
++
++    private BedrockHorseMovement() {}
++
++    public static boolean applies(final AbstractHorse horse) {
++        return isNativeHorse(horse) && BedrockVehiclePredictions.predicts(horse);
++    }
++
++    static boolean isNativeHorse(final AbstractHorse horse) {
++        return horse instanceof Horse || horse instanceof Donkey || horse instanceof Mule
++                || horse instanceof SkeletonHorse || horse instanceof ZombieHorse;
++    }
++
++    /** The ridden step height, limited on blocks that also reduce the native jump factor. */
++    public static float maxUpStep(final AbstractHorse horse) {
++        final var level = horse.level();
++        final float here = level.getBlockState(horse.blockPosition()).getBlock().getJumpFactor();
++        final float below = level.getBlockState(horse.getBlockPosBelowThatAffectsMyMovement()).getBlock().getJumpFactor();
++        return (here == 1F ? below : here) < 1F ? JUMP_REDUCED_STEP : RIDDEN_STEP;
++    }
++
++    /** Move the horse yaw part of the way toward the rider yaw, as native ground rotation does each tick. */
++    public static float easeYaw(final float horseYaw, final float riderYaw) {
++        final float difference = wrapDegrees(riderYaw - horseYaw);
++        final float rate = Math.max((45F - Math.min(Math.abs(difference), 45F)) / 90F, 0.18F) * 0.7F;
++        return wrapDegrees(difference * rate + horseYaw);
++    }
++
++    private static float wrapDegrees(final float degrees) {
++        float wrapped = (degrees + 180F) % 360F;
++        if (wrapped < 0F) wrapped += 360F;
++        return wrapped - 180F;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java
 index 7b0f846de23c2b74bf9915321e9a2daf3e62f615..1578a6e021539c6b504addbe30a2d6b49005178b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java
@@ -5129,10 +5302,10 @@ index 0000000000000000000000000000000000000000..2f9f49a5297949f91bb86195bf9c8eff
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItem.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItem.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..8b10c88400ae11417e6c67f9a64dd434011b3689
+index 0000000000000000000000000000000000000000..e73dc6811538d3de732e08159835faa1f4220e99
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItem.java
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,35 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5143,6 +5316,8 @@ index 0000000000000000000000000000000000000000..8b10c88400ae11417e6c67f9a64dd434
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockItemMetadata;
 +import java.util.Objects;
 +import net.minecraft.core.component.DataComponents;
++import net.minecraft.world.InteractionHand;
++import net.minecraft.world.entity.player.Inventory;
 +import net.minecraft.world.item.ItemStack;
 +
 +/** Keeps a native use cycle attached to its definition, rather than its Java carrier. */
@@ -5155,13 +5330,23 @@ index 0000000000000000000000000000000000000000..8b10c88400ae11417e6c67f9a64dd434
 +                BedrockItemMetadata.get(held.get(DataComponents.CUSTOM_DATA)).identifier(),
 +                BedrockItemMetadata.get(active.get(DataComponents.CUSTOM_DATA)).identifier());
 +    }
++
++    /** Native also ends the cycle when its hand's inventory slot changes, even to an identical stack. */
++    public static boolean continues(final ItemStack held, final ItemStack active, final int useSlot, final int currentSlot) {
++        return useSlot == currentSlot && matches(held, active);
++    }
++
++    /** Returns the inventory slot that owns a hand's use cycle; the offhand ignores hotbar selection. */
++    public static int slot(final InteractionHand hand, final int selectedSlot) {
++        return hand == InteractionHand.OFF_HAND ? Inventory.SLOT_OFFHAND : selectedSlot;
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..61ad9d3845699833f260d4d1a09b235eddc041aa
+index 0000000000000000000000000000000000000000..ac5f4fbb5c2b017864f06bbaaee47626575b5b85
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,58 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5173,7 +5358,9 @@ index 0000000000000000000000000000000000000000..61ad9d3845699833f260d4d1a09b235e
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 +import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.minecraft.client.Minecraft;
 +import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.world.entity.Entity;
 +import net.raphimc.viabedrock.api.model.VehiclePrediction;
 +import net.raphimc.viabedrock.api.model.VehiclePredictionContext;
 +import org.jetbrains.annotations.Nullable;
@@ -5208,6 +5395,14 @@ index 0000000000000000000000000000000000000000..61ad9d3845699833f260d4d1a09b235e
 +            return null;
 +        }
 +        return SESSION.sample(player.connection, player, BedrockActorState.state(player.getVehicle().getUUID()), frame);
++    }
++
++    /** Whether the local player controls this entity as its client-predicted Bedrock vehicle. */
++    public static boolean predicts(final Entity vehicle) {
++        final LocalPlayer player = Minecraft.getInstance().player;
++        return player != null && player.getVehicle() == vehicle && BedrockInputPermissions.isBedrockConnection()
++                && BedrockActorState.supportsUniqueIds()
++                && SESSION.predicts(player.connection, player, BedrockActorState.state(vehicle.getUUID()), vehicle);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/FlightMovementPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/FlightMovementPayload.java
@@ -5478,10 +5673,10 @@ index 0000000000000000000000000000000000000000..1fe3266844fd398286c9dcd1ab06191a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSession.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSession.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..949adc60eb9fbfedd3ba32e5e9c66c9363c502f5
+index 0000000000000000000000000000000000000000..41ed1039e878625faf1e9ff81168f780db02b08d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSession.java
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,107 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -5540,8 +5735,31 @@ index 0000000000000000000000000000000000000000..949adc60eb9fbfedd3ba32e5e9c66c93
 +    }
 +
 +    @Nullable VehiclePrediction sample(final ClientPacketListener listener, final LocalPlayer player, final NativeActorMessage.Snapshot actor, final long frame) {
++        if (frame < 0 || frame <= this.lastFrame) {
++            return null;
++        }
++        final Entity mount = this.controlled(listener, player, actor);
++        if (mount == null) {
++            return null;
++        }
++        final Vec3 motion = mount.getDeltaMovement();
++        final Position3f position = finitePosition(mount.getX(), mount.getY(), mount.getZ());
++        final Position3f velocity = finitePosition(motion.x, motion.y, motion.z);
++        if (position == null || velocity == null || !player.level().hasChunkAt(BlockPos.containing(position.x(), position.y(), position.z()))) {
++            return null;
++        }
++        this.lastFrame = frame;
++        return new VehiclePrediction(frame, this.context, position, velocity);
++    }
++
++    /** Whether the local player's client-predicted Bedrock vehicle is this entity. */
++    boolean predicts(final ClientPacketListener listener, final LocalPlayer player, final NativeActorMessage.Snapshot actor, final Entity vehicle) {
++        return vehicle != null && this.controlled(listener, player, actor) == vehicle;
++    }
++
++    private @Nullable Entity controlled(final ClientPacketListener listener, final LocalPlayer player, final NativeActorMessage.Snapshot actor) {
 +        if (this.owner == null || this.owner != listener || this.context == null || this.context.vehicle() == null
-+                || frame < 0 || frame <= this.lastFrame || !player.isAlive() || player.isSpectator()) {
++                || !player.isAlive() || player.isSpectator()) {
 +            return null;
 +        }
 +        final Entity mount = player.getVehicle();
@@ -5558,14 +5776,7 @@ index 0000000000000000000000000000000000000000..949adc60eb9fbfedd3ba32e5e9c66c93
 +                || mount instanceof AbstractHorse && (!actor.flags().contains(ActorFlags.TAMED) || !actor.flags().contains(ActorFlags.SADDLED))) {
 +            return null;
 +        }
-+        final Vec3 motion = mount.getDeltaMovement();
-+        final Position3f position = finitePosition(mount.getX(), mount.getY(), mount.getZ());
-+        final Position3f velocity = finitePosition(motion.x, motion.y, motion.z);
-+        if (position == null || velocity == null || !player.level().hasChunkAt(BlockPos.containing(position.x(), position.y(), position.z()))) {
-+            return null;
-+        }
-+        this.lastFrame = frame;
-+        return new VehiclePrediction(frame, this.context, position, velocity);
++        return mount;
 +    }
 +
 +    private static @Nullable Position3f finitePosition(final double x, final double y, final double z) {
@@ -5870,10 +6081,10 @@ index 0000000000000000000000000000000000000000..2ecdd67a594c6ecadad1268066d5ffe4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c9db0444d656860ab1811e02f68050ef1d890b1c
+index 0000000000000000000000000000000000000000..2dc545825314093a53c0aeb337ed7ce9fe306a0d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,171 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -5899,12 +6110,18 @@ index 0000000000000000000000000000000000000000..c9db0444d656860ab1811e02f68050ef
 +
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.tags.FluidTags;
++import net.minecraft.tags.TagKey;
 +import net.minecraft.util.Mth;
 +import net.minecraft.world.level.BlockGetter;
 +import net.minecraft.world.level.material.FlowingFluid;
++import net.minecraft.world.level.material.Fluid;
 +import net.minecraft.world.level.material.FluidState;
 +import net.minecraft.world.phys.AABB;
 +import net.minecraft.world.phys.Vec3;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.ArrayList;
++import java.util.List;
 +
 +public final class BedrockFluidPhysics {
 +
@@ -5971,6 +6188,55 @@ index 0000000000000000000000000000000000000000..c9db0444d656860ab1811e02f68050ef
 +            }
 +        }
 +        return false;
++    }
++
++    /**
++     * Returns the cells whose flow pushes the body, or null when native applies no liquid push.
++     * Native 1.26.60.5 0x14ad2c200 collects lava in the lava body first and lets water collect only without lava.
++     */
++    public static @Nullable CurrentContact currentContact(final BlockGetter level, final AABB body, final AABB waterBox) {
++        final FluidCells lava = fluidCells(level, lavaInteractionBox(body), FluidTags.LAVA);
++        if (!lava.cells().isEmpty()) {
++            return lava.flowing() ? new CurrentContact(FluidTags.LAVA, lava.cells()) : null;
++        }
++        final FluidCells water = fluidCells(level, waterBox, FluidTags.WATER);
++        return water.flowing() ? new CurrentContact(FluidTags.WATER, water.cells()) : null;
++    }
++
++    private static FluidCells fluidCells(final BlockGetter level, final AABB box, final TagKey<Fluid> fluid) {
++        final int minX = Mth.floor(box.minX), minY = Mth.floor(box.minY), minZ = Mth.floor(box.minZ);
++        final int maxX = Mth.floor(box.maxX), maxY = Mth.floor(box.maxY), maxZ = Mth.floor(box.maxZ);
++        final List<BlockPos> cells = new ArrayList<>();
++        boolean flowing = false;
++        // Collector 0x14ad354e0 visits Y, then Z, then X. The float flow sum depends on this order.
++        for (int y = minY; y <= maxY; y++) {
++            for (int z = minZ; z <= maxZ; z++) {
++                for (int x = minX; x <= maxX; x++) {
++                    final BlockPos position = new BlockPos(x, y, z);
++                    final FluidState state = level.getFluidState(position);
++                    if (!state.is(fluid)) {
++                        continue;
++                    }
++                    cells.add(position);
++                    // The push needs liquid_depth != 0 in a contacted cell or in a same-fluid outward neighbor of an edge cell.
++                    flowing = flowing || !state.isSource()
++                            || x == minX && isFlowing(level, position.west(), fluid) || x == maxX && isFlowing(level, position.east(), fluid)
++                            || z == minZ && isFlowing(level, position.north(), fluid) || z == maxZ && isFlowing(level, position.south(), fluid);
++                }
++            }
++        }
++        return new FluidCells(cells, flowing);
++    }
++
++    private static boolean isFlowing(final BlockGetter level, final BlockPos position, final TagKey<Fluid> fluid) {
++        final FluidState state = level.getFluidState(position);
++        return state.is(fluid) && !state.isSource();
++    }
++
++    public record CurrentContact(TagKey<Fluid> fluid, List<BlockPos> cells) {
++    }
++
++    private record FluidCells(List<BlockPos> cells, boolean flowing) {
 +    }
 +
 +    public static AABB lavaInteractionBox(final AABB box) {
@@ -7209,7 +7475,7 @@ index 0000000000000000000000000000000000000000..f3a8d05e59d4b95e780558c1291f784f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalMovementCorrection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalMovementCorrection.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ce20ecf3274f7275cf159642db690df9d38a1e8
+index 0000000000000000000000000000000000000000..be983536e4482e0f8d0603aeb411af5919455cb2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalMovementCorrection.java
 @@ -0,0 +1,36 @@
@@ -7234,8 +7500,8 @@ index 0000000000000000000000000000000000000000..5ce20ecf3274f7275cf159642db690df
 +        final var position = correction.javaPosition();
 +        actor.setPos(position.x(), position.y(), position.z());
 +        actor.setDeltaMovement(new Vec3(correction.motion().x(), correction.motion().y(), correction.motion().z()));
-+        // A near MovePlayer command leaves ground membership to the replayed frame.
-+        if (!correction.teleport()) actor.setOnGround(correction.onGround());
++        // Near MovePlayer commands also write the packet ground state (native 0x1410ea691 -> 0x1410e9680).
++        actor.setOnGround(correction.onGround());
 +        if (correction.vehicle()) {
 +            actor.setXRot(correction.rotation().x());
 +            actor.setYRot(correction.javaYaw());
@@ -8225,6 +8491,99 @@ index 0000000000000000000000000000000000000000..e67ba0e73e7f1cbaa0943c4a10aba5fa
 +        }
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovementTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1367d9e8733aa140e6f06bedb93c3fe7c4017afd
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovementTest.java
+@@ -0,0 +1,87 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.core.BlockPos;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.animal.camel.Camel;
++import net.minecraft.world.entity.animal.equine.AbstractHorse;
++import net.minecraft.world.entity.animal.equine.Horse;
++import net.minecraft.world.entity.animal.equine.Llama;
++import net.minecraft.world.entity.animal.equine.Mule;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.level.block.Block;
++import net.minecraft.world.level.block.Blocks;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class BedrockHorseMovementTest {
++    private static final BlockPos FEET = new BlockPos(3, 64, -2);
++    private static final BlockPos BELOW = FEET.below();
++
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void riddenHorseStepsHigherThanJavaExceptOnJumpReducingBlocks() {
++        assertEquals(1.0625F, BedrockHorseMovement.maxUpStep(horseOn(Blocks.AIR, Blocks.STONE)));
++        assertEquals(0.5625F, BedrockHorseMovement.maxUpStep(horseOn(Blocks.HONEY_BLOCK, Blocks.STONE)));
++        assertEquals(0.5625F, BedrockHorseMovement.maxUpStep(horseOn(Blocks.AIR, Blocks.HONEY_BLOCK)));
++    }
++
++    @Test
++    void easesSmallTurnsFasterThanLargeTurns() {
++        assertEquals(10F * (35F / 90F) * 0.7F, BedrockHorseMovement.easeYaw(0F, 10F), 1.0E-5F);
++        assertEquals(90F * 0.18F * 0.7F, BedrockHorseMovement.easeYaw(0F, 90F), 1.0E-5F);
++        assertEquals(-90F * 0.18F * 0.7F, BedrockHorseMovement.easeYaw(0F, -90F), 1.0E-5F);
++        assertEquals(30F, BedrockHorseMovement.easeYaw(30F, 30F));
++    }
++
++    @Test
++    void turnsThroughTheShortestWrappedArc() {
++        final float step = 20F * (25F / 90F) * 0.7F;
++        assertEquals(-170F - step, BedrockHorseMovement.easeYaw(-170F, 170F), 1.0E-4F);
++        assertEquals(170F + step, BedrockHorseMovement.easeYaw(170F, -170F), 1.0E-4F);
++        assertEquals(-80F, BedrockHorseMovement.easeYaw(280F, 1000F), 1.0E-4F);
++    }
++
++    @Test
++    void approachesRiderYawOverSeveralTicksWithoutOvershooting() {
++        float yaw = 0F;
++        for (int tick = 0; tick < 40; tick++) {
++            final float next = BedrockHorseMovement.easeYaw(yaw, 120F);
++            assertTrue(next >= yaw && next <= 120F);
++            yaw = next;
++        }
++        assertEquals(120F, yaw, 0.01F);
++    }
++
++    @Test
++    void limitsNativeRiddenMovementToBedrockHorseTypes() {
++        assertTrue(BedrockHorseMovement.isNativeHorse(mock(Horse.class)));
++        assertTrue(BedrockHorseMovement.isNativeHorse(mock(Mule.class)));
++        assertFalse(BedrockHorseMovement.isNativeHorse(mock(Camel.class)));
++        assertFalse(BedrockHorseMovement.isNativeHorse(mock(Llama.class)));
++    }
++
++    private static AbstractHorse horseOn(final Block feet, final Block below) {
++        final AbstractHorse horse = mock(Horse.class);
++        final Level level = mock(Level.class);
++        when(horse.level()).thenReturn(level);
++        when(horse.blockPosition()).thenReturn(FEET);
++        when(horse.getBlockPosBelowThatAffectsMyMovement()).thenReturn(BELOW);
++        when(level.getBlockState(FEET)).thenReturn(feet.defaultBlockState());
++        when(level.getBlockState(BELOW)).thenReturn(below.defaultBlockState());
++        return horse;
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalMotionLifecycleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockPhysicalMotionLifecycleTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..586a485242b978970aa40ef2f531dfa33df858da
@@ -8623,10 +8982,10 @@ index 0000000000000000000000000000000000000000..eb32b98569ba48517a03b05b48c2f0f6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItemTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItemTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..7da63b1e10ec6e317ef09a8ca46de7c2dde7e065
+index 0000000000000000000000000000000000000000..bba9d275ebc6ef1f2693cf831f3bf40a2772a842
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockUsedItemTest.java
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,83 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -8639,6 +8998,7 @@ index 0000000000000000000000000000000000000000..7da63b1e10ec6e317ef09a8ca46de7c2
 +import net.minecraft.core.component.DataComponents;
 +import net.minecraft.nbt.CompoundTag;
 +import net.minecraft.server.Bootstrap;
++import net.minecraft.world.InteractionHand;
 +import net.minecraft.world.item.Item;
 +import net.minecraft.world.item.ItemStack;
 +import net.minecraft.world.item.Items;
@@ -8676,6 +9036,22 @@ index 0000000000000000000000000000000000000000..7da63b1e10ec6e317ef09a8ca46de7c2
 +        updated.setCount(12);
 +        updated.set(DataComponents.CUSTOM_DATA, updated.get(DataComponents.CUSTOM_DATA).update(tag -> tag.putInt("network_id", 42)));
 +        assertTrue(BedrockUsedItem.matches(updated, active));
++    }
++
++    @Test
++    void identicalStackInAnotherHotbarSlotEndsTheUseCycle() {
++        final var active = food("fixture:food", 32);
++        final var held = active.copy();
++        final int useSlot = BedrockUsedItem.slot(InteractionHand.MAIN_HAND, 2);
++        assertFalse(BedrockUsedItem.continues(held, active, useSlot, BedrockUsedItem.slot(InteractionHand.MAIN_HAND, 3)));
++        assertTrue(BedrockUsedItem.continues(held, active, useSlot, BedrockUsedItem.slot(InteractionHand.MAIN_HAND, 2)));
++    }
++
++    @Test
++    void offhandUseContinuesAcrossHotbarSelection() {
++        final var active = food("fixture:food", 32);
++        final int useSlot = BedrockUsedItem.slot(InteractionHand.OFF_HAND, 2);
++        assertTrue(BedrockUsedItem.continues(active.copy(), active, useSlot, BedrockUsedItem.slot(InteractionHand.OFF_HAND, 5)));
 +    }
 +
 +    @Test
@@ -9167,10 +9543,10 @@ index 0000000000000000000000000000000000000000..b76bbfc4a92723e944e91167342b84e8
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSessionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSessionTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..eac5b9e19e7267bbfcecf69b91467238f66d62cf
+index 0000000000000000000000000000000000000000..39ee8416c97fb6cd8fc5debbad4f32385e76e74a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/VehiclePredictionSessionTest.java
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,301 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9379,6 +9755,23 @@ index 0000000000000000000000000000000000000000..eac5b9e19e7267bbfcecf69b91467238
 +        assertNull(f.sample(1));
 +        f.actor = a;
 +        assertNotNull(f.sample(1));
++    }
++
++    @Test
++    void predictsOnlyTheControlledVehicleOfTheCurrentLeaseWithoutConsumingFrames() {
++        final Fixture f = new Fixture(true);
++        assertTrue(f.session.predicts(f.listener, f.player, f.actor, f.mount));
++        assertFalse(f.session.predicts(f.listener, f.player, f.actor, mock(AbstractHorse.class)));
++        assertFalse(f.session.predicts(mock(ClientPacketListener.class), f.player, f.actor, f.mount));
++        final var a = f.actor;
++        assertFalse(f.session.predicts(f.listener, f.player, actor(a.uuid(), a.lifetime(), a.runtimeId(), a.uniqueId(), Set.of(ActorFlags.TAMED)), f.mount));
++        when(f.mount.getControllingPassenger()).thenReturn(null);
++        assertFalse(f.session.predicts(f.listener, f.player, f.actor, f.mount));
++        when(f.mount.getControllingPassenger()).thenReturn(f.player);
++        assertNotNull(f.sample(1));
++        assertTrue(f.session.predicts(f.listener, f.player, f.actor, f.mount));
++        f.session.accept(f.listener, new VehiclePredictionContext(2, null));
++        assertFalse(f.session.predicts(f.listener, f.player, f.actor, f.mount));
 +    }
 +
 +    @Test
@@ -9813,10 +10206,10 @@ index 0000000000000000000000000000000000000000..7c9534e22bdf65813b0cb2c73cb8e4d6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..667e194684b1dadc4dc89e66097920164dae25e7
+index 0000000000000000000000000000000000000000..50a27486af21b874345c53d634d724102ab37e74
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,276 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -9844,16 +10237,22 @@ index 0000000000000000000000000000000000000000..667e194684b1dadc4dc89e6609792016
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.server.Bootstrap;
 +import net.minecraft.tags.FluidTags;
++import net.minecraft.tags.TagKey;
 +import net.minecraft.world.level.BlockGetter;
 +import net.minecraft.world.level.material.FlowingFluid;
++import net.minecraft.world.level.material.Fluid;
 +import net.minecraft.world.level.material.FluidState;
 +import net.minecraft.world.phys.AABB;
 +import net.minecraft.world.phys.Vec3;
 +import org.junit.jupiter.api.BeforeAll;
 +import org.junit.jupiter.api.Test;
 +
++import java.util.List;
++import java.util.Map;
++
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +import static org.mockito.ArgumentMatchers.any;
 +import static org.mockito.Mockito.mock;
@@ -9918,6 +10317,67 @@ index 0000000000000000000000000000000000000000..667e194684b1dadc4dc89e6609792016
 +        assertFalse(BedrockFluidPhysics.isInLava(level, new AABB(-.3F, 64.75F, -.3F, .3F, 65.25F, .3F)),
 +                "A collapsed Y range at 65 must not query the adjacent lava layer at 64");
 +        assertTrue(BedrockFluidPhysics.isInLava(level, new AABB(-.95F, 65, -3.28F, -.35F, 66.8F, -2.68F)));
++    }
++
++    @Test
++    void lavaInTheNarrowBodySuppressesTheWaterCurrent() {
++        // Native 0x14ad2c200: the lava query runs first, and a lava hit gives water no output cells.
++        final AABB body = new AABB(.2F, 64, .2F, .8F, 65.8F, .8F);
++        final BlockPos lavaCell = new BlockPos(0, 65, 0);
++        final BedrockFluidPhysics.CurrentContact contact = currentContact(body, Map.of(
++                lavaCell, fluid(FluidTags.LAVA, false),
++                new BlockPos(0, 64, 0), fluid(FluidTags.WATER, false)));
++        assertEquals(FluidTags.LAVA, contact.fluid());
++        assertEquals(List.of(lavaCell), contact.cells());
++
++        assertNull(currentContact(body, Map.of(
++                lavaCell, fluid(FluidTags.LAVA, true),
++                new BlockPos(0, 64, 0), fluid(FluidTags.WATER, false))),
++                "Still lava still claims the contact, so flowing water beside it does not push");
++    }
++
++    @Test
++    void lavaOutsideTheNarrowBodyLeavesTheWaterCurrent() {
++        // The water body (0.001 inset) reaches cell x = 0. The lava body (0.1 inset) starts at x = 1.05.
++        final AABB body = new AABB(.95F, 64, .2F, 1.55F, 65.8F, .8F);
++        final BlockPos waterCell = new BlockPos(1, 64, 0);
++        final BedrockFluidPhysics.CurrentContact contact = currentContact(body, Map.of(
++                new BlockPos(0, 64, 0), fluid(FluidTags.LAVA, false),
++                waterCell, fluid(FluidTags.WATER, false)));
++        assertEquals(FluidTags.WATER, contact.fluid());
++        assertEquals(List.of(waterCell), contact.cells());
++    }
++
++    @Test
++    void stillContactPushesOnlyWithFlowingLiquidBehindAnEdge() {
++        final AABB body = new AABB(.95F, 64, .2F, 1.55F, 65.8F, .8F);
++        final BlockPos lower = new BlockPos(1, 64, 0);
++        final BlockPos upper = new BlockPos(1, 65, 0);
++        assertNull(currentContact(body, Map.of(lower, fluid(FluidTags.WATER, true), upper, fluid(FluidTags.WATER, true),
++                new BlockPos(2, 64, 0), fluid(FluidTags.WATER, true))));
++        assertNull(currentContact(body, Map.of(lower, fluid(FluidTags.WATER, true), upper, fluid(FluidTags.WATER, true),
++                new BlockPos(2, 64, 1), fluid(FluidTags.WATER, false))), "A diagonal cell is not an edge neighbor");
++        assertNull(currentContact(body, Map.of(lower, fluid(FluidTags.WATER, true), upper, fluid(FluidTags.WATER, true),
++                new BlockPos(2, 64, 0), fluid(FluidTags.LAVA, false))), "The neighbor must hold the same liquid");
++
++        final BedrockFluidPhysics.CurrentContact contact = currentContact(body, Map.of(lower, fluid(FluidTags.WATER, true),
++                upper, fluid(FluidTags.WATER, true), new BlockPos(2, 64, 0), fluid(FluidTags.WATER, false)));
++        assertEquals(FluidTags.WATER, contact.fluid());
++        assertEquals(List.of(lower, upper), contact.cells(), "The flowing neighbor gates the push but adds no flow");
++    }
++
++    private static BedrockFluidPhysics.CurrentContact currentContact(final AABB body, final Map<BlockPos, FluidState> fluids) {
++        final BlockGetter level = mock(BlockGetter.class);
++        final FluidState dry = mock(FluidState.class);
++        when(level.getFluidState(any(BlockPos.class))).thenAnswer(invocation -> fluids.getOrDefault(invocation.getArgument(0), dry));
++        return BedrockFluidPhysics.currentContact(level, body, BedrockFluidPhysics.interactionBox(body.deflate(0.001)));
++    }
++
++    private static FluidState fluid(final TagKey<Fluid> tag, final boolean source) {
++        final FluidState state = mock(FluidState.class);
++        when(state.is(tag)).thenReturn(true);
++        when(state.isSource()).thenReturn(source);
++        return state;
 +    }
 +
 +    @Test
@@ -11332,10 +11792,10 @@ index 0000000000000000000000000000000000000000..56a71f98255e45fc24db7cb02f1113c7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalMovementCorrectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalMovementCorrectionTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..33866f2094224ffa060d55b1fa37ed6c4ff12d74
+index 0000000000000000000000000000000000000000..490cf6cf03eff8e07542618de3e5bbe82a1e4f8b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/replay/PhysicalMovementCorrectionTest.java
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,99 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11402,18 +11862,22 @@ index 0000000000000000000000000000000000000000..33866f2094224ffa060d55b1fa37ed6c
 +    }
 +
 +    @Test
-+    void appliesNearTeleportAsPositionWithZeroMotionAndLeavesGround() {
-+        final Entity actor = mock(Entity.class);
-+        when(actor.getBbWidth()).thenReturn(0.6F);
-+        when(actor.getBbHeight()).thenReturn(1.8F);
-+        // Native MovePlayer command core 0x1410ea600 writes position and clears motion; it has no ground write.
-+        PhysicalMovementCorrection.apply(actor, PlayerCorrection.teleport(42, UUID.randomUUID(), UUID.randomUUID(), 5,
-+                new MovementCorrectionTiming(102, 105, 25, 100, -1), new Position3f(5.75F, 66.62F, 0F), 1.62F));
-+        verify(actor).setPos(5.75, 65.0, 0);
-+        verify(actor).setDeltaMovement(Vec3.ZERO);
-+        verify(actor, never()).setOnGround(anyBoolean());
-+        verify(actor, never()).setXRot(anyFloat());
-+        verify(actor, never()).setYRot(anyFloat());
++    void appliesNearTeleportAsPositionWithZeroMotionAndPacketGround() {
++        for (boolean onGround : new boolean[]{false, true}) {
++            final Entity actor = mock(Entity.class);
++            when(actor.getBbWidth()).thenReturn(0.6F);
++            when(actor.getBbHeight()).thenReturn(1.8F);
++            // Native MovePlayer command core 0x1410ea600 writes position, clears motion and sets or erases OnGround
++            // from the packet (0x1410ea691 -> 0x1410e9680).
++            PhysicalMovementCorrection.apply(actor, new PlayerCorrection(42, UUID.randomUUID(), UUID.randomUUID(), 5, -1,
++                    new MovementCorrectionTiming(102, 105, 25, 100, -1), new Position3f(5.75F, 66.62F, 0F), Position3f.ZERO,
++                    new Position2f(0F, 0F), null, 1.62F, 0F, onGround, true));
++            verify(actor).setPos(5.75, 65.0, 0);
++            verify(actor).setDeltaMovement(Vec3.ZERO);
++            verify(actor).setOnGround(onGround);
++            verify(actor, never()).setXRot(anyFloat());
++            verify(actor, never()).setYRot(anyFloat());
++        }
 +    }
 +
 +    @Test

@@ -182,6 +182,18 @@ renderer never set it. The native 1.26.60.5 client shows six stands
 with poses 2 to 7 distinctly; the add-on now passes POSE_INDEX from
 the actor snapshot's integer metadata.
 
+Supply the armor stand hurt wiggle inputs. The vanilla wiggle controller
+reads (variable.armor_stand.hurt_time - query.frame_alpha) on every frame,
+so the missing frame_alpha query kept every armor stand on Java fallback.
+Native 1.26.60.5 sets armor_stand.hurt_time to float(HURT actor data 11)
+when that item is an integer, else zero (0x1416ba1c0, caller 0x142c17ae0).
+query.hurt_time reads data 11 the same way (0x142cba9f0) and
+query.hurt_direction reads HURT_DIR data 12 (0x142cbaab0). World actors now
+receive frame_alpha as the render partial tick and both hurt queries from
+the snapshot's integer metadata. The bundled armor stand graph test checks
+sin((hurt_time - frame_alpha) * 120) * 3 degrees of baseplate yaw. The
+hurt overlay tint is unchanged because its native role is unproven.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index 92d333c40059b2d490dde8ef7a39c24c8e3375f0..dbde148415b56c90ff29dfb6c2d076b701c39d4e 100644
 --- a/build.gradle.kts
@@ -633,10 +645,10 @@ index a3d2299aef20d9dad8bbb3ea456a74f39296dc7d..790bee5c8b77dbccde716b5792c6aee1
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..01c5f877384aed01c8a64eca2cf4571fc132a91f
+index 0000000000000000000000000000000000000000..ec77be73ded7b1c1d06adf5d59adb791dabb8de0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,353 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -787,6 +799,10 @@ index 0000000000000000000000000000000000000000..01c5f877384aed01c8a64eca2cf4571f
 +        queries.put("is_in_lava", entity.isInLava());
 +        queries.put("vertical_speed", (float) entity.getDeltaMovement().y * 20F);
 +        queries.put("is_in_ui", false); queries.put("is_first_person", false);
++        queries.put("frame_alpha", partial);
++        // Native query.hurt_time and query.hurt_direction read the HURT and HURT_DIR actor data as floats.
++        queries.put("hurt_time", actorData(snapshot, ActorDataIds.HURT));
++        queries.put("hurt_direction", actorData(snapshot, ActorDataIds.HURT_DIR));
 +        queries.put("property", (BedrockActorAnimation.Query) args -> {
 +            if (args.size() != 1 || !snapshot.properties().containsKey(String.valueOf(args.getFirst())))
 +                throw new IllegalArgumentException("Missing native entity property");
@@ -872,15 +888,21 @@ index 0000000000000000000000000000000000000000..01c5f877384aed01c8a64eca2cf4571f
 +            return animation.variables(snapshot, partial, lieOnPlayer);
 +        }
 +        if (entity instanceof ArmorStand) {
-+            // The native engine copies POSE_INDEX into the variable that the vanilla pose controller reads.
-+            final var metadata = snapshot == null ? null : snapshot.integerMetadata();
-+            return Map.of("armor_stand.pose_index", metadata == null ? 0F : metadata.getOrDefault(ActorDataIds.POSE_INDEX, 0).floatValue());
++            // The native engine copies POSE_INDEX and HURT into the variables that the vanilla pose and wiggle controllers read.
++            return Map.of("armor_stand.pose_index", actorData(snapshot, ActorDataIds.POSE_INDEX),
++                    "armor_stand.hurt_time", actorData(snapshot, ActorDataIds.HURT));
 +        }
 +        if (entity instanceof Shulker shulker) {
 +            return Map.of("shulker.peekamount", shulker.getClientPeekAmount(partial),
 +                    "shulker.facingdirection", (float) shulker.getAttachFace().get3DDataValue());
 +        }
 +        return Map.of();
++    }
++
++    /** Integer actor data as the native float input, or zero when the server did not send an integer value. */
++    private static float actorData(final NativeActorMessage.Snapshot snapshot, final ActorDataIds id) {
++        final var metadata = snapshot == null ? null : snapshot.integerMetadata();
++        return metadata == null ? 0F : metadata.getOrDefault(id, 0).floatValue();
 +    }
 +
 +    static BedrockActorAnimation.Query positionDeltaQuery(final Entity entity) {
@@ -1159,10 +1181,10 @@ index 11be60bc8914b98ae723b1e1dc8400a997777ef9..894d88b41ef75db8ad8aa41e9a55c5b1
          files.put("manifest.json", bytes("{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\"" + java.util.UUID.randomUUID()
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..31bc577e64008e51a0196a905e2d242a0a0d2384
+index 0000000000000000000000000000000000000000..4768416c1f6fef6d8796798cc237d1d3fedd9a13
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,374 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1480,6 +1502,31 @@ index 0000000000000000000000000000000000000000..31bc577e64008e51a0196a905e2d242a
 +            assertNull(actor.sample(0, new BedrockActorAnimation.Frame(Map.of("show_bottom", true), Map.of()), false));
 +        }
 +    }
++
++    @Test
++    void bundledArmorStandWigglesItsBaseplateWhileHurt() throws Exception {
++        Assumptions.assumeTrue(BedrockWorldActorAppearance.class.getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
++        final var packs = BedrockEntityResources.merge(BedrockBuiltinAssets.load().library(), List.of(), "minecraft:armor_stand");
++        final var definition = new BedrockWorldActorAppearance(packs, "minecraft:armor_stand");
++        final Map<String, Object> queries = new HashMap<>(Map.of("is_in_ui", false,
++                "is_item_name_any", (BedrockActorAnimation.Query) _ -> false));
++        // The wiggle controller reads query.frame_alpha on every frame, so the stand needs it even while unhurt.
++        assertNull(definition.playback().sample(0, new BedrockActorAnimation.Frame(queries,
++                Map.of("armor_stand.pose_index", 0F, "armor_stand.hurt_time", 0F)), false));
++        queries.put("frame_alpha", .25F);
++        final var actor = definition.playback();
++        final var still = actor.sample(0, new BedrockActorAnimation.Frame(queries,
++                Map.of("armor_stand.pose_index", 0F, "armor_stand.hurt_time", 0F)), false);
++        assertNotNull(still);
++        final var plate = still.pose().get("baseplate");
++        assertEquals(0F, plate == null ? 0F : plate.rotation().y(), .001F);
++        // Vanilla animation.armor_stand.wiggle: sin((hurt_time - frame_alpha) * 120) * 3 degrees of baseplate yaw.
++        final var hurt = actor.sample(.05F, new BedrockActorAnimation.Frame(queries,
++                Map.of("armor_stand.pose_index", 0F, "armor_stand.hurt_time", 10F)), false);
++        assertNotNull(hurt);
++        assertEquals((float) Math.sin(Math.toRadians(9.75F * 120F)) * 3F, hurt.pose().get("baseplate").rotation().y(), .001F);
++    }
++
 +    @Test
 +    void bundledShulkerUsesAttachmentAndPeekVariablesForEveryFace() throws Exception {
 +        Assumptions.assumeTrue(BedrockWorldActorAppearance.class.getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
@@ -1579,10 +1626,10 @@ index 4676741eb60bd1544b2fedf96556bf3b8be88b0e..4556267d0fbaf2732370a122b8e798db
  }
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..df01bc8f68420191784cd1d2b9b5a3fa80e7ab3d
+index 0000000000000000000000000000000000000000..6af7ce2ae634218bc667b9072a8345c47627a28b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorQueryTest.java
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,190 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1729,14 +1776,34 @@ index 0000000000000000000000000000000000000000..df01bc8f68420191784cd1d2b9b5a3fa
 +        }
 +    }
 +    @Test
-+    void bindsArmorStandPoseIndexFromNativeMetadata() {
++    void bindsArmorStandPoseAndHurtTimeFromNativeMetadata() {
 +        final var stand = mock(ArmorStand.class);
 +        final var posed = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 1,
 +                "minecraft:armor_stand", "", 1, java.util.Set.of(), 0, 0, null, Map.of(), null, null,
-+                Map.of(ActorDataIds.POSE_INDEX, 6), null);
-+        assertEquals(6F, BedrockWorldActorRenderer.actorVariables(stand, posed, 0).get("armor_stand.pose_index"));
-+        // The vanilla client entity initializes the pose to zero before the server sends one.
-+        assertEquals(0F, BedrockWorldActorRenderer.actorVariables(stand, null, 0).get("armor_stand.pose_index"));
++                Map.of(ActorDataIds.POSE_INDEX, 6, ActorDataIds.HURT, 7), null);
++        final var variables = BedrockWorldActorRenderer.actorVariables(stand, posed, 0);
++        assertEquals(6F, variables.get("armor_stand.pose_index"));
++        assertEquals(7F, variables.get("armor_stand.hurt_time"));
++        // The vanilla client entity initializes both variables to zero before the server sends actor data.
++        assertEquals(Map.of("armor_stand.pose_index", 0F, "armor_stand.hurt_time", 0F),
++                BedrockWorldActorRenderer.actorVariables(stand, null, 0));
++    }
++
++    @Test
++    void suppliesFrameAlphaAndHurtQueriesFromThePartialTickAndNativeMetadata() {
++        final var entity = mock(Entity.class);
++        when(entity.getDeltaMovement()).thenReturn(Vec3.ZERO);
++        final var hurt = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 1,
++                "minecraft:minecart", "", 1, java.util.Set.of(), 0, 0, null, Map.of(), null, null,
++                Map.of(ActorDataIds.HURT, 9, ActorDataIds.HURT_DIR, -1), null);
++        final var queries = BedrockWorldActorRenderer.actorQueries(entity, hurt, .375F, 0, Map.of());
++        assertEquals(.375F, queries.get("frame_alpha"));
++        assertEquals(9F, queries.get("hurt_time"));
++        assertEquals(-1F, queries.get("hurt_direction"));
++        // Snapshots from older revisions carry no integer metadata, and native reads absent data as zero.
++        final var unhurt = BedrockWorldActorRenderer.actorQueries(entity, actor(java.util.Set.of()), 0, 0, Map.of());
++        assertEquals(0F, unhurt.get("hurt_time"));
++        assertEquals(0F, unhurt.get("hurt_direction"));
 +    }
 +
 +    @Test

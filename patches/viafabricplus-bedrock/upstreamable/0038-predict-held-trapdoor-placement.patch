@@ -100,10 +100,10 @@ The same executable's underlying build callback143771570 retains its
 first-success flag across failures, matching the path owner's lifetime.
 
 Preserve the last successful build position on ordinary rejection. The
-native wrapper records a rejected target only at its upper height limit.
+native wrapper also records a rejected target outside the build height.
 Keep that exception separate from the first-success flag and pending-cell
 advancement. Regressions cover a failed distant attempt before returning
-to the original line, and the upper-height history branch. Live height
+to the original line, and the height history branch. Live height
 limits and broader mixed-use cases remain separate validation work.
 
 Native first-rejected Stone and trapdoor controls invoke ordinary air use
@@ -235,6 +235,20 @@ an interact button, whether the button was held for 100 ms, 1 s or 2 s.
 The empty-hand block repeat otherwise reran startUseItem every frame and
 sent a Java interact each time, so one short CubeCraft NPC click reached the
 server three times. Held repeats now route an entity target as a miss.
+
+Native continueBuildBlock 14376bb80..14376c4d5 computes each repeat delay
+from the local actor's SNEAKING flag (143d56740, ActorDataFlagComponent
+flag 1), the build line and PostTickPositionDeltaComponent speed times
+20 in all three axes. Sneaking keeps 300 ms and skips line start and
+advance. Otherwise a line waits 200 ms, or min(900/speed, 180) ms while
+moving; before a line it stays 300 ms. Outside Creative the delay has a
+100 ms floor (constants 14f1a8e60, 14ef3e02c, 14efc5cf8). Moving repeats
+record max(now - 180 ms, previous deadline) instead of now. A target
+below the minimum or at or above the height limit records its attempt and
+restarts the timer, like a success. Previously the add-on used fixed
+200/300 ms from now, ignored sneaking and retried out-of-height targets
+every frame. The air or entity aim with an established line and the
+motion-face target before a line remain unported.
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 3f71e4a8cc170259c2d0a0a8694bc58f95290f9e..03814c6c986fb6937210619a8b305fd81cce923a 100644
@@ -457,7 +471,7 @@ index 0000000000000000000000000000000000000000..d716321f252a384311b7478db22bcf9f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..a54ba3aa8ac9a821cfcd78a485b9f81fdf667d7c
+index 0000000000000000000000000000000000000000..0c4759aceb7f41a5124866960c05b814f33d0893
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinHeldBlockPlacement.java
 @@ -0,0 +1,32 @@
@@ -484,7 +498,7 @@ index 0000000000000000000000000000000000000000..a54ba3aa8ac9a821cfcd78a485b9f81f
 +    private void retainTrapdoorOrientation(final BlockPlaceContext context, final CallbackInfoReturnable<InteractionResult> cir) {
 +        if (context.getPlayer() == Minecraft.getInstance().player) {
 +            BedrockItemUse.buildAttempt(context.getClickedPos(), cir.getReturnValue().consumesAction(),
-+                    context.getClickedPos().getY() > context.getLevel().getMaxY());
++                    context.getLevel().isOutsideBuildHeight(context.getClickedPos()), context.getPlayer().isShiftKeyDown());
 +        }
 +        if (cir.getReturnValue().consumesAction() && context.getPlayer() == Minecraft.getInstance().player) {
 +            final var support = context.replacingClickedOnBlock() ? context.getClickedPos()
@@ -566,10 +580,10 @@ index 0000000000000000000000000000000000000000..82b3509790da0035698376c2a8a9988e
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2505dfc8f
+index 0000000000000000000000000000000000000000..71f65d5542639d97d430c291081ab0aa74faa217
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,317 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -590,6 +604,7 @@ index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2
 +import net.minecraft.world.InteractionResult;
 +import net.minecraft.world.item.ItemStack;
 +import net.minecraft.world.item.BlockItem;
++import net.minecraft.world.level.GameType;
 +import net.minecraft.world.level.block.TrapDoorBlock;
 +import net.raphimc.viabedrock.api.model.BlockUsePrediction;
 +import net.minecraft.world.level.block.state.BlockState;
@@ -603,9 +618,11 @@ index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2
 +public final class BedrockItemUse {
 +    private static final TrapdoorPlacement PLACEMENT = new TrapdoorPlacement();
 +    private static final BlockPlacementPath PATH = new BlockPlacementPath();
++    private static final float TICKS_PER_SECOND = 20F;
 +    private static boolean held;
 +    private static boolean placedBlock;
 +    private static boolean successfulAttempt;
++    private static boolean outsideHeightAttempt;
 +    private static boolean airAllowed;
 +    private static Boolean pendingAirPredicate;
 +    private static boolean pendingAirItem;
@@ -635,6 +652,7 @@ index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2
 +        update(true);
 +        INPUT.beginAttempt(freshPress);
 +        successfulAttempt = false;
++        outsideHeightAttempt = false;
 +    }
 +
 +    public static boolean beginAirUse(final InteractionHand hand, final ItemStack item) {
@@ -764,7 +782,7 @@ index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2
 +            INPUT.retainBlockUse();
 +        }
 +        if (held && (successfulAttempt || INPUT.blockActive())) {
-+            INPUT.attemptedBlock(System.nanoTime(), successfulAttempt);
++            INPUT.attemptedBlock(System.nanoTime(), successfulAttempt || outsideHeightAttempt);
 +        }
 +    }
 +
@@ -773,7 +791,20 @@ index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2
 +    }
 +
 +    public static boolean frameReady() {
-+        return repeatsFromFrames() && INPUT.frameReady(System.nanoTime(), PATH.active());
++        if (!repeatsFromFrames()) {
++            return false;
++        }
++        final var client = Minecraft.getInstance();
++        final var player = client.player;
++        if (player != null) {
++            // Native reads PostTickPositionDeltaComponent in blocks per tick, including vertical movement.
++            final float x = (float) (player.getX() - player.xo) * TICKS_PER_SECOND;
++            final float y = (float) (player.getY() - player.yo) * TICKS_PER_SECOND;
++            final float z = (float) (player.getZ() - player.zo) * TICKS_PER_SECOND;
++            INPUT.pace(PATH.active(), player.isShiftKeyDown(), z * z + (y * y + x * x),
++                client.gameMode != null && client.gameMode.getPlayerMode() == GameType.CREATIVE);
++        }
++        return INPUT.frameReady(System.nanoTime());
 +    }
 +
 +    public static void refresh() {
@@ -802,9 +833,10 @@ index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2
 +                ? PATH.select(player.getEyePosition(1F), hit) : hit;
 +    }
 +
-+    public static void buildAttempt(final BlockPos position, final boolean success, final boolean atUpperBuildLimit) {
++    public static void buildAttempt(final BlockPos position, final boolean success, final boolean outsideHeight, final boolean sneaking) {
 +        if (held) {
-+            PATH.attempted(position, success, atUpperBuildLimit);
++            PATH.attempted(position, success, outsideHeight, sneaking);
++            outsideHeightAttempt |= outsideHeight;
 +        }
 +    }
 +
@@ -871,10 +903,10 @@ index 0000000000000000000000000000000000000000..0eade55bd1b9d7a8eefa3f67fbd2cce2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..dff8bffebfcee99717fb7f0ffd73cc7255391f11
+index 0000000000000000000000000000000000000000..5d1d60af7e19058bb9cdd338ac2a6acadb676a9a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,84 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -894,17 +926,18 @@ index 0000000000000000000000000000000000000000..dff8bffebfcee99717fb7f0ffd73cc72
 +    private Direction direction;
 +    private boolean succeeded;
 +
-+    public void attempted(final BlockPos position, final boolean success, final boolean atUpperBuildLimit) {
-+        if (this.next == null && this.succeeded && this.previous != null && this.previous.distManhattan(position) == 1) {
++    public void attempted(final BlockPos position, final boolean success, final boolean outsideHeight, final boolean sneaking) {
++        // Sneaking freezes the line: it neither starts nor advances, but attempts still record their position.
++        if (!sneaking && this.next == null && this.succeeded && this.previous != null && this.previous.distManhattan(position) == 1) {
 +            final BlockPos delta = position.subtract(this.previous);
 +            this.direction = Direction.getNearest(delta, Direction.UP);
 +            this.next = position.immutable();
 +        }
-+        if (success && position.equals(this.next)) {
++        if (!sneaking && success && position.equals(this.next)) {
 +            this.next = position.relative(this.direction);
 +        }
-+        // Ordinary failure preserves the last build position; the upper height limit records its attempt.
-+        if (success || atUpperBuildLimit) {
++        // Ordinary failure preserves the last build position; an attempt outside the build height records it.
++        if (success || outsideHeight) {
 +            this.previous = position.immutable();
 +        }
 +        this.succeeded |= success;
@@ -1059,10 +1092,10 @@ index 0000000000000000000000000000000000000000..4b4e787754d77baa809cc7c2e7045e4f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c9979cde62aa99abaad6e96628f2600891c1256d
+index 0000000000000000000000000000000000000000..e8c153bc0efb259d065a1bfd52089e9163cac762
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/ItemUseState.java
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,196 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1076,8 +1109,12 @@ index 0000000000000000000000000000000000000000..c9979cde62aa99abaad6e96628f26008
 +/** A physical hold retains its air or placement route until release. */
 +public final class ItemUseState {
 +    private static final long AIR_DELAY_NANOS = 200_000_000L;
-+    private static final long BLOCK_DELAY_NANOS = 300_000_000L;
-+    private static final long LINE_DELAY_NANOS = 200_000_000L;
++    private static final float BLOCK_DELAY_MILLIS = 300F;
++    private static final float LINE_DELAY_MILLIS = 200F;
++    private static final float MOVING_DELAY_MILLIS = 900F;
++    private static final float MAX_MOVING_DELAY_MILLIS = 180F;
++    private static final float MIN_DELAY_MILLIS = 100F;
++    private static final long MOVING_ANCHOR_NANOS = 180_000_000L;
 +    private int releaseSlot = -1;
 +    private String releaseDefinition;
 +    private boolean airActive;
@@ -1086,6 +1123,8 @@ index 0000000000000000000000000000000000000000..c9979cde62aa99abaad6e96628f26008
 +    private boolean blockActive;
 +    private long blockStartedAt;
 +    private boolean blockDelayed;
++    private long blockDelay = (long) BLOCK_DELAY_MILLIS * 1_000_000L;
++    private boolean moving;
 +    private boolean heldRepeat;
 +
 +    public boolean canAttempt(final long now) {
@@ -1176,9 +1215,16 @@ index 0000000000000000000000000000000000000000..c9979cde62aa99abaad6e96628f26008
 +        }
 +    }
 +
-+    public void attemptedBlock(final long now, final boolean success) {
-+        if (!this.airActive && (!this.blockActive || success)) {
-+            this.blockStartedAt = now;
++    /** A repeat records its attempt on success or outside the build height; other failures keep the deadline. */
++    public void attemptedBlock(final long now, final boolean recorded) {
++        if (!this.airActive && (!this.blockActive || recorded)) {
++            long recordedAt = now;
++            if (this.blockActive && this.blockDelayed && this.moving) {
++                // A moving repeat keeps its previous deadline, falling at most 180 ms behind the clock.
++                final long deadline = this.blockStartedAt + this.blockDelay;
++                recordedAt = deadline - (now - MOVING_ANCHOR_NANOS) > 0 ? deadline : now - MOVING_ANCHOR_NANOS;
++            }
++            this.blockStartedAt = recordedAt;
 +            this.blockDelayed = true;
 +            this.blockActive = true;
 +        }
@@ -1192,9 +1238,26 @@ index 0000000000000000000000000000000000000000..c9979cde62aa99abaad6e96628f26008
 +        return this.airActive || this.blockActive;
 +    }
 +
-+    public boolean frameReady(final long now, final boolean placementLine) {
++    /**
++     * Native continueBuildBlock derives each repeat delay from sneaking, the build line and post-tick speed.
++     * Sneaking keeps 300 ms. A moving line waits 900 ms divided by its speed in blocks per second, at most 180 ms.
++     * Only Creative skips the 100 ms floor.
++     */
++    public void pace(final boolean placementLine, final boolean sneaking, final float speedSquared, final boolean creative) {
++        float delay = sneaking || !placementLine ? BLOCK_DELAY_MILLIS : LINE_DELAY_MILLIS;
++        if (!sneaking && placementLine && speedSquared > 0F) {
++            delay = Math.min(MOVING_DELAY_MILLIS / (float) Math.sqrt(speedSquared), MAX_MOVING_DELAY_MILLIS);
++        }
++        if (!creative) {
++            delay = Math.max(MIN_DELAY_MILLIS, delay);
++        }
++        this.blockDelay = (int) delay * 1_000_000L;
++        this.moving = speedSquared > 0F;
++    }
++
++    public boolean frameReady(final long now) {
 +        return this.blockActive
-+            ? !this.blockDelayed || now - this.blockStartedAt > (placementLine ? LINE_DELAY_NANOS : BLOCK_DELAY_NANOS)
++            ? !this.blockDelayed || now - this.blockStartedAt > this.blockDelay
 +            : this.canAttempt(now) && this.airActive;
 +    }
 +
@@ -1388,10 +1451,10 @@ index 0000000000000000000000000000000000000000..cd2e709085df0afebb17eb59c9cc1da9
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e4fe3f2d55ceb315f23d3f8103c926cfaa1af309
+index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b882cae2ce
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,145 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1431,11 +1494,11 @@ index 0000000000000000000000000000000000000000..e4fe3f2d55ceb315f23d3f8103c926cf
 +    @Test
 +    void successfulBuildsAdvanceTheCellWhileRejectedBuildsKeepRetryingIt() {
 +        final var path = northPath();
-+        path.attempted(new BlockPos(0, -60, -3), true, false);
++        path.attempted(new BlockPos(0, -60, -3), true, false, false);
 +        final var hit = new BlockHitResult(new Vec3(.5000479817390442F, -59.09409713745117F, -3F),
 +                Direction.NORTH, new BlockPos(0, -60, -3), false);
 +        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit).getBlockPos());
-+        path.attempted(new BlockPos(0, -60, -4), false, false);
++        path.attempted(new BlockPos(0, -60, -4), false, false, false);
 +        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit).getBlockPos());
 +        path.clear();
 +        assertSame(hit, path.select(EYE, hit));
@@ -1445,11 +1508,11 @@ index 0000000000000000000000000000000000000000..e4fe3f2d55ceb315f23d3f8103c926cf
 +    void aRejectedFirstBuildOrNonadjacentTargetsDoNotStartAPlacementLine() {
 +        final var path = new BlockPlacementPath();
 +        final var hit = new BlockHitResult(Vec3.ZERO, Direction.UP, BlockPos.ZERO, false);
-+        path.attempted(BlockPos.ZERO, false, false);
-+        path.attempted(new BlockPos(1, 0, 0), false, false);
++        path.attempted(BlockPos.ZERO, false, false, false);
++        path.attempted(new BlockPos(1, 0, 0), false, false, false);
 +        assertSame(hit, path.select(EYE, hit));
-+        path.attempted(new BlockPos(4, 0, 0), true, false);
-+        path.attempted(new BlockPos(6, 0, 0), true, false);
++        path.attempted(new BlockPos(4, 0, 0), true, false, false);
++        path.attempted(new BlockPos(6, 0, 0), true, false, false);
 +        assertSame(hit, path.select(EYE, hit));
 +    }
 +
@@ -1457,8 +1520,8 @@ index 0000000000000000000000000000000000000000..e4fe3f2d55ceb315f23d3f8103c926cf
 +    void retainsTheAxisForUpwardDownwardAndHorizontalLines() {
 +        for (final Direction direction : Direction.values()) {
 +            final var path = new BlockPlacementPath();
-+            path.attempted(BlockPos.ZERO, true, false);
-+            path.attempted(BlockPos.ZERO.relative(direction), true, false);
++            path.attempted(BlockPos.ZERO, true, false, false);
++            path.attempted(BlockPos.ZERO.relative(direction), true, false, false);
 +            final BlockPos next = BlockPos.ZERO.relative(direction, 2);
 +            final var point = Vec3.atCenterOf(next);
 +            final var hit = new BlockHitResult(point, Direction.UP, next, false);
@@ -1473,14 +1536,31 @@ index 0000000000000000000000000000000000000000..e4fe3f2d55ceb315f23d3f8103c926cf
 +    void anEstablishedLineUsesTheStrictShorterDelayAfterTheSecondBuild() {
 +        final var path = new BlockPlacementPath();
 +        final var input = new ItemUseState();
-+        path.attempted(new BlockPos(0, -60, -1), true, false);
++        path.attempted(new BlockPos(0, -60, -1), true, false, false);
 +        input.attemptedBlock(1_000_000_000L, true);
-+        assertFalse(input.frameReady(1_300_000_000L, path.active()));
-+        assertTrue(input.frameReady(1_300_000_001L, path.active()));
-+        path.attempted(new BlockPos(0, -60, -2), true, false);
++        input.pace(path.active(), false, 0F, false);
++        assertFalse(input.frameReady(1_300_000_000L));
++        assertTrue(input.frameReady(1_300_000_001L));
++        path.attempted(new BlockPos(0, -60, -2), true, false, false);
 +        input.attemptedBlock(1_310_000_000L, true);
-+        assertFalse(input.frameReady(1_510_000_000L, path.active()));
-+        assertTrue(input.frameReady(1_510_000_001L, path.active()));
++        input.pace(path.active(), false, 0F, false);
++        assertFalse(input.frameReady(1_510_000_000L));
++        assertTrue(input.frameReady(1_510_000_001L));
++    }
++
++    @Test
++    void sneakingFreezesTheLineWithoutDroppingItsBuildHistory() {
++        final var path = new BlockPlacementPath();
++        path.attempted(new BlockPos(0, -60, -1), true, false, false);
++        path.attempted(new BlockPos(0, -60, -2), true, false, true);
++        assertFalse(path.active());
++        path.attempted(new BlockPos(0, -60, -3), true, false, false);
++        assertTrue(path.active());
++        final var hit = new BlockHitResult(new Vec3(.5000479817390442F, -59.09409713745117F, -3F),
++                Direction.NORTH, new BlockPos(0, -60, -3), false);
++        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit).getBlockPos());
++        path.attempted(new BlockPos(0, -60, -4), true, false, true);
++        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit).getBlockPos());
 +    }
 +
 +    @Test
@@ -1492,20 +1572,20 @@ index 0000000000000000000000000000000000000000..e4fe3f2d55ceb315f23d3f8103c926cf
 +    @Test
 +    void aFailedDistantAttemptDoesNotReplaceTheLastSuccessfulBuildPosition() {
 +        final var path = new BlockPlacementPath();
-+        path.attempted(new BlockPos(0, -60, -1), true, false);
-+        path.attempted(new BlockPos(2, -60, -1), false, false);
-+        path.attempted(new BlockPos(0, -60, -2), true, false);
++        path.attempted(new BlockPos(0, -60, -1), true, false, false);
++        path.attempted(new BlockPos(2, -60, -1), false, false, false);
++        path.attempted(new BlockPos(0, -60, -2), true, false, false);
 +        final var top = new BlockHitResult(new Vec3(.5001634359359741F, -59F, -1.7961400747299194F),
 +                Direction.UP, new BlockPos(0, -60, -2), false);
 +        assertNull(path.select(EYE, top));
 +    }
 +
 +    @Test
-+    void theUpperBuildLimitKeepsItsSeparateAttemptHistoryException() {
++    void anAttemptOutsideTheBuildHeightKeepsItsSeparateAttemptHistoryException() {
 +        final var path = new BlockPlacementPath();
-+        path.attempted(BlockPos.ZERO, true, false);
-+        path.attempted(new BlockPos(3, 320, 0), false, true);
-+        path.attempted(new BlockPos(3, 319, 0), true, false);
++        path.attempted(BlockPos.ZERO, true, false, false);
++        path.attempted(new BlockPos(3, 320, 0), false, true, false);
++        path.attempted(new BlockPos(3, 319, 0), true, false, false);
 +        final Vec3 point = Vec3.atCenterOf(new BlockPos(3, 318, 0));
 +        final var hit = new BlockHitResult(point, Direction.UP, new BlockPos(3, 318, 0), false);
 +        final var selected = path.select(point, hit);
@@ -1515,17 +1595,17 @@ index 0000000000000000000000000000000000000000..e4fe3f2d55ceb315f23d3f8103c926cf
 +
 +    private static BlockPlacementPath northPath() {
 +        final var path = new BlockPlacementPath();
-+        path.attempted(new BlockPos(0, -60, -1), true, false);
-+        path.attempted(new BlockPos(0, -60, -2), true, false);
++        path.attempted(new BlockPos(0, -60, -1), true, false, false);
++        path.attempted(new BlockPos(0, -60, -2), true, false, false);
 +        return path;
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cfa1f83798
+index 0000000000000000000000000000000000000000..69ce008c8e10aeec6bee628bbb3e7580c038b5aa
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/ItemUseStateTest.java
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,373 @@
 +package com.viaversion.viafabricplus.bedrock.input;
 +
 +import org.junit.jupiter.api.Test;
@@ -1566,8 +1646,8 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        assertTrue(input.admitAirUse(1_000_000_000L, InteractionHand.MAIN_HAND));
 +        input.airResult(false, true, true);
 +        assertEquals(HitResult.Type.MISS, input.hitType(1_500_000_000L, HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
-+        assertFalse(input.frameReady(1_200_000_000L, false));
-+        assertTrue(input.frameReady(1_200_000_001L, false));
++        assertFalse(input.frameReady(1_200_000_000L));
++        assertTrue(input.frameReady(1_200_000_001L));
 +        input.release();
 +        assertFalse(input.admitAirUse(1_100_000_000L, InteractionHand.MAIN_HAND));
 +    }
@@ -1580,7 +1660,7 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        input.release();
 +        assertFalse(input.admitAirUse(1_100_000_000L, InteractionHand.MAIN_HAND));
 +        assertEquals(HitResult.Type.BLOCK, input.hitType(1_300_000_000L, HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
-+        assertTrue(input.frameReady(1_300_000_000L, false));
++        assertTrue(input.frameReady(1_300_000_000L));
 +        assertFalse(input.admitAirUse(1_300_000_000L, InteractionHand.MAIN_HAND));
 +        input.release();
 +        assertTrue(input.admitAirUse(1_300_000_001L, InteractionHand.MAIN_HAND));
@@ -1644,12 +1724,12 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +    void heldFoodUsesTheFirstEligibleInputFrameInsteadOfARepeatedTickCount() {
 +        final var timing = new ItemUseState();
 +        final List<Integer> usedAt = new ArrayList<>();
-+        assertFalse(timing.frameReady(1_000_000_000L, false));
++        assertFalse(timing.frameReady(1_000_000_000L));
 +        assertTrue(timing.admitLegacyAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        usedAt.add(0);
 +        for (final int milliseconds : new int[] {47, 94, 141, 188, 236, 284, 332, 380, 428, 475, 542, 609, 676}) {
 +            final long now = 1_000_000_000L + milliseconds * 1_000_000L;
-+            if (timing.frameReady(now, false) && timing.admitLegacyAirUse(now, InteractionHand.MAIN_HAND, true, false, true)) {
++            if (timing.frameReady(now) && timing.admitLegacyAirUse(now, InteractionHand.MAIN_HAND, true, false, true)) {
 +                usedAt.add(milliseconds);
 +            }
 +        }
@@ -1677,8 +1757,8 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        assertEquals(HitResult.Type.MISS, input.hitType(1_500_000_000L, HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
 +        assertEquals(HitResult.Type.MISS, input.hitType(1_500_000_000L, HitResult.Type.ENTITY, InteractionHand.MAIN_HAND));
 +        input.attemptedBlock(1_100_000_000L, true);
-+        assertFalse(input.frameReady(1_200_000_000L, false));
-+        assertTrue(input.frameReady(1_200_000_001L, false));
++        assertFalse(input.frameReady(1_200_000_000L));
++        assertTrue(input.frameReady(1_200_000_001L));
 +        assertTrue(input.admitLegacyAirUse(1_200_000_001L, InteractionHand.MAIN_HAND, false, false, true));
 +        assertFalse(input.admitLegacyAirUse(1_300_000_000L, InteractionHand.OFF_HAND, false, false, true));
 +        input.cancelPlacement();
@@ -1693,18 +1773,18 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +    void placementHoldDoesNotStartEatingWhenTheSelectedItemChanges() {
 +        final var input = new ItemUseState();
 +        input.attemptedBlock(1_000_000_000L, true);
-+        assertFalse(input.frameReady(1_200_000_001L, false));
-+        assertFalse(input.frameReady(1_300_000_000L, false));
-+        assertTrue(input.frameReady(1_300_000_001L, false));
++        assertFalse(input.frameReady(1_200_000_001L));
++        assertFalse(input.frameReady(1_300_000_000L));
++        assertTrue(input.frameReady(1_300_000_001L));
 +        assertEquals(HitResult.Type.BLOCK, input.hitType(1_500_000_000L, HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
 +        assertEquals(HitResult.Type.MISS, input.hitType(1_500_000_000L, HitResult.Type.BLOCK, InteractionHand.OFF_HAND));
 +        assertFalse(input.admitLegacyAirUse(1_300_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        input.attemptedBlock(1_310_000_000L, false);
-+        assertTrue(input.frameReady(1_311_000_000L, false));
++        assertTrue(input.frameReady(1_311_000_000L));
 +        input.attemptedBlock(1_320_000_000L, true);
-+        assertFalse(input.frameReady(1_619_999_999L, false));
-+        assertFalse(input.frameReady(1_620_000_000L, false));
-+        assertTrue(input.frameReady(1_620_000_001L, false));
++        assertFalse(input.frameReady(1_619_999_999L));
++        assertFalse(input.frameReady(1_620_000_000L));
++        assertTrue(input.frameReady(1_620_000_001L));
 +        input.release();
 +        assertTrue(input.admitLegacyAirUse(1_630_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        assertFalse(input.canAttempt(1_800_000_000L));
@@ -1719,12 +1799,12 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        assertTrue(input.admitLegacyAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false, false));
 +        input.attemptedBlock(1_010_000_000L, false);
 +        assertEquals(HitResult.Type.BLOCK, input.hitType(1_500_000_000L, HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
-+        assertTrue(input.frameReady(1_052_000_000L, false));
++        assertTrue(input.frameReady(1_052_000_000L));
 +        assertFalse(input.admitLegacyAirUse(1_052_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        input.attemptedBlock(1_105_000_000L, true);
-+        assertFalse(input.frameReady(1_404_999_999L, false));
-+        assertFalse(input.frameReady(1_405_000_000L, false));
-+        assertTrue(input.frameReady(1_405_000_001L, false));
++        assertFalse(input.frameReady(1_404_999_999L));
++        assertFalse(input.frameReady(1_405_000_000L));
++        assertTrue(input.frameReady(1_405_000_001L));
 +        input.release();
 +        assertTrue(input.admitLegacyAirUse(1_500_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +    }
@@ -1735,8 +1815,8 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        assertTrue(input.admitLegacyAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        assertTrue(input.admitLegacyAirUse(1_201_000_000L, InteractionHand.MAIN_HAND, true, false, false));
 +        assertEquals(HitResult.Type.MISS, input.hitType(1_500_000_000L, HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
-+        assertFalse(input.frameReady(1_401_000_000L, false));
-+        assertTrue(input.frameReady(1_401_000_001L, false));
++        assertFalse(input.frameReady(1_401_000_000L));
++        assertTrue(input.frameReady(1_401_000_001L));
 +    }
 +
 +    @Test
@@ -1745,14 +1825,14 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        assertTrue(input.admitLegacyAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, false, true, false));
 +        input.attemptedBlock(1_001_000_000L, false);
 +        assertTrue(input.blockActive());
-+        assertTrue(input.frameReady(1_016_000_000L, false));
++        assertTrue(input.frameReady(1_016_000_000L));
 +        assertFalse(input.admitLegacyAirUse(1_016_000_000L, InteractionHand.MAIN_HAND, false, true, false));
 +        assertFalse(input.admitLegacyAirUse(1_016_000_000L, InteractionHand.OFF_HAND, true, false, true));
 +        input.attemptedBlock(1_080_000_000L, false);
-+        assertTrue(input.frameReady(1_096_000_000L, false));
++        assertTrue(input.frameReady(1_096_000_000L));
 +        input.attemptedBlock(1_100_000_000L, true);
-+        assertFalse(input.frameReady(1_400_000_000L, false));
-+        assertTrue(input.frameReady(1_400_000_001L, false));
++        assertFalse(input.frameReady(1_400_000_000L));
++        assertTrue(input.frameReady(1_400_000_001L));
 +    }
 +
 +    @Test
@@ -1783,7 +1863,7 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        input.release();
 +        assertFalse(input.placedBlock(1_172_000_000L, true));
 +        input.attemptedBlock(1_173_000_000L, true);
-+        assertFalse(input.frameReady(1_200_000_000L, false));
++        assertFalse(input.frameReady(1_200_000_000L));
 +        input.release();
 +        assertTrue(input.admitLegacyAirUse(1_201_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +    }
@@ -1794,10 +1874,10 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        assertTrue(input.admitLegacyAirUse(1_000_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        input.release();
 +        assertFalse(input.admitLegacyAirUse(1_172_000_000L, InteractionHand.MAIN_HAND, true, false, true));
-+        assertTrue(input.frameReady(1_173_000_000L, false));
++        assertTrue(input.frameReady(1_173_000_000L));
 +        assertFalse(input.admitLegacyAirUse(1_201_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        input.attemptedBlock(1_202_000_000L, false);
-+        assertTrue(input.frameReady(1_203_000_000L, false));
++        assertTrue(input.frameReady(1_203_000_000L));
 +        input.release();
 +        assertTrue(input.admitLegacyAirUse(1_204_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +    }
@@ -1807,15 +1887,15 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +        final var input = new ItemUseState();
 +        input.retainBlockUse();
 +        input.attemptedBlock(1_000_000_000L, false);
-+        assertTrue(input.frameReady(1_001_000_000L, false));
++        assertTrue(input.frameReady(1_001_000_000L));
 +        assertFalse(input.admitLegacyAirUse(1_002_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        input.release();
-+        assertFalse(input.frameReady(1_003_000_000L, false));
++        assertFalse(input.frameReady(1_003_000_000L));
 +        assertTrue(input.admitLegacyAirUse(1_010_000_000L, InteractionHand.MAIN_HAND, true, false, true));
 +        input.retainBlockUse();
 +        assertEquals(HitResult.Type.MISS, input.hitType(1_500_000_000L, HitResult.Type.BLOCK, InteractionHand.MAIN_HAND));
-+        assertFalse(input.frameReady(1_210_000_000L, false));
-+        assertTrue(input.frameReady(1_210_000_001L, false));
++        assertFalse(input.frameReady(1_210_000_000L));
++        assertTrue(input.frameReady(1_210_000_001L));
 +    }
 +
 +    @Test
@@ -1833,19 +1913,70 @@ index 0000000000000000000000000000000000000000..a9f370910d90fa78726ed7ea2b3c70cf
 +    }
 +
 +    @Test
++    void sneakingKeepsTheFirstBuildDelayOnAnEstablishedLine() {
++        final var input = new ItemUseState();
++        input.attemptedBlock(1_000_000_000L, true);
++        input.pace(true, true, 0F, false);
++        assertFalse(input.frameReady(1_300_000_000L));
++        assertTrue(input.frameReady(1_300_000_001L));
++        input.pace(true, true, 36F, false);
++        assertFalse(input.frameReady(1_300_000_000L));
++    }
++
++    @Test
++    void movingLineRepeatsFollowTheirPreviousDeadlineAtMostOneHundredEightyMillisecondsBehind() {
++        final var input = new ItemUseState();
++        input.attemptedBlock(1_000_000_000L, true);
++        // Six blocks per second: 900 / 6 = 150 ms.
++        input.pace(true, false, 36F, false);
++        assertFalse(input.frameReady(1_150_000_000L));
++        assertTrue(input.frameReady(1_150_000_001L));
++        input.attemptedBlock(1_170_000_000L, true);
++        assertFalse(input.frameReady(1_300_000_000L));
++        assertTrue(input.frameReady(1_300_000_001L));
++        input.attemptedBlock(1_700_000_000L, true);
++        assertFalse(input.frameReady(1_670_000_000L));
++        assertTrue(input.frameReady(1_670_000_001L));
++    }
++
++    @Test
++    void movingDelayIsCappedAtOneHundredEightyAndFloorsAtOneHundredOutsideCreative() {
++        final var input = new ItemUseState();
++        input.attemptedBlock(1_000_000_000L, true);
++        input.pace(true, false, 1F, false);
++        assertFalse(input.frameReady(1_180_000_000L));
++        assertTrue(input.frameReady(1_180_000_001L));
++        input.pace(true, false, 400F, false);
++        assertFalse(input.frameReady(1_100_000_000L));
++        assertTrue(input.frameReady(1_100_000_001L));
++        input.pace(true, false, 400F, true);
++        assertFalse(input.frameReady(1_045_000_000L));
++        assertTrue(input.frameReady(1_045_000_001L));
++    }
++
++    @Test
++    void movingBeforeALineKeepsTheFirstBuildDelay() {
++        final var input = new ItemUseState();
++        input.attemptedBlock(1_000_000_000L, true);
++        input.pace(false, false, 36F, false);
++        assertFalse(input.frameReady(1_300_000_000L));
++        assertTrue(input.frameReady(1_300_000_001L));
++    }
++
++    @Test
 +    void monotonicClockRolloverKeepsBothDeadlines() {
 +        final var timing = new ItemUseState();
 +        final long start = Long.MAX_VALUE - 150_000_000L;
 +        timing.attemptedBlock(start, true);
 +        timing.release();
 +        assertTrue(timing.admitLegacyAirUse(start, InteractionHand.MAIN_HAND, true, false, true));
-+        assertFalse(timing.frameReady(start + 200_000_000L, false));
-+        assertTrue(timing.frameReady(start + 200_000_001L, false));
++        assertFalse(timing.frameReady(start + 200_000_000L));
++        assertTrue(timing.frameReady(start + 200_000_001L));
 +        timing.release();
 +        timing.attemptedBlock(start, true);
-+        assertFalse(timing.frameReady(start + 299_999_999L, false));
-+        assertFalse(timing.frameReady(start + 300_000_000L, false));
-+        assertTrue(timing.frameReady(start + 300_000_001L, false));
++        assertFalse(timing.frameReady(start + 299_999_999L));
++        assertFalse(timing.frameReady(start + 300_000_000L));
++        assertTrue(timing.frameReady(start + 300_000_001L));
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/TrapdoorPlacementTest.java
