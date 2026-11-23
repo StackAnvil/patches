@@ -557,6 +557,7 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
     });
   }
   const exports: { path: string; patch: string }[] = [];
+  const misplaced: string[] = [];
   let titleChanged = false;
   for (const [index, path] of paths.entries()) {
     const patch = yield* exportCommit(dir, required(commits[index], `The commit for ${path}`));
@@ -564,9 +565,17 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
       return yield* StackError.make({
         message: `The commit for ${path} has no file changes. Remove the empty commit and its series.json entry. No patch files changed.`,
       });
+    const message = parsePatchMessage(patch);
     const upstreamable = series.upstreamable[index - series.setup.length];
+    // Commits map to series entries by position. Only the patch under edit may change its subject,
+    // so any other changed subject means a commit was inserted, dropped, or reordered.
+    if (index !== session?.patchIndex) {
+      const saved = upstreamable ? "" : yield* Effect.promise(() => readFile(path, "utf8"));
+      const expected = upstreamable?.title ?? parsePatchMessage(saved).title;
+      if (message.title !== expected)
+        misplaced.push(`${relative(root, path)}: expected "${expected}", found "${message.title}"`);
+    }
     if (upstreamable && index < series.setup.length + series.upstreamable.length) {
-      const message = parsePatchMessage(patch);
       if (!message.description)
         return yield* StackError.make({
           message: `${upstreamable.file} needs a commit body describing the change. No patch files changed.`,
@@ -578,6 +587,10 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
     }
     exports.push({ path, patch });
   }
+  if (misplaced.length > 0)
+    return yield* StackError.make({
+      message: `Commit subjects do not match their series.json entries, so the commits no longer line up with the patch files. No patch files changed.\n${misplaced.join("\n")}\nReorder the commits or update series.json to match. To reword a patch, run bun run stack edit ${id} <patch-file> and amend its commit there.`,
+    });
   for (const { path, patch } of exports) {
     const previous = yield* Effect.promise(() => readFile(path, "utf8"));
     if (previous !== patch) yield* Effect.promise(() => writeFile(path, patch));

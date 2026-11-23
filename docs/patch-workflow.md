@@ -32,6 +32,7 @@ After upstream merges a feature, remove its local tests when retiring the owning
 Do not submit those tests as a separate upstream PR.
 The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
 If two groups use the same filename, name the patch as `<group>/<patch-file>` in `stack edit`.
+`stack rebuild` matches commits to `series.json` entries by position. It stops without changing patch files when a commit subject differs from its entry, except for the patch under edit.
 
 Both `stack add` and `stack rebuild` export with `git format-patch --binary --full-index --zero-commit --no-signature --no-stat`.
 Full blob object IDs keep new and changed exports stable as the object store grows or `core.abbrev` changes.

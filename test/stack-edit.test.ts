@@ -240,3 +240,35 @@ test("stack edit refuses a filename that names patches in two groups", async () 
   const output = await stack(["edit", "fixture", "0001-setup.patch"], true);
   expect(output).toContain("setup/0001-setup.patch, deferred/0001-setup.patch");
 }, 600_000);
+
+test("rebuild refuses commits that no longer line up with series.json", async () => {
+  const { checkout, patches, stack } = await stackFixture();
+  await stack(["sync", "fixture"]);
+  const first = await git(["rev-parse", "HEAD~1"], checkout);
+  // Insert a commit before the first patch and drop the second patch.
+  await git(["reset", "--hard", "HEAD~2"], checkout);
+  await commit(checkout, "inserted.txt", "inserted\n", "feat(test): inserted");
+  await git(["cherry-pick", first], checkout);
+  const saved = await readFile(join(patches, "upstreamable", "0001-first.patch"), "utf8");
+
+  const output = await stack(["rebuild", "fixture"], true);
+  expect(output).toContain(
+    'upstreamable/0001-first.patch: expected "feat(test): first", found "feat(test): inserted"',
+  );
+  expect(await readFile(join(patches, "upstreamable", "0001-first.patch"), "utf8")).toBe(saved);
+}, 600_000);
+
+test("rebuild saves a new subject for the patch under edit", async () => {
+  const { checkout, patches, stack } = await stackFixture();
+  await stack(["edit", "fixture", "0001-first.patch"]);
+  await git(
+    ["commit", "--amend", "-m", "feat(test): renamed", "-m", "Explain the rename."],
+    checkout,
+  );
+
+  await stack(["rebuild", "fixture"]);
+
+  expect(JSON.parse(await readFile(join(patches, "series.json"), "utf8"))).toMatchObject({
+    upstreamable: [{ file: "0001-first.patch", title: "feat(test): renamed" }, {}],
+  });
+}, 600_000);
