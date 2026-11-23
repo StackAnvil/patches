@@ -1,0 +1,208 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 20:18:58 +0100
+Subject: [PATCH] fix(ui): keep the Bedrock death screen above server forms
+
+A server form that arrives while the local player is dead replaced the
+death screen. Its respawn timer then stopped, and closing the form built a
+new death screen without the reason.
+
+The Bedrock 1.26.60.5 gameplay route selector (0x146f42b00, executable
+SHA-256 988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a)
+returns /gameplay/death while the player-alive flag is clear, before it
+checks bedtime, data-driven forms, block actors or trading. The respawn
+listener (0x146f41e40) sets the flag and recomputes the route, so a form
+that arrived meanwhile shows once the player is alive.
+
+Hold both native forms and the Java dialogs that present ordinary forms
+until the local player is alive and Java's terrain screen has closed. A
+newer form replaces the held one, a close-form request drops it, and a
+replaced connection discards it with its listener.
+
+Containers keep their Java behavior because their open state is shared
+with the server.
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenForms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenForms.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd951868c4407c3207c2a9bcf4737ea2207c6072
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockDeathScreenForms.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.screen.death.BedrockDeathScreenUpdates;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.network.protocol.common.ClientboundClearDialogPacket;
++import net.minecraft.network.protocol.common.ClientboundShowDialogPacket;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++/** Server forms presented as Java dialogs wait behind the death screen, as native data-driven forms do. */
++@Mixin(ClientCommonPacketListenerImpl.class)
++public abstract class MixinBedrockDeathScreenForms {
++    @Inject(method = "handleShowDialog", at = @At(value = "INVOKE", target =
++        "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V",
++        shift = At.Shift.AFTER), cancellable = true)
++    private void deferDialog(final ClientboundShowDialogPacket packet, final CallbackInfo ci) {
++        if (!BedrockInputPermissions.isBedrockConnection() || !((Object) this instanceof ClientPacketListener listener)
++                || !(listener instanceof BedrockDeathScreenUpdates.Owner owner)) return;
++        final var client = Minecraft.getInstance();
++        if (owner.bedrockDeathScreens().deferForm(client.player,
++                () -> listener.showDialog(packet.dialog(), client.gui.screen()))) ci.cancel();
++    }
++
++    @Inject(method = "handleClearDialog", at = @At("TAIL"))
++    private void clearDeferredForm(final ClientboundClearDialogPacket packet, final CallbackInfo ci) {
++        if ((Object) this instanceof BedrockDeathScreenUpdates.Owner owner) owner.bedrockDeathScreens().clearForm();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
+index 4456a4885183d5f5ba3920c524e7f91c4053d8c6..f341733484768cbbd020f86ce3678b81fb242af2 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
+@@ -10,6 +10,7 @@ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import java.util.function.LongSupplier;
+ import net.minecraft.client.Minecraft;
+ import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.gui.screens.LevelLoadingScreen;
+ import net.minecraft.client.gui.screens.Screen;
+ import net.minecraft.client.multiplayer.ClientPacketListener;
+ import net.minecraft.client.player.LocalPlayer;
+@@ -24,6 +25,7 @@ public final class BedrockDeathScreenUpdates {
+     private boolean respawning;
+     private boolean loading;
+     private long deadline;
++    private Runnable form;
+ 
+     public BedrockDeathScreenUpdates() { this(Util::getMillis); }
+     BedrockDeathScreenUpdates(final LongSupplier clock) { this.clock = clock; }
+@@ -97,6 +99,11 @@ public final class BedrockDeathScreenUpdates {
+ 
+     public void tick(final ClientPacketListener current, final LocalPlayer player, final Screen foreground) {
+         this.tick(current, player);
++        if (this.form != null && player != null && !player.isDeadOrDying() && !(foreground instanceof LevelLoadingScreen)) {
++            final Runnable open = this.form;
++            this.form = null;
++            open.run();
++        }
+         if (!this.respawning) return;
+         // Leaving the active native route disposes its timer, including while a modal is visible.
+         if (foreground != this.screen) {
+@@ -156,6 +163,21 @@ public final class BedrockDeathScreenUpdates {
+         return this.respawning && this.owner == current && this.player == player && this.screen == screen;
+     }
+ 
++    /**
++     * Native routes a dead player to the death screen before any data-driven form. Hold a form that arrives
++     * meanwhile and open it once the player is alive. A newer request replaces the held one.
++     */
++    public boolean deferForm(final LocalPlayer player, final Runnable open) {
++        if (player == null || !player.isDeadOrDying()) return false;
++        this.form = open;
++        return true;
++    }
++
++    /** The server's close-form request also closes a form held behind the death screen. */
++    public void clearForm() {
++        this.form = null;
++    }
++
+     public interface Owner {
+         BedrockDeathScreenUpdates bedrockDeathScreens();
+     }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
+index f4596e1e6398ef3474a201a6e180791d467332c5..7f1fe41755bb5d1fc767929da14c2b0b40c8b036 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
+@@ -7,6 +7,7 @@ package com.viaversion.viafabricplus.bedrock.screen.form;
+ 
+ import com.viaversion.viafabricplus.bedrock.screen.ui.BedrockUiContext;
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.screen.death.BedrockDeathScreenUpdates;
+ import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiImages;
+ import com.viaversion.viafabricplus.bedrock.screen.ui.NativeUiSceneScreen;
+ import java.util.Optional;
+@@ -40,6 +41,8 @@ public final class BedrockNativeForms {
+         final Minecraft client = Minecraft.getInstance();
+         client.execute(() -> {
+             if (!current(owner)) return;
++            if (owner instanceof BedrockDeathScreenUpdates.Owner deaths
++                    && deaths.bedrockDeathScreens().deferForm(client.player, () -> accept(owner, message))) return;
+             final var program = BedrockUiContext.program(message.context());
+             if (program == null) {
+                 fallback(owner, message.formId());
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index e30c7b99c25390ccf956e36f39f6d1d3e8558d8b..21d9318650b97e7ecea88d1cb4b19b4f35f413a8 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -175,6 +175,7 @@
+     "features.screen.MixinBedrockDeathScreenUpdates",
+     "features.screen.MixinBedrockRespawnScreen",
+     "features.screen.MixinBedrockAutomaticRespawn",
++    "features.screen.MixinBedrockDeathScreenForms",
+     "features.render.MixinBedrockCameraShake",
+     "features.render.MixinBedrockCameraPerspective",
+     "features.render.MixinBedrockFollowInput",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java
+index 477866a7cdbb4cb2b817f1df769653971b229805..404020dae7fe421385a09434c1a04cfaa3fe9ebd 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java
+@@ -10,10 +10,12 @@ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import java.lang.reflect.Field;
+ import java.util.List;
+ import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicInteger;
+ import net.minecraft.SharedConstants;
+ import net.minecraft.client.Minecraft;
+ import net.minecraft.client.gui.components.Button;
+ import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.gui.screens.LevelLoadingScreen;
+ import net.minecraft.client.gui.screens.Screen;
+ import net.minecraft.client.multiplayer.ClientPacketListener;
+ import net.minecraft.client.player.LocalPlayer;
+@@ -307,6 +309,35 @@ class BedrockDeathScreenUpdatesTest {
+         assertFalse(fixture.updates.gameMenu(fixture.owner, fixture.player, screen), "A pending respawn keeps the route");
+     }
+ 
++    @Test
++    void formsWaitBehindTheDeathScreenUntilThePlayerIsAliveAndInGame() {
++        final var fixture = new Fixture();
++        final var opened = new AtomicInteger();
++        final var screen = fixture.screen("Reason");
++        assertTrue(fixture.updates.deferForm(fixture.player, opened::incrementAndGet));
++        fixture.tick(0, screen);
++        assertEquals(0, opened.get(), "The death route outranks forms");
++
++        final var respawned = mock(LocalPlayer.class);
++        fixture.updates.tick(fixture.owner, respawned, mock(LevelLoadingScreen.class));
++        assertEquals(0, opened.get(), "Java's terrain screen is still loading");
++        fixture.updates.tick(fixture.owner, respawned, null);
++        fixture.updates.tick(fixture.owner, respawned, null);
++        assertEquals(1, opened.get());
++        assertFalse(fixture.updates.deferForm(respawned, opened::incrementAndGet), "Alive players see forms at once");
++    }
++
++    @Test
++    void closeFormRequestDropsAFormHeldBehindTheDeathScreen() {
++        final var fixture = new Fixture();
++        final var opened = new AtomicInteger();
++        fixture.updates.deferForm(fixture.player, opened::incrementAndGet);
++        fixture.updates.clearForm();
++        fixture.dead.set(false);
++        fixture.updates.tick(fixture.owner, fixture.player, null);
++        assertEquals(0, opened.get());
++    }
++
+     private static String key(final Component component) {
+         return ((TranslatableContents) component.getContents()).getKey();
+     }
