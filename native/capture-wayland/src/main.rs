@@ -32,7 +32,15 @@ impl std::error::Error for ContextError {
 }
 
 fn main() -> std::process::ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // std::env::args panics on an argument that is not valid UTF-8, such as a file name.
+    let Ok(args) = std::env::args_os()
+        .skip(1)
+        .map(std::ffi::OsString::into_string)
+        .collect::<std::result::Result<Vec<String>, _>>()
+    else {
+        eprintln!("Arguments must be valid UTF-8\n{}", command::USAGE);
+        return std::process::ExitCode::from(2);
+    };
     if matches!(args.as_slice(), [arg] if arg == "--help" || arg == "help") {
         println!("{}", command::USAGE);
         return std::process::ExitCode::SUCCESS;
