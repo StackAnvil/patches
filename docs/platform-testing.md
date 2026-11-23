@@ -123,7 +123,7 @@ ffmpeg -i .stackanvil/lab/vms/windows/captures/installer.ppm \
   .stackanvil/lab/vms/windows/captures/installer.png
 ```
 
-`view` uses the existing private lab display by default.
+`view` opens the viewer on the private lab display by default and starts that display if it is stopped.
 `view --allow-focus` explicitly opens a window on your desktop for manual installation.
 The SPICE viewer disables audio and USB redirection.
 Windows starts without a sound card. Quickemu can select a macOS sound card, but its audio stays in SPICE without audible playback.
