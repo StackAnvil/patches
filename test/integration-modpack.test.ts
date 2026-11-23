@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +9,7 @@ import {
   packOverrides,
   replacePackFiles,
   validatePackIndex,
+  verifiedDownload,
 } from "../src/integration/modpack.ts";
 
 const target = { minecraft: "26.3", fabricLoader: "0.19.5" };
@@ -98,4 +100,20 @@ test("client overrides replace shared overrides even when the archive lists them
       });
     },
   );
+});
+
+test("accepts a cached download whose index spells the SHA-512 in uppercase", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-mrpack-cache-"));
+  try {
+    const file = join(directory, "example.jar");
+    await writeFile(file, "cached mod");
+    const hash = createHash("sha512").update("cached mod").digest("hex").toUpperCase();
+    const pack = index();
+    pack.files[0]!.hashes.sha512 = hash;
+    expect(validatePackIndex(pack, target).files[0]!.hashes.sha512).toBe(hash);
+    // No download URLs: only the verified cached file can satisfy this request.
+    await verifiedDownload([], file, hash);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

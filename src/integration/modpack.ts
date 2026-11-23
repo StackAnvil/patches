@@ -154,7 +154,9 @@ export async function verifiedDownload(
   destination: string,
   hash: string,
 ): Promise<void> {
-  if (existsSync(destination) && sha512(new Uint8Array(await readFile(destination))) === hash)
+  // Pack indexes may spell hexadecimal digests in either case.
+  const expected = hash.toLowerCase();
+  if (existsSync(destination) && sha512(new Uint8Array(await readFile(destination))) === expected)
     return;
   let error: unknown;
   for (const url of urls) {
@@ -163,7 +165,7 @@ export async function verifiedDownload(
       const response = await fetch(url, { headers: { "User-Agent": userAgent } });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const bytes = new Uint8Array(await response.arrayBuffer());
-      if (sha512(bytes) !== hash) throw new Error("SHA-512 mismatch");
+      if (sha512(bytes) !== expected) throw new Error("SHA-512 mismatch");
       await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
       await writeFile(destination, bytes, { mode: 0o600 });
       return;
@@ -179,7 +181,7 @@ async function readPack(): Promise<{ lock: PackLock; index: PackIndex; entries: 
   if (lock.project !== project || !/^[a-f0-9]{128}$/iu.test(lock.sha512))
     throw new Error("Invalid Fabulously Optimized lock file.");
   const bytes = new Uint8Array(await readFile(packFile));
-  if (sha512(bytes) !== lock.sha512)
+  if (sha512(bytes) !== lock.sha512.toLowerCase())
     throw new Error("Fabulously Optimized .mrpack checksum mismatch.");
   const entries = await zipEntries(packFile);
   if (!entries.includes("modrinth.index.json")) throw new Error("The modpack has no index.");
