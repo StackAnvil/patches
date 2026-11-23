@@ -11,11 +11,16 @@ export interface PrPatch {
   omittedTests: boolean;
 }
 
+const testDirectory =
+  /^(?:tests?|__tests__|testFixtures|integrationTest|functionalTest|fixtures|__snapshots__)$/u;
+
 function isTestPath(path: string): boolean {
+  // Below src/<source set>/, directories are packages or resources, such as a tool's test package.
+  const sourceSet = /(?:^|\/)src\/([^/]+)\//u.exec(path)?.[1];
   return (
-    /(?:^|\/)(?:tests?|__tests__|testFixtures|integrationTest|functionalTest|fixtures|__snapshots__)(?:\/|$)/u.test(
-      path,
-    ) ||
+    (sourceSet === undefined
+      ? path.split("/").some((segment) => testDirectory.test(segment))
+      : testDirectory.test(sourceSet)) ||
     /(?:^|\/)(?:junit-platform\.properties|\.codecov\.ya?ml|codecov\.ya?ml)$/u.test(path) ||
     /\.(?:test|spec)\.[^/]+$/u.test(path)
   );

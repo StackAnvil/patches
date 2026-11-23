@@ -197,3 +197,23 @@ test("PR preparation does not guess where production code belongs after its test
 `),
   ).toThrow(/need non-test context/);
 });
+
+test("PR preparation keeps production sources in non-test source sets with a test package", () => {
+  const tool = "src/tool/java/net/raphimc/viabedrock/test/ResourcePackConverterTest.java";
+  const projected = projectPrPatch(`diff --git a/${tool} b/${tool}
+--- a/${tool}
++++ b/${tool}
+@@ -1 +1 @@
+-new ResourcePackStorage(packs);
++new ResourcePackStorage(packs, servers);
+diff --git a/src/test/java/StorageTest.java b/src/test/java/StorageTest.java
+--- a/src/test/java/StorageTest.java
++++ b/src/test/java/StorageTest.java
+@@ -1 +1 @@
+-old
++new
+`);
+  expect(projected.omittedTests).toBe(true);
+  expect(projected.patch).toContain(`+new ResourcePackStorage(packs, servers);`);
+  expect(projected.patch).not.toContain("StorageTest.java");
+});
