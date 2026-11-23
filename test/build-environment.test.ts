@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildEnvironment, prepareBuildInputs } from "../src/build.ts";
+import { buildEnvironment, builtinAssetArguments, prepareBuildInputs } from "../src/build.ts";
 import { buildOrder } from "../src/dependencies.ts";
 import { getTargets } from "../src/model.ts";
 
@@ -79,4 +79,11 @@ test("a full build reports every missing input before the first Gradle build", a
   await expect(result).rejects.toThrow("STACKANVIL_JAVA_17 must name a Java 17 JDK home");
   await expect(result).rejects.toThrow("Bundled Bedrock UI is missing for 1.26.60.5");
   await expect(result).rejects.toThrow("OreUI shaper resources are missing for linux-x64");
+});
+
+test("add-on PR builds use the tracked assets without the setup-only OreUI shaper", async () => {
+  process.env["STACKANVIL_OREUI_SHAPER_RESOURCES"] = join(tmpdir(), "stackanvil-missing-shaper");
+  expect(await builtinAssetArguments("viafabricplus-bedrock")).toEqual([
+    expect.stringMatching(/^-PbedrockBuiltinAssets=/u),
+  ]);
 });

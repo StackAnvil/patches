@@ -59,15 +59,9 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     );
     return [`-PbedrockBuiltinUi=${path}`, `-PbedrockBuiltinImages=${images}`];
   }
-  // The shaper libraries are small and often missing locally, so check them before hashing the assets.
-  const shaper = await oreUiShaperArguments(
-    id,
-    oreUiShaperDirectory(repository),
-    join(repository, "native", "oreui-shaper"),
-  );
   await verifyBuiltinAssets(join(directory, builtinAssetsResource), version);
   await verifyBuiltinOreUi(join(directory, builtinOreUiResource), version);
-  return [`-PbedrockBuiltinAssets=${directory}`, ...shaper];
+  return [`-PbedrockBuiltinAssets=${directory}`];
 }
 
 /** Read the major version from a JDK home's release file. */
@@ -138,8 +132,20 @@ export async function prepareBuildInputs(
   for (const id of order) {
     const target = required(targets[id], `The ${id} target`);
     const environment = await buildEnvironment(target.java).catch(report);
+    // Only the add-on's setup patch embeds the shaper, so PR builds do not need it.
+    // The libraries are small and often missing locally, so check them before hashing the assets.
+    const shaperArguments = await oreUiShaperArguments(
+      id,
+      oreUiShaperDirectory(repository),
+      join(repository, "native", "oreui-shaper"),
+    ).catch(report);
     const assetArguments = await builtinAssetArguments(id, repository).catch(report);
-    if (environment && assetArguments) inputs.set(id, { target, environment, assetArguments });
+    if (environment && shaperArguments && assetArguments)
+      inputs.set(id, {
+        target,
+        environment,
+        assetArguments: [...assetArguments, ...shaperArguments],
+      });
   }
   if (problems.size > 0)
     throw new Error(
