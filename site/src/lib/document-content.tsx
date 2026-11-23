@@ -43,7 +43,10 @@ export const documentLoader = createClientLoader<
         <DocsBody>
           <Content components={mdxComponents} />
         </DocsBody>
-        <EditOnGitHub href={`${site.github}/edit/main/site/content/docs/${props.slug}.mdx`}>
+        <EditOnGitHub
+          className="self-start"
+          href={`${site.github}/edit/main/site/content/docs/${props.slug}.mdx`}
+        >
           Improve this page
         </EditOnGitHub>
       </DocsPage>

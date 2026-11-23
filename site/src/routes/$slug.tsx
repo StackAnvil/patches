@@ -17,9 +17,8 @@ export const Route = createFileRoute("/$slug")({
   head: ({ loaderData }) =>
     loaderData
       ? pageHead(loaderData, loaderData.slug)
-      : {
-          meta: [{ title: "Page not found · StackAnvil" }, { name: "robots", content: "noindex" }],
-        },
+      : // The prerendered 404.html already carries noindex; repeating it duplicates the tag.
+        { meta: [{ title: "Page not found · StackAnvil" }] },
   component: DocumentPage,
 });
 

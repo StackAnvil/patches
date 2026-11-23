@@ -12,7 +12,7 @@ bun install --frozen-lockfile
 bun run site:dev
 ```
 
-Open `http://localhost:3000`. The development server reloads when you edit a page or component.
+Open the local URL that Vite prints, usually `http://localhost:3000`. The development server reloads when you edit a page or component.
 
 ## Edit a guide
 
