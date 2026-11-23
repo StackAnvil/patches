@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 20:07:09 +0100
+Subject: [PATCH] fix(signs): dim unlit sign text like the native client
+
+Bedrock draws colored text on an unlit sign at half the strength of the
+same text on a glowing sign. ViaBedrock kept the full colors, so dyed
+and formatted text on ordinary signs looked twice as bright as on
+Bedrock.
+
+Native 1.26.60.5 evidence from the Windows client:
+
+- The sign renderer (0x146a7f670) draws each row separately. A row is
+  colored when the face color is not opaque black or the row contains
+  a formatting code (it searches for the 0xA7 byte).
+- When IgnoreLighting (face offset 0x150) is off, a colored row gets
+  the tint (0.5, 0.5, 0.5, 1) from 0x14f0feab0 multiplied by the light
+  color at the sign (0x146bf7610). The renderer passes it with a
+  tint flag to the text draw call.
+- The UIText material (data/renderer/materials/UIText.material.bin)
+  declares TintColor at constant buffer offset 0x10. Its fragment
+  shader multiplies the glyph sample and vertex color by TintColor.
+
+So an unlit colored glyph is color x 0.5 x light. Black rows are not
+tinted, which gives the same black. Java's text shader multiplies the
+vertex color by the light map alone. ViaBedrock now halves every text
+color on faces that do not ignore lighting. Glowing faces keep the
+full colors.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
+index e3fc3a10e29029f91f2f20c027c702ea081daad6..04ad7c978191a0cfa3eda0493e93c122133eb6f2 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
+@@ -175,6 +175,17 @@ public class SignBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+             }
+         }
+ 
++        if (!ignoreLighting) {
++            // Bedrock tints colored text on unlit signs with half the light color. Java multiplies by the light alone.
++            for (TextComponent component : components) {
++                component.forEach(c -> {
++                    if (c.getStyle().getColor() != null) {
++                        c.getStyle().setColor(halveRgb(c.getStyle().getColor().getRgbValue()));
++                    }
++                });
++            }
++        }
++
+         final ListTag<CompoundTag> messages = new ListTag<>(CompoundTag.class);
+         for (int i = 0; i < 4; i++) {
+             messages.add(TextUtil.ensureCompoundTag(components.size() > i ? TextUtil.textComponentToNbt(components.get(i)) : TextUtil.stringToNbt("")));
+@@ -184,6 +195,10 @@ public class SignBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+         return javaText;
+     }
+ 
++    private static int halveRgb(final int rgb) {
++        return ((((rgb >> 16) & 0xFF) + 1) >> 1) << 16 | ((((rgb >> 8) & 0xFF) + 1) >> 1) << 8 | (((rgb & 0xFF) + 1) >> 1);
++    }
++
+     /** Keeps the whole characters within the byte limit. The native client cuts the raw bytes instead. */
+     private static String truncateUtf8(final String text, final int maxBytes) {
+         int bytes = 0;
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
+index c03d4c059d36f524ef78337611a6e1c3f416ab97..7362c8f40d6fe049618488e74c7e556f9aa559d9 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
+@@ -43,17 +43,30 @@ class SignBlockEntityRewriterTest {
+         assertEquals("a", text(frontMessages("§a".repeat(170) + "aé", BLACK).get(0)));
+     }
+ 
++    @Test
++    void unlitSignsDimColoredTextToHalf() {
++        final ListTag<?> undyed = frontText("§cRed\n§rplain", BLACK, false).getListTag("messages");
++        assertEquals(Set.of("#802B2B"), colors(undyed.get(0)));
++        assertEquals(Set.of("#000000"), colors(undyed.get(1)));
++        assertEquals(Set.of("#001E80"), colors(frontText("blue", BLUE, false).getListTag("messages").get(0)));
++    }
++
++    /** Lit faces keep the full colors, so these messages show the color choice alone. */
+     private static ListTag<?> frontMessages(final String text, final int color) {
++        return frontText(text, color, true).getListTag("messages");
++    }
++
++    private static CompoundTag frontText(final String text, final int color, final boolean ignoreLighting) {
+         final CompoundTag front = new CompoundTag();
+         front.putString("Text", text);
+         front.putInt("SignTextColor", color);
+-        front.putByte("IgnoreLighting", (byte) 0);
++        front.putByte("IgnoreLighting", (byte) (ignoreLighting ? 1 : 0));
+         front.putByte("PersistFormatting", (byte) 1);
+         final CompoundTag sign = new CompoundTag();
+         sign.putString("id", "Sign");
+         sign.put("FrontText", front);
+         final var java = new SignBlockEntityRewriter().toJava(null, new BedrockBlockEntity(new BlockPosition(0, 0, 0), sign));
+-        return java.tag().getCompoundTag("front_text").getListTag("messages");
++        return java.tag().getCompoundTag("front_text");
+     }
+ 
+     private static String text(final Tag tag) {

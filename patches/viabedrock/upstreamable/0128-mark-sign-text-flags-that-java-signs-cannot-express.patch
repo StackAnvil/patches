@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 20:08:07 +0100
+Subject: [PATCH] feat(signs): mark sign text flags that Java signs cannot
+ express
+
+Bedrock sign faces have IgnoreLighting, HideGlowOutline and
+PersistFormatting flags. Java sign text has only has_glowing_text, so
+two native results were lost:
+
+- IgnoreLighting with HideGlowOutline draws the text at full
+  brightness without an outline. ViaBedrock sends such a face as
+  unlit text, because Java glowing text always has an outline.
+- Without PersistFormatting, the native client starts every drawn
+  row with no formatting. This also applies to the rows of a wrapped
+  line, which only a client that wraps like Bedrock can reproduce.
+
+Native 1.26.60.5 evidence: the sign renderer (0x146a7f670) reads
+IgnoreLighting at face offset 0x150, HideGlowOutline at 0x151 and
+PersistFormatting at 0x152. With IgnoreLighting set it skips the
+light tint, and with HideGlowOutline set it skips the outline pass.
+The row callback (0x146a94fe0) prefixes a row with the formatting
+codes that are active at the end of the previous rows (0x1407f8260
+collects them until a reset code) only when PersistFormatting is set.
+Each row is drawn by its own text call.
+
+The Java face now carries "viabedrock:full_bright" for the first case
+and "viabedrock:persist_formatting": false for the second. Vanilla
+Java clients ignore unknown sign text fields, so their result does not
+change.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
+index 04ad7c978191a0cfa3eda0493e93c122133eb6f2..046030b80460e349b1db2ae1859c02d16317e912 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
+@@ -36,6 +36,10 @@ public class SignBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+     private static final String[] TEXT_CONTAINER_KEYS = {"FrontText", "BackText"};
+     // The Bedrock client lays out at most the first 512 UTF-8 bytes of a sign face's text.
+     private static final int MAX_TEXT_BYTES = 512;
++    /** Marks a face that Bedrock draws at full brightness without the outline that Java adds to glowing text. */
++    public static final String FULL_BRIGHT_TAG = "viabedrock:full_bright";
++    /** False when Bedrock starts each drawn row without the formatting of the rows before it. */
++    public static final String PERSIST_FORMATTING_TAG = "viabedrock:persist_formatting";
+ 
+     public static void upgradeData(final CompoundTag data) {
+         if (data.get("Text1") instanceof StringTag) {
+@@ -150,12 +154,15 @@ public class SignBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+             for (String line : text.split("\n")) {
+                 components.add(TextUtil.stringToTextComponent(line));
+             }
++            javaText.putBoolean(PERSIST_FORMATTING_TAG, false);
+         }
+ 
+         final boolean ignoreLighting = !(bedrockText.get("IgnoreLighting") instanceof ByteTag ignoreLightingTag) || ignoreLightingTag.asByte() != 0;
+         final boolean hideGlowOutline = bedrockText.get("HideGlowOutline") instanceof ByteTag hideGlowOutlineTag && hideGlowOutlineTag.asByte() != 0;
+         if (!hideGlowOutline && ignoreLighting) {
+             javaText.putByte("has_glowing_text", (byte) 1);
++        } else if (ignoreLighting) {
++            javaText.putBoolean(FULL_BRIGHT_TAG, true);
+         }
+ 
+         if (bedrockText.get("SignTextColor") instanceof IntTag signTextColorTag) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
+index 7362c8f40d6fe049618488e74c7e556f9aa559d9..f4386113ee012eb3f18ec4c9377d9c5ef153e04f 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
+@@ -12,6 +12,8 @@ import java.util.HashSet;
+ import java.util.Set;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ class SignBlockEntityRewriterTest {
+ 
+@@ -51,6 +53,24 @@ class SignBlockEntityRewriterTest {
+         assertEquals(Set.of("#001E80"), colors(frontText("blue", BLUE, false).getListTag("messages").get(0)));
+     }
+ 
++    @Test
++    void facesCarryTheBedrockFlagsThatJavaSignTextCannotExpress() {
++        final CompoundTag bedrock = new CompoundTag();
++        bedrock.putString("Text", "text");
++        bedrock.putByte("IgnoreLighting", (byte) 1);
++        bedrock.putByte("HideGlowOutline", (byte) 1);
++        bedrock.putByte("PersistFormatting", (byte) 0);
++        final CompoundTag fullBright = toJava(bedrock);
++        assertFalse(fullBright.getBoolean("has_glowing_text"));
++        assertTrue(fullBright.getBoolean(SignBlockEntityRewriter.FULL_BRIGHT_TAG));
++        assertFalse(fullBright.getBoolean(SignBlockEntityRewriter.PERSIST_FORMATTING_TAG, true));
++
++        final CompoundTag glowing = frontText("text", BLACK, true);
++        assertTrue(glowing.getBoolean("has_glowing_text"));
++        assertFalse(glowing.contains(SignBlockEntityRewriter.FULL_BRIGHT_TAG));
++        assertFalse(glowing.contains(SignBlockEntityRewriter.PERSIST_FORMATTING_TAG));
++    }
++
+     /** Lit faces keep the full colors, so these messages show the color choice alone. */
+     private static ListTag<?> frontMessages(final String text, final int color) {
+         return frontText(text, color, true).getListTag("messages");
+@@ -62,6 +82,10 @@ class SignBlockEntityRewriterTest {
+         front.putInt("SignTextColor", color);
+         front.putByte("IgnoreLighting", (byte) (ignoreLighting ? 1 : 0));
+         front.putByte("PersistFormatting", (byte) 1);
++        return toJava(front);
++    }
++
++    private static CompoundTag toJava(final CompoundTag front) {
+         final CompoundTag sign = new CompoundTag();
+         sign.putString("id", "Sign");
+         sign.put("FrontText", front);

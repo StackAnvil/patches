@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 20:16:28 +0100
+Subject: [PATCH] fix(signs): draw Bedrock signs that hide the glow outline at
+ full brightness
+
+A Bedrock sign face with IgnoreLighting and HideGlowOutline shows its
+text at full brightness without an outline. Java glowing text always
+has an outline, so ViaBedrock sends such a face as ordinary unlit
+text. On Bedrock servers, the text then darkened with the light at the
+sign.
+
+Native 1.26.60.5 evidence from the Windows client: the sign renderer
+(0x146a7f670) skips the light tint for every row when IgnoreLighting
+(face offset 0x150) is set. It draws the outline pass only when
+HideGlowOutline (face offset 0x151) is clear.
+
+ViaBedrock marks such faces with "viabedrock:full_bright". The add-on
+keeps the mark on the loaded SignText and draws those rows with full
+brightness on Bedrock connections. Java already omits the outline for
+text without has_glowing_text.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSignText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSignText.java
+index a66d2185d9e6a26983dc5f66412ca7598a628803..10e3c974590f57495528784862da40c0ccc4d098 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSignText.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSignText.java
+@@ -11,5 +11,7 @@ import net.minecraft.world.level.storage.ValueInput;
+ public interface IBedrockSignText {
+     boolean viaFabricPlusBedrock$persistFormatting();
+ 
++    boolean viaFabricPlusBedrock$fullBright();
++
+     void viaFabricPlusBedrock$readFlags(ValueInput face);
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignText.java
+index 138d73ff67ebba1262ae87fd38d75530682f16b4..e1c5dd3460cfef3817b165188fcce684a75662a3 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignText.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignText.java
+@@ -14,15 +14,22 @@ import org.spongepowered.asm.mixin.Unique;
+ @Mixin(SignText.class)
+ public abstract class MixinSignText implements IBedrockSignText {
+     @Unique private boolean viaFabricPlusBedrock$persistFormatting = true;
++    @Unique private boolean viaFabricPlusBedrock$fullBright;
+ 
+     @Override
+     public boolean viaFabricPlusBedrock$persistFormatting() {
+         return this.viaFabricPlusBedrock$persistFormatting;
+     }
+ 
++    @Override
++    public boolean viaFabricPlusBedrock$fullBright() {
++        return this.viaFabricPlusBedrock$fullBright;
++    }
++
+     @Override
+     public void viaFabricPlusBedrock$readFlags(final ValueInput face) {
+-        // Matches SignBlockEntityRewriter.PERSIST_FORMATTING_TAG in ViaBedrock.
++        // Match SignBlockEntityRewriter.PERSIST_FORMATTING_TAG and FULL_BRIGHT_TAG in ViaBedrock.
+         this.viaFabricPlusBedrock$persistFormatting = face.getBooleanOr("viabedrock:persist_formatting", true);
++        this.viaFabricPlusBedrock$fullBright = face.getBooleanOr("viabedrock:full_bright", false);
+     }
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java
+index 1adc4805de4582be7417ed90fe39e99d2cfe804f..0f3cebaefed2c7deea677e08b7d33cd7fa71ba63 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java
+@@ -8,23 +8,29 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+ import com.llamalad7.mixinextras.sugar.Local;
++import com.mojang.blaze3d.vertex.PoseStack;
+ import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockSignText;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockSignText;
+ import java.util.function.Function;
+ import net.minecraft.client.gui.Font;
++import net.minecraft.client.renderer.SubmitNodeCollector;
+ import net.minecraft.client.renderer.blockentity.AbstractSignRenderer;
+ import net.minecraft.client.renderer.blockentity.state.HangingSignRenderState;
+ import net.minecraft.client.renderer.blockentity.state.SignRenderState;
+ import net.minecraft.network.chat.Component;
+ import net.minecraft.util.FormattedCharSequence;
++import net.minecraft.util.LightCoordsUtil;
+ import net.minecraft.world.level.block.entity.SignText;
+ import org.spongepowered.asm.mixin.Final;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.Shadow;
+ import org.spongepowered.asm.mixin.injection.At;
+ 
+-/** Bedrock wraps long sign lines into the following rows. Java clips each line at the sign's width. */
++/**
++ * Bedrock wraps long sign lines into the following rows. Java clips each line at the sign's width. A Bedrock face that
++ * ignores lighting but hides the glow outline is drawn at full brightness without an outline.
++ */
+ @Mixin(AbstractSignRenderer.class)
+ public abstract class MixinAbstractSignRenderer {
+     @Shadow @Final private Font font;
+@@ -41,4 +47,16 @@ public abstract class MixinAbstractSignRenderer {
+         final boolean persistFormatting = ((IBedrockSignText) text).viaFabricPlusBedrock$persistFormatting();
+         return original.call(text, filtered, BedrockSignText.rows(this.font, text.getMessages(filtered), width, persistFormatting));
+     }
++
++    @WrapOperation(method = "submitSignText", at = @At(value = "INVOKE", target =
++            "Lnet/minecraft/client/renderer/SubmitNodeCollector;submitText(Lcom/mojang/blaze3d/vertex/PoseStack;FFLnet/minecraft/util/FormattedCharSequence;ZLnet/minecraft/client/gui/Font$DisplayMode;IIII)V"),
++            require = 1, allow = 1)
++    private void lightFullBrightBedrockText(final SubmitNodeCollector collector, final PoseStack poseStack, final float x, final float y,
++                                            final FormattedCharSequence line, final boolean shadow, final Font.DisplayMode mode,
++                                            final int light, final int color, final int background, final int outline,
++                                            final Operation<Void> original, @Local(argsOnly = true) final SignText text) {
++        // ViaBedrock sends these faces without has_glowing_text, so Java already omits the outline.
++        final boolean fullBright = BedrockInputPermissions.isBedrockConnection() && ((IBedrockSignText) text).viaFabricPlusBedrock$fullBright();
++        original.call(collector, poseStack, x, y, line, shadow, mode, fullBright ? LightCoordsUtil.FULL_BRIGHT : light, color, background, outline);
++    }
+ }
