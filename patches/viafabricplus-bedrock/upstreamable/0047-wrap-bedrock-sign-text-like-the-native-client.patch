@@ -1,0 +1,360 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 19:08:19 +0100
+Subject: [PATCH] fix(signs): wrap Bedrock sign text like the native client
+
+Bedrock wraps a long sign line into the following rows. Java clips
+each line at the sign's width, so the end of every long Bedrock sign
+line was missing and the lines below it sat too high.
+
+Native 1.26.60.5 evidence from the Windows client:
+
+- The sign renderer (0x146a7f670) passes the face's text to the
+  layout at 0x140e6c950 with a budget of four rows. The layout
+  (0x140e69dd0) splits the text into words, spaces and line breaks.
+  A word that does not fit starts a new row. A space that does not
+  fit stays at the end of its row. All lines share the four rows, so
+  a wrapped line pushes later lines down and the last ones drop out.
+- A word as wide as the row fills the current row and continues on
+  the next rows (0x140e6b010). The head is the longest prefix that
+  fits, found by dropping one character at a time but keeping one
+  (0x140e6c4c0). If the break is inside a word, the layout measures
+  again with room for a hyphen and appends "-".
+- 0x140e6bbc0 skips formatting codes and adds no hyphen after a
+  space, beside a hyphen, or beside wide script (Hangul Jamo,
+  U+2329-232A, U+2E80-A4CF, U+AC00-D7FF, U+F900-FAFF, U+FE10-FE6F,
+  U+FF01-FFEF, U+1B000-1B16F and U+20000-323AF). If the hyphenated
+  break does not need a hyphen, the plain break is used.
+- Rows are 89 units wide on standing signs and 60 on hanging signs.
+  Java uses 90 and 60.
+
+On Bedrock connections, the sign renderer now lays out each face this
+way with the client font, which holds the converted Bedrock bitmap
+metrics. The layout works on styled characters, so a hyphen takes the
+style of the character before it. The rows go through Java's own
+render cache in SignText, so the layout runs once per sign text.
+Java servers keep Java's clipping.
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6a198c2e2af1961bbc4b6954a917211faccde748
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java
+@@ -0,0 +1,42 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.llamalad7.mixinextras.sugar.Local;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.render.BedrockSignText;
++import java.util.function.Function;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.renderer.blockentity.AbstractSignRenderer;
++import net.minecraft.client.renderer.blockentity.state.HangingSignRenderState;
++import net.minecraft.client.renderer.blockentity.state.SignRenderState;
++import net.minecraft.network.chat.Component;
++import net.minecraft.util.FormattedCharSequence;
++import net.minecraft.world.level.block.entity.SignText;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++
++/** Bedrock wraps long sign lines into the following rows. Java clips each line at the sign's width. */
++@Mixin(AbstractSignRenderer.class)
++public abstract class MixinAbstractSignRenderer {
++    @Shadow @Final private Font font;
++
++    @WrapOperation(method = "submitSignText", at = @At(value = "INVOKE", target =
++            "Lnet/minecraft/world/level/block/entity/SignText;getRenderMessages(ZLjava/util/function/Function;)[Lnet/minecraft/util/FormattedCharSequence;"),
++            require = 1, allow = 1)
++    private FormattedCharSequence[] wrapBedrockRows(final SignText text, final boolean filtered,
++                                                    final Function<Component, FormattedCharSequence> prepare,
++                                                    final Operation<FormattedCharSequence[]> original,
++                                                    @Local(argsOnly = true) final SignRenderState state) {
++        if (!BedrockInputPermissions.isBedrockConnection()) return original.call(text, filtered, prepare);
++        final int width = state instanceof HangingSignRenderState ? BedrockSignText.HANGING_WIDTH : BedrockSignText.STANDING_WIDTH;
++        return original.call(text, filtered, BedrockSignText.rows(this.font, text.getMessages(filtered), width));
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignText.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6f3e65598c54259b7bccc18da83fb4df56481d3e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignText.java
+@@ -0,0 +1,163 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.function.Function;
++import java.util.function.ToIntFunction;
++import net.minecraft.client.gui.Font;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.Style;
++import net.minecraft.util.FormattedCharSequence;
++import net.minecraft.util.StringDecomposer;
++
++/**
++ * Wraps sign text into rows like the Bedrock 1.26.60.5 client. The native layout (0x140e69dd0) breaks lines at spaces
++ * and line breaks, and all lines share one budget of four rows. A word wider than the row is broken with a hyphen
++ * (0x140e6b010). Java clips each line at the row width instead.
++ */
++public final class BedrockSignText {
++    public static final int STANDING_WIDTH = 89;
++    public static final int HANGING_WIDTH = 60;
++    static final int ROWS = 4;
++
++    private BedrockSignText() {}
++
++    /**
++     * Prepares the messages of one sign face for {@code SignText.getRenderMessages}, which caches the result. The
++     * first message lays out the whole face. Each call then returns the next row.
++     */
++    public static Function<Component, FormattedCharSequence> rows(final Font font, final List<Component> messages, final int width) {
++        final FormattedCharSequence[][] rows = {null};
++        final int[] next = {0};
++        return message -> {
++            if (rows[0] == null) rows[0] = rows(messages, width, glyphs -> font.width(sequence(glyphs)));
++            return next[0] < rows[0].length ? rows[0][next[0]++] : FormattedCharSequence.EMPTY;
++        };
++    }
++
++    static FormattedCharSequence[] rows(final List<Component> messages, final int width, final ToIntFunction<List<Glyph>> measure) {
++        final List<List<Glyph>> lines = new ArrayList<>(messages.size());
++        for (final Component message : messages) {
++            final List<Glyph> line = new ArrayList<>();
++            StringDecomposer.iterateFormatted(message, Style.EMPTY, (index, style, codePoint) -> line.add(new Glyph(codePoint, style)));
++            lines.add(line);
++        }
++        final FormattedCharSequence[] result = new FormattedCharSequence[messages.size()];
++        Arrays.fill(result, FormattedCharSequence.EMPTY);
++        final List<List<Glyph>> rows = layout(lines, width, measure);
++        for (int i = 0; i < Math.min(result.length, rows.size()); i++) result[i] = sequence(rows.get(i));
++        return result;
++    }
++
++    /** Lays out the lines into at most four rows of at most {@code width} units. */
++    static List<List<Glyph>> layout(final List<List<Glyph>> lines, final int width, final ToIntFunction<List<Glyph>> measure) {
++        final List<List<Glyph>> rows = new ArrayList<>(ROWS);
++        final int hyphenWidth = measure.applyAsInt(List.of(new Glyph('-', Style.EMPTY)));
++        for (final List<Glyph> line : lines) {
++            if (rows.size() == ROWS) break;
++            if (line.isEmpty()) rows.add(line);
++            else wrap(line, width, hyphenWidth, measure, rows);
++        }
++        return rows;
++    }
++
++    private static void wrap(final List<Glyph> line, final int width, final int hyphenWidth,
++                             final ToIntFunction<List<Glyph>> measure, final List<List<Glyph>> rows) {
++        List<Glyph> current = List.of();
++        int start = 0;
++        while (start < line.size()) {
++            // A token is one space or one word.
++            int end = start + 1;
++            if (line.get(start).codePoint() != ' ') {
++                while (end < line.size() && line.get(end).codePoint() != ' ') end++;
++            }
++            final List<Glyph> token = line.subList(start, end);
++            start = end;
++            final List<Glyph> candidate = concat(current, token);
++            if (measure.applyAsInt(candidate) <= width) {
++                current = candidate;
++            } else if (measure.applyAsInt(token) >= width) {
++                // The word fills the current row and continues on the next rows.
++                List<Glyph> text = candidate;
++                do {
++                    final Split split = split(text, width, hyphenWidth, measure);
++                    rows.add(split.head());
++                    if (rows.size() == ROWS) return;
++                    current = token.subList(Math.max(0, token.size() - split.tail()), token.size());
++                    text = current;
++                } while (measure.applyAsInt(current) >= width);
++            } else {
++                // A space that does not fit stays at the end of its row.
++                final boolean space = token.getFirst().codePoint() == ' ';
++                rows.add(space ? candidate : current);
++                if (rows.size() == ROWS) return;
++                current = space ? List.of() : token;
++            }
++        }
++        if (!current.isEmpty()) rows.add(current);
++    }
++
++    /** Splits the longest fitting head from the text. A hyphen marks a break inside a word. */
++    private static Split split(final List<Glyph> text, final int width, final int hyphenWidth, final ToIntFunction<List<Glyph>> measure) {
++        final int plain = fit(text, width, 0, measure);
++        if (!hyphenates(text, plain)) return new Split(text.subList(0, plain), text.size() - plain);
++        final int hyphenated = fit(text, width, hyphenWidth, measure);
++        if (!hyphenates(text, hyphenated)) return new Split(text.subList(0, plain), text.size() - plain);
++        final List<Glyph> head = new ArrayList<>(text.subList(0, hyphenated));
++        head.add(new Glyph('-', head.getLast().style()));
++        return new Split(head, text.size() - hyphenated);
++    }
++
++    /** The native search drops one character at a time from the end, but always keeps one. */
++    private static int fit(final List<Glyph> text, final int width, final int extra, final ToIntFunction<List<Glyph>> measure) {
++        int length = text.size();
++        while (length >= 2 && measure.applyAsInt(text.subList(0, length)) + extra > width) length--;
++        return length;
++    }
++
++    /** Native 0x140e6bbc0: no hyphen at either end of the text, next to a hyphen, after a space or beside wide script. */
++    private static boolean hyphenates(final List<Glyph> text, final int split) {
++        if (split == 0 || split == text.size()) return false;
++        final int left = text.get(split - 1).codePoint();
++        final int right = text.get(split).codePoint();
++        return left != '-' && right != '-' && left != ' ' && !wide(left) && !wide(right);
++    }
++
++    private static boolean wide(final int codePoint) {
++        return codePoint >= 0x1100 && codePoint <= 0x11FF
++                || codePoint >= 0x2329 && codePoint <= 0x232A
++                || codePoint >= 0x2E80 && codePoint <= 0xA4CF
++                || codePoint >= 0xAC00 && codePoint <= 0xD7FF
++                || codePoint >= 0xF900 && codePoint <= 0xFAFF
++                || codePoint >= 0xFE10 && codePoint <= 0xFE6F
++                || codePoint >= 0xFF01 && codePoint <= 0xFFEF
++                || codePoint >= 0x1B000 && codePoint <= 0x1B16F
++                || codePoint >= 0x20000 && codePoint <= 0x323AF;
++    }
++
++    private static List<Glyph> concat(final List<Glyph> first, final List<Glyph> second) {
++        final List<Glyph> result = new ArrayList<>(first.size() + second.size());
++        result.addAll(first);
++        result.addAll(second);
++        return result;
++    }
++
++    private static FormattedCharSequence sequence(final List<Glyph> glyphs) {
++        return sink -> {
++            for (int i = 0; i < glyphs.size(); i++) {
++                if (!sink.accept(i, glyphs.get(i).style(), glyphs.get(i).codePoint())) return false;
++            }
++            return true;
++        };
++    }
++
++    record Glyph(int codePoint, Style style) {}
++
++    private record Split(List<Glyph> head, int tail) {}
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 6e72a10cb3b05fe829edbbc6800fb1ef8d20cada..1f678f0adf8dc8c84a7bab29b50b503b80cad4c7 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -124,6 +124,7 @@
+     "features.render.MixinPlayerInfoSkin",
+     "features.render.MixinPlayerSkinRenderCache",
+     "features.render.MixinBossHealthOverlay",
++    "features.render.MixinAbstractSignRenderer",
+     "features.render.MixinPlayerTabOverlay",
+     "features.render.MixinBedrockActorPipelines",
+     "features.render.MixinBedrockActorRenderType",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignTextTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignTextTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6522cdeec2f346d91cf65f75bbb76ca7ea6fab43
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignTextTest.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Set;
++import net.minecraft.ChatFormatting;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.Style;
++import net.minecraft.network.chat.TextColor;
++import net.minecraft.util.FormattedCharSequence;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++final class BedrockSignTextTest {
++    @Test
++    void longLinesWrapAtSpacesAndPushLaterLinesOutOfTheFourRows() {
++        // 8 + 1 + 8 glyphs are 100 units wide, more than the 89-unit standing sign row.
++        final var rows = rows(BedrockSignText.STANDING_WIDTH, "aaaaaaaa bbbbbbbb", "second", "third", "fourth");
++        assertEquals(List.of("aaaaaaaa ", "bbbbbbbb", "second", "third"), rows);
++    }
++
++    @Test
++    void wordsWiderThanTheRowBreakWithHyphensInTheirOwnColor() {
++        final var red = Style.EMPTY.withColor(ChatFormatting.RED);
++        final FormattedCharSequence[] rows = BedrockSignText.rows(
++            List.of(Component.literal("abcdefghijkl").setStyle(red), Component.empty(), Component.empty(), Component.empty()),
++            30, BedrockSignTextTest::width);
++        assertEquals(List.of("abcd-", "efgh-", "ijkl", ""), text(rows));
++        final Set<TextColor> colors = new HashSet<>();
++        for (final FormattedCharSequence row : rows) {
++            row.accept((index, style, codePoint) -> {
++                colors.add(style.getColor());
++                return true;
++            });
++        }
++        assertEquals(Set.of(red.getColor()), colors);
++    }
++
++    @Test
++    void longWordsFillTheRestOfTheCurrentRow() {
++        assertEquals(List.of("ab c-", "defg-", "hij", ""), rows(30, "ab cdefghij"));
++    }
++
++    @Test
++    void hyphensAreNotAddedBesideHyphensOrWideCharacters() {
++        assertEquals(List.of("abcd-", "efgh-", "ij", ""), rows(30, "abcd-efghij"));
++        assertEquals(List.of("一二三", "四五六", "", ""), rows(30, "一二三四五六"));
++    }
++
++    @Test
++    void oneLongWordUsesAtMostFourRows() {
++        assertEquals(List.of("aaaa-", "aaaa-", "aaaa-", "aaaa-"), rows(30, "a".repeat(30), "hidden"));
++    }
++
++    private static List<String> rows(final int width, final String... lines) {
++        final List<Component> messages = new ArrayList<>();
++        for (final String line : lines) messages.add(Component.literal(line));
++        while (messages.size() < 4) messages.add(Component.empty());
++        return text(BedrockSignText.rows(messages, width, BedrockSignTextTest::width));
++    }
++
++    private static List<String> text(final FormattedCharSequence[] rows) {
++        final List<String> result = new ArrayList<>();
++        for (final FormattedCharSequence row : rows) {
++            final StringBuilder text = new StringBuilder();
++            row.accept((index, style, codePoint) -> {
++                text.appendCodePoint(codePoint);
++                return true;
++            });
++            result.add(text.toString());
++        }
++        return result;
++    }
++
++    /** Spaces are 4 units, wide characters 9 and other glyphs 6, as in the Bedrock bitmap font. */
++    private static int width(final List<BedrockSignText.Glyph> glyphs) {
++        int width = 0;
++        for (final var glyph : glyphs) width += glyph.codePoint() == ' ' ? 4 : glyph.codePoint() >= 0x2E80 ? 9 : 6;
++        return width;
++    }
++}
