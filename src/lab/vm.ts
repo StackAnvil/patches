@@ -19,7 +19,14 @@ import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { bundlePrism } from "../prism.ts";
 import { displayEnv } from "./display.ts";
-import { clickPointer, keyEvents, validateHoldMs, withNamedQmp, type QmpCommand } from "./qmp.ts";
+import {
+  clickPointer,
+  keyEvents,
+  QmpError,
+  validateHoldMs,
+  withNamedQmp,
+  type QmpCommand,
+} from "./qmp.ts";
 import { Schema } from "effect";
 import { errorCode, parseJson } from "../guards.ts";
 import { print } from "../output.ts";
@@ -263,6 +270,21 @@ async function control<T>(
   return withNamedQmp(controlPath(spec.guest), spec.name, operation);
 }
 
+/**
+ * QEMU leaves its QMP socket behind after a crash or host reboot. A missing or refusing socket
+ * means that no guest answers, so start can replace it.
+ */
+export async function guestAnswers(socket: string, name: string): Promise<boolean> {
+  try {
+    await withNamedQmp(socket, name, (command) => command("query-status"));
+    return true;
+  } catch (error) {
+    const code = errorCode(error instanceof QmpError ? error.cause : error);
+    if (code === "ENOENT" || code === "ECONNREFUSED") return false;
+    throw error;
+  }
+}
+
 async function runQuickemu(spec: VmSpec): Promise<void> {
   const path = directory(spec.guest);
   const log = await open(join(path, "launch.log"), "a", 0o600);
@@ -481,14 +503,9 @@ export async function vmMain(args: string[]): Promise<void> {
     await locked(path, async () => {
       validatePaths(path, spec);
       await validateInstallMedia(join(path, `${configName(spec)}.conf`));
-      if (existsSync(controlPath(selected))) {
-        try {
-          await control(spec, (command) => command("query-status"));
-          print(`${selected} is already running.`);
-          return;
-        } catch (error) {
-          if (!["ENOENT", "ECONNREFUSED"].includes(errorCode(error) ?? "")) throw error;
-        }
+      if (await guestAnswers(controlPath(selected), spec.name)) {
+        print(`${selected} is already running.`);
+        return;
       }
       if (await running(spec)) {
         await control(spec, (command) => command("query-status"));

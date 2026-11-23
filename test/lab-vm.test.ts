@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepareVm, shareResponse, validateInstallMedia, validateSpec, type VmSpec } from "../src/lab/vm.ts";
+import { createServer } from "node:net";
+import { guestAnswers, prepareVm, shareResponse, validateInstallMedia, validateSpec, type VmSpec } from "../src/lab/vm.ts";
 import { keyEvents, pointerEvents } from "../src/lab/qmp.ts";
 
 const spec: VmSpec = { version: 1, guest: "windows", release: "11", name: "sa-windows-0123456789ab", cores: 4, ramGiB: 8, diskGiB: 128 };
@@ -87,4 +88,28 @@ test("artifact share cannot expose arbitrary files or traverse directories", asy
     expect(shareResponse(name, path).status).toBe(404);
   }
   expect(await shareResponse("/manifest.json", path).json()).toEqual({ files: [] });
+}));
+
+test("VM start replaces a control socket left by a crashed guest but still detects a running one", async () => temporary(async (path) => {
+  const socket = join(path, "control.socket");
+  expect(await guestAnswers(socket, spec.name)).toBe(false);
+  await writeFile(socket, "");
+  expect(await guestAnswers(socket, spec.name)).toBe(false);
+  await rm(socket);
+  const server = createServer((client) => {
+    client.write('{"QMP":{}}\n');
+    client.on("data", (data) => {
+      for (const line of data.toString().split("\n").filter(Boolean)) {
+        const { id } = JSON.parse(line);
+        client.write(`${JSON.stringify({ id, return: { name: spec.name, status: "running" } })}\n`);
+      }
+    });
+  });
+  await new Promise<void>((settle) => server.listen(socket, settle));
+  try {
+    expect(await guestAnswers(socket, spec.name)).toBe(true);
+    await expect(guestAnswers(socket, "sa-windows-ffffffffffff")).rejects.toBeInstanceOf(Error);
+  } finally {
+    await new Promise<void>((settle) => server.close(() => settle()));
+  }
 }));
