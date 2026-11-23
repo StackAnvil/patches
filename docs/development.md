@@ -4,7 +4,7 @@ Use this guide to build the four patch targets with pinned ViaFabricPlus and sta
 
 ## Build the stack
 
-Install Bun, Git, JDK 17, and JDK 25. ViaBedrock, ViaProxy, and the Bedrock add-on require Java 25. CubeConverter still builds with JDK 17.
+Install Bun, Git, JDK 17, and JDK 25. ViaBedrock, ViaProxy, and the Bedrock add-on require Java 25. CubeConverter builds with JDK 17.
 
 Set `STACKANVIL_JAVA_17` and `STACKANVIL_JAVA_25` if the JDKs are not in the standard paths.
 The build reads each JDK's `release` file and stops if a variable names a JDK with another version.
@@ -76,7 +76,7 @@ It writes `builtin_images.zip` under `.stackanvil/builtin-images/<version>/` and
 ViaProxy receives the same native images through that dependency.
 Server images and atlases keep priority over these built-in layers.
 The build verifies the exact image bundle in the core and both consumers.
-Core builds now require the full pinned native archive inputs alongside the tracked UI bundle.
+Core builds require the full pinned native archive inputs alongside the tracked UI bundle.
 Generated image bundles remain outside Git.
 
 The normal stack build passes the resource directory to Gradle.
@@ -140,8 +140,6 @@ Use `--modpack-only` to skip the plain Java cases. To update the pinned modpack,
 Use `--entity-probe`, `--gameplay-probe`, or `--resource-pack-probe` with `--route java-bedrock` to run the Bedrock probes. Select individual gameplay cases with `--gameplay-cases case-one,case-two`. See [the Bedrock probe guide](bedrock-test-packs.md) for case IDs, assertions, and known limits.
 
 The suite creates managed Prism instances named `StackAnvil Integration 26.3` and `Fabulously Optimized StackAnvil Integration 26.3`. It leaves your other instances alone. Server data and logs stay under `.stackanvil/integration/`. Native screenshots and HTTPS flows stay under `.stackanvil/captures/`. The test removes its temporary Bedrock server entry and stops only processes it started. The full join suite needs signed-in game clients. GitHub hosted CI runs the tooling tests and build, but does not run account-based game joins.
-
-The renderer regression from [this client log](https://mclo.gs/r01cqUJ) was a cast from a vanilla entity render state to the Bedrock renderer's state. The feature patch now selects its renderer only for tracked Bedrock actors and accepts a vanilla state safely. A focused Java test calls that failure path directly. The Java server join case also runs with Fabulously Optimized and a vanilla interaction entity in view. The local lab forces SDL3 to use native Wayland on the private display.
 
 To test with shaders, add `--shaders` to the join command:
 

@@ -56,7 +56,7 @@ bun run bedrock:version --auth-file .stackanvil/private/xsts.json \
   --version-id 1.26.5101.0.d8c5d0b8-98a0-4965-9be6-8650afed6611
 ```
 
-This example requests Bedrock 1.26.51.1. An authenticated lookup returned the expected x64 package on October 9, 2026.
+This example requests Bedrock 1.26.51.1.
 
 For historical builds, [the Archiver metadata](https://github.com/MinecraftBedrockArchiver/Metadata/blob/master/w10_meta.json) records Xbox version IDs under `<game version>.Archs.x64.UpdateIds`. It also records package checksums.
 

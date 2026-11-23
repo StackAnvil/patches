@@ -1,6 +1,6 @@
 # Bedrock Edition development sources
 
-Use this reference when changing ViaBedrock, the ViaFabricPlus Bedrock add-on, or their data generators. The target protocol and GDK snapshot were updated on 2026-10-27. Recheck versions and source branches before using a numeric protocol value.
+Use this reference when changing ViaBedrock, the ViaFabricPlus Bedrock add-on, or their data generators. Recheck versions and source branches before using a numeric protocol value.
 
 ## Choose the protocol version first
 
@@ -18,16 +18,12 @@ For protocol and enum work:
 
 The [preview `TextProcessingEventOrigin` page](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.25/types/text-processing-event-origin/) shows a concrete enum renumbering in its **All builds** changelog. Use the changelog to locate a change, then check the schema for the target build.
 
-Preview tables also need wire checks.
-The earlier protocol 2193 actor-event table lists sequential values that contradict the matching BDS and native client.
-BDS sends rocket explosion 25 and crossbow charge completion 74. The old table lists 24 and 54.
-The protocol 2225 metadata now supplies the correct explicit values.
-The [actor-event evidence](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.patch) records the discrepancy.
+Preview and older tables also need wire checks.
+The protocol 2193 actor-event table listed sequential values that contradict BDS and the native client.
+The [actor-event evidence](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.patch) records that discrepancy.
 Keep verified sparse IDs even when a versioned table gives different values.
 
-The 2225 archive resolves the old container-slot and text-origin enum corrections.
-The generator no longer repairs protocol 2193 metadata.
-It supplements `MinecraftPacketIds` from packet schemas because that enum still omits declared packets, including stonecutter and block-passenger packets.
+The generator supplements `MinecraftPacketIds` from packet schemas because that enum omits declared packets, including stonecutter and block-passenger packets.
 Schema and enum protocol numbers must match. Conflicting IDs fail generation.
 
 Enum values and Cereal variant indexes are separate wire fields.
@@ -95,10 +91,8 @@ The [1.26.60.5 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/r
 Its package SHA-256 is `a36945ad3b28d762d31d4533168a102294b55e8f88fe2c570485493fb3d15f08`.
 Its `Minecraft.Windows.exe` SHA-256 is `988f6a61403b4381aa41e6c66d64cce441b14e561a9b10f647c2758ef3f2672a`.
 
-The [1.26.51.1 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.51.1) remains the historical native reference for earlier comparisons.
+The [1.26.51.1 release](https://github.com/bubbles-wow/mcbe-gdk-unpack-archive/releases/tag/1.26.51.1) is the native reference for comparisons made before the 1.26.60 update.
 Its `Minecraft.Windows.exe` has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
-The existing private executable matches that digest and the published file size.
-This provides a reproducible source for the native instruction controls without another executable download.
 
 Build files are release attachments. The Git tags themselves point to README commits.
 Use the target release rather than the newest preview, and verify the executable digest before reusing recorded native addresses.

@@ -186,13 +186,12 @@ The primary honey blocks still use the cursor fallback.
 Complete request fixtures preserve split placement, repeated source references, and cursor replacement.
 The matching server accepts these native requests.
 Planner tests cover these request and prediction boundaries, including rejection rollback.
-Installed direct and ViaProxy controls each complete 11 server-accepted requests.
 Both routes match the captured split-placement, cursor-replacement, and freed-slot requests after stack-ID normalization.
 Additional controls consume the player crafting grid and produce one wooden sword with repeated references to its plank source.
 Reopening retains completed output and the returned cursor stack.
 The incompatible-cursor control sends no craft request until the cursor is empty.
 Separate installed direct and ViaProxy controls verify bucket chunks, returned bottles using a freed source slot, and bottle drops with a full inventory.
-The three craft requests per route match the native cake and honey captures after stack-ID normalization.
+The craft requests on each route match the native cake and honey captures after stack-ID normalization.
 Authoritative responses confirm inventory and cursor quantities. Reopening retains completed output.
 Rejected requests remain unit-tested. These live controls do not induce server rejection.
 
@@ -202,7 +201,7 @@ Manual Shift-click leaves the cursor unchanged and uses combined inventory capac
 It sends the remaining stack-sized craft requests in one packet, with each request referring to earlier predicted stack identities.
 The native 20-millisecond click control crafts 128 planks through two requests of 64.
 State regressions cover both grids, returned containers, capacity across partial stacks, linked requests, and partial rejection.
-Installed direct and ViaProxy controls each match nine native craft requests and their authoritative response quantities across eight player/workbench cases.
+Installed direct and ViaProxy controls match the native craft requests and their authoritative response quantities across player and workbench cases.
 The controls cover right-click, linked Shift-click requests, returned containers, full inventory, partial bottle stacks, and retained output after reopening.
 
 Admit an authored player screen only when its required collections and controls are available.
@@ -242,7 +241,7 @@ Retained bundle navigation uses padded display cells. Directional callbacks stop
 A separate optional channel carries selected-cell extraction against the published source snapshot. Core resolves the physical slot and rejects padding, overflow labels, and stale contents.
 Physical input bindings remain unfinished. Installed selected-cell extraction remains unverified.
 Cooking uses the same transfer owner with its [complete source contract](native-cooking-actions.md).
-Installed direct and ViaProxy controls each complete fourteen server-accepted item requests. They insert and extract iron ingots with the bundle in either the clicked slot or the cursor, retain a filled bundle after reopening, and reject insertion into a full bundle without an item request. Screen audits distinguish native commands from ordinary Java clicks. Sound audits observe seven matching level events and decoded PCM channel starts on each route.
+Installed direct and ViaProxy controls insert and extract iron ingots with the bundle in either the clicked slot or the cursor, retain a filled bundle after reopening, and reject insertion into a full bundle without an item request. Screen audits distinguish native commands from ordinary Java clicks. Sound audits observe matching level events and decoded PCM channel starts on each route.
 Bundle hover survives temporary source removal and returns when the source becomes available, without another pointer event.
 Source regressions cover independent selection and touch behavior. Screen regressions retain hover while a pending command blocks duplicate actions.
 Installed direct and ViaProxy controls each reject one ordinary pickup of a filled bundle through a loopback fault relay.

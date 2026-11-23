@@ -191,7 +191,7 @@ Official 1.26.60.5 desktop controls also establish held quantity selection in ho
 A nine-item source produces a partial pickup during a hold and retains the remaining items in its original slot.
 Read-only observations of the live controller distinguish initial pickup, quantity selection, and completion on release or pointer exit.
 Core regressions cover delayed responses, renewed stack IDs, rejection recovery, source capacity, and opening retirement.
-The Java desktop controller now retains an ordinary primary pickup through held quantity selection.
+The Java desktop controller retains an ordinary primary pickup through held quantity selection.
 It waits for a newer pickup snapshot and keeps the selected source through delayed replies.
 Source and cursor previews do not change the real menu items.
 Release or pointer exit submits the last displayed quantity through the inventory request owner.
@@ -199,19 +199,18 @@ Release or pointer exit submits the last displayed quantity through the inventor
 Installed direct and ViaProxy controls use an admitted authored furnace fixture with the normal admission guards.
 A short press picks up nine items. A 600-millisecond hold picks up three, and a longer hold picks up all nine.
 Pointer exit completes a partial pickup before physical release without another request on release.
-The hotbar and ingredient controls conserve all nine items through 18 successful inventory responses on each route.
+The hotbar and ingredient controls conserve all nine items on each route.
 These controls do not establish default cooking-screen support or exact native frame timing.
 
 The incremental drag and interrupted-close reference uses the official 1.26.60.5 integrated world.
 Read-only script observations establish real inventory changes before physical Escape and mouse release.
 Installed direct and ViaProxy controls match the nine-item sequence before release and retain three items per destination after reopening.
 Both routes also close visibly while incoming replies wait for about three seconds, then reconcile the earlier destinations before sending the native close.
-Each complete journal contains 18 successful requests: 14 across the ordinary and delayed controls, plus four for secondary dragging.
 Secondary dragging places one item in each visited destination before release. Release preserves those three placements and the six carried items.
 The official 1.26.60.5 client also distributes 64 items across all 36 player slots before release.
 The held native model and visible items agree on one item per destination and 28 carried items.
 Installed direct and ViaProxy controls retain this allocation through delayed replies, Escape while held, and a fresh opening.
-Each journal contains 173 accepted transfers. Replies finish before the native close.
+Replies finish before the native close.
 Server inventory, response data, and the reopened menu agree. All 64 items remain accounted for, with no dropped items.
 These controls use an admitted authored furnace fixture. Default cooking hosts retain their admission guards.
 Native multiplayer transfer grouping and delayed or rejected native drag behavior remain unverified.
@@ -221,7 +220,7 @@ A tap transfers seven and leaves two in the source. Drawing across two destinati
 Both routes preserve that distribution after closing with incoming replies held for about three seconds and reopening.
 A server replacement renews the source identity while its updates wait in the relay.
 The stale tap receives a real rejection, restores all nine items, and retires the selected preview without replacing the screen or menu.
-A fresh selection then transfers seven successfully. Both complete fault journals contain five matched replies, including the rejection.
+A fresh selection then transfers seven successfully.
 These controls use an admitted authored furnace fixture, mouse contact in Touch style, and software rendering.
 They do not establish native multiplayer grouping, native rejection recovery, physical touch input, or complete visual parity.
 
@@ -230,15 +229,14 @@ After the recipe-panel release, an unheld pointer entry redistributes ten items 
 The cursor changes from one item to two. Read-only allocation fields and inspected screenshots agree.
 Installed direct and ViaProxy controls retain this behavior while replies wait.
 Both routes preserve the allocation during a secondary hold and stop further visits after its slot release.
-Each complete journal contains eleven successful transfers and preserves all ten items after reopening.
+Both routes preserve all ten items after reopening.
 Official 1.26.60.5 controls also complete quantity selection after secondary release while the primary button remains held.
 Read-only controller observations and physical button masks establish that event order.
 Installed direct and ViaProxy controls retain selection during the second press and complete it before primary release.
-Each journal contains four accepted transfers and retains all nine items after reopening.
+Both routes retain all nine items after reopening.
 These controls establish the input lifetime, not exact frame timing or equal selected counts at matching requested durations.
 Installed direct and ViaProxy reset controls retain drag allocation after a release whose previous phase is pressed.
 A later qualifying reset ends the allocation once. Pointer entry cannot redistribute items after that completion.
-Each journal contains seven accepted transfers and one drag start/end pair.
 Server inventory and reopened menus retain three stacks of three, without dropped items.
 Other input modes, broader source selection, and same-frame pointer and press admission still need matching controls.
 
