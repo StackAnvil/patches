@@ -9,4 +9,4 @@ This keeps component colors while the sign color is black and fills only uncolor
 
 Validation: unit tests convert an undyed sign with `§c`, a carried color and a reset, and a dyed sign with `§e`, and check the Java message colors. In game, the add-on now matches the native screenshots for both signs.
 
-Remaining limits: Bedrock breaks a line that is too long with a hyphen, while Java clips it. Bedrock also draws formatting colors on unlit signs slightly darker than Java.
+Remaining limits: Bedrock draws formatting colors on unlit signs slightly darker than Java. The [add-on wrapping patch](../../viafabricplus-bedrock/upstreamable/0047-wrap-bedrock-sign-text-like-the-native-client.pr.md) breaks long lines like Bedrock.
