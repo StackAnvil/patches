@@ -99,16 +99,27 @@ test("offline health rejects a prerequisite file that is not in its project's se
 
 // Four upstream inspections run about 80 git commands. A loaded machine can need over 30 seconds.
 test("upstream inspection recognizes equivalent patches and rehearses updates without touching editing checkouts", async () => {
-  // Keep the developer's global Git config, such as commit signing, out of the fixture and clones.
   const globalConfig = process.env["GIT_CONFIG_GLOBAL"];
-  process.env["GIT_CONFIG_GLOBAL"] = "/dev/null";
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-health-git-"));
+  // A developer's global config can require signed commits and install hooks. Scratch replays
+  // must not sign their throwaway commits or run those hooks, so both fail here.
+  const hooks = join(directory, "global-hooks");
+  await mkdir(hooks);
+  for (const hook of ["applypatch-msg", "pre-applypatch", "post-applypatch"])
+    await writeFile(join(hooks, hook), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const global = join(directory, "global.gitconfig");
+  await writeFile(
+    global,
+    `[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = false\n[core]\n\thooksPath = ${hooks}\n`,
+  );
+  process.env["GIT_CONFIG_GLOBAL"] = global;
   try {
     const upstream = join(directory, "upstream");
     await mkdir(upstream);
     await runGit(["init", "-b", "main"], upstream);
     await runGit(["config", "user.name", "Health Test"], upstream);
     await runGit(["config", "user.email", "test@example.invalid"], upstream);
+    await runGit(["config", "commit.gpgSign", "false"], upstream);
     const commit = async (content: string) => {
       await writeFile(join(upstream, "note.txt"), content);
       await runGit(["add", "note.txt"], upstream);

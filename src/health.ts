@@ -90,6 +90,13 @@ async function hasPrContext(path: string): Promise<boolean> {
 
 const runGit = (args: string[], cwd: string) => Effect.runPromise(git(args, cwd));
 
+const scratchConfig = [
+  "user.name=StackAnvil health",
+  "user.email=health@stackanvil.invalid",
+  "commit.gpgSign=false",
+  "core.hooksPath=/dev/null",
+];
+
 async function applies(directory: string, patch: string, reverse = false): Promise<Check> {
   // --check leaves the disposable checkout untouched between independent checks.
   try {
@@ -141,13 +148,13 @@ export async function inspectUpstream(
         "--single-branch",
         "--branch",
         target.baseBranch,
+        // The scratch commits are discarded. Do not sign them or run the developer's global hooks.
+        ...scratchConfig.flatMap((setting) => ["--config", setting]),
         upstream,
         directory,
       ],
       repository,
     );
-    await runGit(["config", "user.name", "StackAnvil health"], directory);
-    await runGit(["config", "user.email", "health@stackanvil.invalid"], directory);
     report.upstreamSha = await runGit(["rev-parse", "HEAD"], directory);
     await runGit(["cat-file", "-e", `${target.baseSha}^{commit}`], directory);
     await runGit(["checkout", "--detach", target.baseSha], directory);
