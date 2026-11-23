@@ -44,6 +44,12 @@ const SavedDisplaySchema = Schema.Union([
   Schema.Struct({ backend: Schema.String, pid: Schema.Finite }),
 ]);
 const OutputsSchema = Schema.Array(Schema.Struct({ name: Schema.String, active: Schema.Boolean }));
+const silentModuleArgs = [
+  "sink_name=stackanvil_silent",
+  "sink_properties=device.description=StackAnvil-Silent",
+];
+type Pactl = (args: string[]) => Promise<string>;
+const pactl: Pactl = async (args) => (await execute("pactl", args)).stdout;
 
 function alive(pid: number): boolean {
   try {
@@ -220,8 +226,7 @@ export async function ensureDisplay(): Promise<DisplayState> {
       if (state?.inputPid) await stopProcess(state.inputPid, "Wayland input service");
       if (state?.audioPid) await stopProcess(state.audioPid, "Lab audio guard");
       if (state) await stopProcess(state.pid, "Sway");
-      if (state?.audioModuleId)
-        await execute("pactl", ["unload-module", String(state.audioModuleId)]);
+      if (state?.audioModuleId) await unloadSilentModule(state.audioModuleId);
     } catch (cleanupError) {
       // Retain a receipt for recovery if a failed startup leaves a process alive.
       if (state) await writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
@@ -272,12 +277,7 @@ async function startInput(state: DisplayState): Promise<void> {
 async function startAudio(state: DisplayState): Promise<void> {
   const { stdout } = await execute("pactl", ["list", "sinks", "short"]);
   if (!stdout.split("\n").some((line) => line.split("\t")[1] === "stackanvil_silent")) {
-    const loaded = await execute("pactl", [
-      "load-module",
-      "module-null-sink",
-      "sink_name=stackanvil_silent",
-      "sink_properties=device.description=StackAnvil-Silent",
-    ]);
+    const loaded = await execute("pactl", ["load-module", "module-null-sink", ...silentModuleArgs]);
     state.audioModuleId = Number(loaded.stdout.trim());
   }
   const log = openSync(join(privateRoot, "audio.log"), "a", 0o600);
@@ -290,6 +290,20 @@ async function startAudio(state: DisplayState): Promise<void> {
   guard.unref();
   if (!guard.pid) throw new Error("Could not start lab audio guard.");
   state.audioPid = guard.pid;
+}
+
+/**
+ * Module IDs restart with the sound server. After a restart or reboot, the saved ID can be missing
+ * or belong to another module, so unload it only while it is still the lab's silent sink.
+ */
+export async function unloadSilentModule(id: number, run: Pactl = pactl): Promise<void> {
+  const loaded = (await run(["list", "modules", "short"])).split("\n").some((line) => {
+    const [module, name, args] = line.split("\t");
+    return (
+      module === String(id) && name === "module-null-sink" && args === silentModuleArgs.join(" ")
+    );
+  });
+  if (loaded) await run(["unload-module", String(id)]);
 }
 
 export async function displayEnv(start = false): Promise<NodeJS.ProcessEnv | undefined> {
@@ -322,7 +336,7 @@ export async function stopDisplay(guard?: {
   if (state.audioPid) await stopProcess(state.audioPid, "Lab audio guard", guard?.process);
   if (state.audioModuleId) {
     await guard?.audioModule(state.audioModuleId);
-    await execute("pactl", ["unload-module", String(state.audioModuleId)]);
+    await unloadSilentModule(state.audioModuleId);
   }
   await rm(state.runtime, { recursive: true, force: true });
   await rm(stateFile, { force: true });
