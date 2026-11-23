@@ -17,7 +17,7 @@ bun run test:integration -- --route java-java --reuse-build
 bun run server-replay record cubecraft --seconds 120
 ```
 
-The other named target is `minehut`. Each live target must provide NetherNet. CubeCraft uses `mco.cubecraft.net`, because its signaling certificate does not name `play.cubecraft.net`. The Hive uses `nethernet.playhive.com`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
+The other named targets are `hive`, `lifeboat`, `galaxite`, `minehut`, and `geyser`. Each live target must provide NetherNet. CubeCraft uses `mco.cubecraft.net`, because its signaling certificate does not name `play.cubecraft.net`. The Hive uses `nethernet.playhive.com`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
 
 For another public server, use its current address from the in-game catalog or the server operator:
 
@@ -199,7 +199,7 @@ The proxy route still does not support native actor and player geometry. It ther
 
 ## Validation scope
 
-The [live lobby survey](lobby-survey.md) records the scenes reached, interaction results, and join blockers from the latest multi-server pass.
+The [public-server guide](lobby-survey.md) lists retained reproduction targets and how to reduce a public result to a local fixture.
 
 Native recording and `--client native` replay screenshots show the official Bedrock client. Default replay screenshots show ViaFabricPlus with the Bedrock add-on.
 

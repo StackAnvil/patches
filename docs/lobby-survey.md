@@ -22,7 +22,7 @@ These targets come from earlier survey results. They require a fresh build-speci
 | Target | Path worth retaining |
 | --- | --- |
 | CubeCraft | Lobby transfers, selectors, NPC cosmetics, server player graphs, and attachables. |
-| Lifeboat | SkyWars form actions and the previously black world or biome failure. |
+| Lifeboat | SkyWars form actions and the black world or biome failure. |
 | Galaxite | Converted custom-block geometry, carriers, model acceptance, and secondary fluids. |
 | Enchanted | Authored hub UI, transfer continuity, labels, and moving pistons. |
 | Mineville and Zeqa | Continuous transfer, resource replacement, menu text, kit delivery, and return to lobby. |
