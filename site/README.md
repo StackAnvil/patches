@@ -16,7 +16,7 @@ Open the local URL that Vite prints, usually `http://localhost:3000`. The develo
 
 ## Edit a guide
 
-Edit Markdown or MDX files in `site/content/docs/`. Each file needs `title` and `description` fields in its front matter.
+Edit the `.mdx` files in `site/content/docs/`. The site publishes only `.mdx` guides. Each file needs `title` and `description` fields in its front matter.
 Fumadocs supplies code highlighting, copy buttons, callouts, the page contents list, and search.
 Keep existing filenames and heading anchors when you update published guides.
 
