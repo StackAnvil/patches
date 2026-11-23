@@ -17,7 +17,6 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, delimiter } from "node:path";
 import { createServer, isIP } from "node:net";
-import { createSocket } from "node:dgram";
 import { Effect, Schema } from "effect";
 import { isRecord, JsonObjectSchema, parseJson, required } from "../guards.ts";
 import { root } from "../model.ts";
@@ -115,18 +114,7 @@ function service(
   if (javaCleanup && child.pid) javaCleanup.capture(child.pid);
   return child;
 }
-async function port(udp = false): Promise<number> {
-  if (udp) {
-    const socket = createSocket("udp4");
-    await new Promise<void>((done) => {
-      socket.bind(0, "127.0.0.1", done);
-    });
-    const value = socket.address().port;
-    await new Promise<void>((done) => {
-      socket.close(done);
-    });
-    return value;
-  }
+async function port(): Promise<number> {
   const server = createServer();
   await new Promise<void>((done) => {
     server.listen(0, "127.0.0.1", done);
@@ -906,7 +894,8 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
             join(directory, "replay-self-uuid.txt"),
           ]);
       }
-      const replayPort = await port(client !== "native");
+      // Every replay client reaches ReplayServer through TCP HTTP NetherNet signaling.
+      const replayPort = await port();
       const log = join(directory, "replay.log");
       const child = service(
         "java",
