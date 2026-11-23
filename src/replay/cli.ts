@@ -31,7 +31,7 @@ import {
   readGraphicsLock,
   type GraphicsProfile,
 } from "../integration/graphics.ts";
-import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
+import { activeDisplay, displayEnv, silentModuleArgs, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
 import { prepareFormFixture } from "./form-fixture.ts";
 import {
@@ -572,7 +572,6 @@ async function launchNative(
       ...isolated,
       BOL_HOME: runtime,
       APPDIR: app,
-      PULSE_SINK: "stackanvil_silent",
       ...(replayPrefix ? { BOL_WINEPREFIX: replayPrefix } : {}),
     },
   );
@@ -1090,7 +1089,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
                     },
                     audioModule: async (id) => {
                       const { stdout } = await execute("pactl", ["list", "modules", "short"]);
-                      requireOwnedSilentModule(stdout, id);
+                      requireOwnedSilentModule(stdout, id, silentModuleArgs.join(" "));
                     },
                   }
                 : undefined,

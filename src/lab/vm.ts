@@ -18,7 +18,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
 import { bundlePrism } from "../prism.ts";
-import { displayEnv } from "./display.ts";
+import { displayEnv, silentSink } from "./display.ts";
 import {
   clickPointer,
   keyEvents,
@@ -294,7 +294,7 @@ async function runQuickemu(spec: VmSpec): Promise<void> {
       ["--vm", `${spec.name}.conf`, "--display", "spice", "--viewer", "none", "--access", "local"],
       {
         cwd: path,
-        env: { ...process.env, DISPLAY: "", WAYLAND_DISPLAY: "", PULSE_SINK: "stackanvil_silent" },
+        env: { ...process.env, DISPLAY: "", WAYLAND_DISPLAY: "", PULSE_SINK: silentSink },
         stdio: ["ignore", log.fd, log.fd],
       },
     );

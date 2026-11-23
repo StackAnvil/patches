@@ -49,10 +49,11 @@ test("does not adopt descendants of a reused owner", () => {
 
 test("unloads only the saved null-sink module identity in the actual pactl short protocol", () => {
   const id = 536870918;
-  const owned = `${id}\tmodule-null-sink\tsink_name=stackanvil_silent sink_properties=device.description=StackAnvil-Silent\t\n`;
-  requireOwnedSilentModule(`7\tmodule-native-protocol-tcp\tport=4713\n${owned}`, id);
+  const args = "sink_name=stackanvil_silent_0123456789ab sink_properties=device.description=StackAnvil-Silent";
+  const owned = `${id}\tmodule-null-sink\t${args}\t\n`;
+  requireOwnedSilentModule(`7\tmodule-native-protocol-tcp\tport=4713\n${owned}`, id, args);
   for (const output of [owned.replace(String(id), "8"), owned.replace("module-null-sink", "module-loopback"),
-    owned.replace("stackanvil_silent", "stackanvil_desktop_vfp"), owned.replace("StackAnvil-Silent", "Other-Sink"), owned + owned]) {
-    expect(() => requireOwnedSilentModule(output, id)).toThrow();
+    owned.replace("0123456789ab", "ba9876543210"), owned.replace("StackAnvil-Silent", "Other-Sink"), owned + owned]) {
+    expect(() => requireOwnedSilentModule(output, id, args)).toThrow();
   }
 });

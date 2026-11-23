@@ -4,7 +4,7 @@ import { printError } from "../output.ts";
 import { execFileAsync as execute } from "../process.ts";
 
 const identity = Bun.argv[2];
-const sink = "stackanvil_silent";
+const sink = Bun.argv[3];
 
 const InputsSchema = Schema.Array(
   Schema.Struct({
@@ -22,12 +22,12 @@ async function pactl(args: string[]): Promise<string> {
   return (await execute("pactl", args)).stdout;
 }
 
-async function mute(): Promise<void> {
+async function mute(silentSink: string): Promise<void> {
   const sinks = await pactl(["list", "sinks", "short"]);
   const sinkId = Number(
     sinks
       .split("\n")
-      .find((line) => line.split("\t")[1] === sink)
+      .find((line) => line.split("\t")[1] === silentSink)
       ?.split("\t")[0],
   );
   if (!Number.isInteger(sinkId)) throw new TypeError("StackAnvil silent sink is missing.");
@@ -36,7 +36,7 @@ async function mute(): Promise<void> {
     const properties = input.properties;
     if (properties["stackanvil.lab"] !== identity) continue;
     const id = String(input.index);
-    if (input.sink !== sinkId) await pactl(["move-sink-input", id, sink]);
+    if (input.sink !== sinkId) await pactl(["move-sink-input", id, silentSink]);
     if (Object.values(input.volume ?? {}).some(({ value_percent }) => value_percent !== "0%")) {
       await pactl(["set-sink-input-volume", id, "0%"]);
     }
@@ -44,10 +44,10 @@ async function mute(): Promise<void> {
   }
 }
 
-if (!identity) throw new Error("Supply the lab audio identity.");
+if (!identity || !sink) throw new Error("Supply the lab audio identity and sink.");
 for (;;) {
   try {
-    await mute();
+    await mute(sink);
   } catch (error) {
     printError(error);
   }

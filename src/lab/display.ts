@@ -46,8 +46,13 @@ const SavedDisplaySchema = Schema.Union([
   Schema.Struct({ backend: Schema.String, pid: Schema.Finite }),
 ]);
 const OutputsSchema = Schema.Array(Schema.Struct({ name: Schema.String, active: Schema.Boolean }));
-const silentModuleArgs = [
-  "sink_name=stackanvil_silent",
+/**
+ * Each worktree runs its own lab, so each lab owns a separate sink. A shared sink would disappear
+ * for every other live lab when one lab stops and unloads it.
+ */
+export const silentSink = `stackanvil_silent_${identity}`;
+export const silentModuleArgs = [
+  `sink_name=${silentSink}`,
   "sink_properties=device.description=StackAnvil-Silent",
 ];
 type Pactl = (args: string[]) => Promise<string>;
@@ -319,14 +324,20 @@ async function startInput(state: DisplayState): Promise<void> {
     throw new Error("Wayland input service failed. Read .stackanvil/lab/input.log.");
 }
 
+/** Loads this lab's silent sink unless it already exists, and returns the new module ID. */
+export async function ensureSilentSink(run: Pactl = pactl): Promise<number | undefined> {
+  const sinks = await run(["list", "sinks", "short"]);
+  if (sinks.split("\n").some((line) => line.split("\t")[1] === silentSink)) return undefined;
+  return Number((await run(["load-module", "module-null-sink", ...silentModuleArgs])).trim());
+}
+
 async function startAudio(state: DisplayState): Promise<void> {
-  const { stdout } = await execute("pactl", ["list", "sinks", "short"]);
-  if (!stdout.split("\n").some((line) => line.split("\t")[1] === "stackanvil_silent")) {
-    const loaded = await execute("pactl", ["load-module", "module-null-sink", ...silentModuleArgs]);
-    state.audioModuleId = Number(loaded.stdout.trim());
-  }
+  const moduleId = await ensureSilentSink();
+  if (moduleId !== undefined) state.audioModuleId = moduleId;
   const log = openSync(join(privateRoot, "audio.log"), "a", 0o600);
-  const guard = spawn(process.execPath, audioMarkers, {
+  // The guard's ownership markers stay unchanged, so stop still recognizes guards started before
+  // the sink name was passed.
+  const guard = spawn(process.execPath, [...audioMarkers, silentSink], {
     cwd: root,
     detached: true,
     stdio: ["ignore", log, log],
@@ -378,7 +389,7 @@ export async function displayEnv(start = false): Promise<NodeJS.ProcessEnv | und
     SWAYSOCK: state.socket,
     STACKANVIL_INPUT_SOCKET: join(state.runtime, "input.sock"),
     STACKANVIL_UI_ISOLATED: "1",
-    PULSE_SINK: "stackanvil_silent",
+    PULSE_SINK: silentSink,
     PULSE_PROP: `${process.env["PULSE_PROP"] ?? ""} stackanvil.lab=${identity}`.trim(),
     PIPEWIRE_PROPS: `${process.env["PIPEWIRE_PROPS"] ?? ""} stackanvil.lab=${identity}`.trim(),
   });
