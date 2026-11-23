@@ -292,3 +292,33 @@ test("stack abort discards an edit session and restores the stack", async () => 
   await stack(["sync", "fixture"]);
   expect(await git(["rev-list", "--count", `${baseSha}..HEAD`], checkout)).toBe("3");
 }, 600_000);
+
+test("stack add numbers a patch after every existing patch without overwriting files", async () => {
+  const { checkout, patches, stack } = await stackFixture();
+  const upstreamable = join(patches, "upstreamable");
+  // Patches keep their numbers when they move between groups, so numbers can skip.
+  await cp(join(upstreamable, "0002-second.patch"), join(upstreamable, "0003-second.patch"));
+  await rm(join(upstreamable, "0002-second.patch"));
+  await writeFile(
+    join(patches, "series.json"),
+    JSON.stringify({
+      setup: ["0001-setup.patch"],
+      upstreamable: [
+        { file: "0001-first.patch", title: "feat(test): first" },
+        { file: "0003-second.patch", title: "feat(test): second" },
+      ],
+      deferred: [],
+    }),
+  );
+  await stack(["sync", "fixture"]);
+  await commit(checkout, "note.txt", "three\n", "feat(test): second");
+  await writeFile(join(upstreamable, "0004-second.patch"), "stray\n");
+
+  expect(await stack(["add", "fixture", "upstreamable"], true)).toContain("already exists");
+  expect(await readFile(join(upstreamable, "0004-second.patch"), "utf8")).toBe("stray\n");
+  await rm(join(upstreamable, "0004-second.patch"));
+  await stack(["add", "fixture", "upstreamable"]);
+
+  expect(await readFile(join(upstreamable, "0003-second.patch"), "utf8")).toContain("\n+two\n");
+  expect(await readFile(join(upstreamable, "0004-second.patch"), "utf8")).toContain("\n+three\n");
+}, 600_000);

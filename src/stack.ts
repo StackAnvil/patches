@@ -669,14 +669,22 @@ export const addPatch = Effect.fn("addPatch")(function* (
     .replaceAll(/^-|-$/gu, "")
     .slice(0, 60);
   if (!slug) return yield* StackError.make({ message: "Patch title needs words for a filename" });
-  const number = String(
-    (group === "upstreamable" ? series.upstreamable.length : series.deferred.length) + 1,
-  ).padStart(4, "0");
+  // Patches move between groups without renumbering, so a group's size is not a free number.
+  const used = [
+    ...series.setup,
+    ...series.upstreamable.map(({ file }) => file),
+    ...series.deferred.map(({ file }) => file),
+  ].map((file) => Number(/^\d+/u.exec(file)?.[0] ?? 0));
+  const number = String(Math.max(0, ...used) + 1).padStart(4, "0");
   const file = `${number}-${slug}.patch`;
+  const path = join(root, "patches", id, group, file);
+  if (existsSync(path))
+    return yield* StackError.make({
+      message: `${path} already exists. Move or remove it before adding a patch.`,
+    });
   if (group === "upstreamable") series.upstreamable.push({ file, title });
   else series.deferred.push({ file, reason: required(reason, "The deferred patch reason").trim() });
-  const path = join(root, "patches", id, group, file);
-  yield* Effect.promise(() => writeFile(path, patch));
+  yield* Effect.promise(() => writeFile(path, patch, { flag: "wx" }));
   yield* Effect.promise(() =>
     writeFile(join(root, "patches", id, "series.json"), `${encodeIndentedJson(series)}\n`),
   );

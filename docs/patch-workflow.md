@@ -31,6 +31,7 @@ The saved patches and full-stack checkouts retain these local tests.
 After upstream merges a feature, remove its local tests when retiring the owning patch.
 Do not submit those tests as a separate upstream PR.
 The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
+`stack add` numbers a new file after the highest number in any group and never replaces an existing file.
 If two groups use the same filename, name the patch as `<group>/<patch-file>` in `stack edit`.
 `stack rebuild` matches commits to `series.json` entries by position. It stops without changing patch files when a commit subject differs from its entry, except for the patch under edit.
 
