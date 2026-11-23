@@ -2,7 +2,7 @@ import { flatpakWaylandArguments, nativeWaylandEnvironment, waylandTool } from "
 import { labExecute, labIO, labValue, labError, runLabCommand } from "../lab/effect-runtime.ts";
 import type { LabError } from "../lab/effect-runtime.ts";
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, lstatSync, openSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -57,6 +57,21 @@ function groupAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+function bootTime(): number {
+  const seconds = /^btime (\d+)$/mu.exec(readFileSync("/proc/stat", "utf8"))?.[1];
+  if (seconds === undefined) throw new Error("The kernel boot time is unavailable.");
+  return Number(seconds) * 1000;
+}
+/**
+ * processes.json outlives reboots, and the kernel then reuses its process group IDs. A group
+ * belongs to the lab only if the lab started it during the current boot.
+ */
+export function managedAlive(
+  entry: { pid: number; startedAt: string },
+  bootedAt = bootTime(),
+): boolean {
+  return Date.parse(entry.startedAt) >= bootedAt && groupAlive(entry.pid);
 }
 const ManagedProcessSchema = Schema.Struct({
   pid: Schema.Finite,
@@ -173,7 +188,7 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
 });
 const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
   const entries = yield* managedEffect();
-  if (entries[service] && groupAlive(entries[service].pid)) {
+  if (entries[service] && managedAlive(entries[service])) {
     print(`${service} is already running under this lab (PID ${entries[service].pid}).`);
     return;
   }
@@ -262,7 +277,7 @@ const startEffect = Effect.fn("Lab.start")(function* (service: Service) {
 const stopEffect = Effect.fn("Lab.stop")(function* (service: Service) {
   const entries = yield* managedEffect();
   const { [service]: entry, ...remaining } = entries;
-  if (!entry || !groupAlive(entry.pid)) {
+  if (!entry || !managedAlive(entry)) {
     print(`${service} is not running under this lab.`);
     yield* saveEffect(remaining);
     return;
@@ -285,7 +300,7 @@ const statusEffect = Effect.fn("Lab.status")(function* () {
     const entry = entries[service];
     const external = yield* matchingProcessesEffect(service);
     print(
-      `${service}: ${entry && groupAlive(entry.pid) ? `managed process group ${entry.pid}` : external.length > 0 ? `external PID ${external.join(", ")}` : "stopped"}`,
+      `${service}: ${entry && managedAlive(entry) ? `managed process group ${entry.pid}` : external.length > 0 ? `external PID ${external.join(", ")}` : "stopped"}`,
     );
   }
 });
