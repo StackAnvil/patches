@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 19:02:55 +0100
+Subject: [PATCH] fix(signs): stop sign text at the client's 512-byte limit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Bedrock client lays out at most the first 512 bytes of a sign
+face's text. Text after that limit never appears on a Bedrock sign, but
+ViaBedrock translated all of it. A sign whose text starts with many
+formatting codes therefore showed words that Bedrock players never see.
+
+Native 1.26.60.5 evidence: the sign text renderer at 0x146a7f670
+copies texts longer than 0x200 bytes into a new 0x200-byte buffer
+before it wraps them into rows. Formatting codes count toward the
+limit, and each "§x" code is three UTF-8 bytes. ViaBedrock now keeps
+the whole characters within the first 512 UTF-8 bytes. The native
+client cuts the raw bytes, so a character split at the limit is
+dropped here instead of becoming an invalid sequence.
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
+index da6150db6eee07c36f2d4ebedadd2d7942dd094d..e3fc3a10e29029f91f2f20c027c702ea081daad6 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriter.java
+@@ -34,6 +34,8 @@ import java.util.List;
+ public class SignBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+ 
+     private static final String[] TEXT_CONTAINER_KEYS = {"FrontText", "BackText"};
++    // The Bedrock client lays out at most the first 512 UTF-8 bytes of a sign face's text.
++    private static final int MAX_TEXT_BYTES = 512;
+ 
+     public static void upgradeData(final CompoundTag data) {
+         if (data.get("Text1") instanceof StringTag) {
+@@ -138,7 +140,7 @@ public class SignBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+     private CompoundTag translateText(final CompoundTag bedrockText) {
+         final CompoundTag javaText = new CompoundTag();
+ 
+-        final String text = bedrockText.getString("Text", "");
++        final String text = truncateUtf8(bedrockText.getString("Text", ""), MAX_TEXT_BYTES);
+         final List<TextComponent> components = new ArrayList<>();
+         if (bedrockText.get("PersistFormatting") instanceof ByteTag persistFormatting && persistFormatting.asByte() != 0) {
+             for (String line : BedrockTextUtils.split(text, "\n")) {
+@@ -182,4 +184,18 @@ public class SignBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+         return javaText;
+     }
+ 
++    /** Keeps the whole characters within the byte limit. The native client cuts the raw bytes instead. */
++    private static String truncateUtf8(final String text, final int maxBytes) {
++        int bytes = 0;
++        for (int i = 0; i < text.length(); ) {
++            final int codePoint = text.codePointAt(i);
++            bytes += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
++            if (bytes > maxBytes) {
++                return text.substring(0, i);
++            }
++            i += Character.charCount(codePoint);
++        }
++        return text;
++    }
++
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
+index 0642bb868ff690ad83435c08c31b93dc9cf27906..c03d4c059d36f524ef78337611a6e1c3f416ab97 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/SignBlockEntityRewriterTest.java
+@@ -34,6 +34,15 @@ class SignBlockEntityRewriterTest {
+         assertEquals(Set.of("#003CFF"), colors(messages.get(1)));
+     }
+ 
++    @Test
++    void signTextStopsAtTheClientsFiveHundredTwelveByteLimit() {
++        // Each "§a" code is three UTF-8 bytes, so 170 codes leave room for "ab". A cut two-byte character is dropped.
++        final ListTag<?> messages = frontMessages("§a".repeat(170) + "abc\nnext", BLACK);
++        assertEquals("ab", text(messages.get(0)));
++        assertEquals("", text(messages.get(1)));
++        assertEquals("a", text(frontMessages("§a".repeat(170) + "aé", BLACK).get(0)));
++    }
++
+     private static ListTag<?> frontMessages(final String text, final int color) {
+         final CompoundTag front = new CompoundTag();
+         front.putString("Text", text);
+@@ -47,6 +56,25 @@ class SignBlockEntityRewriterTest {
+         return java.tag().getCompoundTag("front_text").getListTag("messages");
+     }
+ 
++    private static String text(final Tag tag) {
++        final StringBuilder text = new StringBuilder();
++        collectText(tag, text);
++        return text.toString();
++    }
++
++    private static void collectText(final Tag tag, final StringBuilder text) {
++        if (tag instanceof CompoundTag compound) {
++            text.append(compound.getString("text", ""));
++            if (compound.get("extra") instanceof ListTag<?> extra) {
++                extra.forEach(child -> collectText(child, text));
++            }
++        } else if (tag instanceof ListTag<?> list) {
++            list.forEach(child -> collectText(child, text));
++        } else if (tag instanceof StringTag string) {
++            text.append(string.getValue());
++        }
++    }
++
+     private static Set<String> colors(final Tag tag) {
+         final Set<String> colors = new HashSet<>();
+         collect(tag, colors);
