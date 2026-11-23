@@ -258,6 +258,12 @@ test("an interrupted patch apply can continue or abort without losing the series
   await mkdir(join(prCheckout, "src", "test"), { recursive: true });
   await writeFile(join(prCheckout, "src", "test", "accidental.txt"), "local test\n");
   await git(["add", "."], prCheckout);
+  expect(
+    await run("bun", [cli, "stack", "continue", "fixture", "--pr", "--force"], project, true),
+  ).toContain("Unknown option '--force'");
+  expect(await readFile(join(prCheckout, "src", "test", "accidental.txt"), "utf8")).toBe(
+    "local test\n",
+  );
   expect(await run("bun", [cli, "stack", "continue", "fixture", "--pr"], project, true)).toContain(
     "include local tests",
   );

@@ -10,16 +10,48 @@ import { healthFailed, healthMarkdown, patchHealth } from "./health.ts";
 import { writeReport } from "./validation.ts";
 import { print, printError } from "./output.ts";
 
-const [area, action, id, extra, ...rest] = process.argv.slice(2);
-const argumentsAfterProject = extra ? [extra, ...rest] : rest;
+const [area, action] = process.argv.slice(2);
 
-function option(name: string): string | undefined {
-  const index = argumentsAfterProject.indexOf(name);
-  return index >= 0 ? argumentsAfterProject[index + 1] : undefined;
+const patchOption = { patch: { type: "string" } } as const;
+const artifactOptions = {
+  "run-id": { type: "string" },
+  "artifact-id": { type: "string" },
+} as const;
+const applyOptions = { pr: { type: "boolean" }, ...patchOption } as const;
+const commandOptions = {
+  stack: {
+    sync: {},
+    continue: applyOptions,
+    abort: applyOptions,
+    edit: {},
+    rebuild: {},
+    build: {},
+    add: { reason: { type: "string" } },
+    status: {},
+  },
+  pr: {
+    check: patchOption,
+    body: { ...patchOption, ...artifactOptions },
+    build: patchOption,
+    assign: patchOption,
+    sync: { ...patchOption, ...artifactOptions },
+  },
+} as const;
+
+/** Parses flags anywhere after the command and rejects flags the command does not accept. */
+function commandArguments(options: Record<string, { type: "string" | "boolean" }>) {
+  const { values, positionals } = parseArgs({
+    args: process.argv.slice(4),
+    allowPositionals: true,
+    strict: true,
+    options,
+  });
+  const text = (name: string) => {
+    const value = values[name];
+    return typeof value === "string" ? value : undefined;
+  };
+  return { positionals, flag: (name: string) => values[name] === true, text };
 }
-
-const artifact = { runId: option("--run-id"), artifactId: option("--artifact-id") };
-const patchFile = option("--patch");
 
 async function main(): Promise<void> {
   if (area === "stack" && action === "health") {
@@ -43,8 +75,26 @@ async function main(): Promise<void> {
   }
   if (area !== "stack" && area !== "pr")
     throw new Error("Usage: bun run stack <stack|pr|dev> <command> [project]");
-  // The project follows the action, so a missing action also means a missing project.
-  if (!action || !id) throw new Error(`Choose a project: ${(await targetIds()).join(", ")}`);
+  const areaOptions: Record<
+    string,
+    Record<string, { type: "string" | "boolean" }>
+  > = commandOptions[area];
+  const options = action === undefined ? undefined : areaOptions[action];
+  if (action === undefined || !options) {
+    const commands = [...Object.keys(areaOptions), ...(area === "stack" ? ["health"] : [])];
+    throw new Error(`Choose a ${area} command: ${commands.join(", ")}`);
+  }
+  const { positionals, flag, text } = commandArguments(options);
+  const [id, extra, ...rest] = positionals;
+  if (!id) throw new Error(`Choose a project: ${(await targetIds()).join(", ")}`);
+  const expected = action === "edit" ? 2 : action === "add" ? 3 : 1;
+  const unexpected = positionals.slice(expected);
+  if (unexpected.length > 0) throw new Error(`Unexpected arguments: ${unexpected.join(" ")}`);
+  // Only stack continue and abort accept both flags.
+  if (area === "stack" && text("patch") && !flag("pr"))
+    throw new Error("--patch selects a PR checkout and requires --pr");
+  const patchFile = text("patch");
+  const artifact = { runId: text("run-id"), artifactId: text("artifact-id") };
   if (area === "stack") {
     switch (action) {
       case "sync": {
@@ -52,13 +102,11 @@ async function main(): Promise<void> {
         return;
       }
       case "continue": {
-        print(
-          await Effect.runPromise(continueApply(id, extra === "--pr" ? "pr" : "full", patchFile)),
-        );
+        print(await Effect.runPromise(continueApply(id, flag("pr") ? "pr" : "full", patchFile)));
         return;
       }
       case "abort": {
-        print(await Effect.runPromise(abortApply(id, extra === "--pr" ? "pr" : "full", patchFile)));
+        print(await Effect.runPromise(abortApply(id, flag("pr") ? "pr" : "full", patchFile)));
         return;
       }
       case "edit": {
@@ -78,8 +126,7 @@ async function main(): Promise<void> {
       case "add": {
         if (extra !== "upstreamable" && extra !== "deferred")
           throw new Error("Choose upstreamable or deferred");
-        const expectedTitle = rest[0]?.startsWith("--") ? undefined : rest[0];
-        print(await Effect.runPromise(addPatch(id, extra, expectedTitle, option("--reason"))));
+        print(await Effect.runPromise(addPatch(id, extra, rest[0], text("reason"))));
         return;
       }
       case "status": {
