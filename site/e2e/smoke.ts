@@ -115,3 +115,15 @@ test.describe("guide navigation on a phone", () => {
     await expect(drawer).toBeHidden();
   });
 });
+
+test("patch stacks explain their blocks without hover", async ({ page, hasTouch }) => {
+  await page.goto("/");
+  const stack = page.locator(".patch-stack").first();
+  const readout = stack.locator(".patch-readout");
+  await expect(readout).toHaveText(/^\d+ features? · /u);
+  const block = stack.locator(".patch-block").first();
+  await block.scrollIntoViewIfNeeded();
+  await (hasTouch ? block.tap() : block.hover());
+  await expect(block).toHaveAttribute("data-active", "true");
+  await expect(readout).toHaveText(/^[a-z]+(\([^)]+\))?: \S/u);
+});
