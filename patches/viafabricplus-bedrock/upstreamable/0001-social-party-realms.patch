@@ -57,6 +57,9 @@ switch cannot identify the connecting player as another account's party.
 Use the current BedrockProtocolVersion API in the independent social patch,
 which must compile before the downstream entity rendering patch applies.
 
+Skip image draws into an empty target box. A zero-by-zero cover crop
+divided by zero, and a zero-size contained image still drew one pixel.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index 832bcee4bac6ac37e87fce6280e225d40f2f9ec7..7ba0932506d370b6bf500d2b53cb5ef35c8bb2ec 100644
 --- a/build.gradle.kts
@@ -13934,10 +13937,10 @@ index 0000000000000000000000000000000000000000..f106d5741e1fac03cb29e22ea041cad5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..94f1e8da631ab1fd686ac302dda56e2f787943f3
+index 0000000000000000000000000000000000000000..56886454aba82d2cf83369c376e9b3d38b644c28
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,345 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2023-2026 ViaVersion and contributors
@@ -13980,6 +13983,7 @@ index 0000000000000000000000000000000000000000..94f1e8da631ab1fd686ac302dda56e2f
 +import net.minecraft.client.renderer.RenderPipelines;
 +import net.minecraft.client.renderer.texture.DynamicTexture;
 +import net.minecraft.resources.Identifier;
++import org.jetbrains.annotations.Nullable;
 +
 +/** Loads Xbox and Realm imagery without blocking the game thread. */
 +public final class BedrockImageCache {
@@ -14158,37 +14162,12 @@ index 0000000000000000000000000000000000000000..94f1e8da631ab1fd686ac302dda56e2f
 +            final boolean contain) {
 +        final Image image = IMAGES.get(key);
 +        if (image != null) {
-+            if (contain) {
-+                final double scale =
-+                        Math.min((double) width / image.width(), (double) height / image.height());
-+                final int fittedWidth = Math.max(1, (int) (image.width() * scale));
-+                final int fittedHeight = Math.max(1, (int) (image.height() * scale));
-+                graphics.blit(
-+                        RenderPipelines.GUI_TEXTURED,
-+                        image.id(),
-+                        x + (width - fittedWidth) / 2,
-+                        y + (height - fittedHeight) / 2,
-+                        0,
-+                        0,
-+                        fittedWidth,
-+                        fittedHeight,
-+                        image.width(),
-+                        image.height(),
-+                        image.width(),
-+                        image.height());
-+                return true;
++            final Placement placement = place(image.width(), image.height(), width, height, contain);
++            if (placement != null) {
++                graphics.blit(RenderPipelines.GUI_TEXTURED, image.id(), x + placement.x(), y + placement.y(),
++                    placement.u(), placement.v(), placement.width(), placement.height(),
++                    placement.sourceWidth(), placement.sourceHeight(), image.width(), image.height());
 +            }
-+            int sourceWidth = image.width();
-+            int sourceHeight = image.height();
-+            if ((long) sourceWidth * height > (long) sourceHeight * width) {
-+                sourceWidth = Math.max(1, sourceHeight * width / height);
-+            } else {
-+                sourceHeight = Math.max(1, sourceWidth * height / width);
-+            }
-+            final float u = (image.width() - sourceWidth) / 2F;
-+            final float v = (image.height() - sourceHeight) / 2F;
-+            graphics.blit(RenderPipelines.GUI_TEXTURED, image.id(), x, y, u, v,
-+                width, height, sourceWidth, sourceHeight, image.width(), image.height());
 +            return true;
 +        }
 +        if (!FAILED.contains(key) && LOADING.add(key)) {
@@ -14242,6 +14221,31 @@ index 0000000000000000000000000000000000000000..94f1e8da631ab1fd686ac302dda56e2f
 +        return false;
 +    }
 +
++    /**
++     * Places an image in a target box: scaled to fit inside it when contained, otherwise cropped from the center to
++     * cover it. Returns null for an empty box, such as a thumbnail in a window too small for it.
++     */
++    static @Nullable Placement place(final int imageWidth, final int imageHeight, final int width, final int height,
++                                     final boolean contain) {
++        if (width <= 0 || height <= 0) return null;
++        if (contain) {
++            final double scale = Math.min((double) width / imageWidth, (double) height / imageHeight);
++            final int fittedWidth = Math.max(1, (int) (imageWidth * scale));
++            final int fittedHeight = Math.max(1, (int) (imageHeight * scale));
++            return new Placement((width - fittedWidth) / 2, (height - fittedHeight) / 2, fittedWidth, fittedHeight,
++                0, 0, imageWidth, imageHeight);
++        }
++        int sourceWidth = imageWidth;
++        int sourceHeight = imageHeight;
++        if ((long) sourceWidth * height > (long) sourceHeight * width) {
++            sourceWidth = Math.max(1, sourceHeight * width / height);
++        } else {
++            sourceHeight = Math.max(1, sourceWidth * height / width);
++        }
++        return new Placement(0, 0, width, height, (imageWidth - sourceWidth) / 2F, (imageHeight - sourceHeight) / 2F,
++            sourceWidth, sourceHeight);
++    }
++
 +    private static boolean isPng(final byte[] bytes) {
 +        return bytes.length >= 8 && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P'
 +            && bytes[2] == 'N' && bytes[3] == 'G';
@@ -14275,6 +14279,10 @@ index 0000000000000000000000000000000000000000..94f1e8da631ab1fd686ac302dda56e2f
 +    }
 +
 +    private record Image(Identifier id, int width, int height) {
++    }
++
++    /** A blit offset from the target box's top-left corner. */
++    record Placement(int x, int y, int width, int height, float u, float v, int sourceWidth, int sourceHeight) {
 +    }
 +
 +}
@@ -32897,5 +32905,41 @@ index 0000000000000000000000000000000000000000..c850e2681d102541c27697c5b23cac37
 +                                "",
 +                                "",
 +                                BedrockPartyDestination.Intent.OptIn));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCacheTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCacheTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d53ae7b422448d7c3c2d7dba41db07de1a6e2ed8
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCacheTest.java
+@@ -0,0 +1,30 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.visual;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockImageCacheTest {
++
++    @Test
++    void emptyTargetBoxesDrawNothingInsteadOfDividingByZero() {
++        for (final boolean contain : new boolean[]{false, true}) {
++            assertNull(BedrockImageCache.place(64, 32, 0, 0, contain));
++            assertNull(BedrockImageCache.place(64, 32, 0, 20, contain));
++            assertNull(BedrockImageCache.place(64, 32, 20, 0, contain));
++        }
++    }
++
++    @Test
++    void coverCropsTheCenterAndContainLetterboxes() {
++        assertEquals(new BedrockImageCache.Placement(0, 0, 10, 10, 16, 0, 32, 32),
++            BedrockImageCache.place(64, 32, 10, 10, false));
++        assertEquals(new BedrockImageCache.Placement(0, 2, 10, 5, 0, 0, 64, 32),
++            BedrockImageCache.place(64, 32, 10, 10, true));
 +    }
 +}

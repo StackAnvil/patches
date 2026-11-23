@@ -34,8 +34,7 @@ Daylight and twilight vectors protect the clock phase and channel factors;
 other dimensions keep their existing color path.
 
 Focused regressions cover resource/session retirement, empty commands,
-medium boundaries and the observed dragon cap. Spatial biome blending,
-directional sunrise tint, engine-specific vanilla rules, exact transitions,
+medium boundaries and the observed dragon cap. Directional sunrise tint, engine-specific vanilla rules, exact transitions,
 End sky motion/sampling, fluids and weather still need native comparisons.
 
 Native 1.26.60.5 caps final fog by a distance D = R - margin, where R is
@@ -48,6 +47,21 @@ is clamped to 0..D and the start to D - clamp((D - 40) / 2, 4, 96)
 (0x145390137) passes the same clamp, so a 5-chunk view ends at 72 blocks.
 A stricter end cap at 0x1453714a0 depends on a camera-block flag set at
 0x1453762e4, likely a submerged camera, and remains unmodeled.
+
+Native 1.26.60.5 resolves air fog per frame (0x145372970). It samples the
+biome at 27 positions around the floored camera: the center, 12 blocks
+along each axis and 8 along each diagonal, at dy 0, -3 and +3 (table
+0x14f246c50). FogManager::calculateCurrentDistanceSetting (0x142148a80)
+walks the layers from the top. Each layer adds the remaining weight times
+its defined samples' sum over its sample count and passes the undefined
+share down, so a single command still wins outright and partial biome
+coverage mixes with the data default. Settings mix in blocks. Native fills
+any rest from an engine fallback with unknown values; without a data
+default we spread it over the defined share. The clock-modulated result
+then moves 1% toward the target each frame (0.01 at 0x14f0b7770, used at
+0x145373dd8), before the distance cap and the dragon override. The first
+frame and a medium change snap (0x145373cd6). We also snap after any frame
+that used Java fog, such as fluid or rain frames.
 
 BREAKING CHANGE: The fog receiver requires the matching core payload version 2.
 
@@ -244,10 +258,10 @@ index 0000000000000000000000000000000000000000..4a06cb860e15cdb93f76dfc6339255c3
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..55e86fda0880995f27e96c62969ff6bee7b72fe8
+index 0000000000000000000000000000000000000000..b8fa5e0c7cb6f7d15038bdf4728e40549bb6bfaa
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFog.java
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,41 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -258,10 +272,8 @@ index 0000000000000000000000000000000000000000..55e86fda0880995f27e96c62969ff6be
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.viaversion.viafabricplus.bedrock.render.fog.BedrockFog;
-+import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapExtractor;
 +import net.minecraft.client.Camera;
 +import net.minecraft.client.DeltaTracker;
-+import net.minecraft.client.Minecraft;
 +import net.minecraft.client.multiplayer.ClientLevel;
 +import net.minecraft.client.renderer.fog.FogData;
 +import net.minecraft.client.renderer.fog.FogRenderer;
@@ -277,10 +289,9 @@ index 0000000000000000000000000000000000000000..55e86fda0880995f27e96c62969ff6be
 +    private Vector3fc nativeColor(final FogEnvironment environment, final ClientLevel level, final Camera camera,
 +                                  final int renderChunks, final float partialTick, final Operation<Vector3fc> original) {
 +        final Vector3fc color = original.call(environment, level, camera, renderChunks, partialTick);
-+        final var air = BedrockFog.air(camera, level);
-+        if (air == null) return color;
-+        // Preserve the later void, blindness, darkness, night-vision and camera-effect modifiers.
-+        return BedrockFog.color(air.color(), BedrockLightmapExtractor.dimension(Minecraft.getInstance()), level.getOverworldClockTime());
++        // Runs once per frame. Preserve the later void, blindness, darkness, night-vision and camera-effect modifiers.
++        final Vector3fc air = BedrockFog.frameColor(camera, level, renderChunks);
++        return air == null ? color : air;
 +    }
 +
 +    @WrapOperation(method = "setupFog", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/environment/FogEnvironment;setupFog(Lnet/minecraft/client/renderer/fog/FogData;Lnet/minecraft/client/Camera;Lnet/minecraft/client/multiplayer/ClientLevel;FLnet/minecraft/client/DeltaTracker;)V"))
@@ -338,10 +349,10 @@ index 0000000000000000000000000000000000000000..09d62f3ed404ff047bfef746a6e22559
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba34d2c5340
+index 0000000000000000000000000000000000000000..5319bb3362c54871a3e4511e94c15c312ee12a8a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFog.java
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,173 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -352,6 +363,8 @@ index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba3
 +import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapExtractor;
 +import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapMath;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockEndSkyTexture;
++import java.util.ArrayList;
++import java.util.List;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 +import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -361,10 +374,10 @@ index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba3
 +import net.minecraft.client.multiplayer.ClientLevel;
 +import net.minecraft.client.multiplayer.ClientPacketListener;
 +import net.minecraft.client.renderer.fog.FogData;
++import net.minecraft.core.BlockPos;
 +import net.minecraft.util.Mth;
 +import net.minecraft.world.entity.EntityTypes;
 +import net.minecraft.world.level.material.FogType;
-+import net.raphimc.viabedrock.api.model.FogState;
 +import net.raphimc.viabedrock.protocol.data.enums.Dimension;
 +import org.jetbrains.annotations.Nullable;
 +import org.joml.Vector3f;
@@ -372,6 +385,8 @@ index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba3
 +public final class BedrockFog {
 +    private static final FogSession SESSION = new FogSession();
 +    private static @Nullable ClientPacketListener owner;
++    /** Dry-air fog after the latest frame's blend, or null when that frame used Java fog. */
++    private static @Nullable FogSetting frame;
 +
 +    private BedrockFog() {
 +    }
@@ -384,6 +399,7 @@ index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba3
 +        ClientPlayConnectionEvents.INIT.register((listener, client) -> {
 +            BedrockEndSkyTexture.clear();
 +            owner = listener;
++            frame = null;
 +            final long generation = SESSION.begin();
 +            ClientPlayNetworking.registerReceiver(FogPayload.TYPE, (payload, context) -> {
 +                if (client.getConnection() == listener) SESSION.accept(generation, payload.state());
@@ -393,19 +409,52 @@ index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba3
 +            // Disconnect can run on Netty; retire GPU resources on the client thread, for this listener only.
 +            if (owner == listener) {
 +                owner = null;
++                frame = null;
 +                SESSION.clear();
 +                BedrockEndSkyTexture.clear();
 +            }
 +        }));
 +    }
 +
-+    public static @Nullable FogState.Distance air(final Camera camera, final ClientLevel level) {
-+        return active(BedrockLightmapExtractor.dimension(Minecraft.getInstance()), camera, level)
-+            ? SESSION.snapshot().resolve("air", biome(camera, level)) : null;
++    /**
++     * Advances the dry-air fog once per frame, before vision and camera modifiers, and returns its color.
++     *
++     * @return the blended color, or null to keep Java's fog for this frame
++     */
++    public static @Nullable Vector3f frameColor(final Camera camera, final ClientLevel level, final int renderChunks) {
++        final Dimension dimension = BedrockLightmapExtractor.dimension(Minecraft.getInstance());
++        FogSetting target = null;
++        if (active(dimension, camera, level)) {
++            target = FogStack.resolve(SESSION.snapshot(), "air", biomes(camera, level), fogDistance(renderChunks * 16F));
++        }
++        if (target != null) {
++            // Native blends the clock-modulated color (0x145373c82 precedes the blend at 0x145373e20).
++            final Vector3f rgb = color(new Vector3f(target.red(), target.green(), target.blue()), dimension, level.getOverworldClockTime());
++            target = target.withColor(rgb.x, rgb.y, rgb.z);
++        }
++        frame = advance(frame, target);
++        return frame == null ? null : new Vector3f(frame.red(), frame.green(), frame.blue());
 +    }
 +
-+    private static @Nullable String biome(final Camera camera, final ClientLevel level) {
-+        return level.getBiome(camera.blockPosition()).unwrapKey().map(key -> key.identifier().toString()).orElse(null);
++    /**
++     * Native 1.26.60.5 keeps the previous frame's air fog and moves it toward each new target. The first frame and a
++     * frame after a camera medium change take the target directly (0x145373cd6..0x145373d0f).
++     */
++    static @Nullable FogSetting advance(final @Nullable FogSetting previous, final @Nullable FogSetting target) {
++        if (target == null) return null;
++        return previous == null ? target : previous.toward(target, FogSetting.AIR_RATE);
++    }
++
++    /** The camera biome at each native sample position around the floored camera position. */
++    private static List<@Nullable String> biomes(final Camera camera, final ClientLevel level) {
++        final BlockPos origin = camera.blockPosition();
++        final var position = new BlockPos.MutableBlockPos();
++        final List<@Nullable String> biomes = new ArrayList<>(FogStack.BIOME_SAMPLES.length);
++        for (final int[] offset : FogStack.BIOME_SAMPLES) {
++            position.setWithOffset(origin, offset[0], offset[1], offset[2]);
++            biomes.add(level.getBiome(position).unwrapKey().map(key -> key.identifier().toString()).orElse(null));
++        }
++        return biomes;
 +    }
 +
 +    private static boolean active(final @Nullable Dimension dimension, final Camera camera, final ClientLevel level) {
@@ -415,16 +464,14 @@ index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba3
 +
 +    public static boolean endSky() {
 +        final var minecraft = Minecraft.getInstance();
-+        return minecraft.level != null && BedrockLightmapExtractor.dimension(minecraft) == Dimension.END
-+            && air(minecraft.gameRenderer.mainCamera(), minecraft.level) != null;
++        return minecraft.level != null && BedrockLightmapExtractor.dimension(minecraft) == Dimension.END && frame != null;
 +    }
 +
 +    static boolean supported(final @Nullable Dimension dimension, final FogType medium, final float rain, final float thunder) {
 +        return dimension != null && medium == FogType.NONE && rain <= 0 && thunder <= 0;
 +    }
 +
-+    public static Vector3f color(final int color, final Dimension dimension, final long time) {
-+        final Vector3f rgb = new Vector3f((color >> 16 & 255) / 255F, (color >> 8 & 255) / 255F, (color & 255) / 255F);
++    public static Vector3f color(final Vector3f rgb, final Dimension dimension, final long time) {
 +        if (dimension == Dimension.OVERWORLD) {
 +            final float angle = BedrockLightmapMath.overworldAngle(time, 0F);
 +            final float daylight = Mth.clamp((float) Math.cos(angle * ((float) Math.PI * 2F)) * 2F + 0.5F, 0F, 1F);
@@ -446,7 +493,7 @@ index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba3
 +                }
 +            }
 +        }
-+        final Range range = range(dimension, livingDragon, SESSION.snapshot().resolve("air", biome(camera, level)), renderDistance);
++        final Range range = range(dimension, livingDragon, frame, renderDistance);
 +        if (range == null) return;
 +        fog.environmentalStart = range.start;
 +        fog.environmentalEnd = range.end;
@@ -455,13 +502,13 @@ index 0000000000000000000000000000000000000000..12888cf315c05db2e110c6115b9adba3
 +    }
 +
 +    static @Nullable Range range(final @Nullable Dimension dimension, final boolean livingDragon,
-+                                 final @Nullable FogState.Distance setting, final float renderDistance) {
++                                 final @Nullable FogSetting setting, final float renderDistance) {
 +        if (dimension == null) return null;
 +        final float distance = fogDistance(renderDistance);
 +        // The dragon replaces distances with 0..100 even without a command, before the render distance cap.
 +        // The ordinary color path remains intact.
 +        if (dimension == Dimension.END && livingDragon) return cap(0, 100, distance);
-+        return setting == null ? null : cap(setting.start(distance), setting.end(distance), distance);
++        return setting == null ? null : cap(setting.start(), setting.end(), distance);
 +    }
 +
 +    /** Native fog reaches the render distance in blocks less a margin of 1/16, 8 or 16 blocks. */
@@ -548,6 +595,125 @@ index 0000000000000000000000000000000000000000..966423789487df9679d34a572baa0df3
 +        return this.snapshot;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSetting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSetting.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..ba95fe486e94724b7e4a3e0b01d3e6b6559eb69d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSetting.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++/** A resolved fog color and its start and end distances in blocks. */
++record FogSetting(float red, float green, float blue, float start, float end) {
++    /** Native 1.26.60.5 moves dry-air fog 1% of the way to its target each frame (0x145373dd8, 0.01 at 0x14f0b7770). */
++    static final float AIR_RATE = 0.01F;
++
++    FogSetting withColor(final float red, final float green, final float blue) {
++        return new FogSetting(red, green, blue, this.start, this.end);
++    }
++
++    /** Matches the native operand order: colors use target * f + previous * (1 - f), distances previous + (target - previous) * f. */
++    FogSetting toward(final FogSetting target, final float rate) {
++        final float keep = 1F - rate;
++        return new FogSetting(target.red * rate + keep * this.red, target.green * rate + keep * this.green,
++            target.blue * rate + keep * this.blue, (target.start - this.start) * rate + this.start,
++            (target.end - this.end) * rate + this.end);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogStack.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogStack.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..876e625ec2491aef19501d7abbaf2f84649399db
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/fog/FogStack.java
+@@ -0,0 +1,83 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++import com.viaversion.viaversion.util.Key;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.List;
++import net.raphimc.viabedrock.api.model.FogState;
++import org.jetbrains.annotations.Nullable;
++
++/** Resolves a medium through the native weighted fog stack: commands, camera biome samples, then data defaults. */
++final class FogStack {
++    /**
++     * Native 1.26.60.5 biome sample offsets from the floored camera position (table 0x14f246c50):
++     * the center, 12 blocks along each horizontal axis and 8 blocks along each diagonal, at dy 0, -3 and +3.
++     */
++    static final int[][] BIOME_SAMPLES = {
++        {0, 0, 0}, {-12, 0, 0}, {-8, 0, -8}, {0, 0, -12}, {8, 0, -8}, {12, 0, 0}, {8, 0, 8}, {0, 0, 12}, {-8, 0, 8},
++        {0, -3, 0}, {-12, -3, 0}, {-8, -3, -8}, {0, -3, -12}, {8, -3, -8}, {12, -3, 0}, {8, -3, 8}, {0, -3, 12}, {-8, -3, 8},
++        {0, 3, 0}, {-12, 3, 0}, {-8, 3, -8}, {0, 3, -12}, {8, 3, -8}, {12, 3, 0}, {8, 3, 8}, {0, 3, 12}, {-8, 3, 8}
++    };
++
++    private FogStack() {
++    }
++
++    /**
++     * Native FogManager::calculateCurrentDistanceSetting (0x142148a80) walks the layers from the top. Each layer adds
++     * the remaining weight times the sum of its defined samples divided by its sample count, then keeps the weight of
++     * its undefined samples for the layers below. A command layer holds one sample, so the topmost command that
++     * defines the medium takes all weight. The biome layer holds one sample per biome position.
++     *
++     * @param biomes the biome key at each sample position, or null where none is known
++     * @param distance the native fog distance that scales render-relative settings
++     * @return the blended setting in blocks, or null if no layer defines the medium
++     */
++    static @Nullable FogSetting resolve(final FogState state, final String medium, final List<@Nullable String> biomes,
++                                        final float distance) {
++        final List<List<FogState.@Nullable Distance>> layers = new ArrayList<>();
++        for (int i = state.layers().size() - 1; i >= 0; i--) {
++            layers.add(Collections.singletonList(state.layers().get(i).distances().get(medium)));
++        }
++        final List<FogState.@Nullable Distance> samples = new ArrayList<>(biomes.size());
++        for (final String biome : biomes) {
++            final FogState.Layer layer = biome == null ? null : state.biomes().get(Key.namespaced(biome));
++            samples.add(layer == null ? null : layer.distances().get(medium));
++        }
++        layers.add(samples);
++        layers.add(Collections.singletonList(state.defaults().get(medium)));
++
++        float weight = 1F;
++        float red = 0, green = 0, blue = 0, start = 0, end = 0;
++        for (final var layer : layers) {
++            if (layer.isEmpty()) continue;
++            int defined = 0;
++            float layerRed = 0, layerGreen = 0, layerBlue = 0, layerStart = 0, layerEnd = 0;
++            for (final FogState.Distance sample : layer) {
++                if (sample == null) continue;
++                defined++;
++                layerRed += (sample.color() >> 16 & 255) / 255F;
++                layerGreen += (sample.color() >> 8 & 255) / 255F;
++                layerBlue += (sample.color() & 255) / 255F;
++                layerStart += sample.start(distance);
++                layerEnd += sample.end(distance);
++            }
++            final float share = weight / layer.size();
++            red += layerRed * share;
++            green += layerGreen * share;
++            blue += layerBlue * share;
++            start += layerStart * share;
++            end += layerEnd * share;
++            if (defined == layer.size()) return new FogSetting(red, green, blue, start, end);
++            weight *= 1F - (float) defined / layer.size();
++        }
++        if (weight >= 1F) return null;
++        // Native fills the rest from an engine fallback whose values are not established; spread it proportionally.
++        final float resolved = 1F - weight;
++        return new FogSetting(red / resolved, green / resolved, blue / resolved, start / resolved, end / resolved);
++    }
++}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_end_sky.fsh
 new file mode 100644
 index 0000000000000000000000000000000000000000..3909d5b5d6857c1eaff9a970f9735aa87c10e520
@@ -602,10 +768,10 @@ index 57b1267c042fa2b628a9c81ff8285e5c74a3dae1..01cc7b0a07dbf3cf785a80d1c2de5801
      "features.render.MixinEntityRenderDispatcher",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4589e76f0237b57d3161ca4ac15ab487d99ac21
+index 0000000000000000000000000000000000000000..acb475b152fa3b718285bc026e3d940d12d05447
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/BedrockFogTest.java
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -613,10 +779,12 @@ index 0000000000000000000000000000000000000000..f4589e76f0237b57d3161ca4ac15ab48
 + */
 +package com.viaversion.viafabricplus.bedrock.render.fog;
 +
++import java.util.List;
 +import java.util.Map;
 +import net.minecraft.world.level.material.FogType;
 +import net.raphimc.viabedrock.api.model.FogState;
 +import net.raphimc.viabedrock.protocol.data.enums.Dimension;
++import org.joml.Vector3f;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -624,20 +792,20 @@ index 0000000000000000000000000000000000000000..f4589e76f0237b57d3161ca4ac15ab48
 +class BedrockFogTest {
 +    @Test
 +    void overworldFogUsesNativeDayNightModulationBeforeVisionEffects() {
-+        final var day = BedrockFog.color(0x204060, Dimension.OVERWORLD, 6000);
++        final var day = BedrockFog.color(rgb(0x204060), Dimension.OVERWORLD, 6000);
 +        assertEquals(0.1254902035F, day.x(), 0.000001F);
 +        assertEquals(0.2509804070F, day.y(), 0.000001F);
 +        assertEquals(0.3764707744F, day.z(), 0.000001F);
-+        final var night = BedrockFog.color(0x204060, Dimension.OVERWORLD, 18000);
++        final var night = BedrockFog.color(rgb(0x204060), Dimension.OVERWORLD, 18000);
 +        assertEquals(0.0075294119F, night.x(), 0.000001F);
 +        assertEquals(0.0150588239F, night.y(), 0.000001F);
 +        assertEquals(0.0338823721F, night.z(), 0.000001F);
-+        final var dusk = BedrockFog.color(0x204060, Dimension.OVERWORLD, 13000);
++        final var dusk = BedrockFog.color(rgb(0x204060), Dimension.OVERWORLD, 13000);
 +        assertEquals(0.0522189364F, dusk.x(), 0.00001F);
 +        assertEquals(0.1044378728F, dusk.y(), 0.00001F);
 +        assertEquals(0.1636722237F, dusk.z(), 0.00001F);
 +        for (final Dimension dimension : new Dimension[]{Dimension.NETHER, Dimension.END}) {
-+            assertEquals(day, BedrockFog.color(0x204060, dimension, 18000));
++            assertEquals(day, BedrockFog.color(rgb(0x204060), dimension, 18000));
 +        }
 +    }
 +
@@ -666,7 +834,7 @@ index 0000000000000000000000000000000000000000..f4589e76f0237b57d3161ca4ac15ab48
 +                new FogState.Distance(0, 128, 0xFF0000, false),
 +                new FogState.Distance(-0.25F, 0.75F, 0, true)
 +            }) {
-+                assertEquals(expected, BedrockFog.range(Dimension.END, true, command, renderDistance));
++                assertEquals(expected, BedrockFog.range(Dimension.END, true, setting(command, renderDistance), renderDistance));
 +            }
 +            assertNull(BedrockFog.range(Dimension.END, false, null, renderDistance));
 +        }
@@ -686,21 +854,48 @@ index 0000000000000000000000000000000000000000..f4589e76f0237b57d3161ca4ac15ab48
 +            512F, new BedrockFog.Range[]{new BedrockFog.Range(248, 496), new BedrockFog.Range(300, 496)});
 +        for (final var entry : observed.entrySet()) {
 +            final float renderDistance = entry.getKey();
-+            assertEquals(entry.getValue()[0], BedrockFog.range(Dimension.OVERWORLD, false, relative, renderDistance));
-+            assertEquals(entry.getValue()[1], BedrockFog.range(Dimension.OVERWORLD, false, farFixed, renderDistance));
++            assertEquals(entry.getValue()[0], BedrockFog.range(Dimension.OVERWORLD, false, setting(relative, renderDistance), renderDistance));
++            assertEquals(entry.getValue()[1], BedrockFog.range(Dimension.OVERWORLD, false, setting(farFixed, renderDistance), renderDistance));
 +            assertEquals(new BedrockFog.Range(0, Math.min(32, entry.getValue()[1].end())),
-+                BedrockFog.range(Dimension.END, false, nearFixed, renderDistance));
++                BedrockFog.range(Dimension.END, false, setting(nearFixed, renderDistance), renderDistance));
 +        }
 +    }
 +
 +    @Test
 +    void dragonOverrideDoesNotEscapeTheEndOrAnAcceptedNativeContext() {
-+        final var command = new FogState.Distance(0, 16, 0, false);
++        final var command = setting(new FogState.Distance(0, 16, 0, false), 192);
 +        assertNull(BedrockFog.range(null, true, command, 192));
 +        for (final Dimension dimension : new Dimension[]{Dimension.OVERWORLD, Dimension.NETHER}) {
 +            assertNull(BedrockFog.range(dimension, true, null, 192));
 +            assertEquals(new BedrockFog.Range(0, 16), BedrockFog.range(dimension, true, command, 192));
 +        }
++    }
++
++    @Test
++    void airFogSnapsToItsFirstTargetThenMovesOnePercentPerFrame() {
++        final var clear = new FogSetting(1, 1, 1, 0, 200);
++        final var red = new FogSetting(1, 0, 0, 0, 100);
++        assertEquals(clear, BedrockFog.advance(null, clear));
++        FogSetting frame = clear;
++        for (int i = 0; i < 100; i++) {
++            frame = BedrockFog.advance(frame, red);
++        }
++        // After 100 frames the remaining difference is 0.99^100 = 36.6% of the step.
++        assertEquals(1F, frame.red(), 0.00001F);
++        assertEquals(0.36603F, frame.green(), 0.0001F);
++        assertEquals(136.603F, frame.end(), 0.01F);
++        // A frame without native air fog, such as one in a fluid, makes the next target apply at once.
++        assertNull(BedrockFog.advance(frame, null));
++        assertEquals(clear, BedrockFog.advance(BedrockFog.advance(frame, null), clear));
++    }
++
++    private static FogSetting setting(final FogState.Distance air, final float renderDistance) {
++        final var state = new FogState(List.of(), Map.of(), Map.of("air", air));
++        return FogStack.resolve(state, "air", List.of(), BedrockFog.fogDistance(renderDistance));
++    }
++
++    private static Vector3f rgb(final int color) {
++        return new Vector3f((color >> 16 & 255) / 255F, (color >> 8 & 255) / 255F, (color & 255) / 255F);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogSessionTest.java
@@ -774,4 +969,75 @@ index 0000000000000000000000000000000000000000..f41cfebac76655d72d4d15c709bfc969
 +        assertFalse(session.accept(second, current));
 +    }
 +
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogStackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogStackTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..b636bcc4357de12e56c441363aa520523e608b3c
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/fog/FogStackTest.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.fog;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import net.raphimc.viabedrock.api.model.FogState;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class FogStackTest {
++    private static final FogState.Distance RED = new FogState.Distance(0, 32, 0xFF0000, false);
++    private static final FogState.Distance GREEN = new FogState.Distance(0, 96, 0x00FF00, false);
++    private static final FogState.Layer RED_BIOME = new FogState.Layer("test:red", Map.of("air", RED));
++
++    @Test
++    void biomeSamplesWithoutAirFogPassTheirShareToTheDataDefault() {
++        final var state = new FogState(List.of(), Map.of("minecraft:the_end", RED_BIOME), Map.of("air", GREEN));
++        // 9 of the 27 samples near a biome boundary fall in the red End biome.
++        final List<String> samples = new ArrayList<>();
++        for (int i = 0; i < FogStack.BIOME_SAMPLES.length; i++) {
++            samples.add(i % 3 == 0 ? "minecraft:the_end" : i % 3 == 1 ? "minecraft:plains" : null);
++        }
++        final FogSetting setting = FogStack.resolve(state, "air", samples, 176);
++        assertNotNull(setting);
++        assertEquals(1F / 3F, setting.red(), 0.00001F);
++        assertEquals(2F / 3F, setting.green(), 0.00001F);
++        assertEquals(0F, setting.blue());
++        assertEquals(32F / 3F + 64F, setting.end(), 0.0001F);
++    }
++
++    @Test
++    void topmostCommandDefiningTheMediumReplacesBiomesAndDefaults() {
++        final var blue = new FogState.Distance(8, 16, 0x0000FF, false);
++        final var state = new FogState(List.of(
++            new FogState.Layer("test:blue", Map.of("air", blue)),
++            new FogState.Layer("test:water_only", Map.of("water", GREEN))
++        ), Map.of("minecraft:the_end", RED_BIOME), Map.of("air", GREEN));
++        assertEquals(new FogSetting(0, 0, 1, 8, 16), FogStack.resolve(state, "air", List.of("minecraft:the_end"), 176));
++        // The water-only command above it does not take any air weight.
++        assertEquals(new FogSetting(0, 1, 0, 0, 96), FogStack.resolve(state, "water", List.of("minecraft:the_end"), 176));
++    }
++
++    @Test
++    void renderRelativeAndFixedSamplesAverageInBlocks() {
++        final var relative = new FogState.Layer("test:relative", Map.of("air", new FogState.Distance(0.5F, 1, 0, true)));
++        final var state = new FogState(List.of(), Map.of("minecraft:the_end", RED_BIOME, "minecraft:plains", relative), Map.of());
++        final FogSetting setting = FogStack.resolve(state, "air", List.of("minecraft:the_end", "minecraft:plains"), 100);
++        assertNotNull(setting);
++        assertEquals(25F, setting.start(), 0.0001F);
++        assertEquals(66F, setting.end(), 0.0001F);
++    }
++
++    @Test
++    void undefinedMediumKeepsJavaFog() {
++        final var state = new FogState(List.of(), Map.of("minecraft:the_end", RED_BIOME), Map.of());
++        assertNull(FogStack.resolve(state, "air", List.of("minecraft:plains"), 176));
++        assertNull(FogStack.resolve(state, "water", List.of("minecraft:the_end"), 176));
++    }
 +}

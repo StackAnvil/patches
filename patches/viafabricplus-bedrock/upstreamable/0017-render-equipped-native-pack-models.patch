@@ -382,6 +382,25 @@ head, torso, "", "", body, main_hand, off_hand for armor slots 0-4 and
 then the hands. Use torso for the chest and empty names for legs and feet
 instead of Java's chest, legs and feet.
 
+Apply the same admission to parent_setup and to drawing. Native admission
+0x1458b7520 is the only path to per-slot setup 0x1458b7ac0, and only that
+setup runs the attachable's parent_setup script (0x1458b8764, gated by the
+admission's constant true argument). A skin with enable_attachables false
+therefore no longer changes the player model through equipment it does not
+draw. The skin parser 0x145958cd5 stores enable_attachables and hide_armor
+at +0x310/+0x311, and 0x1458afd86 copies them to the +0x1d8/+0x1d9 flags
+that admission reads. Check 0x141ad7980 accepts Item virtual +0x50, item
+minecraft:wolf_armor (HashedString 0x1529a6148) or the minecraft:harness
+tag (0x1528c3828). Hand slots always skip such items, and armor slots skip
+them when hide_armor is set. Java head, chest, leg and foot armor tags,
+wolf armor and harnesses stand in for that check; custom wearable items
+keep drawing because the virtual's class membership is not established.
+The hide_armor gate applies when the level's MinimumCompatibleClientVersion
+(LevelData +0x2d8) exceeds 1.16.210 (0x14590cd34). Remote client levels
+start at the current version 1.26.60 (0x141068a2b, 0x140d3caa9), so
+connected sessions use it. Tests cover disabled attachables, hidden armor
+and held armor.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 index e9ce32eb550df25e5476cb623de3667c7544ebb4..fae5b0ab3633094ed6f00609659fe709650ba4cd 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
@@ -1233,10 +1252,10 @@ index 0000000000000000000000000000000000000000..1ea81dc9c9eb6dbec10fa16d47e6e492
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..b88018d889ceb886ed0a620a1a0925461088d9d6
+index 0000000000000000000000000000000000000000..785a647a0c1478f6570c0e4693525c5c67cd4950
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-@@ -0,0 +1,521 @@
+@@ -0,0 +1,536 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1274,6 +1293,7 @@ index 0000000000000000000000000000000000000000..b88018d889ceb886ed0a620a1a092546
 +import net.minecraft.client.renderer.texture.DynamicTexture;
 +import net.minecraft.core.component.DataComponents;
 +import net.minecraft.resources.Identifier;
++import net.minecraft.tags.ItemTags;
 +import net.minecraft.world.entity.Avatar;
 +import net.minecraft.world.InteractionHand;
 +import net.minecraft.world.entity.EquipmentSlot;
@@ -1350,8 +1370,10 @@ index 0000000000000000000000000000000000000000..b88018d889ceb886ed0a620a1a092546
 +        queries.put("is_owner_identifier_any", (BedrockActorAnimation.Query) names -> names.contains("minecraft:player"));
 +        final var actor = BedrockActorState.state(entity.getUUID());
 +        final Map<String, Object> properties = actor == null ? Map.of() : actor.properties();
++        final var rendering = BedrockPlayerSkins.options(state.skin).rendering();
 +        for (final EquipmentSlot slot : firstPerson ? HANDS : SLOTS) {
 +            final var stack = firstPerson ? slot == EquipmentSlot.MAINHAND ? main : off : entity.getItemBySlot(slot);
++            if (!admits(slot, armor(stack), rendering)) continue;
 +            final var context = Map.<String, Object>of("is_first_person", firstPerson ? 1F : 0F, "item_slot", slotName(slot));
 +            try {
 +                final var identity = identify(stack, packs, SELECTORS.computeIfAbsent(entity, _ -> new BedrockAttachableSelection()),
@@ -1391,8 +1413,10 @@ index 0000000000000000000000000000000000000000..b88018d889ceb886ed0a620a1a092546
 +        queries.put("is_owner_identifier_any", (BedrockActorAnimation.Query) names -> names.contains("minecraft:player"));
 +        final var actor = BedrockActorState.state(entity.getUUID());
 +        final Map<String, Object> properties = actor == null ? Map.of() : actor.properties();
-+        for (final EquipmentSlot slot : admittedSlots(firstPerson, BedrockPlayerSkins.options(state.skin).rendering())) {
++        final var rendering = BedrockPlayerSkins.options(state.skin).rendering();
++        for (final EquipmentSlot slot : firstPerson ? HANDS : SLOTS) {
 +            final ItemStack stack = firstPerson ? slot == EquipmentSlot.MAINHAND ? main : off : entity.getItemBySlot(slot);
++            if (!admits(slot, armor(stack), rendering)) continue;
 +            final boolean hand = slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND;
 +            final var appearance = BedrockShieldPatterns.get(stack);
 +            if (hand && requiresBannerAtlas(stack) && !appearance.patterned()) continue;
@@ -1566,10 +1590,20 @@ index 0000000000000000000000000000000000000000..b88018d889ceb886ed0a620a1a092546
 +        } catch (IOException invalid) { throw new IllegalArgumentException("Invalid native binding", invalid); }
 +    }
 +
-+    /** Native attachable admission returns before every equipment slot when the owner disables attachables. */
-+    static List<EquipmentSlot> admittedSlots(final boolean firstPerson, final Map<String, Boolean> rendering) {
-+        if (!rendering.getOrDefault("enable_attachables", true)) return List.of();
-+        return firstPerson ? HANDS : SLOTS;
++    /**
++     * Native admission precedes the per-slot setup, which alone runs parent_setup. An owner that disables
++     * attachables admits no slot. Armor never uses a held attachable, and hide_armor removes it from armor slots.
++     */
++    static boolean admits(final EquipmentSlot slot, final boolean armor, final Map<String, Boolean> rendering) {
++        if (!rendering.getOrDefault("enable_attachables", true)) return false;
++        if (!armor) return true;
++        return slot != EquipmentSlot.MAINHAND && slot != EquipmentSlot.OFFHAND && !rendering.getOrDefault("hide_armor", false);
++    }
++
++    /** Native admission treats humanoid armor, wolf armor and harnesses as armor. */
++    private static boolean armor(final ItemStack stack) {
++        return stack.is(ItemTags.HEAD_ARMOR) || stack.is(ItemTags.CHEST_ARMOR) || stack.is(ItemTags.LEG_ARMOR)
++                || stack.is(ItemTags.FOOT_ARMOR) || stack.is(Items.WOLF_ARMOR) || stack.is(ItemTags.HARNESSES);
 +    }
 +
 +    /** Native context.item_slot names; legs and feet have empty names. */
@@ -3252,10 +3286,10 @@ index 0000000000000000000000000000000000000000..bd734330a9eccb5a89bb28506023eaf3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c7ac1e7c62aaa6e30e8862532ae8ad1346c3649
+index 0000000000000000000000000000000000000000..8adfbf807a4028c670234da27664c0ec4c655672
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,176 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -3314,13 +3348,29 @@ index 0000000000000000000000000000000000000000..7c7ac1e7c62aaa6e30e8862532ae8ad1
 +    @Test
 +    void disabledAttachablesAdmitNoArmorOrHeldSlot() {
 +        final var disabled = Map.of("enable_attachables", false);
-+        assertEquals(List.of(), BedrockPlayerAttachables.admittedSlots(false, disabled));
-+        assertEquals(List.of(), BedrockPlayerAttachables.admittedSlots(true, disabled));
-+        assertTrue(BedrockPlayerAttachables.admittedSlots(false, Map.of()).containsAll(List.of(
-+                EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET,
-+                EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND)));
-+        assertEquals(List.of(EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND),
-+                BedrockPlayerAttachables.admittedSlots(true, Map.of("enable_attachables", true)));
++        for (final var slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
++                EquipmentSlot.FEET, EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND)) {
++            assertFalse(BedrockPlayerAttachables.admits(slot, false, disabled));
++            assertTrue(BedrockPlayerAttachables.admits(slot, false, Map.of()));
++            assertTrue(BedrockPlayerAttachables.admits(slot, false, Map.of("enable_attachables", true)));
++        }
++    }
++
++    @Test
++    void hiddenArmorAdmitsOnlyItemsThatAreNotArmor() {
++        final var hidden = Map.of("hide_armor", true);
++        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.CHEST, true, hidden));
++        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.HEAD, true, hidden));
++        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.CHEST, false, hidden));
++        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.CHEST, true, Map.of()));
++        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.CHEST, true, Map.of("hide_armor", false)));
++    }
++
++    @Test
++    void heldArmorNeverUsesAnAttachable() {
++        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.MAINHAND, true, Map.of()));
++        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.OFFHAND, true, Map.of()));
++        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.MAINHAND, false, Map.of()));
 +    }
 +
 +    @Test

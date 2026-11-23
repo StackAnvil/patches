@@ -55,6 +55,11 @@ the waypoint map, HUD state and game mode, not server packs, and draw
 resources still win. If the bundled layer also lacks locator_bg, keep the
 Java locator bar instead of suppressing it and drawing nothing.
 
+Bound every remembered texture failure, including names that neither a
+pack nor the add-on provides. Waypoint packets choose the names, so the
+unbounded missing-texture path let a server grow the cache until
+disconnect.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 827fce8ed6aacd68d5ee41b6081e56937259f16d..9332a593e05c99882e6ff2f570630c194be55117 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -210,10 +215,10 @@ index 0000000000000000000000000000000000000000..49a5e369d82114c86b7ad39607498deb
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..da855de9ed76105357a58b33e0da006d6fdd09d3
+index 0000000000000000000000000000000000000000..1affefc27ef4f53d62ba6aff56d5dd00af71e353
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,152 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -245,7 +250,13 @@ index 0000000000000000000000000000000000000000..da855de9ed76105357a58b33e0da006d
 +    static final String BACKGROUND = "textures/ui/locator_bg";
 +    private static final Object BUILTIN = new Object();
 +    private final Map<Identifier, Image> images = new LinkedHashMap<>(16, 0.75F, true);
-+    private final Map<Identifier, Object> failures = new LinkedHashMap<>();
++    // Server waypoints name their textures, so a stream of distinct names that never resolve must not grow this.
++    private final Map<Identifier, Object> failures = new LinkedHashMap<>() {
++        @Override
++        protected boolean removeEldestEntry(final Map.Entry<Identifier, Object> eldest) {
++            return this.size() > 256;
++        }
++    };
 +    private final Map<Identifier, Image> builtinImages = new HashMap<>();
 +
 +    Image image(final String texture) {
@@ -269,7 +280,6 @@ index 0000000000000000000000000000000000000000..da855de9ed76105357a58b33e0da006d
 +            return image;
 +        } catch (final IOException | RuntimeException failure) {
 +            this.failures.put(id, resource.source());
-+            if (this.failures.size() > 256) this.failures.remove(this.failures.keySet().iterator().next());
 +            ViaFabricPlusBedrock.impl().logger().warn("Could not load native locator texture {}", id, failure);
 +            return null;
 +        }
@@ -725,10 +735,10 @@ index 90e335d1a31ccfefd0ab72a9565720ea0de1c0aa..249f95f230896ed08a987976899ea852
      "features.render.MixinBedrockVignette",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImagesTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fefab1de2cdf35153fa6bc9cdfad6284f8fd19ee
+index 0000000000000000000000000000000000000000..04383990532f6254a61bc05b0d7d9cc18438fbca
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImagesTest.java
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,71 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -736,13 +746,23 @@ index 0000000000000000000000000000000000000000..fefab1de2cdf35153fa6bc9cdfad6284
 + */
 +package com.viaversion.viafabricplus.bedrock.hud;
 +
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.util.Optional;
 +import javax.imageio.ImageIO;
++import net.minecraft.client.Minecraft;
 +import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.PackResources;
++import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.ResourceManager;
 +import net.raphimc.viabedrock.api.resourcepack.ui.JsonUiProgram;
++import org.apache.logging.log4j.Logger;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.*;
 +
 +class LocatorBarImagesTest {
 +
@@ -752,6 +772,34 @@ index 0000000000000000000000000000000000000000..fefab1de2cdf35153fa6bc9cdfad6284
 +        assertSize(LocatorBarImages.BACKGROUND, 12, 5);
 +        assertSize("textures/ui/locator_arrow_up", 7, 4);
 +        assertSize("textures/ui/locator_arrow_down", 7, 4);
++    }
++
++    @Test
++    void unresolvedWaypointTextureNamesDoNotGrowTheFailureCacheWithoutBound() throws Exception {
++        final var game = mock(Minecraft.class);
++        final var resources = mock(ResourceManager.class);
++        final var broken = mock(Resource.class);
++        final var brokenId = Identifier.parse(JsonUiProgram.textureId("textures/ui/fixture_broken"));
++        when(game.getResourceManager()).thenReturn(resources);
++        when(resources.getResource(any())).thenReturn(Optional.empty());
++        when(resources.getResource(brokenId)).thenReturn(Optional.of(broken));
++        when(broken.source()).thenReturn(mock(PackResources.class));
++        when(broken.open()).thenThrow(new IOException("Corrupt fixture texture"));
++        final var addon = mock(ViaFabricPlusBedrock.class);
++        when(addon.logger()).thenReturn(mock(Logger.class));
++        try (final var singleton = mockStatic(Minecraft.class);
++             final var entrypoint = mockStatic(ViaFabricPlusBedrock.class)) {
++            singleton.when(Minecraft::getInstance).thenReturn(game);
++            entrypoint.when(ViaFabricPlusBedrock::impl).thenReturn(addon);
++            final var images = new LocatorBarImages();
++            assertNull(images.image("textures/ui/fixture_broken"));
++            assertNull(images.image("textures/ui/fixture_broken"));
++            verify(broken, times(1)).open();
++            // A server can name any number of waypoint textures that neither a pack nor the add-on provides.
++            for (int i = 0; i < 256; i++) assertNull(images.image("textures/ui/fixture_missing_" + i));
++            assertNull(images.image("textures/ui/fixture_broken"));
++            verify(broken, times(2)).open();
++        }
 +    }
 +
 +    private static void assertSize(final String texture, final int width, final int height) throws Exception {

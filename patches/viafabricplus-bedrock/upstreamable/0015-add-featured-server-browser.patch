@@ -41,6 +41,10 @@ shows vanilla ping bars beside the player count, using the Java
 latency thresholds. Windows from about 500 GUI pixels wide show the
 selected server's details beside the list instead of only above 780.
 
+BedrockServerPings releases pings in flight when a catalog load starts.
+Their replies are ignored, so a failed load used to leave those servers
+pending and never pinged again until the screen closed.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerListsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerListsScreen.java
 index 19b3a21a867cf8cce0e8e5e30685eb01ca2730f2..4d1f11461f3318896cdbfa1ab6697fa4b3f2d739 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerListsScreen.java
@@ -362,12 +366,82 @@ index 0000000000000000000000000000000000000000..4b32975da1df06396b4538fa1d12ff1f
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerPings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerPings.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0455b2b905850904a3d6a94d1542e76dc43f7a20
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerPings.java
+@@ -0,0 +1,64 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerCatalog.Server;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerStatus.Status;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.Executor;
++import java.util.function.Function;
++import org.jetbrains.annotations.Nullable;
++
++/** Keeps one status ping in flight per catalog server and ignores replies for a replaced catalog. */
++final class BedrockServerPings {
++    private final Function<Server, CompletableFuture<Status>> ping;
++    private final Executor gameThread;
++    private final Map<String, Status> statuses = new HashMap<>();
++    private final Set<String> pending = new HashSet<>();
++    private int catalog;
++
++    BedrockServerPings(final Function<Server, CompletableFuture<Status>> ping, final Executor gameThread) {
++        this.ping = ping;
++        this.gameThread = gameThread;
++    }
++
++    /** Pings each server that has an address and no ping in flight. */
++    void ping(final List<Server> servers) {
++        final int current = this.catalog;
++        for (final Server server : servers) {
++            if (!server.hasAddress() || !this.pending.add(server.id())) continue;
++            this.ping.apply(server).whenComplete((status, error) -> this.gameThread.execute(() -> {
++                if (current != this.catalog) return;
++                this.pending.remove(server.id());
++                if (status != null) this.statuses.put(server.id(), status);
++            }));
++        }
++    }
++
++    /**
++     * Releases the pings in flight when a catalog load starts. Their replies are ignored, so a failed load would
++     * otherwise keep the old catalog's servers marked as pending and never ping them again.
++     */
++    void restart() {
++        this.catalog++;
++        this.pending.clear();
++    }
++
++    /** Forgets every status, for a newly loaded catalog or a signed-out account. */
++    void clear() {
++        this.restart();
++        this.statuses.clear();
++    }
++
++    @Nullable Status status(final String id) {
++        return this.statuses.get(id);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServersScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServersScreen.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f713672206c69c6ff
+index 0000000000000000000000000000000000000000..edd0d60fe973c61ef277d0cd9364c1239a9f05a5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServersScreen.java
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,435 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2023-2026 ViaVersion and contributors
@@ -386,11 +460,8 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +import com.viaversion.viafabricplus.screen.base.VFPScreen;
 +import com.viaversion.viafabricplus.screen.base.list.VFPListEntry;
 +import com.viaversion.viafabricplus.screen.base.list.VFPTextEntry;
-+import java.util.HashMap;
-+import java.util.HashSet;
 +import java.util.List;
 +import java.util.Map;
-+import java.util.Set;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.gui.Font;
 +import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -420,9 +491,9 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +
 +    private Tab tab = Tab.FEATURED;
 +    private List<Server> servers = List.of();
-+    private final Map<String, Status> statuses = new HashMap<>();
++    private final BedrockServerPings pings = new BedrockServerPings(BedrockServerStatus::ping,
++        task -> Minecraft.getInstance().execute(task));
 +    private Map<String, Integer> counts = Map.of();
-+    private final Set<String> pendingPings = new HashSet<>();
 +    private boolean requested;
 +    private boolean loading;
 +    private boolean failed;
@@ -531,7 +602,7 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +            }
 +            if (now - this.lastStatusRefresh > 30_000_000_000L) {
 +                this.lastStatusRefresh = now;
-+                this.pingServers(this.generation);
++                this.pings.ping(this.servers);
 +            }
 +        }
 +    }
@@ -554,7 +625,7 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
 +        if (account == null) {
 +            this.servers = List.of();
-+            this.statuses.clear();
++            this.pings.clear();
 +            this.counts = Map.of();
 +            this.failed = false;
 +            this.requested = true;
@@ -565,6 +636,7 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +        this.loading = true;
 +        this.failed = false;
 +        final int currentGeneration = ++this.generation;
++        this.pings.restart();
 +        this.countsLoading = false;
 +        BedrockServerCatalog.load(account).whenComplete((results, error) -> Minecraft.getInstance().execute(() -> {
 +            if (currentGeneration != this.generation) {
@@ -574,11 +646,10 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +            this.failed = error != null;
 +            if (error == null) {
 +                this.servers = results;
-+                this.statuses.clear();
-+                this.pendingPings.clear();
++                this.pings.clear();
 +                this.counts = Map.of();
 +                this.lastStatusRefresh = System.nanoTime();
-+                this.pingServers(currentGeneration);
++                this.pings.ping(results);
 +                this.refreshCounts(currentGeneration);
 +            } else {
 +                ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock server catalog", error);
@@ -592,23 +663,6 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +        }));
 +        if (this.list != null) {
 +            this.rebuildWidgets();
-+        }
-+    }
-+
-+    private void pingServers(final int currentGeneration) {
-+        for (final Server server : this.servers) {
-+            if (!server.hasAddress() || !this.pendingPings.add(server.id())) {
-+                continue;
-+            }
-+            BedrockServerStatus.ping(server).whenComplete((status, error) -> Minecraft.getInstance().execute(() -> {
-+                if (currentGeneration != this.generation) {
-+                    return;
-+                }
-+                this.pendingPings.remove(server.id());
-+                if (status != null) {
-+                    this.statuses.put(server.id(), status);
-+                }
-+            }));
 +        }
 +    }
 +
@@ -661,7 +715,7 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +    private void details() {
 +        final Server selected = this.selected();
 +        if (selected != null) {
-+            new BedrockServerDetailsScreen(selected, this.statuses.get(selected.id()), this.counts.get(selected.experienceId())).open(this);
++            new BedrockServerDetailsScreen(selected, this.pings.status(selected.id()), this.counts.get(selected.experienceId())).open(this);
 +        }
 +    }
 +
@@ -691,7 +745,7 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +        y += this.font.lineHeight + 3;
 +        graphics.text(this.font, fit(selected.creator(), width), left, y, SECONDARY);
 +        y += this.font.lineHeight + 8;
-+        final Status status = this.statuses.get(selected.id());
++        final Status status = this.pings.status(selected.id());
 +        final Component players = this.counts.containsKey(selected.experienceId())
 +            ? Component.translatable("bedrock_servers.viafabricplus.players_online", this.counts.get(selected.experienceId()))
 +            : status != null ? Component.translatable("bedrock_servers.viafabricplus.players", status.players(), status.maxPlayers())
@@ -803,7 +857,7 @@ index 0000000000000000000000000000000000000000..8714d60ae46d04e53b8b5b4f71367220
 +            final int icon = Math.min(32, entryHeight - 6);
 +            final int textX = icon + 9;
 +            BedrockImageCache.drawRemote(graphics, this.server.icon(), SLOT_MARGIN, (entryHeight - icon) / 2, icon, icon);
-+            final Status status = BedrockServersScreen.this.statuses.get(this.server.id());
++            final Status status = BedrockServersScreen.this.pings.status(this.server.id());
 +            final Integer count = BedrockServersScreen.this.counts.get(this.server.experienceId());
 +            final String right = count != null ? Integer.toString(count)
 +                : status == null ? "" : status.players() + "/" + status.maxPlayers();
@@ -1232,10 +1286,10 @@ index 0000000000000000000000000000000000000000..b1c821fb766e3202e48f3a663a76c523
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java
-index 94f1e8da631ab1fd686ac302dda56e2f787943f3..ef4f6808d6698d180a626901d933e3ae0ff99875 100644
+index 56886454aba82d2cf83369c376e9b3d38b644c28..8fccc3a795ae9f61c979adefd120706e25ff3511 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java
-@@ -123,7 +123,8 @@ public final class BedrockImageCache {
+@@ -124,7 +124,8 @@ public final class BedrockImageCache {
          return host.equals("xboxlive.com") || host.endsWith(".xboxlive.com")
              || host.equals("xbox.com") || host.endsWith(".xbox.com")
              || host.equals("minecraft.net") || host.endsWith(".minecraft.net")
@@ -1277,6 +1331,57 @@ index 4dce5e7142eece3ef356785b95038662e6516eb0..bac8dc3c3984a2baf7edea22f62f7ed7
    "bedrock_lan.viafabricplus.button": "Bedrock LAN Worlds",
    "bedrock_lan.viafabricplus.join": "Join world",
    "bedrock_lan.viafabricplus.refresh": "Refresh",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerPingsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerPingsTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..9f079c6515444e159146d43c660f4d866f526066
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerPingsTest.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerCatalog.Server;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerStatus.Status;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.CompletableFuture;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockServerPingsTest {
++
++    @Test
++    void serversPingedDuringAFailedCatalogRefreshArePingedAgain() {
++        final List<CompletableFuture<Status>> started = new ArrayList<>();
++        final var pings = new BedrockServerPings(_ -> {
++            final var reply = new CompletableFuture<Status>();
++            started.add(reply);
++            return reply;
++        }, Runnable::run);
++        final var catalog = List.of(new Server("hive", "hive", "The Hive", "", "", "geo.hivebedrock.network", 19132,
++            true, 0, "", "", "", "", List.of()));
++
++        pings.ping(catalog);
++        pings.ping(catalog);
++        assertEquals(1, started.size(), "one ping in flight per server");
++
++        // A refresh starts while the ping is in flight, then fails and keeps the old catalog.
++        pings.restart();
++        started.getFirst().complete(new Status(1, 10, 20, "stale", "1.26.60"));
++        assertNull(pings.status("hive"));
++
++        pings.ping(catalog);
++        assertEquals(2, started.size());
++        final var status = new Status(2, 10, 25, "current", "1.26.60");
++        started.get(1).complete(status);
++        assertEquals(status, pings.status("hive"));
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalogTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..051a151e377b8895e5e9193d060fd04b3c6c4749

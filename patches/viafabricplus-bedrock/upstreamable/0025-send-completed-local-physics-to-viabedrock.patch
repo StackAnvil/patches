@@ -1117,6 +1117,20 @@ rider, adds wrap(riderYaw - yaw) * max((45 - min(|d|, 45)) / 90, 0.18)
 Both changes use the same gate as the vehicle prediction sample, so
 camels, llamas and server-driven horses keep Java behavior.
 
+Leave every mount except boats and tamed, saddled horse-flag mounts to
+the server. Native 1.26.60.5 has only SetIsClientPredictedBoatSystem and
+SetIsClientPredictedHorseSystem; the horse tick 0x14b31c230 sets the
+predicted byte only for a local rider with TAMED and SADDLED. The auth
+input validator 0x14401c670 rejects a vehicle rotation or predicted
+vehicle ID without IsInClientPredictedVehicle. Since core sends saddles,
+Java controlled saddled pigs, striders, camels, nautili and happy ghasts
+locally and ignored their server positions while core dropped its
+MOVE_VEHICLE, so the two positions drifted apart. Return false from
+Entity.isLocalClientAuthoritative for those mounts on Bedrock. Java 26.3
+then keeps the rider in control (jump bar, ridden rotation) but skips
+travel, applies server moves and sends no MOVE_VEHICLE. Rider input
+still reaches the server through PlayerAuthInput's move vector and flags.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index adde34af196c0411209255d462328f77b0125752..92d333c40059b2d490dde8ef7a39c24c8e3375f0 100644
 --- a/build.gradle.kts
@@ -1671,10 +1685,10 @@ index 0000000000000000000000000000000000000000..71edbae46d6ef0250f436b00ce744613
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
-index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..39bf1bb02d48b872a5e11d954e421b3ed95d3eb7 100644
+index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..23ab7727197c284d6425bc8b0fc95a83263a67f1 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
-@@ -21,25 +21,31 @@
+@@ -21,25 +21,32 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -1690,6 +1704,7 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..39bf1bb02d48b872a5e11d954e421b3e
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 -import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viafabricplus.bedrock.input.BedrockVehicleAuthority;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockGroundState;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockMovementPosition;
@@ -1711,7 +1726,7 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..39bf1bb02d48b872a5e11d954e421b3e
  
  @Mixin(Entity.class)
  public abstract class MixinEntity {
-@@ -47,19 +53,73 @@ public abstract class MixinEntity {
+@@ -47,19 +54,73 @@ public abstract class MixinEntity {
      @Shadow
      protected Vec3 stuckSpeedMultiplier;
  
@@ -1795,7 +1810,7 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..39bf1bb02d48b872a5e11d954e421b3e
      }
  
      @Redirect(method = "makeStuckInBlock", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/Entity;stuckSpeedMultiplier:Lnet/minecraft/world/phys/Vec3;", opcode = Opcodes.PUTFIELD))
-@@ -77,11 +137,11 @@ public abstract class MixinEntity {
+@@ -77,14 +138,20 @@ public abstract class MixinEntity {
          return BedrockInputPermissions.isBedrockConnection() ? null : vehicle;
      }
  
@@ -1809,6 +1824,15 @@ index 8c9bbaa336ea9b3b03deafedb8fc277bea62eb14..39bf1bb02d48b872a5e11d954e421b3e
          } else {
              return box;
          }
+     }
+ 
++    // A controlled vehicle that native Bedrock does not predict follows server positions instead of local physics.
++    @ModifyReturnValue(method = "isLocalClientAuthoritative", at = @At("RETURN"), require = 1, allow = 1)
++    private boolean leaveServerMovedVehicleToServer(final boolean controlledHere) {
++        return controlledHere && !(BedrockInputPermissions.isBedrockConnection() && BedrockVehicleAuthority.serverMoves((Entity) (Object) this));
++    }
++
+ }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityCollisionReplay.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..aaf488739cc705c0fbb069ecdd3518b531386a86
@@ -5339,6 +5363,36 @@ index 0000000000000000000000000000000000000000..e73dc6811538d3de732e08159835faa1
 +    /** Returns the inventory slot that owns a hand's use cycle; the offhand ignores hotbar selection. */
 +    public static int slot(final InteractionHand hand, final int selectedSlot) {
 +        return hand == InteractionHand.OFF_HAND ? Inventory.SLOT_OFFHAND : selectedSlot;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehicleAuthority.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehicleAuthority.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..807a738f3ea640fd1356d1378f308172c7f057c2
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehicleAuthority.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.animal.equine.AbstractHorse;
++import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
++
++/** Which ridden entities a native Bedrock client moves itself. */
++public final class BedrockVehicleAuthority {
++    private BedrockVehicleAuthority() {}
++
++    /**
++     * Native Bedrock predicts boats and tamed, saddled horse-flag mounts. The server moves every other mount,
++     * including saddled pigs, striders, camels, nautili and happy ghasts, and the client only interpolates it.
++     */
++    public static boolean serverMoves(final Entity vehicle) {
++        return !(vehicle instanceof AbstractBoat || vehicle instanceof AbstractHorse horse
++                && BedrockHorseMovement.isNativeHorse(horse) && horse.isTamed() && horse.isSaddled());
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictions.java
@@ -9067,6 +9121,75 @@ index 0000000000000000000000000000000000000000..bba9d275ebc6ef1f2693cf831f3bf40a
 +        final var stack = new ItemStack(Items.PAPER, 64);
 +        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
 +        return stack;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehicleAuthorityTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehicleAuthorityTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a545308c47cdb1865856380623a70994fc5410e9
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehicleAuthorityTest.java
+@@ -0,0 +1,63 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.animal.camel.Camel;
++import net.minecraft.world.entity.animal.equine.AbstractHorse;
++import net.minecraft.world.entity.animal.equine.Donkey;
++import net.minecraft.world.entity.animal.equine.Horse;
++import net.minecraft.world.entity.animal.happyghast.HappyGhast;
++import net.minecraft.world.entity.animal.nautilus.Nautilus;
++import net.minecraft.world.entity.animal.pig.Pig;
++import net.minecraft.world.entity.monster.Strider;
++import net.minecraft.world.entity.vehicle.boat.Boat;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++final class BedrockVehicleAuthorityTest {
++
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void clientMovesOnlyBoatsAndTamedSaddledHorses() {
++        assertFalse(BedrockVehicleAuthority.serverMoves(mock(Boat.class)));
++        assertFalse(BedrockVehicleAuthority.serverMoves(horse(Horse.class, true, true)));
++        assertFalse(BedrockVehicleAuthority.serverMoves(horse(Donkey.class, true, true)));
++    }
++
++    @Test
++    void serverMovesSaddledMountsThatNativeDoesNotPredict() {
++        assertTrue(BedrockVehicleAuthority.serverMoves(mock(Pig.class)));
++        assertTrue(BedrockVehicleAuthority.serverMoves(mock(Strider.class)));
++        assertTrue(BedrockVehicleAuthority.serverMoves(mock(Nautilus.class)));
++        assertTrue(BedrockVehicleAuthority.serverMoves(mock(HappyGhast.class)));
++        assertTrue(BedrockVehicleAuthority.serverMoves(horse(Camel.class, true, true)));
++    }
++
++    @Test
++    void serverMovesHorsesUntilTheyAreTamedAndSaddled() {
++        assertTrue(BedrockVehicleAuthority.serverMoves(horse(Horse.class, false, true)));
++        assertTrue(BedrockVehicleAuthority.serverMoves(horse(Horse.class, true, false)));
++    }
++
++    private static AbstractHorse horse(final Class<? extends AbstractHorse> type, final boolean tamed, final boolean saddled) {
++        final AbstractHorse horse = mock(type);
++        when(horse.isTamed()).thenReturn(tamed);
++        when(horse.isSaddled()).thenReturn(saddled);
++        return horse;
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockVehiclePredictionsTest.java

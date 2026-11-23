@@ -86,6 +86,10 @@ Completed vehicle frame IDs advance, and the same vehicle returns under a fresh 
 Horizontal client and server endpoints settle within 0.0001 blocks in the recorded quiet windows.
 These controls use server mounting. Trajectories from the native client, horses, other seats, and adverse networks remain unverified.
 
+Native 1.26.60.5 has client-prediction systems only for boats and horse-flag mounts, and a horse is predicted only while tamed and saddled.
+Java no longer simulates other ridden mounts on Bedrock, such as saddled pigs, striders, camels, nautili and happy ghasts.
+The rider keeps Java's controls and the mount follows the server's positions. `BedrockVehicleAuthorityTest` covers the selection; riding these mounts on a live server was not verified.
+
 Original 1.26.60.5 constructors zero paddle strength and timing state. The input callbacks retain strength and release decay.
 The [versioned boat definition](https://github.com/Mojang/bedrock-samples/blob/v1.26.60.5/behavior_pack/entities/boat.json) uses buoyancy 1.0 and wave movement.
 Selected native callbacks differ from Java 26.3's boat control method under supplied inputs.
