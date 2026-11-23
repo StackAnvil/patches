@@ -59,7 +59,7 @@ bun run build viabedrock
 
 Before opening a PR, add a non-empty `.pr.md` file beside its `.patch` file. Use it for evidence, review guidance, and test results that do not belong in the commit message. Run `bun run pr body <project>` to inspect the first patch's PR text. Run `bun run pr sync <project>` to update the fork's north-star branch and its PR.
 
-To open another upstreamable patch as a separate PR, select its filename with `--patch`. The selected patch must apply alone to the pinned upstream base. The tool uses a separate checkout and fork branch for each patch. It checks for one PR commit before it pushes. The default command still selects the first patch.
+To open another upstreamable patch as a separate PR, select its filename with `--patch`. The selected patch must apply alone to the pinned upstream base. The tool uses a separate checkout and fork branch for each patch. It checks for one PR commit before it pushes. Without `--patch`, or with the first patch's filename, the commands use the north-star checkout, branch, and PR.
 
 ```bash
 bun run pr check viabedrock --patch 0085-resolve-server-effects-relative-to-their-actor.patch

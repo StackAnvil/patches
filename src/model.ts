@@ -103,6 +103,13 @@ export async function targetIds(): Promise<string[]> {
   return Object.keys(await getTargets());
 }
 
+/** Selecting the first upstreamable patch by name means its north-star PR, checkout, and branch. */
+export async function prPatchFile(id: string, patchFile?: string): Promise<string | undefined> {
+  if (patchFile === undefined) return undefined;
+  const [first] = (await getSeries(id)).upstreamable;
+  return first?.file === patchFile ? undefined : patchFile;
+}
+
 export async function getSeries(id: string, repository = root): Promise<Series> {
   const series: Series = parseJson(
     SeriesSchema,

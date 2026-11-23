@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { rejects } from "node:assert/strict";
 import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -156,11 +157,16 @@ test("an interrupted patch apply can continue or abort without losing the series
   await rejects(readFile(join(prCheckout, "deferred.txt"), "utf8"));
   await rejects(readFile(join(prCheckout, "src", "test", "local.txt"), "utf8"));
   expect(await readFile(secondPatch, "utf8")).toBe(conflictingPatch);
-  const selectedCheckout = join(project, ".worktrees", "fixture-pr-0001-second");
-  await git(["clone", upstream, selectedCheckout], fixture);
+  // Naming the first patch selects the north-star checkout and PR, not a second PR for it.
   await run("bun", [cli, "pr", "check", "fixture", "--patch", "0001-second.patch"], project);
-  expect(await readFile(join(selectedCheckout, "note.txt"), "utf8")).toBe("second\n");
-  await rejects(readFile(join(selectedCheckout, "src", "test", "local.txt"), "utf8"));
+  expect(await readFile(join(prCheckout, "note.txt"), "utf8")).toBe("second\n");
+  expect(existsSync(join(project, ".worktrees", "fixture-pr-0001-second"))).toBe(false);
+  await writeFile(secondPatch.replace(/\.patch$/, ".pr.md"), "Tested locally.\n");
+  const northStarBody = await run("bun", [cli, "pr", "body", "fixture"], project);
+  expect(northStarBody).toContain("This is the first upstreamable change");
+  expect(
+    await run("bun", [cli, "pr", "body", "fixture", "--patch", "0001-second.patch"], project),
+  ).toBe(northStarBody);
   await run("bun", [cli, "stack", "sync", "fixture"], project, true);
   expect(
     (await readFile(join(project, ".stackanvil", "fixture-full-apply.json"), "utf8")).length,
@@ -268,7 +274,11 @@ test("an interrupted patch apply can continue or abort without losing the series
     "include local tests",
   );
   await git(["rm", "-f", "src/test/accidental.txt"], prCheckout);
-  await run("bun", [cli, "stack", "continue", "fixture", "--pr"], project);
+  await run(
+    "bun",
+    [cli, "stack", "continue", "fixture", "--patch", "0001-second.patch", "--pr"],
+    project,
+  );
   expect(await git(["rev-list", "--count", `${baseSha}..HEAD`], prCheckout)).toBe("1");
   expect(await readFile(join(prCheckout, "note.txt"), "utf8")).toBe("resolved\n");
 

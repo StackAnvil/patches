@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { getSeries, getTarget, targetIds } from "./model.ts";
+import { getSeries, getTarget, prPatchFile, targetIds } from "./model.ts";
 import { build, buildPr } from "./build.ts";
 import { abortApply, addPatch, continueApply, edit, rebuild, sync, workdir } from "./stack.ts";
 import { prBody, syncPr, updatePrParticipants } from "./pr.ts";
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   // Only stack continue and abort accept both flags.
   if (area === "stack" && text("patch") && !flag("pr"))
     throw new Error("--patch selects a PR checkout and requires --pr");
-  const patchFile = text("patch");
+  const patchFile = await prPatchFile(id, text("patch"));
   const artifact = { runId: text("run-id"), artifactId: text("artifact-id") };
   if (area === "stack") {
     switch (action) {
