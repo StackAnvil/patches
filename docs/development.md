@@ -4,7 +4,7 @@ Use this guide to build the four patch targets with pinned ViaFabricPlus and sta
 
 ## Build the stack
 
-Install Bun, Git, JDK 17, and JDK 25. ViaBedrock, ViaProxy, and the Bedrock add-on require Java 25. CubeConverter builds with JDK 17.
+Install Git, JDK 17, JDK 25, and the Bun version named by `packageManager` in [`package.json`](../package.json). CI installs the same version. ViaBedrock, ViaProxy, and the Bedrock add-on require Java 25. CubeConverter builds with JDK 17.
 
 Set `STACKANVIL_JAVA_17` and `STACKANVIL_JAVA_25` if the JDKs are not in the standard paths.
 The build reads each JDK's `release` file and stops if a variable names a JDK with another version.
