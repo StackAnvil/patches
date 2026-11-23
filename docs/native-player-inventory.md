@@ -70,7 +70,6 @@ The native player profile starts with Search, Crafting, filtering off, and autom
 The controller reads this profile before an inventory-options packet arrives.
 Server packets replace all five fields, including explicit zero tabs.
 Java filter changes retain the native tabs and automatic layouts.
-Fresh direct and ViaProxy sessions retain this state across first opening and reopening without an inventory-options packet.
 
 The same negotiated messages serve direct and ViaProxy connections.
 Late capability announcements must not duplicate a legacy opening.
@@ -162,8 +161,6 @@ Holding secondary input does not repeat the drop. Blank recipe panels retain the
 Player pointer and keyboard drops share the ordinary inventory request owner.
 Empty cursors, pending native commands, and the transition into Help do not start a cursor-drop request.
 Admitted cooking pointer hosts use this same path. Partial container scopes retain ordinary controls when they require cursor drops.
-Installed direct and ViaProxy E-key controls each receive three successful replies: pickup of nine, secondary drop of one, and primary drop of eight.
-Both routes retain the same screen, menu, and presentation, conserve all nine ingots on the server, and send no further requests with an empty cursor.
 
 Bedrock 1.26.60.5 desktop drop keys follow the authored bindings for recipe, Creative catalog, and real inventory slots.
 With a held stack, Q and Shift+Q drop one carried item. Ctrl+Q leaves the cursor and pointed slot unchanged.
@@ -196,7 +193,6 @@ When inventory is full, an empty cursor receives the output.
 Held logs increase displayed availability, but bulk crafting leaves them unchanged.
 With full inventory, a full compatible cursor or an incompatible held stack prevents the craft request.
 A partially filled compatible cursor instead drops its held stack and receives the full crafted stack.
-Captured requests cover cursors with 60 and 63 planks; both produce 64 new planks.
 With one free inventory item-space, native crafting places one plank, drops any held stack, and takes the remaining 63.
 This behavior also applies to an incompatible cursor or a full compatible cursor.
 The initial capacity check precedes consumption.
@@ -210,26 +206,13 @@ Each created stack chunk starts another merge pass before using empty inventory 
 Six cakes return 18 buckets as stacks of 16 and 2.
 When inventory is full, returned bottles drop directly from created-output slot 50.
 The primary honey blocks still use the cursor fallback.
-Complete request fixtures preserve split placement, repeated source references, and cursor replacement.
-The matching server accepts these native requests.
-Planner tests cover these request and prediction boundaries, including rejection rollback.
-Both routes match the captured split-placement, cursor-replacement, and freed-slot requests after stack-ID normalization.
-Additional controls consume the player crafting grid and produce one wooden sword with repeated references to its plank source.
 Reopening retains completed output and the returned cursor stack.
-The incompatible-cursor control sends no craft request until the cursor is empty.
-Separate installed direct and ViaProxy controls verify bucket chunks, returned bottles using a freed source slot, and bottle drops with a full inventory.
-The craft requests on each route match the native cake and honey captures after stack-ID normalization.
-Authoritative responses confirm inventory and cursor quantities. Reopening retains completed output.
-Rejected requests remain unit-tested. These live controls do not induce server rejection.
 
 Direct output-slot clicks craft once onto the cursor, including right-click.
 Manual crafting selects the primary output before returned containers and places returns in inventory, with overflow dropped from created output.
 Manual Shift-click leaves the cursor unchanged and uses combined inventory capacity.
 It sends the remaining stack-sized craft requests in one packet, with each request referring to earlier predicted stack identities.
 The native 20-millisecond click control crafts 128 planks through two requests of 64.
-State regressions cover both grids, returned containers, capacity across partial stacks, linked requests, and partial rejection.
-Installed direct and ViaProxy controls match the native craft requests and their authoritative response quantities across player and workbench cases.
-The controls cover right-click, linked Shift-click requests, returned containers, full inventory, partial bottle stacks, and retained output after reopening.
 
 Admit an authored player screen only when its required collections and controls are available.
 The default player and workbench graphs resolve real slots, recipe rows, and local Help views.
