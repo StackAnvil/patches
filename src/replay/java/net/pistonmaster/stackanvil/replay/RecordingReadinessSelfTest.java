@@ -8,9 +8,10 @@ public final class RecordingReadinessSelfTest {
     public static void main(String[] args) throws Exception {
         Path root = Files.createTempDirectory("stackanvil-readiness-test");
         try {
-            // Protocol 2225 headers: SetLocalPlayerAsInitialized=113, PlayerAuthInput=144.
+            // Protocol 2225 headers: SetLocalPlayerAsInitialized=113, PlayerAuthInput=144, MovePlayer=19.
             byte[] initialized = {113};
             byte[] input = {(byte) 0x90, 1};
+            byte[] move = {19};
             Path marker = root.resolve("gameplay-ready");
             var readiness = new RecordingReadiness(root);
             readiness.record(true, initialized);
@@ -24,11 +25,20 @@ public final class RecordingReadinessSelfTest {
             readiness.record(false, input);
             require(Files.readAllBytes(marker).length == 1, "Repeated input replaced readiness evidence");
 
+            Path moving = root.resolve("moving");
+            PrivateFiles.createDirectory(moving);
+            var movePlayer = new RecordingReadiness(moving);
+            movePlayer.record(false, move);
+            require(!Files.exists(moving.resolve("gameplay-ready")), "Movement without serverbound initialization admitted gameplay");
+            movePlayer.record(false, initialized);
+            movePlayer.record(false, move);
+            require(Files.exists(moving.resolve("gameplay-ready")), "Initialized MovePlayer did not admit gameplay");
+
             Path next = root.resolve("next");
             PrivateFiles.createDirectory(next);
             new RecordingReadiness(next).record(false, input);
             require(!Files.exists(next.resolve("gameplay-ready")), "Another connection inherited initialized state");
-            System.out.println("PASS connection-owned gameplay admission after initialized player input");
+            System.out.println("PASS connection-owned gameplay admission after initialized player movement");
         } finally {
             try (var paths = Files.walk(root)) {
                 for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
