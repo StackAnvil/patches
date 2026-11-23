@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Effect } from "effect";
 import { parsePatchMessage } from "../src/patch-message.ts";
+import { command } from "../src/process.ts";
 import { missingPrParticipants, prHead, renderPrBody } from "../src/pr.ts";
 
 test.each(["legacy", "lean"])(
@@ -25,6 +30,37 @@ test.each(["legacy", "lean"])(
     });
   },
 );
+
+test("a non-ASCII commit subject keeps its text instead of Git's MIME encoding", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-subject-"));
+  const git = (args: string[], trimOutput = true) =>
+    Effect.runPromise(
+      command(
+        "git",
+        args,
+        directory,
+        { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+        trimOutput,
+      ),
+    );
+  try {
+    await git(["init", "-b", "main"]);
+    await git(["config", "user.name", "PR Test"]);
+    await git(["config", "user.email", "test@example.invalid"]);
+    await writeFile(join(directory, "note.txt"), "change\n");
+    await git(["add", "note.txt"]);
+    const title = "fix(ui): show “Realms” names with the × button in a long wrapped subject";
+    await git(["commit", "-m", title, "-m", "Keep the café label."]);
+    const patch = await git(
+      ["format-patch", "--zero-commit", "--no-signature", "--no-stat", "--stdout", "-1"],
+      false,
+    );
+    expect(patch).toContain("Subject: [PATCH] =?UTF-8?q?");
+    expect(parsePatchMessage(patch)).toEqual({ title, description: "Keep the café label." });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("a PR needs both the patch description and extra body", () => {
   expect(() => renderPrBody("viabedrock", "", "## Testing\n\nRun tests")).toThrow(/commit body/);
