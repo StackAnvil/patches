@@ -13,6 +13,7 @@ import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
 import { checkFps, createCaptureUi, type Client } from "./ui.ts";
 import { checkMarker, parseScenario } from "./scenario.ts";
+import { stopCaptureSession } from "./processes.ts";
 import { print, printError } from "../output.ts";
 import { execFileAsync as execute } from "../process.ts";
 
@@ -397,22 +398,32 @@ async function mark(label: string): Promise<void> {
 
 async function stop(): Promise<void> {
   const active = await load();
-  for (const client of ["bedrock", "java"] as const) {
-    if (active.videos?.[client] && !active.videos[client].stoppedAt) await stopVideo(client);
-  }
-  const session = await load();
-  if (session.stoppedAt) {
-    print(`Capture ${session.id} is already stopped.`);
-    return;
-  }
-  if (alive(session.proxyPid)) {
-    process.kill(session.proxyPid, "SIGINT");
-    for (let attempt = 0; attempt < 40 && alive(session.proxyPid); attempt++) await Bun.sleep(250);
-  }
-  session.stoppedAt = new Date().toISOString();
-  await save(session);
-  print(
-    `Capture ${session.id} stopped.${session.gamePid && alive(session.gamePid) ? " The game remains open." : ""}`,
+  const recording = (["bedrock", "java"] as const).filter(
+    (client) => active.videos?.[client] && !active.videos[client].stoppedAt,
+  );
+  await stopCaptureSession(
+    recording.map((client) => () => stopVideo(client)),
+    async () => {
+      const session = await load();
+      if (session.stoppedAt) {
+        print(`Capture ${session.id} is already stopped.`);
+        return;
+      }
+      if (alive(session.proxyPid)) {
+        process.kill(session.proxyPid, "SIGINT");
+        for (let attempt = 0; attempt < 40 && alive(session.proxyPid); attempt++)
+          await Bun.sleep(250);
+        if (alive(session.proxyPid))
+          throw new Error(
+            `mitmdump ${session.proxyPid} did not stop. The capture remains active; run stop again.`,
+          );
+      }
+      session.stoppedAt = new Date().toISOString();
+      await save(session);
+      print(
+        `Capture ${session.id} stopped.${session.gamePid && alive(session.gamePid) ? " The game remains open." : ""}`,
+      );
+    },
   );
 }
 
