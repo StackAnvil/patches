@@ -225,6 +225,13 @@ entrypoints run, so the state ids go to ViaBedrock once both have
 happened. Each block ships a catch-all empty variant, because Java
 rejects an empty multipart list.
 
+Give faces that fail the per-vertex test the native fallback of callback
+0x146acea60: one core face light for all four vertices and AO 1, so only
+directional dimming shades them. This covers materials with AO exponent 0
+and faces wider than the per-vertex diagonal limit. The removed corner
+branch gave them per-corner light and AO from neighbors that the native
+callback does not read.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 13947739329f65000d449d2d73586e3cd554fec8..c819cd9c4c83b4daae14726d9786fbdc7a43a20b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -768,10 +775,10 @@ index 0000000000000000000000000000000000000000..616bc46bb643070433d727a57d79d095
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockTerrainLighting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockTerrainLighting.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f9ce82994f0b252e579b3084e1c4b3a702149202
+index 0000000000000000000000000000000000000000..bef891650b57a1771579b9588eeec58e3f58ad2e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockTerrainLighting.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,95 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -786,11 +793,10 @@ index 0000000000000000000000000000000000000000..f9ce82994f0b252e579b3084e1c4b3a7
 +import net.minecraft.world.level.CardinalLighting;
 +import net.minecraft.world.level.LightLayer;
 +import net.minecraft.world.level.block.state.BlockState;
-+import net.raphimc.viabedrock.api.model.CustomBlockCulling;
 +import net.raphimc.viabedrock.api.model.CustomBlockFaceLighting;
 +import net.raphimc.viabedrock.api.model.CustomBlockLighting;
 +
-+/** Adapts client world and physical quad coordinates to the shared native corner calculation. */
++/** Adapts client world and physical quad coordinates to the shared native face lighting calculation. */
 +public final class BedrockTerrainLighting {
 +
 +    private BedrockTerrainLighting() {
@@ -799,19 +805,6 @@ index 0000000000000000000000000000000000000000..f9ce82994f0b252e579b3084e1c4b3a7
 +    public static void prepare(final BlockAndTintGetter level, final BlockState state, final BlockPos pos,
 +                               final CustomBlockLighting material, final Direction faceDirection, final Direction shadeDirection,
 +                               final Positions positions, final Corners output) {
-+        final var direction = CustomBlockCulling.Direction.values()[faceDirection.ordinal()];
-+        final int innerAxis = direction.axis() == 0 ? 2 : 0;
-+        final int outerAxis = direction.axis() == 1 ? 2 : 1;
-+        float minInner = Float.POSITIVE_INFINITY, maxInner = Float.NEGATIVE_INFINITY;
-+        float minOuter = Float.POSITIVE_INFINITY, maxOuter = Float.NEGATIVE_INFINITY;
-+        float bound = direction.positive() ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY;
-+        for (int i = 0; i < 4; i++) {
-+            minInner = Math.min(minInner, positions.coordinate(i, innerAxis));
-+            maxInner = Math.max(maxInner, positions.coordinate(i, innerAxis));
-+            minOuter = Math.min(minOuter, positions.coordinate(i, outerAxis));
-+            maxOuter = Math.max(maxOuter, positions.coordinate(i, outerAxis));
-+            bound = direction.positive() ? Math.max(bound, positions.coordinate(i, direction.axis())) : Math.min(bound, positions.coordinate(i, direction.axis()));
-+        }
 +        final float[][] vertices = new float[4][3];
 +        for (int i = 0; i < 4; i++) {
 +            for (int axis = 0; axis < 3; axis++) {
@@ -824,14 +817,12 @@ index 0000000000000000000000000000000000000000..f9ce82994f0b252e579b3084e1c4b3a7
 +        final float directional = CustomBlockLighting.directional(normal[0], normal[1], normal[2],
 +                cardinal.byFace(Direction.WEST), cardinal.byFace(Direction.EAST), cardinal.byFace(Direction.DOWN),
 +                cardinal.byFace(Direction.UP), cardinal.byFace(Direction.NORTH), cardinal.byFace(Direction.SOUTH));
-+        final int sourceLight = nativeLight(level, state, pos);
 +        final BlockPos.MutableBlockPos samplePos = new BlockPos.MutableBlockPos();
 +        final CustomBlockFaceLighting.Neighborhood neighborhood = (x, y, z) -> {
 +            samplePos.setWithOffset(pos, x, y, z);
 +            final BlockState sample = x == 0 && y == 0 && z == 0 ? state : level.getBlockState(samplePos);
 +            return new CustomBlockFaceLighting.Sample(nativeLight(level, sample, samplePos), sample.getShadeBrightness(level, samplePos), sample.isSolidRender());
 +        };
-+        final boolean outerPlane = CustomBlockFaceLighting.outerPlane(direction, bound);
 +        if (CustomBlockFaceLighting.perVertex(material, vertices)) {
 +            final var sampled = CustomBlockFaceLighting.sampleVertices(vertices, normal, neighborhood);
 +            for (int i = 0; i < 4; i++) {
@@ -839,11 +830,11 @@ index 0000000000000000000000000000000000000000..f9ce82994f0b252e579b3084e1c4b3a7
 +            }
 +            return;
 +        }
-+        final var face = CustomBlockFaceLighting.sample(direction, outerPlane, state.isSolidRender(), sourceLight, material, directional, neighborhood);
-+        final float middleInner = (minInner + maxInner) * 0.5F, middleOuter = (minOuter + maxOuter) * 0.5F;
++        // Native fallback faces share one light and use AO 1, so only directional dimming shades them.
++        final int light = CustomBlockFaceLighting.faceLight(vertices, normal, neighborhood);
++        final float shade = material.shade(1F, directional);
 +        for (int i = 0; i < 4; i++) {
-+            final float inner = positions.coordinate(i, innerAxis), outer = positions.coordinate(i, outerAxis);
-+            output.corner(i, face.corner(inner > middleInner, outer > middleOuter).light(), Math.clamp(face.shade(inner, outer), 0F, 1F));
++            output.corner(i, light, shade);
 +        }
 +    }
 +
@@ -2238,10 +2229,10 @@ index 0000000000000000000000000000000000000000..10934cb30c993e6f9d29495cde8fe9ed
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockTerrainLightingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockTerrainLightingTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..d15b2a2058afee60d8b1e39ec6424da61906a8e9
+index 0000000000000000000000000000000000000000..59ab0cf70c93dd6f99d75c5d00dd80d83e139ea2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockTerrainLightingTest.java
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,257 @@
 +package com.viaversion.viafabricplus.bedrock.block;
 +
 +import java.lang.reflect.Proxy;
@@ -2408,6 +2399,38 @@ index 0000000000000000000000000000000000000000..d15b2a2058afee60d8b1e39ec6424da6
 +        for (int vertex = 0; vertex < 4; vertex++) {
 +            assertEquals(0, result.light()[vertex]);
 +            assertEquals(0.2F * CardinalLighting.DEFAULT.north(), result.shade()[vertex], 1E-7F);
++        }
++    }
++
++    @Test
++    void fallbackFacesUseOneLightWithoutAmbientOcclusion() {
++        // Native callback 0x146acea60: a face without an AO exponent takes the per-channel maximum of its cell
++        // and the next cell along the normal for all four vertices, with AO 1. The bright opaque neighbors
++        // around the face cell must not raise or darken any corner.
++        final BlockAndTintGetter level = (BlockAndTintGetter) Proxy.newProxyInstance(BlockAndTintGetter.class.getClassLoader(),
++                new Class<?>[]{BlockAndTintGetter.class}, (_, method, arguments) -> switch (method.getName()) {
++                    case "cardinalLighting" -> CardinalLighting.DEFAULT;
++                    case "getBlockState" -> {
++                        final BlockPos pos = (BlockPos) arguments[0];
++                        yield pos.getX() == 0 && pos.getY() == 0 ? Blocks.AIR.defaultBlockState() : Blocks.STONE.defaultBlockState();
++                    }
++                    case "getBrightness" -> {
++                        final BlockPos pos = (BlockPos) arguments[1];
++                        final boolean sky = arguments[0] == LightLayer.SKY;
++                        if (pos.getX() != 0 || pos.getY() != 0) yield 15;
++                        yield switch (pos.getZ()) {
++                            case 0 -> sky ? 1 : 6;
++                            case -1 -> sky ? 12 : 2;
++                            default -> 15;
++                        };
++                    }
++                    default -> throw new UnsupportedOperationException(method.getName());
++                });
++        final float[][] positions = {{1, 1, 0.5F}, {1, 0, 0.5F}, {0, 0, 0.5F}, {0, 1, 0.5F}};
++        final Samples result = sample(level, Blocks.AIR.defaultBlockState(), new CustomBlockLighting(0F, true), Direction.NORTH, null, positions);
++        for (int vertex = 0; vertex < 4; vertex++) {
++            assertEquals(LightCoordsUtil.pack(6, 12), result.light()[vertex]);
++            assertEquals(CardinalLighting.DEFAULT.north(), result.shade()[vertex]);
 +        }
 +    }
 +

@@ -48,6 +48,10 @@ The converter names each UI image with a texture identifier but does not copy it
 
 Existing unresolved mappings still fail broad replay rendering checks; these controls establish the source-backed lookup, not complete native appearance.
 
+## Experience gating
+
+Bedrock 1.26.60.5 predicate `0x144b64630` always shows locator groups in Creative. In other modes, including Spectator, it shows them only after 5 s without a level or progress change. The experience bar, or an empty slot in Spectator, takes their place meanwhile. `LocatorBarExperienceTest` covers the first observed change, level-only changes, the FLT_EPSILON threshold and deferred Creative sampling. The predicate also waits 5 s after a HUD controller event that is not yet identified, so the add-on does not model it.
+
 ## Upstream prerequisites
 
 - [viafabricplus-bedrock patch](../../viafabricplus-bedrock/upstreamable/0021-apply-server-element-visibility-restrictions.pr.md): Land HUD visibility hooks before integrating locator draws with them.

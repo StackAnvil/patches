@@ -12,6 +12,8 @@ Select attachables using the rendered owner, slot, item binding, world-version c
 
 Regression coverage includes `BedrockAttachableBindingsTest`, `BedrockAttachableScopeTest`, `BedrockAttachableSelectionTest`, `BedrockEquipmentResourcesTest`.
 
+`BedrockEquippedAttachableTest` covers the native admission rules for disabled attachables, spectators, hidden and held armor, the first-person view, and the native armor item set. Custom component items with an armor `minecraft:wearable` slot still count as non-armor, because the Java item data does not keep that slot. A native owner flag that limits admission to the head slot is not mapped.
+
 Native authored wings and equipment controls cover selected binding paths. Broader equipment lifecycles and complete native appearance remain incomplete.
 
 Bedrock 1.26.60.5 and BDS 1.26.60.6 controls on protocol 2225 cover plain and Unbreaking I offhand shields. Native, direct Java, and ViaProxy each receive the same enchantment NBT, record two blocking cycles, and return to a plain shield. Both Java routes use verified add-on JARs; the running proxy also matches its built JAR.

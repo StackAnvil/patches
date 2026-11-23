@@ -40,16 +40,26 @@ actions or the visual component.
 
 Headless regressions exercise real Java death timers and pending command
 counts through late text, automatic re-entry, delayed callbacks, active
-route changes, and connection/player replacement. The presentation remains
-Java. Native OreUI typography, layout, animation, loading presentation,
-menu routing and complete lifecycle parity remain unfinished.
+route changes, and connection/player replacement. Native OreUI typography,
+layout, fade animations and complete lifecycle parity remain unfinished.
+
+Follow the same controller's keyboard and mouse stages on Java widgets. The
+reason appears after 500 ms and the buttons after 1000 ms (animations on).
+Non-hardcore worlds offer Respawn and Game menu; hardcore worlds offer Exit
+world above Spectate world. Escape or the back mouse button (DOM button 3)
+opens the game menu once the buttons are shown. A respawn request hides the
+content and, after its initial wait, shows Respawning... (Saving... in
+hardcore). Bedrock shows no score line. Closing the game menu returns to the
+retained screen with its reason and stage, as native ContentButtonInstant
+does, and Java widget rebuilds no longer restart the button delay. The
+gamepad layout, which hides the secondary button, does not apply.
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/DeathScreenAccess.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/DeathScreenAccess.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6c872357bb846abf34c4b4120cded2a69ba4208
+index 0000000000000000000000000000000000000000..38c4a709a0939c76636eb6b72cc7b7dfe29c4b3a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/DeathScreenAccess.java
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,26 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -73,6 +83,8 @@ index 0000000000000000000000000000000000000000..a6c872357bb846abf34c4b4120cded2a
 +    @Accessor("causeOfDeath") Component bedrockDeathReason();
 +    @Mutable @Accessor("causeOfDeath") void bedrockDeathReason(Component reason);
 +    @Accessor("exitButtons") List<Button> bedrockDeathButtons();
++    @Accessor("delayTicker") int bedrockDeathDelay();
++    @Accessor("delayTicker") void bedrockDeathDelay(int delay);
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockAutomaticRespawn.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockAutomaticRespawn.java
 new file mode 100644
@@ -179,10 +191,10 @@ index 0000000000000000000000000000000000000000..c18730d250e4def8fb1c9376ce49b5a2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockRespawnScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockRespawnScreen.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e8a88b5bb74b20f8e07707746bc056fe3871a679
+index 0000000000000000000000000000000000000000..450a8940b8bd129ae328c16daa992a97e6ed45b7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/screen/MixinBedrockRespawnScreen.java
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,123 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -190,43 +202,211 @@ index 0000000000000000000000000000000000000000..e8a88b5bb74b20f8e07707746bc056fe
 + */
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen;
 +
++import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.screen.death.BedrockDeathScreenStages;
 +import com.viaversion.viafabricplus.bedrock.screen.death.BedrockDeathScreenUpdates;
-+import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.gui.ActiveTextCollector;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.TextAlignment;
 +import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.client.gui.screens.LoadingDotsText;
++import net.minecraft.client.gui.screens.PauseScreen;
++import net.minecraft.client.gui.screens.Screen;
++import net.minecraft.client.input.KeyEvent;
++import net.minecraft.client.input.MouseButtonEvent;
 +import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.network.chat.Component;
++import net.minecraft.util.Util;
 +import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
 +import org.spongepowered.asm.mixin.injection.At;
 +import org.spongepowered.asm.mixin.injection.Inject;
 +import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 +
 +@Mixin(DeathScreen.class)
-+public abstract class MixinBedrockRespawnScreen {
-+    @WrapOperation(method = {"lambda$init$0", "lambda$handleExitToTitleScreen$0"}, at = @At(value = "INVOKE",
++public abstract class MixinBedrockRespawnScreen extends Screen {
++    @Shadow private int delayTicker;
++    @Unique private int bedrockDelay;
++
++    protected MixinBedrockRespawnScreen(final Component title) {
++        super(title);
++    }
++
++    @WrapOperation(method = "lambda$init$0", at = @At(value = "INVOKE",
 +            target = "Lnet/minecraft/client/player/LocalPlayer;respawn()V"))
 +    private void requestRespawn(final LocalPlayer player, final Operation<Void> original) {
 +        if (!BedrockDeathScreenUpdates.requestRespawn(player, (DeathScreen) (Object) this)) original.call(player);
 +    }
 +
-+    @Inject(method = {"init", "tick"}, at = @At("TAIL"))
-+    private void retainPendingControls(final CallbackInfo ci) {
-+        if (BedrockDeathScreenUpdates.respawning((DeathScreen) (Object) this)) {
-+            ((DeathScreenAccess) this).bedrockDeathButtons().forEach(button -> button.active = false);
++    @Inject(method = "init", at = @At("HEAD"))
++    private void rememberStage(final CallbackInfo ci) {
++        this.bedrockDelay = this.delayTicker;
++    }
++
++    @Inject(method = "init", at = @At("TAIL"))
++    private void arrangeControls(final CallbackInfo ci) {
++        if (!BedrockInputPermissions.isBedrockConnection()) return;
++        final var screen = (DeathScreen) (Object) this;
++        BedrockDeathScreenStages.arrange(screen, this.bedrockDelay, BedrockDeathScreenUpdates.respawning(screen));
++    }
++
++    @Inject(method = "tick", at = @At("TAIL"))
++    private void updateControls(final CallbackInfo ci) {
++        if (!BedrockInputPermissions.isBedrockConnection()) return;
++        final var screen = (DeathScreen) (Object) this;
++        BedrockDeathScreenStages.update(screen, BedrockDeathScreenUpdates.respawning(screen));
++    }
++
++    /** Non-hardcore worlds replace Java's title-screen action with the native game menu. */
++    @Inject(method = "lambda$init$1", at = @At("HEAD"), cancellable = true)
++    private void openGameMenu(final Button button, final CallbackInfo ci) {
++        if (!BedrockInputPermissions.isBedrockConnection()) return;
++        final var screen = (DeathScreen) (Object) this;
++        if (BedrockDeathScreenUpdates.respawning(screen)) ci.cancel();
++        else if (!((DeathScreenAccess) this).bedrockDeathHardcore()) {
++            this.bedrockOpenGameMenu();
++            ci.cancel();
 +        }
 +    }
 +
-+    @Inject(method = "lambda$init$1", at = @At("HEAD"), cancellable = true)
-+    private void retainPendingExit(final Button button, final CallbackInfo ci) {
-+        if (BedrockDeathScreenUpdates.respawning((DeathScreen) (Object) this)) ci.cancel();
++    @Inject(method = "visitText", at = @At("HEAD"), cancellable = true)
++    private void hideMessage(final ActiveTextCollector output, final CallbackInfo ci) {
++        if (BedrockInputPermissions.isBedrockConnection() && !BedrockDeathScreenStages.messageShown(
++                (DeathScreen) (Object) this, BedrockDeathScreenUpdates.respawning((DeathScreen) (Object) this))) ci.cancel();
++    }
++
++    /** Bedrock's death screen has no score line. */
++    @WrapWithCondition(method = "visitText", at = @At(value = "INVOKE", ordinal = 2, target =
++            "Lnet/minecraft/client/gui/ActiveTextCollector;accept(Lnet/minecraft/client/gui/TextAlignment;IILnet/minecraft/network/chat/Component;)V"))
++    private boolean showScore(final ActiveTextCollector output, final TextAlignment alignment, final int x, final int y,
++                              final Component score) {
++        return !BedrockInputPermissions.isBedrockConnection();
++    }
++
++    @Inject(method = "extractRenderState", at = @At("TAIL"))
++    private void renderProgress(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float a,
++                                final CallbackInfo ci) {
++        final var screen = (DeathScreen) (Object) this;
++        if (!BedrockInputPermissions.isBedrockConnection() || !BedrockDeathScreenUpdates.loading(screen)) return;
++        graphics.centeredText(this.font, LoadingDotsText.get(Util.getMillis()), this.width / 2, this.height - 64, 0xFF808080);
++        graphics.centeredText(this.font, BedrockDeathScreenStages.progress(screen), this.width / 2, this.height - 52, -1);
++    }
++
++    @Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)
++    private void openGameMenuWithMouse(final MouseButtonEvent event, final boolean doubleClick,
++                                       final CallbackInfoReturnable<Boolean> cir) {
++        if (event.button() == BedrockDeathScreenStages.GAME_MENU_MOUSE_BUTTON
++                && BedrockInputPermissions.isBedrockConnection() && this.bedrockOpenGameMenu()) cir.setReturnValue(true);
++    }
++
++    @Override
++    public boolean keyPressed(final KeyEvent event) {
++        if (event.isEscape() && BedrockInputPermissions.isBedrockConnection() && this.bedrockOpenGameMenu()) return true;
++        return super.keyPressed(event);
++    }
++
++    @Unique
++    private boolean bedrockOpenGameMenu() {
++        if (!BedrockDeathScreenUpdates.openGameMenu((DeathScreen) (Object) this)) return false;
++        this.minecraft.gui.setScreen(new PauseScreen(true));
++        return true;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenStages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenStages.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..74a5e6bc605c3e75bbfc197d8e4744a4e40e097f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenStages.java
+@@ -0,0 +1,77 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.death;
++
++import com.mojang.blaze3d.platform.InputConstants;
++import com.viaversion.viafabricplus.bedrock.injection.mixin.features.screen.DeathScreenAccess;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.gui.screens.DeathScreen;
++import net.minecraft.network.chat.Component;
++
++/**
++ * Projects the Bedrock death screen stages onto Java's death screen controls.
++ *
++ * <p>The keyboard and mouse layout shows the reason after 500 ms and the buttons after 1000 ms. Non-hardcore
++ * worlds offer Respawn and Game menu; hardcore worlds offer Exit world first and Spectate world second. A
++ * respawn request hides both, then shows a progress line until the player is alive.</p>
++ */
++public final class BedrockDeathScreenStages {
++    /** Java client ticks before the reason appears (native ContentPrompt). */
++    public static final int MESSAGE_TICKS = 10;
++    /** Java client ticks before the buttons appear and accept input (native ContentButton). */
++    public static final int BUTTON_TICKS = 20;
++    /** The DOM button 3 that opens the native game menu is the first extra (back) mouse button. */
++    public static final int GAME_MENU_MOUSE_BUTTON = InputConstants.MOUSE_BUTTON_4;
++
++    private static final Component GAME_MENU = Component.translatable("menu.game");
++    private static final Component EXIT_WORLD = Component.translatable("death_screen.viafabricplus.exit_world");
++    private static final Component RESPAWNING = Component.translatable("death_screen.viafabricplus.respawning");
++    private static final Component SAVING = Component.translatable("death_screen.viafabricplus.saving");
++
++    private BedrockDeathScreenStages() {}
++
++    /**
++     * Labels and orders Java's two buttons after each init. Java restarts its button delay whenever it rebuilds
++     * widgets, for example after a resize or when the game menu closes. The native stage does not restart.
++     */
++    public static void arrange(final DeathScreen screen, final int delay, final boolean pending) {
++        final var access = (DeathScreenAccess) screen;
++        access.bedrockDeathDelay(delay);
++        final Button primary = access.bedrockDeathButtons().get(0);
++        final Button secondary = access.bedrockDeathButtons().get(1);
++        if (access.bedrockDeathHardcore()) {
++            // Java places Spectate World first. Native places Exit world first.
++            final int top = primary.getY();
++            primary.setY(secondary.getY());
++            secondary.setY(top);
++            secondary.setMessage(EXIT_WORLD);
++        } else {
++            secondary.setMessage(GAME_MENU);
++        }
++        update(screen, pending);
++    }
++
++    public static void update(final DeathScreen screen, final boolean pending) {
++        final boolean shown = buttonsShown(screen, pending);
++        for (final Button button : ((DeathScreenAccess) screen).bedrockDeathButtons()) {
++            button.visible = shown;
++            button.active = shown;
++        }
++    }
++
++    public static boolean messageShown(final DeathScreen screen, final boolean pending) {
++        return !pending && ((DeathScreenAccess) screen).bedrockDeathDelay() >= MESSAGE_TICKS;
++    }
++
++    public static boolean buttonsShown(final DeathScreen screen, final boolean pending) {
++        return !pending && ((DeathScreenAccess) screen).bedrockDeathDelay() >= BUTTON_TICKS;
++    }
++
++    /** Native selects this progress text by world mode, including a hardcore spectate request. */
++    public static Component progress(final DeathScreen screen) {
++        return ((DeathScreenAccess) screen).bedrockDeathHardcore() ? SAVING : RESPAWNING;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd8d3e635ebfdc7234ddf7813faa5f622d99a8f1
+index 0000000000000000000000000000000000000000..4456a4885183d5f5ba3920c524e7f91c4053d8c6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdates.java
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,162 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -271,6 +451,20 @@ index 0000000000000000000000000000000000000000..cd8d3e635ebfdc7234ddf7813faa5f62
 +        final var client = Minecraft.getInstance();
 +        return client.getConnection() instanceof Owner owner
 +                && owner.bedrockDeathScreens().pending(client.getConnection(), client.player, screen);
++    }
++
++    /** True after the pending request's initial wait, when native shows its progress line. */
++    public static boolean loading(final DeathScreen screen) {
++        final var client = Minecraft.getInstance();
++        return client.getConnection() instanceof Owner owner && owner.bedrockDeathScreens().loading
++                && owner.bedrockDeathScreens().pending(client.getConnection(), client.player, screen);
++    }
++
++    /** True if the screen's game menu action may open the game menu now. */
++    public static boolean openGameMenu(final DeathScreen screen) {
++        final var client = Minecraft.getInstance();
++        return client.getConnection() instanceof Owner owner
++                && owner.bedrockDeathScreens().gameMenu(client.getConnection(), client.player, screen);
 +    }
 +
 +    /** True consumes an update; false admits the supplied screen through the ordinary screen path. */
@@ -344,11 +538,25 @@ index 0000000000000000000000000000000000000000..cd8d3e635ebfdc7234ddf7813faa5f62
 +        player.respawn();
 +    }
 +
-+    /** Java's null-screen path must not replace a screen whose respawn is still pending. */
++    /**
++     * Native keeps the death route behind the game menu and returns to it with its controls enabled. Retain the
++     * screen so Java's automatic re-entry restores it with its reason and stage.
++     */
++    public boolean gameMenu(final ClientPacketListener current, final LocalPlayer player, final DeathScreen screen) {
++        this.tick(current, player);
++        if (current == null || !current.getConnection().isConnected() || player == null || !player.isDeadOrDying()
++                || this.respawning || !(screen instanceof DeathScreenAccess access) || access.bedrockDeathPlayer() != player
++                || !BedrockDeathScreenStages.buttonsShown(screen, false)) return false;
++        this.owner = current;
++        this.player = player;
++        this.screen = screen;
++        return true;
++    }
++
++    /** Java's null-screen path must not replace the retained screen, its reason, stage or pending respawn. */
 +    public DeathScreen automaticScreen(final ClientPacketListener current, final LocalPlayer player, final DeathScreen incoming) {
 +        this.tick(current, player);
-+        if (this.pending(current, player, this.screen) && this.screen != null
-+                && incoming instanceof DeathScreenAccess next && next.bedrockDeathPlayer() == player
++        if (this.screen != null && incoming instanceof DeathScreenAccess next && next.bedrockDeathPlayer() == player
 +                && next.bedrockDeathHardcore() == ((DeathScreenAccess) this.screen).bedrockDeathHardcore()) return this.screen;
 +        return incoming;
 +    }
@@ -361,6 +569,21 @@ index 0000000000000000000000000000000000000000..cd8d3e635ebfdc7234ddf7813faa5f62
 +        BedrockDeathScreenUpdates bedrockDeathScreens();
 +    }
 +}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index b925d8b9779536fb361ae59c2881f9a101d70600..2ad5cb6f9d25205c991a63bedd14e0cc5de44445 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -423,5 +423,9 @@
+   "cartography.viafabricplus.lock": "Lock Map",
+   "cartography.viafabricplus.locator": "Map that Shows Players",
+   "cartography.viafabricplus.loading_images": "Loading images…",
+-  "cartography.viafabricplus.missing_images": "Built-in images unavailable"
++  "cartography.viafabricplus.missing_images": "Built-in images unavailable",
++
++  "death_screen.viafabricplus.exit_world": "Exit World",
++  "death_screen.viafabricplus.respawning": "Respawning...",
++  "death_screen.viafabricplus.saving": "Saving..."
+ }
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
 index eaaa3d9576f4aade91d3d674722faf66659c1d08..cf851e324db6182182c565a0afc3315dabb52c31 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
@@ -378,10 +601,10 @@ index eaaa3d9576f4aade91d3d674722faf66659c1d08..cf851e324db6182182c565a0afc3315d
      "features.render.MixinBedrockFollowInput",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e982186b0c9cdf33cc84d4aa0a08542ce0376fe2
+index 0000000000000000000000000000000000000000..477866a7cdbb4cb2b817f1df769653971b229805
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/death/BedrockDeathScreenUpdatesTest.java
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,405 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -403,6 +626,7 @@ index 0000000000000000000000000000000000000000..e982186b0c9cdf33cc84d4aa0a08542c
 +import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.network.Connection;
 +import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.contents.TranslatableContents;
 +import net.minecraft.server.Bootstrap;
 +import org.junit.jupiter.api.AfterEach;
 +import org.junit.jupiter.api.BeforeAll;
@@ -618,6 +842,82 @@ index 0000000000000000000000000000000000000000..e982186b0c9cdf33cc84d4aa0a08542c
 +        }
 +    }
 +
++    @Test
++    void controlsAppearAfterOneSecondAndJavaWidgetRebuildsDoNotRestartTheStage() {
++        final var fixture = new Fixture();
++        final var screen = fixture.screen("Initial reason");
++        screen.rebuild(0, false);
++        for (int tick = 0; tick < BedrockDeathScreenStages.MESSAGE_TICKS; tick++) {
++            assertFalse(BedrockDeathScreenStages.messageShown(screen, false), "Tick " + tick);
++            screen.tickStage(false);
++        }
++        assertTrue(BedrockDeathScreenStages.messageShown(screen, false));
++        for (int tick = BedrockDeathScreenStages.MESSAGE_TICKS; tick < BedrockDeathScreenStages.BUTTON_TICKS; tick++) {
++            assertFalse(screen.exitButtons().getFirst().visible, "Tick " + tick);
++            screen.tickStage(false);
++        }
++        assertEquals(List.of("deathScreen.respawn", "menu.game"), screen.labels());
++        assertTrue(screen.exitButtons().stream().allMatch(button -> button.visible && button.active));
++
++        // Java restarts delayTicker in init after a resize or when the game menu returns to the screen.
++        screen.rebuild((int) screen.field("delayTicker"), false);
++        assertTrue(screen.exitButtons().stream().allMatch(button -> button.visible && button.active));
++    }
++
++    @Test
++    void hardcorePlacesExitWorldAboveSpectateWorld() {
++        final var fixture = new Fixture();
++        final var screen = new TestDeathScreen("Reason", fixture.player, true);
++        screen.rebuild(BedrockDeathScreenStages.BUTTON_TICKS, false);
++        final var spectate = screen.exitButtons().get(0);
++        final var exit = screen.exitButtons().get(1);
++        assertEquals(List.of("deathScreen.spectate", "death_screen.viafabricplus.exit_world"), screen.labels());
++        assertTrue(exit.getY() < spectate.getY(), "Exit world is the primary action");
++        assertEquals("death_screen.viafabricplus.saving", key(BedrockDeathScreenStages.progress(screen)));
++    }
++
++    @Test
++    void respawnRequestHidesTheContentThenShowsProgressAfterTheInitialWait() {
++        final var fixture = new Fixture();
++        final var client = Minecraft.getInstance();
++        client.player = fixture.player;
++        when(client.getConnection()).thenReturn(fixture.owner);
++        final var screen = fixture.screen("Reason");
++        screen.rebuild(BedrockDeathScreenStages.BUTTON_TICKS, false);
++        fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, screen);
++        assertTrue(BedrockDeathScreenUpdates.respawning(screen));
++        screen.tickStage(true);
++        assertFalse(BedrockDeathScreenStages.messageShown(screen, true));
++        assertTrue(screen.exitButtons().stream().noneMatch(button -> button.visible || button.active));
++        assertFalse(BedrockDeathScreenUpdates.loading(screen));
++        fixture.tick(500, screen);
++        assertTrue(BedrockDeathScreenUpdates.loading(screen));
++        assertEquals("death_screen.viafabricplus.respawning", key(BedrockDeathScreenStages.progress(screen)));
++        verify(fixture.player).respawn();
++    }
++
++    @Test
++    void gameMenuNeedsEnabledControlsAndReturnsToTheRetainedScreen() {
++        final var fixture = new Fixture();
++        final var screen = fixture.screen("Initial reason");
++        screen.rebuild(BedrockDeathScreenStages.BUTTON_TICKS - 1, false);
++        assertFalse(fixture.updates.gameMenu(fixture.owner, fixture.player, screen), "Controls are not shown yet");
++        screen.tickStage(false);
++        assertTrue(fixture.updates.gameMenu(fixture.owner, fixture.player, screen));
++        assertTrue(fixture.receive(mock(Screen.class), fixture.screen("Late reason")), "The menu stays open");
++
++        final var reentry = fixture.updates.automaticScreen(fixture.owner, fixture.player, fixture.screen(""));
++        assertSame(screen, reentry, "Closing the menu returns to the same death screen");
++        assertEquals("Late reason", screen.bedrockDeathReason().getString());
++
++        fixture.updates.respawn(fixture.owner, fixture.owner, fixture.player, screen);
++        assertFalse(fixture.updates.gameMenu(fixture.owner, fixture.player, screen), "A pending respawn keeps the route");
++    }
++
++    private static String key(final Component component) {
++        return ((TranslatableContents) component.getContents()).getKey();
++    }
++
 +    private static final class Fixture {
 +        private long time;
 +        private final BedrockDeathScreenUpdates updates = new BedrockDeathScreenUpdates(() -> this.time);
@@ -654,7 +954,28 @@ index 0000000000000000000000000000000000000000..e982186b0c9cdf33cc84d4aa0a08542c
 +    /** Headless bridge for the fields supplied by DeathScreenAccess in the installed client. */
 +    private static final class TestDeathScreen extends DeathScreen implements DeathScreenAccess {
 +        private TestDeathScreen(final String reason, final LocalPlayer player) {
-+            super(Component.literal(reason), false, player);
++            this(reason, player, false);
++        }
++
++        private TestDeathScreen(final String reason, final LocalPlayer player, final boolean hardcore) {
++            super(Component.literal(reason), hardcore, player);
++        }
++
++        /** Mirrors Java's rebuildWidgets plus the installed init injections. */
++        private void rebuild(final int previousDelay, final boolean pending) {
++            this.clearWidgets();
++            this.init();
++            BedrockDeathScreenStages.arrange(this, previousDelay, pending);
++        }
++
++        /** Mirrors Java's tick plus the installed tick injection. */
++        private void tickStage(final boolean pending) {
++            this.tick();
++            BedrockDeathScreenStages.update(this, pending);
++        }
++
++        private List<String> labels() {
++            return this.exitButtons().stream().map(button -> key(button.getMessage())).toList();
 +        }
 +
 +        private Object field(final String name) {
@@ -671,14 +992,18 @@ index 0000000000000000000000000000000000000000..e982186b0c9cdf33cc84d4aa0a08542c
 +        private List<Button> exitButtons() { return (List<Button>) this.field("exitButtons"); }
 +
 +        @Override public List<Button> bedrockDeathButtons() { return this.exitButtons(); }
++        @Override public int bedrockDeathDelay() { return (int) this.field("delayTicker"); }
++        @Override public void bedrockDeathDelay(final int delay) { this.set("delayTicker", delay); }
 +        @Override public LocalPlayer bedrockDeathPlayer() { return (LocalPlayer) this.field("player"); }
 +        @Override public boolean bedrockDeathHardcore() { return (boolean) this.field("hardcore"); }
 +        @Override public Component bedrockDeathReason() { return (Component) this.field("causeOfDeath"); }
-+        @Override public void bedrockDeathReason(final Component reason) {
++        @Override public void bedrockDeathReason(final Component reason) { this.set("causeOfDeath", reason); }
++
++        private void set(final String name, final Object value) {
 +            try {
-+                final Field field = DeathScreen.class.getDeclaredField("causeOfDeath");
++                final Field field = DeathScreen.class.getDeclaredField(name);
 +                field.setAccessible(true);
-+                field.set(this, reason);
++                field.set(this, value);
 +            } catch (ReflectiveOperationException error) {
 +                throw new AssertionError(error);
 +            }

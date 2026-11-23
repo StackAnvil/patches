@@ -5,9 +5,10 @@ Native evidence from the 1.26.60.5 Windows client, static analysis only:
 - The sign renderer (`0x146a7f670`) lays out each face through `0x140e69dd0` with a budget of four rows. Words, spaces and line breaks are the units. A word that does not fit starts a new row, and a space that does not fit stays at the end of its row.
 - A word as wide as the row fills the current row and continues on later rows with a hyphen (`0x140e6b010`, `0x140e6c4c0`). `0x140e6bbc0` adds no hyphen after a space, beside a hyphen, or beside wide script.
 - Rows are 89 units wide on standing signs and 60 on hanging signs.
+- Every row is drawn with its own text call. Without `PersistFormatting`, the row callback (`0x146a94fe0`) does not carry the earlier formatting into the next row, so a wrapped row keeps only the codes that it contains.
 
-On Bedrock connections, the sign renderer now lays out each face this way with the client font. Java servers keep Java's clipping.
+On Bedrock connections, the sign renderer now lays out each face this way with the client font. ViaBedrock marks faces without `PersistFormatting`, and their wrapped rows start again from the line's base style. Java servers keep Java's clipping.
 
-Validation: unit tests cover wrapping at spaces with the shared four-row budget, hyphenation and its color, a long word after text, the hyphen exceptions, and a word longer than four rows. The mixin targets were checked against the 26.3 bytecode. No in-game capture was taken.
+Validation: unit tests cover wrapping at spaces with the shared four-row budget, hyphenation and its color, a long word after text, the hyphen exceptions, a word longer than four rows, and wrapped rows with and without `PersistFormatting`. The mixin targets were checked against the 26.3 bytecode. No in-game capture was taken.
 
-Remaining limits: the hyphenation switch comes from a global localization object that static analysis does not resolve, so hyphenation assumes the English default. Without `PersistFormatting`, the native client may drop formatting on the continuation rows of a wrapped line; this layout keeps it.
+Remaining limits: the hyphenation switch comes from a global localization object that static analysis does not resolve, so hyphenation assumes the English default. Without `PersistFormatting`, a wrapped row keeps decorations such as bold from earlier rows when a later code in the row changes only the color.

@@ -60,6 +60,19 @@ pack nor the add-on provides. Waypoint packets choose the names, so the
 unbounded missing-texture path let a server grow the cache until
 disconnect.
 
+Gate native groups by experience like 1.26.60.5 predicate 0x144b64630.
+Creative, including Default in a Creative world, always shows them.
+Survival, Adventure and Spectator show them only after more than 5.0 s
+of wall-clock time since the last change seen by 0x146db07a0: a level
+change or a progress change above FLT_EPSILON, compared with values that
+start at zero. The predicate samples experience only while the progress
+bar is visible and the player is not in Creative. Java counted only
+progress changes, ignored the first one, used 100 ticks and always showed
+the bar in Spectator. The experience bar, or an empty slot in Spectator,
+takes the place of the locator meanwhile. The predicate also waits 5.0 s
+after LocalPlayer+0x1188, stamped by HUD controller override 0x147469e50.
+That trigger is still unidentified, so it is not modeled.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 827fce8ed6aacd68d5ee41b6081e56937259f16d..9332a593e05c99882e6ff2f570630c194be55117 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -86,10 +99,10 @@ index 827fce8ed6aacd68d5ee41b6081e56937259f16d..9332a593e05c99882e6ff2f570630c19
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..49a5e369d82114c86b7ad39607498deb5097f577
+index 0000000000000000000000000000000000000000..868e86366be82f086649deec588b1577be0b00fe
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockLocatorBar.java
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,132 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -114,6 +127,7 @@ index 0000000000000000000000000000000000000000..49a5e369d82114c86b7ad39607498deb
 +    private static final LocatorBarSession SESSION = new LocatorBarSession();
 +    private static final LocatorBarImages IMAGES = new LocatorBarImages();
 +    private static final LocatorBarMotion MOTION = new LocatorBarMotion();
++    private static final LocatorBarExperience EXPERIENCE = new LocatorBarExperience();
 +    private static final int WIDTH = 182;
 +    private static final int HEIGHT = 5;
 +    private static final long ANIMATION_START = Util.getNanos();
@@ -137,8 +151,15 @@ index 0000000000000000000000000000000000000000..49a5e369d82114c86b7ad39607498deb
 +        return SESSION.snapshot() != null && IMAGES.hasBackground();
 +    }
 +
-+    public static boolean hasWaypoints(final boolean javaWaypoints) {
-+        return active() ? !SESSION.snapshot().waypoints().isEmpty() : javaWaypoints;
++    /**
++     * Native 1.26.60.5 predicate 0x144b64630 shows groups in Creative and otherwise only after five quiet seconds of
++     * experience, including in Spectator. The experience bar or an empty slot takes its place meanwhile.
++     */
++    public static boolean hasWaypoints(final boolean javaWaypoints, final boolean creative, final int level,
++            final float progress) {
++        if (!active()) return javaWaypoints;
++        return !SESSION.snapshot().waypoints().isEmpty()
++                && EXPERIENCE.showsLocator(Util.getNanos(), creative, level, progress);
 +    }
 +
 +    public static void background(final GuiGraphicsExtractor graphics) {
@@ -208,10 +229,59 @@ index 0000000000000000000000000000000000000000..49a5e369d82114c86b7ad39607498deb
 +        SESSION.clear();
 +        IMAGES.clear();
 +        MOTION.clear();
++        EXPERIENCE.clear();
 +        previousFrame = 0;
 +    }
 +
 +    private record Icon(LocatorBarWaypoint waypoint, Vec3 position, double distanceSquared) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarExperience.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarExperience.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6a9ae82b8f3daf61676f7fe927a88e01938e77d5
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarExperience.java
+@@ -0,0 +1,42 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++/** Gives the experience bar the slot for five seconds after the observed level or progress changes. */
++final class LocatorBarExperience {
++    private static final long DELAY_NANOS = 5_000_000_000L;
++    private static final float EPSILON = Math.ulp(1F);
++
++    private int level;
++    private float progress;
++    private long changed;
++    private boolean recent;
++
++    /** Native samples experience only when this check runs, so changes seen first in Creative count later. */
++    boolean showsLocator(final long now, final boolean creative, final int level, final float progress) {
++        if (creative) return true;
++        if (level != this.level) {
++            this.level = level;
++            this.stamp(now);
++        }
++        if (Math.abs(this.progress - progress) > EPSILON) {
++            this.progress = progress;
++            this.stamp(now);
++        }
++        return !this.recent || now - this.changed > DELAY_NANOS;
++    }
++
++    private void stamp(final long now) {
++        this.changed = now;
++        this.recent = true;
++    }
++
++    void clear() {
++        this.level = 0;
++        this.progress = 0;
++        this.recent = false;
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImages.java
 new file mode 100644
@@ -549,10 +619,10 @@ index 0000000000000000000000000000000000000000..cecb8bb6a97061f75c6604fd63b24d7a
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
-index c9f0ec657bc45a2d13128d4e7ab770ad50facceb..0d5a6900575b2254b3aac1af54e151786a3dc267 100644
+index c9f0ec657bc45a2d13128d4e7ab770ad50facceb..9a8d9f2ea0c0650eed09a09d31968e7aae5054a9 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
-@@ -6,13 +6,16 @@
+@@ -6,15 +6,23 @@
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
  
  import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
@@ -560,23 +630,49 @@ index c9f0ec657bc45a2d13128d4e7ab770ad50facceb..0d5a6900575b2254b3aac1af54e15178
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
 +import com.viaversion.viafabricplus.bedrock.hud.BedrockLocatorBar;
  import net.minecraft.client.DeltaTracker;
++import net.minecraft.client.Minecraft;
  import net.minecraft.client.gui.Font;
  import net.minecraft.client.gui.GuiGraphicsExtractor;
  import net.minecraft.client.gui.Hud;
  import net.minecraft.client.gui.components.spectator.SpectatorGui;
  import net.minecraft.client.gui.contextualbar.ContextualBar;
 +import net.minecraft.client.gui.contextualbar.LocatorBar;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.world.level.GameType;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudElement;
++import org.spongepowered.asm.mixin.Final;
  import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
  import org.spongepowered.asm.mixin.injection.At;
-@@ -67,10 +70,20 @@ public abstract class MixinBedrockHudVisibility {
+ import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+@@ -22,6 +30,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+ @Mixin(Hud.class)
+ public abstract class MixinBedrockHudVisibility {
+ 
++    @Shadow @Final private Minecraft minecraft;
++
+     @Inject(method = "extractCrosshair", at = @At("HEAD"), cancellable = true)
+     private void hideCrosshair(final CallbackInfo ci) {
+         if (BedrockHudVisibility.hidden(HudElement.Crosshair)) ci.cancel();
+@@ -67,10 +77,30 @@ public abstract class MixinBedrockHudVisibility {
          if (BedrockHudVisibility.hidden(HudElement.ItemText)) ci.cancel();
      }
  
 +    @ModifyExpressionValue(method = "nextContextualInfoState", at = @At(value = "INVOKE",
 +            target = "Lnet/minecraft/client/waypoints/ClientWaypointManager;hasWaypoints()Z"))
 +    private boolean nativeLocatorGroups(final boolean original) {
-+        return BedrockLocatorBar.hasWaypoints(original);
++        // Native evaluates the locator predicate, which samples experience, only while the progress bar is visible.
++        if (BedrockHudVisibility.hidden(HudElement.ProgressBar)) return original;
++        final LocalPlayer player = this.minecraft.player;
++        return BedrockLocatorBar.hasWaypoints(original, this.minecraft.gameMode.getPlayerMode() == GameType.CREATIVE,
++                player.experienceLevel, player.experienceProgress);
++    }
++
++    @ModifyExpressionValue(method = "nextContextualInfoState", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/gui/Hud;willPrioritizeExperienceInfo()Z"))
++    private boolean nativeExperienceDelay(final boolean original) {
++        return original && !BedrockLocatorBar.active();
 +    }
 +
      @WrapWithCondition(method = "extractHotbarAndDecorations", at = @At(value = "INVOKE",
@@ -590,7 +686,7 @@ index c9f0ec657bc45a2d13128d4e7ab770ad50facceb..0d5a6900575b2254b3aac1af54e15178
          return true;
      }
  
-@@ -78,6 +91,10 @@ public abstract class MixinBedrockHudVisibility {
+@@ -78,6 +108,10 @@ public abstract class MixinBedrockHudVisibility {
              target = "Lnet/minecraft/client/gui/contextualbar/ContextualBar;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V"))
      private boolean showProgress(final ContextualBar bar, final GuiGraphicsExtractor graphics, final DeltaTracker delta) {
          if (BedrockHudVisibility.hidden(HudElement.ProgressBar)) return false;
@@ -733,6 +829,45 @@ index 90e335d1a31ccfefd0ab72a9565720ea0de1c0aa..249f95f230896ed08a987976899ea852
      "features.render.MixinBedrockRenderingConnection",
      "features.render.MixinBedrockRenderingSession",
      "features.render.MixinBedrockVignette",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarExperienceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarExperienceTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0e56caebe45ec310ade9924834ad359825830e55
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarExperienceTest.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class LocatorBarExperienceTest {
++    private static final long SECOND = 1_000_000_000L;
++
++    @Test
++    void firstObservedExperienceAndLevelOnlyChangesHideTheLocatorForFiveSeconds() {
++        final var experience = new LocatorBarExperience();
++        assertTrue(experience.showsLocator(0, false, 0, 0F));
++        assertFalse(experience.showsLocator(SECOND, false, 3, 0.5F));
++        assertFalse(experience.showsLocator(6 * SECOND, false, 3, 0.5F));
++        assertTrue(experience.showsLocator(6 * SECOND + 1, false, 3, 0.5F));
++        assertFalse(experience.showsLocator(7 * SECOND, false, 4, 0.5F));
++        assertTrue(experience.showsLocator(13 * SECOND, false, 4, 0.5F + Math.ulp(1F)));
++    }
++
++    @Test
++    void creativeShowsTheLocatorAndDefersExperienceChangesUntilTheModeChanges() {
++        final var experience = new LocatorBarExperience();
++        assertTrue(experience.showsLocator(SECOND, true, 7, 0.25F));
++        assertTrue(experience.showsLocator(20 * SECOND, true, 7, 0.25F));
++        assertFalse(experience.showsLocator(20 * SECOND, false, 7, 0.25F));
++        assertTrue(experience.showsLocator(26 * SECOND, false, 7, 0.25F));
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/hud/LocatorBarImagesTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..04383990532f6254a61bc05b0d7d9cc18438fbca

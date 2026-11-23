@@ -392,14 +392,31 @@ at +0x310/+0x311, and 0x1458afd86 copies them to the +0x1d8/+0x1d9 flags
 that admission reads. Check 0x141ad7980 accepts Item virtual +0x50, item
 minecraft:wolf_armor (HashedString 0x1529a6148) or the minecraft:harness
 tag (0x1528c3828). Hand slots always skip such items, and armor slots skip
-them when hide_armor is set. Java head, chest, leg and foot armor tags,
-wolf armor and harnesses stand in for that check; custom wearable items
-keep drawing because the virtual's class membership is not established.
+them when hide_armor is set.
 The hide_armor gate applies when the level's MinimumCompatibleClientVersion
 (LevelData +0x2d8) exceeds 1.16.210 (0x14590cd34). Remote client levels
 start at the current version 1.26.60 (0x141068a2b, 0x140d3caa9), so
 connected sessions use it. Tests cover disabled attachables, hidden armor
 and held armor.
+
+The armor check now follows the native classes. Of the 111 vtables in
+.rdata that share most slots with Item 0x14f103440, virtual +0x50
+returns true only in ArmorItem 0x14f102c00 (0x140084510). Nine
+component item vtables use 0x14483c8e0, which accepts a
+minecraft:wearable slot from 2 to 6; the rest return false. ArmorItem's only constructor
+site, 0x14479dc60, registers the 28 leather, chainmail, iron, diamond,
+golden, netherite and copper pieces, minecraft:turtle_helmet and
+minecraft:elytra. The harness tag is registered for the 16 colored
+harnesses (0x1447a9bd7 to 0x1447aa0ff); horse armor is not armor. The
+add-on reads the native identifier and tags that ViaBedrock keeps in the
+item data instead of Java armor tags, so elytra are now armor. Java item
+data does not keep the wearable slot, so custom wearable component
+items still count as non-armor. Admission also skips a spectator owner:
+ActorGameTypeComponent (EnTT hash 0x88d3eddf, lookup 0x14297c120) is 6,
+or 5 with level default 6, which matches the Java player list mode that
+ViaBedrock resolves. With variable.is_first_person set (owner variable
+0x2739f381184de4ae), items tagged transparentattachable (0x141ad7490) and
+armor in armor slots are skipped. Tests cover these rules.
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 index e9ce32eb550df25e5476cb623de3667c7544ebb4..fae5b0ab3633094ed6f00609659fe709650ba4cd 100644
@@ -1252,10 +1269,10 @@ index 0000000000000000000000000000000000000000..1ea81dc9c9eb6dbec10fa16d47e6e492
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..785a647a0c1478f6570c0e4693525c5c67cd4950
+index 0000000000000000000000000000000000000000..95a2fdb8bf54bdacbd2c5dffd3e3dcce18ca3b41
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-@@ -0,0 +1,536 @@
+@@ -0,0 +1,560 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1293,7 +1310,6 @@ index 0000000000000000000000000000000000000000..785a647a0c1478f6570c0e4693525c5c
 +import net.minecraft.client.renderer.texture.DynamicTexture;
 +import net.minecraft.core.component.DataComponents;
 +import net.minecraft.resources.Identifier;
-+import net.minecraft.tags.ItemTags;
 +import net.minecraft.world.entity.Avatar;
 +import net.minecraft.world.InteractionHand;
 +import net.minecraft.world.entity.EquipmentSlot;
@@ -1307,6 +1323,8 @@ index 0000000000000000000000000000000000000000..785a647a0c1478f6570c0e4693525c5c
 +public final class BedrockPlayerAttachables {
 +    private static final List<EquipmentSlot> SLOTS = List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET, EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND);
 +    private static final List<EquipmentSlot> HANDS = List.of(EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND);
++    private static final Set<String> ARMOR_ITEMS = armorItems();
++    private static final String TRANSPARENT_TAG = "transparentattachable";
 +    private static final Map<Avatar, BedrockEquipmentCache<Equipped>> EQUIPPED = new WeakHashMap<>();
 +    private static final Map<Avatar, BedrockAttachableSelection> SELECTORS = new WeakHashMap<>();
 +    private static final Map<String, Optional<Resource>> RESOURCES = new HashMap<>();
@@ -1373,7 +1391,7 @@ index 0000000000000000000000000000000000000000..785a647a0c1478f6570c0e4693525c5c
 +        final var rendering = BedrockPlayerSkins.options(state.skin).rendering();
 +        for (final EquipmentSlot slot : firstPerson ? HANDS : SLOTS) {
 +            final var stack = firstPerson ? slot == EquipmentSlot.MAINHAND ? main : off : entity.getItemBySlot(slot);
-+            if (!admits(slot, armor(stack), rendering)) continue;
++            if (!admits(entity, slot, stack, firstPerson, rendering)) continue;
 +            final var context = Map.<String, Object>of("is_first_person", firstPerson ? 1F : 0F, "item_slot", slotName(slot));
 +            try {
 +                final var identity = identify(stack, packs, SELECTORS.computeIfAbsent(entity, _ -> new BedrockAttachableSelection()),
@@ -1416,7 +1434,7 @@ index 0000000000000000000000000000000000000000..785a647a0c1478f6570c0e4693525c5c
 +        final var rendering = BedrockPlayerSkins.options(state.skin).rendering();
 +        for (final EquipmentSlot slot : firstPerson ? HANDS : SLOTS) {
 +            final ItemStack stack = firstPerson ? slot == EquipmentSlot.MAINHAND ? main : off : entity.getItemBySlot(slot);
-+            if (!admits(slot, armor(stack), rendering)) continue;
++            if (!admits(entity, slot, stack, firstPerson, rendering)) continue;
 +            final boolean hand = slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND;
 +            final var appearance = BedrockShieldPatterns.get(stack);
 +            if (hand && requiresBannerAtlas(stack) && !appearance.patterned()) continue;
@@ -1590,20 +1608,43 @@ index 0000000000000000000000000000000000000000..785a647a0c1478f6570c0e4693525c5c
 +        } catch (IOException invalid) { throw new IllegalArgumentException("Invalid native binding", invalid); }
 +    }
 +
-+    /**
-+     * Native admission precedes the per-slot setup, which alone runs parent_setup. An owner that disables
-+     * attachables admits no slot. Armor never uses a held attachable, and hide_armor removes it from armor slots.
-+     */
-+    static boolean admits(final EquipmentSlot slot, final boolean armor, final Map<String, Boolean> rendering) {
-+        if (!rendering.getOrDefault("enable_attachables", true)) return false;
-+        if (!armor) return true;
-+        return slot != EquipmentSlot.MAINHAND && slot != EquipmentSlot.OFFHAND && !rendering.getOrDefault("hide_armor", false);
++    private static boolean admits(final Avatar entity, final EquipmentSlot slot, final ItemStack stack, final boolean firstPerson,
++                                  final Map<String, Boolean> rendering) {
++        final var item = BedrockItemMetadata.get(stack == null ? null : stack.get(DataComponents.CUSTOM_DATA));
++        final List<String> tags = item.animation().tags();
++        return admits(slot, armor(item.identifier(), tags), tags.contains(TRANSPARENT_TAG), firstPerson, entity.isSpectator(), rendering);
 +    }
 +
-+    /** Native admission treats humanoid armor, wolf armor and harnesses as armor. */
-+    private static boolean armor(final ItemStack stack) {
-+        return stack.is(ItemTags.HEAD_ARMOR) || stack.is(ItemTags.CHEST_ARMOR) || stack.is(ItemTags.LEG_ARMOR)
-+                || stack.is(ItemTags.FOOT_ARMOR) || stack.is(Items.WOLF_ARMOR) || stack.is(ItemTags.HARNESSES);
++    /**
++     * Native admission precedes the per-slot setup, which alone runs parent_setup. An owner that disables
++     * attachables or is a spectator admits no slot. A transparentattachable item has no first-person attachable.
++     * Armor never uses a held attachable, and hide_armor or the first-person view removes it from armor slots.
++     */
++    static boolean admits(final EquipmentSlot slot, final boolean armor, final boolean transparent, final boolean firstPerson,
++                          final boolean spectator, final Map<String, Boolean> rendering) {
++        if (!rendering.getOrDefault("enable_attachables", true) || spectator) return false;
++        if (firstPerson && transparent) return false;
++        if (!armor) return true;
++        return slot != EquipmentSlot.MAINHAND && slot != EquipmentSlot.OFFHAND && !firstPerson
++                && !rendering.getOrDefault("hide_armor", false);
++    }
++
++    /**
++     * The native armor check accepts ArmorItem, wolf armor by name and items tagged minecraft:harness. A component
++     * item also counts when its minecraft:wearable slot is an armor slot, which the Java item data does not retain.
++     */
++    static boolean armor(final String identifier, final List<String> tags) {
++        return identifier != null && (ARMOR_ITEMS.contains(identifier) || identifier.equals("minecraft:wolf_armor"))
++                || tags.contains("minecraft:harness");
++    }
++
++    /** Every vanilla item constructed as a native ArmorItem. */
++    private static Set<String> armorItems() {
++        final Set<String> items = new HashSet<>(Set.of("minecraft:turtle_helmet", "minecraft:elytra"));
++        for (final String material : List.of("leather", "chainmail", "iron", "diamond", "golden", "netherite", "copper")) {
++            for (final String piece : List.of("helmet", "chestplate", "leggings", "boots")) items.add("minecraft:" + material + "_" + piece);
++        }
++        return Set.copyOf(items);
 +    }
 +
 +    /** Native context.item_slot names; legs and feet have empty names. */
@@ -3286,10 +3327,10 @@ index 0000000000000000000000000000000000000000..bd734330a9eccb5a89bb28506023eaf3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..8adfbf807a4028c670234da27664c0ec4c655672
+index 0000000000000000000000000000000000000000..3eb7e86f73f3c75daaae1afe0f4f8a958e0a36d6
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,212 @@
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -3350,27 +3391,63 @@ index 0000000000000000000000000000000000000000..8adfbf807a4028c670234da27664c0ec
 +        final var disabled = Map.of("enable_attachables", false);
 +        for (final var slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
 +                EquipmentSlot.FEET, EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND)) {
-+            assertFalse(BedrockPlayerAttachables.admits(slot, false, disabled));
-+            assertTrue(BedrockPlayerAttachables.admits(slot, false, Map.of()));
-+            assertTrue(BedrockPlayerAttachables.admits(slot, false, Map.of("enable_attachables", true)));
++            assertFalse(admits(slot, false, disabled));
++            assertTrue(admits(slot, false, Map.of()));
++            assertTrue(admits(slot, false, Map.of("enable_attachables", true)));
++        }
++    }
++
++    @Test
++    void spectatorsAdmitNoAttachableInAnySlot() {
++        for (final var slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND)) {
++            assertFalse(BedrockPlayerAttachables.admits(slot, false, false, false, true, Map.of()));
++            assertFalse(BedrockPlayerAttachables.admits(slot, false, false, true, true, Map.of()));
 +        }
 +    }
 +
 +    @Test
 +    void hiddenArmorAdmitsOnlyItemsThatAreNotArmor() {
 +        final var hidden = Map.of("hide_armor", true);
-+        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.CHEST, true, hidden));
-+        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.HEAD, true, hidden));
-+        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.CHEST, false, hidden));
-+        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.CHEST, true, Map.of()));
-+        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.CHEST, true, Map.of("hide_armor", false)));
++        assertFalse(admits(EquipmentSlot.CHEST, true, hidden));
++        assertFalse(admits(EquipmentSlot.HEAD, true, hidden));
++        assertTrue(admits(EquipmentSlot.CHEST, false, hidden));
++        assertTrue(admits(EquipmentSlot.CHEST, true, Map.of()));
++        assertTrue(admits(EquipmentSlot.CHEST, true, Map.of("hide_armor", false)));
 +    }
 +
 +    @Test
 +    void heldArmorNeverUsesAnAttachable() {
-+        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.MAINHAND, true, Map.of()));
-+        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.OFFHAND, true, Map.of()));
-+        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.MAINHAND, false, Map.of()));
++        assertFalse(admits(EquipmentSlot.MAINHAND, true, Map.of()));
++        assertFalse(admits(EquipmentSlot.OFFHAND, true, Map.of()));
++        assertTrue(admits(EquipmentSlot.MAINHAND, false, Map.of()));
++    }
++
++    @Test
++    void firstPersonSkipsWornArmorAndTransparentAttachables() {
++        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.HEAD, true, false, true, false, Map.of()));
++        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.HEAD, false, false, true, false, Map.of()));
++        assertFalse(BedrockPlayerAttachables.admits(EquipmentSlot.MAINHAND, false, true, true, false, Map.of()));
++        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.MAINHAND, false, true, false, false, Map.of()));
++        assertTrue(BedrockPlayerAttachables.admits(EquipmentSlot.MAINHAND, false, false, true, false, Map.of()));
++    }
++
++    @Test
++    void nativeArmorCheckFollowsArmorItemsWolfArmorAndHarnessTag() {
++        for (final String identifier : List.of("minecraft:copper_helmet", "minecraft:netherite_boots",
++                "minecraft:turtle_helmet", "minecraft:elytra", "minecraft:wolf_armor")) {
++            assertTrue(BedrockPlayerAttachables.armor(identifier, List.of()), identifier);
++        }
++        assertTrue(BedrockPlayerAttachables.armor("minecraft:black_harness", List.of("minecraft:harness")));
++        assertTrue(BedrockPlayerAttachables.armor("example:saddlebag", List.of("minecraft:harness")));
++        for (final String identifier : List.of("minecraft:black_harness", "minecraft:iron_horse_armor",
++                "minecraft:carved_pumpkin", "minecraft:skull", "example:crown")) {
++            assertFalse(BedrockPlayerAttachables.armor(identifier, List.of()), identifier);
++        }
++        assertFalse(BedrockPlayerAttachables.armor(null, List.of("minecraft:is_armor")));
++    }
++
++    private static boolean admits(final EquipmentSlot slot, final boolean armor, final Map<String, Boolean> rendering) {
++        return BedrockPlayerAttachables.admits(slot, armor, false, false, false, rendering);
 +    }
 +
 +    @Test

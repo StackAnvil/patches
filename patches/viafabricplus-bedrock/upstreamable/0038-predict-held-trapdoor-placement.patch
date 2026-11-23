@@ -247,8 +247,7 @@ record max(now - 180 ms, previous deadline) instead of now. A target
 below the minimum or at or above the height limit records its attempt and
 restarts the timer, like a success. Previously the add-on used fixed
 200/300 ms from now, ignored sneaking and retried out-of-height targets
-every frame. The air or entity aim with an established line and the
-motion-face target before a line remain unported.
+every frame.
 
 Record a placement only when the local player placed the block. BlockItem.place
 also runs on the integrated server for a dispenser, which places a shulker box
@@ -258,6 +257,17 @@ placer's sneaking state threw, which crashed the integrated server.
 
 BedrockItemUseReleaseTest binds the paper holder components itself, so
 it passes when run alone instead of relying on an earlier test class.
+
+Held repeat 14376b8d0 selects the build target for continueBuildBlock.
+With a line it clips the ray against the next cell for any aim, so air
+and entity aims still build. The ray ends at the hit point, or at full
+range for no hit. Before a line, once a build succeeded and the actor
+motion (setter 140bb5800) exceeds 0.01 squared, it builds on the
+dominant motion face, ties to Z: from the last build position, or from
+the hit block while sneaking. Previously bridging stalled when the
+player looked past the edge. Only block hits use the motion target.
+Flags 0x42 and 0x43 stay unidentified; the port keeps treating 0x43
+as set and 0x42 as clear.
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 3f71e4a8cc170259c2d0a0a8694bc58f95290f9e..03814c6c986fb6937210619a8b305fd81cce923a 100644
@@ -331,10 +341,10 @@ index 82db187e28120a52e6679fb36e475462ed7e8864..eda72b300c1020fda277c4fca2288b09
              return super.getOcclusionShape(state);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..17a29e84c480f3cc78368b99531b047a971edd2a
+index 0000000000000000000000000000000000000000..6f9e38a1b6d6a8ae45369ed04f0b24721015c63a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinItemUseControl.java
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,117 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -430,14 +440,19 @@ index 0000000000000000000000000000000000000000..17a29e84c480f3cc78368b99531b047a
 +        target = "Lnet/minecraft/client/MouseHandler;handleAccumulatedMovement()V", shift = At.Shift.AFTER))
 +    private void repeatAfterCameraInput(final boolean renderLevel, final CallbackInfo ci) {
 +        BedrockItemUse.refresh();
-+        final var player = ((Minecraft) (Object) this).player;
++        final var client = (Minecraft) (Object) this;
++        final var player = client.player;
 +        if (player != null && !player.isUsingItem() && BedrockItemUse.frameReady()) {
 +            this.pick(1F);
++            // Use a line target for this repeat only; the crosshair keeps showing the air or entity hit.
++            final HitResult visible = client.hitResult;
++            client.hitResult = BedrockItemUse.repeatHit(visible);
 +            this.viaFabricPlusBedrock$frameRepeat = true;
 +            try {
 +                this.startUseItem();
 +            } finally {
 +                this.viaFabricPlusBedrock$frameRepeat = false;
++                client.hitResult = visible;
 +            }
 +        }
 +    }
@@ -580,10 +595,10 @@ index 0000000000000000000000000000000000000000..82b3509790da0035698376c2a8a9988e
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..3d8cc1210a041afe22ad0f3b52a26ce5a1943e28
+index 0000000000000000000000000000000000000000..3ca63e3994bca5b6fdf541d3b49c42f435a781da
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockItemUse.java
-@@ -0,0 +1,336 @@
+@@ -0,0 +1,350 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -830,9 +845,23 @@ index 0000000000000000000000000000000000000000..3d8cc1210a041afe22ad0f3b52a26ce5
 +
 +    public static BlockHitResult blockHit(final BlockHitResult hit, final boolean frameRepeat) {
 +        final var player = Minecraft.getInstance().player;
-+        return held && frameRepeat && INPUT.blockActive() && player != null
-+                && player.getMainHandItem().getItem() instanceof BlockItem
-+                ? PATH.select(player.getEyePosition(1F), hit) : hit;
++        // Native reads the actor's motion here, not the post-tick position delta that paces the repeat.
++        return frameRepeat && repeatsBuild(player)
++            ? PATH.select(player.getEyePosition(1F), hit, player.getDeltaMovement(), player.isShiftKeyDown()) : hit;
++    }
++
++    /** A held repeat with an established line can build while the crosshair shows air or an entity. */
++    public static HitResult repeatHit(final HitResult hit) {
++        final var player = Minecraft.getInstance().player;
++        if (hit == null || hit.getType() == HitResult.Type.BLOCK || !repeatsBuild(player)) {
++            return hit;
++        }
++        final BlockHitResult line = PATH.lineHit(player.getEyePosition(1F), hit);
++        return line == null ? hit : line;
++    }
++
++    private static boolean repeatsBuild(final Player player) {
++        return held && INPUT.blockActive() && player != null && player.getMainHandItem().getItem() instanceof BlockItem;
 +    }
 +
 +    /**
@@ -922,10 +951,10 @@ index 0000000000000000000000000000000000000000..3d8cc1210a041afe22ad0f3b52a26ce5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..5d1d60af7e19058bb9cdd338ac2a6acadb676a9a
+index 0000000000000000000000000000000000000000..875fa4a4f6a93a0822639d68142ffd90c9b0f7a3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPath.java
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,121 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -936,9 +965,10 @@ index 0000000000000000000000000000000000000000..5d1d60af7e19058bb9cdd338ac2a6aca
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.core.Direction;
 +import net.minecraft.world.phys.BlockHitResult;
++import net.minecraft.world.phys.HitResult;
 +import net.minecraft.world.phys.Vec3;
 +
-+/** Retains the next cell after adjacent build attempts establish a placement direction. */
++/** Selects each held build target from the last build position, an established line and the player's motion. */
 +public final class BlockPlacementPath {
 +    private BlockPos previous;
 +    private BlockPos next;
@@ -966,12 +996,48 @@ index 0000000000000000000000000000000000000000..5d1d60af7e19058bb9cdd338ac2a6aca
 +        return this.next != null;
 +    }
 +
-+    public BlockHitResult select(final Vec3 origin, final BlockHitResult hit) {
-+        if (this.next == null) {
-+            return hit;
++    /**
++     * Native held repeat 14376b8d0 retargets a block hit. A line builds only when the ray crosses its next cell.
++     * Before a line, motion above 0.1 blocks per tick builds on its dominant face, from the last build position
++     * or, while sneaking, from the hit block.
++     */
++    public BlockHitResult select(final Vec3 origin, final BlockHitResult hit, final Vec3 motion, final boolean sneaking) {
++        if (this.next != null) {
++            return this.lineHit(origin, hit);
 +        }
-+        return intersects(this.next, origin, hit.getLocation())
-+                ? hit.withPosition(this.next.relative(this.direction.getOpposite())).withDirection(this.direction) : null;
++        final Direction face = this.succeeded ? motionFace(motion) : null;
++        return face == null ? hit : hit.withPosition(sneaking ? hit.getBlockPos() : this.previous).withDirection(face);
++    }
++
++    /** Native clips an air or entity aim against the next cell too; the visible hit keeps its world location. */
++    public BlockHitResult lineHit(final Vec3 origin, final HitResult hit) {
++        if (this.next == null || !intersects(this.next, origin, hit.getLocation())) {
++            return null;
++        }
++        final BlockPos support = this.next.relative(this.direction.getOpposite());
++        return hit instanceof BlockHitResult block && block.getType() == HitResult.Type.BLOCK
++            ? block.withPosition(support).withDirection(this.direction)
++            : new BlockHitResult(hit.getLocation(), this.direction, support, false);
++    }
++
++    // Native compares squared float motion with 0.01 (14f0b7770); ties fall through to the Z axis.
++    static Direction motionFace(final Vec3 motion) {
++        final float x = (float) motion.x;
++        final float y = (float) motion.y;
++        final float z = (float) motion.z;
++        if (z * z + (x * x + y * y) <= .01F) {
++            return null;
++        }
++        final float ax = Math.abs(x);
++        final float ay = Math.abs(y);
++        final float az = Math.abs(z);
++        if (ay > ax && ay > az) {
++            return y > 0F ? Direction.UP : Direction.DOWN;
++        }
++        if (ax > ay && ax > az) {
++            return x > 0F ? Direction.EAST : Direction.WEST;
++        }
++        return z > 0F ? Direction.SOUTH : Direction.NORTH;
 +    }
 +
 +    // Native 1.26.60.5 segment/box SAT uses float midpoints, half extents and 0.0001 cross-axis tolerance.
@@ -1530,10 +1596,10 @@ index 0000000000000000000000000000000000000000..86945ff8ff93c845e116de9ec0d0ec9e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b882cae2ce
+index 0000000000000000000000000000000000000000..55eef0817775cf51fe8fd5654174831ed15e2309
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BlockPlacementPathTest.java
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,191 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1544,6 +1610,8 @@ index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b8
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.core.Direction;
 +import net.minecraft.world.phys.BlockHitResult;
++import net.minecraft.world.phys.EntityHitResult;
++import net.minecraft.world.phys.HitResult;
 +import net.minecraft.world.phys.Vec3;
 +import org.junit.jupiter.api.Test;
 +
@@ -1551,18 +1619,20 @@ index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b8
 +
 +final class BlockPlacementPathTest {
 +    private static final Vec3 EYE = new Vec3(.5F, -58.37998962402344F, -3.5F);
++    // Standing on the ground keeps gravity's motion, below native's 0.01 squared motion threshold.
++    private static final Vec3 STILL = new Vec3(0, -.0784F, 0);
 +
 +    @Test
 +    void rejectsTheNewTopFaceUntilTheRayCrossesTheRetainedNextCell() {
 +        final var path = northPath();
 +        final var top = new BlockHitResult(new Vec3(.5001634359359741F, -59F, -1.7961400747299194F),
 +                Direction.UP, new BlockPos(0, -60, -2), false);
-+        assertNull(path.select(EYE, top));
++        assertNull(path.select(EYE, top, STILL, false));
 +
 +        // Native re-aims onto the floor, but dispatches the retained north face of the last placed block.
 +        final var floor = new BlockHitResult(new Vec3(.5001088380813599F, -60F, -2.365708589553833F),
 +                Direction.UP, new BlockPos(0, -61, -3), false);
-+        final var selected = path.select(EYE, floor);
++        final var selected = path.select(EYE, floor, STILL, false);
 +        assertNotNull(selected);
 +        assertEquals(new BlockPos(0, -60, -2), selected.getBlockPos());
 +        assertEquals(Direction.NORTH, selected.getDirection());
@@ -1576,11 +1646,11 @@ index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b8
 +        path.attempted(new BlockPos(0, -60, -3), true, false, false);
 +        final var hit = new BlockHitResult(new Vec3(.5000479817390442F, -59.09409713745117F, -3F),
 +                Direction.NORTH, new BlockPos(0, -60, -3), false);
-+        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit).getBlockPos());
++        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit, STILL, false).getBlockPos());
 +        path.attempted(new BlockPos(0, -60, -4), false, false, false);
-+        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit).getBlockPos());
++        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit, STILL, false).getBlockPos());
 +        path.clear();
-+        assertSame(hit, path.select(EYE, hit));
++        assertSame(hit, path.select(EYE, hit, STILL, false));
 +    }
 +
 +    @Test
@@ -1589,10 +1659,10 @@ index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b8
 +        final var hit = new BlockHitResult(Vec3.ZERO, Direction.UP, BlockPos.ZERO, false);
 +        path.attempted(BlockPos.ZERO, false, false, false);
 +        path.attempted(new BlockPos(1, 0, 0), false, false, false);
-+        assertSame(hit, path.select(EYE, hit));
++        assertSame(hit, path.select(EYE, hit, STILL, false));
 +        path.attempted(new BlockPos(4, 0, 0), true, false, false);
 +        path.attempted(new BlockPos(6, 0, 0), true, false, false);
-+        assertSame(hit, path.select(EYE, hit));
++        assertSame(hit, path.select(EYE, hit, STILL, false));
 +    }
 +
 +    @Test
@@ -1604,7 +1674,7 @@ index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b8
 +            final BlockPos next = BlockPos.ZERO.relative(direction, 2);
 +            final var point = Vec3.atCenterOf(next);
 +            final var hit = new BlockHitResult(point, Direction.UP, next, false);
-+            final var selected = path.select(point, hit);
++            final var selected = path.select(point, hit, STILL, false);
 +            assertNotNull(selected, direction.name());
 +            assertEquals(direction, selected.getDirection());
 +            assertEquals(BlockPos.ZERO.relative(direction), selected.getBlockPos());
@@ -1637,9 +1707,9 @@ index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b8
 +        assertTrue(path.active());
 +        final var hit = new BlockHitResult(new Vec3(.5000479817390442F, -59.09409713745117F, -3F),
 +                Direction.NORTH, new BlockPos(0, -60, -3), false);
-+        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit).getBlockPos());
++        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit, STILL, false).getBlockPos());
 +        path.attempted(new BlockPos(0, -60, -4), true, false, true);
-+        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit).getBlockPos());
++        assertEquals(new BlockPos(0, -60, -3), path.select(EYE, hit, STILL, false).getBlockPos());
 +    }
 +
 +    @Test
@@ -1656,7 +1726,7 @@ index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b8
 +        path.attempted(new BlockPos(0, -60, -2), true, false, false);
 +        final var top = new BlockHitResult(new Vec3(.5001634359359741F, -59F, -1.7961400747299194F),
 +                Direction.UP, new BlockPos(0, -60, -2), false);
-+        assertNull(path.select(EYE, top));
++        assertNull(path.select(EYE, top, STILL, false));
 +    }
 +
 +    @Test
@@ -1667,9 +1737,51 @@ index 0000000000000000000000000000000000000000..d5fb92e71f163abc469e7bcb713c39b8
 +        path.attempted(new BlockPos(3, 319, 0), true, false, false);
 +        final Vec3 point = Vec3.atCenterOf(new BlockPos(3, 318, 0));
 +        final var hit = new BlockHitResult(point, Direction.UP, new BlockPos(3, 318, 0), false);
-+        final var selected = path.select(point, hit);
++        final var selected = path.select(point, hit, STILL, false);
 +        assertEquals(Direction.DOWN, selected.getDirection());
 +        assertEquals(new BlockPos(3, 319, 0), selected.getBlockPos());
++    }
++
++    @Test
++    void aLineKeepsBuildingWhenTheRayCrossesItsNextCellPastTheEdgeIntoAirOrAnEntity() {
++        final var path = new BlockPlacementPath();
++        path.attempted(new BlockPos(0, 64, 0), true, false, false);
++        path.attempted(new BlockPos(1, 64, 0), true, false, false);
++        final Vec3 eye = new Vec3(1.5F, 65.62F, .5F);
++        final Vec3 below = new Vec3(4.5F, 62.26F, .5F);
++        for (final HitResult hit : new HitResult[]{BlockHitResult.miss(below, Direction.WEST, BlockPos.containing(below)),
++                new EntityHitResult(null, below)}) {
++            final var selected = path.lineHit(eye, hit);
++            assertNotNull(selected, hit.getType().name());
++            assertEquals(HitResult.Type.BLOCK, selected.getType());
++            assertEquals(new BlockPos(1, 64, 0), selected.getBlockPos());
++            assertEquals(Direction.EAST, selected.getDirection());
++            assertEquals(below, selected.getLocation());
++        }
++        final Vec3 level = new Vec3(6F, 65.62F, .5F);
++        assertNull(path.lineHit(eye, BlockHitResult.miss(level, Direction.WEST, BlockPos.containing(level))));
++        assertNull(new BlockPlacementPath().lineHit(eye, new EntityHitResult(null, below)));
++    }
++
++    @Test
++    void beforeALineMovementBuildsOnItsDominantFaceFromTheLastBuildOrTheSneakedHit() {
++        final var path = new BlockPlacementPath();
++        final var floor = new BlockHitResult(new Vec3(3.25F, 64F, 2.75F), Direction.UP, new BlockPos(3, 63, 2), false);
++        final Vec3 walkingEast = new Vec3(.2F, -.0784F, .05F);
++        assertSame(floor, path.select(EYE, floor, walkingEast, false));
++
++        path.attempted(new BlockPos(0, 64, 0), true, false, false);
++        final var moving = path.select(EYE, floor, walkingEast, false);
++        assertEquals(new BlockPos(0, 64, 0), moving.getBlockPos());
++        assertEquals(Direction.EAST, moving.getDirection());
++        assertEquals(floor.getLocation(), moving.getLocation());
++        final var sneaking = path.select(EYE, floor, walkingEast, true);
++        assertEquals(new BlockPos(3, 63, 2), sneaking.getBlockPos());
++        assertEquals(Direction.EAST, sneaking.getDirection());
++        assertSame(floor, path.select(EYE, floor, STILL, false));
++        assertEquals(Direction.DOWN, path.select(EYE, floor, new Vec3(.05F, -.5F, 0), false).getDirection());
++        // Equal horizontal components resolve to the Z axis.
++        assertEquals(Direction.NORTH, path.select(EYE, floor, new Vec3(.1F, 0, -.1F), false).getDirection());
 +    }
 +
 +    private static BlockPlacementPath northPath() {

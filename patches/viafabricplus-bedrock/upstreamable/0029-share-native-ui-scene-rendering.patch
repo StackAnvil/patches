@@ -1498,6 +1498,36 @@ Zero coefficients add no dependency, and "%sm" skips siblings whose
 size also starts with "%sm". The layout previously iterated three
 passes and rejected the whole screen past 16384 pixels.
 
+A negative sum stays negative. The native setter (0x140512a30, cases 2
+and 3) stores the computed width or height unchanged, replacing only NaN
+and infinity with 0, and dependent terms read the solved value. A
+"100% - 200px" child of a 150-pixel panel is -50 pixels wide, its "50%"
+child -25, and centering moves it right by 25 pixels. A negative control
+has no visible area, so it draws nothing and takes no input. The add-on
+previously raised every sum to 0.
+
+Offsets go through the same solver. The native binder (0x1405196c0,
+cases 0 and 1) builds each position from the parent anchor term, minus
+the control's own anchor term, plus the authored offset terms; the solver
+(0x14051a6d0) then clamps the sum to -32768..32767, and the setter stores
+it at the control position. An offset of 100000 pixels places a control
+at 32767; the add-on previously rejected the whole screen past 16384.
+
+A "%sm" term reads every child of the parent, the control included
+(term builder 0x14050ef34). It skips a child only when that child's size
+on the same axis starts with "%sm". A "10px + 100%sm" control therefore
+depends on itself and stays unsolved, as does a "100%sm" sibling that
+reads it.
+
+inherit_max_sibling_width and inherit_max_sibling_height (layout flags
+0x20 and 0x40) apply after the solve. The solver (0x14051b690) queues
+each solved flagged size; 0x140509cd0 then evaluates 0x14051b220 for all
+of them, which takes the largest size on that axis among every child of
+the parent, before it stores any result. It pins the size, invalidates
+its dependents and solves again, so the control's own children and the
+parent's "%c" size follow the inherited value. The add-on ignored both
+flags.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index f845830418399fccf82c2278f6ff73594b9082bf..7fbe6b1a7c3874cd9138b59460240b6038a0e641 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -3121,10 +3151,10 @@ index 0000000000000000000000000000000000000000..2ed5c05795646439e15c96d02033bf29
 +    private record Draw(Model<EntityRenderState> model, RenderType type) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-index 785a647a0c1478f6570c0e4693525c5c67cd4950..68381d2e68d9c68778ff0b643b256e9b84c21ae5 100644
+index 95a2fdb8bf54bdacbd2c5dffd3e3dcce18ca3b41..31407b039e6922c2ca73c68b02068ff704fc6151 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-@@ -105,6 +105,9 @@ public final class BedrockPlayerAttachables {
+@@ -106,6 +106,9 @@ public final class BedrockPlayerAttachables {
              final BedrockActorAnimation.Frame input, final boolean firstPerson, final ItemStack main, final ItemStack off) {
          final var packs = resources(entity);
          if (packs == null) return List.of();
@@ -3134,8 +3164,8 @@ index 785a647a0c1478f6570c0e4693525c5c67cd4950..68381d2e68d9c68778ff0b643b256e9b
          final List<BedrockActorAnimation.ParentSetup> result = new ArrayList<>();
          final Map<String, Object> queries = new HashMap<>(input.queries());
          queries.putAll(BedrockAttachableBindings.queries());
-@@ -118,7 +121,7 @@ public final class BedrockPlayerAttachables {
-             if (!admits(slot, armor(stack), rendering)) continue;
+@@ -119,7 +122,7 @@ public final class BedrockPlayerAttachables {
+             if (!admits(entity, slot, stack, firstPerson, rendering)) continue;
              final var context = Map.<String, Object>of("is_first_person", firstPerson ? 1F : 0F, "item_slot", slotName(slot));
              try {
 -                final var identity = identify(stack, packs, SELECTORS.computeIfAbsent(entity, _ -> new BedrockAttachableSelection()),
@@ -3143,7 +3173,7 @@ index 785a647a0c1478f6570c0e4693525c5c67cd4950..68381d2e68d9c68778ff0b643b256e9b
                          properties, new BedrockActorAnimation.Frame(queries, input.variables(), context));
                  if (identity == null || !identity.variant().equals("default")) continue;
                  final var resource = RESOURCES.computeIfAbsent(identity.identifier(), _ -> load(identity.identifier(), packs)).orElse(null);
-@@ -145,12 +148,18 @@ public final class BedrockPlayerAttachables {
+@@ -146,12 +149,18 @@ public final class BedrockPlayerAttachables {
          final ResourcePackStorage packs = resources(entity);
          if (packs == null) return List.of();
          final var glintFrame = BedrockActorGlintFrames.current();
@@ -3163,7 +3193,7 @@ index 785a647a0c1478f6570c0e4693525c5c67cd4950..68381d2e68d9c68778ff0b643b256e9b
          queries.put("owner_identifier", "minecraft:player");
          queries.put("is_owner_identifier_any", (BedrockActorAnimation.Query) names -> names.contains("minecraft:player"));
          final var actor = BedrockActorState.state(entity.getUUID());
-@@ -174,7 +183,7 @@ public final class BedrockPlayerAttachables {
+@@ -175,7 +184,7 @@ public final class BedrockPlayerAttachables {
                      "is_patterned", appearance.patterned() ? 1F : 0F);
              ItemIdentity identity;
              try {
@@ -3172,7 +3202,7 @@ index 785a647a0c1478f6570c0e4693525c5c67cd4950..68381d2e68d9c68778ff0b643b256e9b
                          new BedrockActorAnimation.Frame(itemQueries, variables, context));
              } catch (IOException | RuntimeException invalid) {
                  if (FAILED_SELECTIONS.add(stack.getItem().toString()))
-@@ -230,7 +239,7 @@ public final class BedrockPlayerAttachables {
+@@ -231,7 +240,7 @@ public final class BedrockPlayerAttachables {
                          if (!heldBindings.hasBindingPath(bindings.declared())) { supported = false; break; }
                      }
                      for (final var group : BedrockGeometry.partitionMaterials(geometry, Map.of(), selected.materials()).entrySet()) {
@@ -8114,7 +8144,7 @@ index 0000000000000000000000000000000000000000..165c9f3e71eb3f16884126f30b2e6ad5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiDimension.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiDimension.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b027c7657b8a0edd6c623eceacf45efc8a14235
+index 0000000000000000000000000000000000000000..499d92dcac4d740b9d3fea80024b19a26ad9981b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiDimension.java
 @@ -0,0 +1,105 @@
@@ -8190,7 +8220,7 @@ index 0000000000000000000000000000000000000000..2b027c7657b8a0edd6c623eceacf45ef
 +            case WIDTH -> width / 100;
 +            case HEIGHT -> height / 100;
 +            case SIBLING -> sibling / 100;
-+            case DEFAULT -> Math.max(0, fallback);
++            case DEFAULT -> fallback;
 +            case FILL -> Math.max(0, parent);
 +        };
 +        return result;
@@ -9944,10 +9974,10 @@ index 0000000000000000000000000000000000000000..cd387879688b23bb6ecf9099f32f25ec
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92aec706d00
+index 0000000000000000000000000000000000000000..30aa0a286d728df9e81c5afb1a9d7d51ac605e18
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayout.java
-@@ -0,0 +1,699 @@
+@@ -0,0 +1,753 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9968,8 +9998,11 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +/** Resolves authored anchors and content dimensions independently of the rendering backend. */
 +public final class NativeUiLayout {
 +    private static final float LIMIT = 16384;
-+    /** Native clamps each computed size to this range unless an authored min_size or max_size replaces a bound. */
-+    private static final float MINIMUM_SIZE = -32768, MAXIMUM_SIZE = 32767;
++    /**
++     * Native clamps each computed size and position to this range. An authored min_size or max_size replaces a size
++     * bound; a position has none.
++     */
++    private static final float MINIMUM_VALUE = -32768, MAXIMUM_VALUE = 32767;
 +    /**
 +     * Native computes a size only after all of its dependencies. It leaves a cyclic size, and every size that
 +     * depends on it, unsolved without error, and the control keeps its stored size: 0 for a new control.
@@ -10084,19 +10117,19 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +        final boolean defaultWidthAxis = defaultSize(node, 0);
 +        final boolean defaultHeightAxis = defaultSize(node, 1);
 +        // A size that depends on its children starts unsolved, so a child that depends on it stays unsolved too.
-+        float width = childDimension(node, 0) ? UNSOLVED : intrinsic.width;
-+        float height = childDimension(node, 1) ? UNSOLVED : intrinsic.height;
++        float width = pin(environment.pinnedWidth, childDimension(node, 0) ? UNSOLVED : intrinsic.width);
++        float height = pin(environment.pinnedHeight, childDimension(node, 1) ? UNSOLVED : intrinsic.height);
 +        for (int pass = 0; pass < 3; pass++) {
 +            final float previousWidth = width, previousHeight = height;
 +            // Resolve dimensions independent of children before descending. Measuring at the
 +            // inherited extent first multiplies speculative passes through nested content panels.
 +            if (!defaultWidthAxis && !childDimension(node, 0)) {
 +                width = dimension(node, "size", 0, environment, width, height, 0, 0, intrinsic.width);
-+                width = constrain(node, 0, width, environment, width, height, 0, 0);
++                width = pin(environment.pinnedWidth, constrain(node, 0, width, environment, width, height, 0, 0));
 +            }
 +            if (!defaultHeightAxis && !childDimension(node, 1)) {
 +                height = dimension(node, "size", 1, environment, width, height, 0, 0, intrinsic.height);
-+                height = constrain(node, 1, height, environment, width, height, 0, 0);
++                height = pin(environment.pinnedHeight, constrain(node, 1, height, environment, width, height, 0, 0));
 +            }
 +            final List<Size> children = this.activeState(node, this.children(node, width, height));
 +            final Size content = this.content(node, children, width, height);
@@ -10113,7 +10146,7 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +                ? height * intrinsic.width / intrinsic.height
 +                : stack ? vertical ? environment.width : content.width : intrinsic.width;
 +            width = dimension(node, "size", 0, environment, width, height, childDimensions.width, maximumWidth, defaultWidth);
-+            width = constrain(node, 0, width, environment, width, height, childDimensions.width, maximumWidth);
++            width = pin(environment.pinnedWidth, constrain(node, 0, width, environment, width, height, childDimensions.width, maximumWidth));
 +            final float intrinsicHeight = container || inventoryButton || stack || image ? intrinsic.height
 +                : Float.isNaN(width) ? UNSOLVED : this.metrics.constrained(node, width).height;
 +            final float defaultHeight = ratioSize && defaultHeightAxis && !defaultWidthAxis && intrinsic.width > 0
@@ -10121,7 +10154,7 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +                : stack ? vertical ? content.height : environment.height
 +                : node.type().equals("grid") && !node.string("grid_item_template", "").isEmpty() ? content.height : intrinsicHeight;
 +            height = dimension(node, "size", 1, environment, width, height, childDimensions.height, maximumHeight, defaultHeight);
-+            height = constrain(node, 1, height, environment, width, height, childDimensions.height, maximumHeight);
++            height = pin(environment.pinnedHeight, constrain(node, 1, height, environment, width, height, childDimensions.height, maximumHeight));
 +            if (Float.compare(width, previousWidth) == 0 && Float.compare(height, previousHeight) == 0) break;
 +        }
 +        final Size result = new Size(width, height);
@@ -10178,17 +10211,21 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +        final float availableWidth = width;
 +        final float availableHeight = height;
 +        final List<Size> result = new ArrayList<>();
++        final List<Measurement> environments = new ArrayList<>();
 +        final Grid collection = node.type().equals("grid") && !node.string("grid_item_template", "").isEmpty()
 +            ? this.grid(node, width, height) : null;
 +        final float defaultWidth = collection == null ? width : width / collection.columns;
 +        final float defaultHeight = collection == null ? height : height / collection.rows;
-+        for (final var child : node.children())
-+            result.add(this.measure(child, new Measurement(availableWidth, availableHeight, 0, 0, defaultWidth, defaultHeight)));
++        for (final var child : node.children()) {
++            environments.add(new Measurement(availableWidth, availableHeight, 0, 0, defaultWidth, defaultHeight));
++            result.add(this.measure(child, environments.getLast()));
++        }
 +        for (int i = 0; i < result.size(); i++) {
 +            final var child = node.children().get(i);
 +            if (!siblingDimension(child)) continue;
 +            final Size sibling = this.siblingExtent(node, result, i);
-+            result.set(i, this.measure(child, new Measurement(availableWidth, availableHeight, sibling.width, sibling.height, defaultWidth, defaultHeight)));
++            environments.set(i, new Measurement(availableWidth, availableHeight, sibling.width, sibling.height, defaultWidth, defaultHeight));
++            result.set(i, this.measure(child, environments.get(i)));
 +        }
 +        if (node.type().equals("stack_panel")) {
 +            final boolean vertical = !node.string("orientation", "vertical").equals("horizontal");
@@ -10208,25 +10245,59 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +                    final Size sibling = siblingDimension(child) ? this.siblingExtent(node, result, i) : EMPTY;
 +                    final float fillWidth = vertical ? availableWidth : remainder;
 +                    final float fillHeight = vertical ? remainder : availableHeight;
-+                    result.set(i, this.measure(child, new Measurement(fillWidth, fillHeight,
-+                        sibling.width, sibling.height, fillWidth, fillHeight)));
++                    environments.set(i, new Measurement(fillWidth, fillHeight, sibling.width, sibling.height, fillWidth, fillHeight));
++                    result.set(i, this.measure(child, environments.get(i)));
 +                }
 +            }
 +        }
++        this.inheritMaximumSiblingSizes(node, result, environments);
 +        return result;
 +    }
 +
 +    /**
-+     * Native %sm takes the largest size among the parent's children, skipping each child whose own size on that axis
-+     * starts with %sm. Sibling %sm controls therefore never size each other.
++     * After the solve, native raises each solved size flagged inherit_max_sibling_width or _height to the largest
++     * size on that axis among all of the parent's children, using the sizes from before any of them changed
++     * (0x140509cd0 with 0x14051b220). The control keeps that size, and native solves its dependents again.
++     */
++    private void inheritMaximumSiblingSizes(final NativeUiScene.Node node, final List<Size> sizes,
++                                            final List<Measurement> environments) {
++        final List<Size> solved = List.copyOf(sizes);
++        for (int i = 0; i < solved.size(); i++) {
++            final var child = node.children().get(i);
++            if (!this.visibleNodes.getOrDefault(child, true)) continue;
++            final Size own = solved.get(i);
++            final boolean inheritWidth = child.flag("inherit_max_sibling_width", false) && !Float.isNaN(own.width);
++            final boolean inheritHeight = child.flag("inherit_max_sibling_height", false) && !Float.isNaN(own.height);
++            if (!inheritWidth && !inheritHeight) continue;
++            float width = own.width, height = own.height;
++            for (final Size sibling : solved) {
++                width = Math.max(width, stored(sibling.width));
++                height = Math.max(height, stored(sibling.height));
++            }
++            final Measurement environment = environments.get(i);
++            sizes.set(i, this.measure(child, new Measurement(environment.width, environment.height, environment.siblingWidth,
++                environment.siblingHeight, environment.defaultWidth, environment.defaultHeight,
++                inheritWidth ? width : UNSOLVED, inheritHeight ? height : UNSOLVED)));
++        }
++    }
++
++    private static float pin(final float pinned, final float value) {
++        return Float.isNaN(pinned) ? value : pinned;
++    }
++
++    /**
++     * Native %sm takes the largest size among all of the parent's children, skipping each child whose own size on
++     * that axis starts with %sm (term builder 0x14050ef34). Sibling %sm controls therefore never size each other.
++     * The control itself counts unless its own size starts with %sm, so a "10px + 100%sm" size depends on itself
++     * and stays unsolved, as does every %sm size that depends on it.
 +     */
 +    private Size siblingExtent(final NativeUiScene.Node node, final List<Size> sizes, final int index) {
 +        float width = 0, height = 0;
 +        for (int other = 0; other < sizes.size(); other++) {
-+            if (other == index) continue;
 +            final var sibling = node.children().get(other);
-+            if (!this.siblingSized(sibling, 0)) width = Math.max(width, sizes.get(other).width);
-+            if (!this.siblingSized(sibling, 1)) height = Math.max(height, sizes.get(other).height);
++            final Size size = other == index ? new Size(UNSOLVED, UNSOLVED) : sizes.get(other);
++            if (!this.siblingSized(sibling, 0)) width = Math.max(width, size.width);
++            if (!this.siblingSized(sibling, 1)) height = Math.max(height, size.height);
 +        }
 +        return new Size(width, height);
 +    }
@@ -10297,8 +10368,8 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +        final boolean anchored = !stacked || container.flag("use_child_anchors", false);
 +        final float offsetX = stacked ? 0 : offset(node, 0, parent.width, size);
 +        final float offsetY = stacked ? 0 : offset(node, 1, parent.height, size);
-+        final float x = parent.x + (anchored ? parent.width * from[0] - size.width * to[0] : 0) + offsetX;
-+        final float y = parent.y + (anchored ? parent.height * from[1] - size.height * to[1] : 0) + offsetY;
++        final float x = parent.x + position((anchored ? parent.width * from[0] - size.width * to[0] : 0) + offsetX);
++        final float y = parent.y + position((anchored ? parent.height * from[1] - size.height * to[1] : 0) + offsetY);
 +        final NativeUiCursorPlacement placement = this.placements.apply(node);
 +        if (placement != null) this.cursorOffsets.put(node, new CursorOffset(placement, offsetX, offsetY));
 +        final Rect bounds = new Rect(x, y, size.width, size.height);
@@ -10427,13 +10498,14 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +
 +    /**
 +     * Applies the native bounds: a larger sum takes the maximum, and a smaller one rises to the minimum. A minimum
-+     * above the maximum therefore wins only when the sum is at or below the maximum.
++     * above the maximum therefore wins only when the sum is at or below the maximum. Nothing raises a negative size
++     * to zero; such a control has no visible area, so it draws nothing and takes no input.
 +     */
 +    private float constrain(final NativeUiScene.Node node, final int axis, final float size,
 +                                   final Measurement environment, final float width, final float height,
 +                                   final float content, final float maximum) {
-+        final float lower = this.bound(node, "min_size", axis, environment, width, height, content, maximum, MINIMUM_SIZE);
-+        final float upper = this.bound(node, "max_size", axis, environment, width, height, content, maximum, MAXIMUM_SIZE);
++        final float lower = this.bound(node, "min_size", axis, environment, width, height, content, maximum, MINIMUM_VALUE);
++        final float upper = this.bound(node, "max_size", axis, environment, width, height, content, maximum, MAXIMUM_VALUE);
 +        if (Float.isNaN(size) || Float.isNaN(lower) || Float.isNaN(upper)) return UNSOLVED;
 +        return size > upper ? upper : Math.max(size, lower);
 +    }
@@ -10450,11 +10522,12 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +                                   final Measurement environment, final float width, final float height,
 +                                   final float content, final float maximum, final float fallback) {
 +        final NativeUiDimension dimension = this.dimensionValue(node, key, axis);
-+        if (dimension == null) return Math.max(0, fallback);
++        if (dimension == null) return fallback;
 +        final float parent = axis == 0 ? environment.width : environment.height;
 +        final float sibling = axis == 0 ? environment.siblingWidth : environment.siblingHeight;
-+        // Math.max keeps NaN, so an unsolved dependency stays unsolved. Overflow reaches the native range in constrain.
-+        return Math.max(0, dimension.resolve(parent, content, maximum, width, height, sibling, fallback));
++        // Native stores a negative sum as computed (setter 0x140512a30), so dependents see it. NaN stays unsolved,
++        // and overflow reaches the native range in constrain.
++        return dimension.resolve(parent, content, maximum, width, height, sibling, fallback);
 +    }
 +
 +    public static float dimension(final JsonElement value, final float parent, final float content, final float maximum) {
@@ -10473,7 +10546,15 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +
 +    private float offset(final NativeUiScene.Node node, final int axis, final float parent, final Size size) {
 +        final var dimension = this.dimensionValue(node, "offset", axis);
-+        return dimension == null ? 0 : signed(dimension.resolve(parent, 0, 0, size.width, size.height, 0, 0));
++        return dimension == null ? 0 : dimension.resolve(parent, 0, 0, size.width, size.height, 0, 0);
++    }
++
++    /**
++     * Native solves a control's position like its size (binder 0x1405196c0, solver 0x14051a6d0): the parent
++     * anchor point, less the control's own anchor point, plus the authored offset, clamped to the native range.
++     */
++    private static float position(final float value) {
++        return value > MAXIMUM_VALUE ? MAXIMUM_VALUE : Math.max(value, MINIMUM_VALUE);
 +    }
 +
 +    private boolean contentDimension(final NativeUiScene.Node node, final int axis) {
@@ -10490,12 +10571,8 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +    }
 +
 +    private static float bounded(final float value) {
-+        return Math.max(0, signed(value));
-+    }
-+
-+    private static float signed(final float value) {
 +        if (!Float.isFinite(value) || Math.abs(value) > LIMIT) throw new IllegalArgumentException("Native UI dimension exceeds layout limits");
-+        return value;
++        return Math.max(0, value);
 +    }
 +
 +    private Grid grid(final NativeUiScene.Node node, final float width, final float height) {
@@ -10618,7 +10695,14 @@ index 0000000000000000000000000000000000000000..2eb8632be3c24f9a6475f72c6928f92a
 +        }
 +    }
 +
-+    private record Measurement(float width, float height, float siblingWidth, float siblingHeight, float defaultWidth, float defaultHeight) {}
++    /** A pinned size (not NaN) replaces the computed one, as an inherited maximum sibling size does natively. */
++    private record Measurement(float width, float height, float siblingWidth, float siblingHeight, float defaultWidth,
++                               float defaultHeight, float pinnedWidth, float pinnedHeight) {
++        Measurement(final float width, final float height, final float siblingWidth, final float siblingHeight,
++                    final float defaultWidth, final float defaultHeight) {
++            this(width, height, siblingWidth, siblingHeight, defaultWidth, defaultHeight, UNSOLVED, UNSOLVED);
++        }
++    }
 +
 +    private static Size stored(final Size size) {
 +        return Float.isNaN(size.width) || Float.isNaN(size.height) ? new Size(stored(size.width), stored(size.height)) : size;
@@ -19484,10 +19568,10 @@ index 0000000000000000000000000000000000000000..4405dd61a8e933950924beea7824267d
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayoutTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayoutTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3bb20da85feb96e66762838e978bad3a8b51d2a
+index 0000000000000000000000000000000000000000..f3404d5a639c807bfe140bf42705abf560dceee8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiLayoutTest.java
-@@ -0,0 +1,1163 @@
+@@ -0,0 +1,1227 @@
 +package com.viaversion.viafabricplus.bedrock.screen.ui;
 +
 +import com.google.gson.JsonArray;
@@ -19586,9 +19670,19 @@ index 0000000000000000000000000000000000000000..a3bb20da85feb96e66762838e978bad3
 +        child.add("max_size", pair(100000, 100000));
 +        child.add("size", pair(100000, 20));
 +        assertEquals(100000, layout(scene(root), 640, 360).children().getFirst().bounds().width());
-+        child.add("size", pair(20, 20));
-+        child.add("offset", pair(100000, 0));
-+        assertThrows(IllegalArgumentException.class, () -> layout(scene(root), 640, 360));
++    }
++
++    @Test
++    void clampsOffsetPositionsToTheNativeRangeInsteadOfRejectingTheScreen() {
++        final JsonObject root = node("panel", 200, 100);
++        final JsonObject child = node("panel", 20, 20);
++        child.addProperty("anchor_from", "center");
++        child.addProperty("anchor_to", "center");
++        child.add("offset", pair(32700, -100000));
++        children(root, child);
++        assertEquals(new NativeUiLayout.Rect(32767, -32768, 20, 20), layout(scene(root), 640, 360).children().getFirst().bounds());
++        child.add("offset", pair(20000, "-50%"));
++        assertEquals(new NativeUiLayout.Rect(20090, -10, 20, 20), layout(scene(root), 640, 360).children().getFirst().bounds());
 +    }
 +
 +    @Test
@@ -19630,6 +19724,25 @@ index 0000000000000000000000000000000000000000..a3bb20da85feb96e66762838e978bad3
 +    }
 +
 +    @Test
++    void keepsNegativeSizesForPlacementAndDependentsButShowsNothing() {
++        final JsonObject root = node("panel", 150, 100);
++        final JsonObject child = node("panel", "100% - 200px", 20);
++        child.addProperty("anchor_from", "center");
++        child.addProperty("anchor_to", "center");
++        final JsonObject nested = node("panel", "50%", "100%");
++        children(child, nested);
++        children(root, child);
++
++        final var box = layout(scene(root), 640, 360).children().getFirst();
++        assertEquals(new NativeUiLayout.Rect(100, 40, -50, 20), box.bounds());
++        assertEquals(-25, box.children().getFirst().bounds().width());
++        assertEquals(0, box.visibleBounds().width());
++        assertFalse(box.visibleBounds().contains(90, 50));
++        child.add("min_size", pair(10, 0));
++        assertEquals(new NativeUiLayout.Rect(70, 40, 10, 20), layout(scene(root), 640, 360).children().getFirst().bounds());
++    }
++
++    @Test
 +    void appliesAMinimumAboveTheMaximumOnlyWhenTheSizeFitsTheMaximum() {
 +        final JsonObject root = node("panel", 200, 100);
 +        final JsonObject child = node("panel", 20, 20);
@@ -19648,6 +19761,41 @@ index 0000000000000000000000000000000000000000..a3bb20da85feb96e66762838e978bad3
 +        final var children = layout(scene(root), 640, 360).children();
 +        assertEquals(60, children.get(1).bounds().width());
 +        assertEquals(60, children.get(2).bounds().width());
++    }
++
++    @Test
++    void maximumSiblingSizeAfterAnotherTermDependsOnItselfAndStaysUnsolved() {
++        final JsonObject root = node("panel", 200, 100);
++        final JsonObject trailing = node("panel", "10px + 100%sm", 10);
++        children(root, node("panel", 50, 10), trailing, node("panel", "100%sm", 10));
++        var children = layout(scene(root), 640, 360).children();
++        assertEquals(0, children.get(1).bounds().width());
++        assertEquals(0, children.get(2).bounds().width());
++        trailing.add("size", pair("100%sm + 10px", 10));
++        children = layout(scene(root), 640, 360).children();
++        assertEquals(60, children.get(1).bounds().width());
++        assertEquals(50, children.get(2).bounds().width());
++    }
++
++    @Test
++    void inheritsTheLargestSiblingSizeAndResizesDependentsAfterTheSolve() {
++        final JsonObject root = node("stack_panel", "100%c", "100%cm");
++        root.addProperty("orientation", "horizontal");
++        final JsonObject tall = node("panel", 20, "100%c");
++        children(tall, node("panel", 5, 40));
++        final JsonObject inheriting = node("panel", 25, 10);
++        inheriting.addProperty("inherit_max_sibling_width", true);
++        inheriting.addProperty("inherit_max_sibling_height", true);
++        children(inheriting, node("panel", "100%", "100%"));
++        children(root, node("panel", 30, 10), tall, inheriting);
++
++        final var box = layout(scene(root), 640, 360);
++        final var inherited = box.children().get(2);
++        assertEquals(new NativeUiLayout.Rect(50, 0, 30, 40), inherited.bounds());
++        assertEquals(30, inherited.children().getFirst().bounds().width(), .0001F);
++        assertEquals(40, inherited.children().getFirst().bounds().height());
++        assertEquals(new NativeUiLayout.Rect(0, 0, 80, 40), box.bounds());
++        assertEquals(10, box.children().getFirst().bounds().height());
 +    }
 +
 +    @Test
@@ -20125,7 +20273,7 @@ index 0000000000000000000000000000000000000000..a3bb20da85feb96e66762838e978bad3
 +        }
 +        root.add("grid_dimensions", pair(1, 1));
 +        root.add("offset", pair(1000000, 0));
-+        assertThrows(IllegalArgumentException.class, () -> layout(scene(root), 320, 200));
++        assertEquals(32767, layout(scene(root), 320, 200).bounds().x());
 +        final var props = node("grid", 100, 100);
 +        final var child = new NativeUiScene.Node("child", "panel", new JsonObject(), java.util.List.of(), Integer.MIN_VALUE);
 +        final var direct = new NativeUiScene.Node("grid", "grid", props,

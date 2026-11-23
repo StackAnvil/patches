@@ -35,12 +35,119 @@ style of the character before it. The rows go through Java's own
 render cache in SignText, so the layout runs once per sign text.
 Java servers keep Java's clipping.
 
+Without PersistFormatting, the native row callback (0x146a94fe0)
+adds each row as it is, and the renderer draws every row with its own
+text call. A wrapped row therefore loses the formatting of the rows
+before it, but keeps a formatting code that moved into it. With the
+flag, the callback prefixes the codes that 0x1407f8260 collects until
+a reset code. ViaBedrock marks faces without the flag with
+"viabedrock:persist_formatting": false, which the add-on keeps on the
+loaded SignText. Rows that continue a wrapped line on such faces start
+from the line's base style until the next styled part.
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSignText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSignText.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a66d2185d9e6a26983dc5f66412ca7598a628803
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSignText.java
+@@ -0,0 +1,15 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.access;
++
++import net.minecraft.world.level.storage.ValueInput;
++
++/** Bedrock sign face flags that Java sign text cannot express. ViaBedrock adds them to the face's NBT. */
++public interface IBedrockSignText {
++    boolean viaFabricPlusBedrock$persistFormatting();
++
++    void viaFabricPlusBedrock$readFlags(ValueInput face);
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignBlockEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignBlockEntity.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c3cf19ad157d6e0dd34f9926a937b973ce68e77
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignBlockEntity.java
+@@ -0,0 +1,36 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockSignText;
++import net.minecraft.world.level.block.entity.SignBlockEntity;
++import net.minecraft.world.level.block.entity.SignText;
++import net.minecraft.world.level.storage.ValueInput;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++/** Keeps the Bedrock face flags that the Java sign text codec drops. */
++@Mixin(SignBlockEntity.class)
++public abstract class MixinSignBlockEntity {
++    @Shadow private SignText frontText;
++    @Shadow private SignText backText;
++
++    @Inject(method = "loadAdditional", at = @At("TAIL"))
++    private void readBedrockFaceFlags(final ValueInput input, final CallbackInfo ci) {
++        viaFabricPlusBedrock$readFlags(input, "front_text", this.frontText);
++        viaFabricPlusBedrock$readFlags(input, "back_text", this.backText);
++    }
++
++    @Unique
++    private static void viaFabricPlusBedrock$readFlags(final ValueInput input, final String key, final SignText text) {
++        // A missing or invalid face is the shared empty text, which must keep the defaults.
++        if (text != SignText.EMPTY) input.child(key).ifPresent(((IBedrockSignText) text)::viaFabricPlusBedrock$readFlags);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignText.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..138d73ff67ebba1262ae87fd38d75530682f16b4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinSignText.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockSignText;
++import net.minecraft.world.level.block.entity.SignText;
++import net.minecraft.world.level.storage.ValueInput;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
++
++@Mixin(SignText.class)
++public abstract class MixinSignText implements IBedrockSignText {
++    @Unique private boolean viaFabricPlusBedrock$persistFormatting = true;
++
++    @Override
++    public boolean viaFabricPlusBedrock$persistFormatting() {
++        return this.viaFabricPlusBedrock$persistFormatting;
++    }
++
++    @Override
++    public void viaFabricPlusBedrock$readFlags(final ValueInput face) {
++        // Matches SignBlockEntityRewriter.PERSIST_FORMATTING_TAG in ViaBedrock.
++        this.viaFabricPlusBedrock$persistFormatting = face.getBooleanOr("viabedrock:persist_formatting", true);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a198c2e2af1961bbc4b6954a917211faccde748
+index 0000000000000000000000000000000000000000..1adc4805de4582be7417ed90fe39e99d2cfe804f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractSignRenderer.java
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,44 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -51,6 +158,7 @@ index 0000000000000000000000000000000000000000..6a198c2e2af1961bbc4b6954a917211f
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.llamalad7.mixinextras.sugar.Local;
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockSignText;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockSignText;
 +import java.util.function.Function;
@@ -80,15 +188,16 @@ index 0000000000000000000000000000000000000000..6a198c2e2af1961bbc4b6954a917211f
 +                                                    @Local(argsOnly = true) final SignRenderState state) {
 +        if (!BedrockInputPermissions.isBedrockConnection()) return original.call(text, filtered, prepare);
 +        final int width = state instanceof HangingSignRenderState ? BedrockSignText.HANGING_WIDTH : BedrockSignText.STANDING_WIDTH;
-+        return original.call(text, filtered, BedrockSignText.rows(this.font, text.getMessages(filtered), width));
++        final boolean persistFormatting = ((IBedrockSignText) text).viaFabricPlusBedrock$persistFormatting();
++        return original.call(text, filtered, BedrockSignText.rows(this.font, text.getMessages(filtered), width, persistFormatting));
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignText.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignText.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f3e65598c54259b7bccc18da83fb4df56481d3e
+index 0000000000000000000000000000000000000000..1c61f99f92473d491792711aac73939609551156
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignText.java
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,193 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -99,6 +208,7 @@ index 0000000000000000000000000000000000000000..6f3e65598c54259b7bccc18da83fb4df
 +import java.util.ArrayList;
 +import java.util.Arrays;
 +import java.util.List;
++import java.util.Optional;
 +import java.util.function.Function;
 +import java.util.function.ToIntFunction;
 +import net.minecraft.client.gui.Font;
@@ -110,7 +220,8 @@ index 0000000000000000000000000000000000000000..6f3e65598c54259b7bccc18da83fb4df
 +/**
 + * Wraps sign text into rows like the Bedrock 1.26.60.5 client. The native layout (0x140e69dd0) breaks lines at spaces
 + * and line breaks, and all lines share one budget of four rows. A word wider than the row is broken with a hyphen
-+ * (0x140e6b010). Java clips each line at the row width instead.
++ * (0x140e6b010). Java clips each line at the row width instead. Without PersistFormatting, the native client draws each
++ * row without the formatting of the rows before it, including the rows of a wrapped line (0x146a94fe0).
 + */
 +public final class BedrockSignText {
 +    public static final int STANDING_WIDTH = 89;
@@ -123,39 +234,66 @@ index 0000000000000000000000000000000000000000..6f3e65598c54259b7bccc18da83fb4df
 +     * Prepares the messages of one sign face for {@code SignText.getRenderMessages}, which caches the result. The
 +     * first message lays out the whole face. Each call then returns the next row.
 +     */
-+    public static Function<Component, FormattedCharSequence> rows(final Font font, final List<Component> messages, final int width) {
++    public static Function<Component, FormattedCharSequence> rows(final Font font, final List<Component> messages, final int width,
++                                                                  final boolean persistFormatting) {
 +        final FormattedCharSequence[][] rows = {null};
 +        final int[] next = {0};
 +        return message -> {
-+            if (rows[0] == null) rows[0] = rows(messages, width, glyphs -> font.width(sequence(glyphs)));
++            if (rows[0] == null) rows[0] = rows(messages, width, persistFormatting, glyphs -> font.width(sequence(glyphs)));
 +            return next[0] < rows[0].length ? rows[0][next[0]++] : FormattedCharSequence.EMPTY;
 +        };
 +    }
 +
-+    static FormattedCharSequence[] rows(final List<Component> messages, final int width, final ToIntFunction<List<Glyph>> measure) {
++    static FormattedCharSequence[] rows(final List<Component> messages, final int width, final boolean persistFormatting,
++                                        final ToIntFunction<List<Glyph>> measure) {
 +        final List<List<Glyph>> lines = new ArrayList<>(messages.size());
++        final List<Style> bases = new ArrayList<>(messages.size());
 +        for (final Component message : messages) {
 +            final List<Glyph> line = new ArrayList<>();
-+            StringDecomposer.iterateFormatted(message, Style.EMPTY, (index, style, codePoint) -> line.add(new Glyph(codePoint, style)));
++            // Each styled part starts where a formatting code stood in the Bedrock text.
++            message.visit((style, text) -> {
++                final int start = line.size();
++                StringDecomposer.iterateFormatted(text, style, (index, glyphStyle, codePoint) -> line.add(new Glyph(codePoint, glyphStyle, line.size() == start)));
++                return Optional.empty();
++            }, Style.EMPTY);
 +            lines.add(line);
++            bases.add(message.getStyle());
 +        }
 +        final FormattedCharSequence[] result = new FormattedCharSequence[messages.size()];
 +        Arrays.fill(result, FormattedCharSequence.EMPTY);
-+        final List<List<Glyph>> rows = layout(lines, width, measure);
++        final List<List<Glyph>> rows = layout(lines, persistFormatting ? null : bases, width, measure);
 +        for (int i = 0; i < Math.min(result.length, rows.size()); i++) result[i] = sequence(rows.get(i));
 +        return result;
 +    }
 +
-+    /** Lays out the lines into at most four rows of at most {@code width} units. */
-+    static List<List<Glyph>> layout(final List<List<Glyph>> lines, final int width, final ToIntFunction<List<Glyph>> measure) {
++    /**
++     * Lays out the lines into at most four rows of at most {@code width} units. With {@code bases}, the rows that
++     * continue a wrapped line start again from the base style of their line.
++     */
++    static List<List<Glyph>> layout(final List<List<Glyph>> lines, final List<Style> bases, final int width,
++                                    final ToIntFunction<List<Glyph>> measure) {
 +        final List<List<Glyph>> rows = new ArrayList<>(ROWS);
-+        final int hyphenWidth = measure.applyAsInt(List.of(new Glyph('-', Style.EMPTY)));
-+        for (final List<Glyph> line : lines) {
-+            if (rows.size() == ROWS) break;
++        final int hyphenWidth = measure.applyAsInt(List.of(new Glyph('-', Style.EMPTY, false)));
++        for (int i = 0; i < lines.size() && rows.size() < ROWS; i++) {
++            final List<Glyph> line = lines.get(i);
++            final int first = rows.size();
 +            if (line.isEmpty()) rows.add(line);
 +            else wrap(line, width, hyphenWidth, measure, rows);
++            if (bases == null) continue;
++            for (int row = first + 1; row < rows.size(); row++) rows.set(row, restart(rows.get(row), bases.get(i)));
 +        }
 +        return rows;
++    }
++
++    /** Drops the formatting carried in from the previous row. Formatting that starts within the row still applies. */
++    private static List<Glyph> restart(final List<Glyph> row, final Style base) {
++        final List<Glyph> result = new ArrayList<>(row.size());
++        boolean carried = true;
++        for (final Glyph glyph : row) {
++            carried &= !glyph.styleStart();
++            result.add(carried ? new Glyph(glyph.codePoint(), base, false) : glyph);
++        }
++        return result;
 +    }
 +
 +    private static void wrap(final List<Glyph> line, final int width, final int hyphenWidth,
@@ -201,7 +339,7 @@ index 0000000000000000000000000000000000000000..6f3e65598c54259b7bccc18da83fb4df
 +        final int hyphenated = fit(text, width, hyphenWidth, measure);
 +        if (!hyphenates(text, hyphenated)) return new Split(text.subList(0, plain), text.size() - plain);
 +        final List<Glyph> head = new ArrayList<>(text.subList(0, hyphenated));
-+        head.add(new Glyph('-', head.getLast().style()));
++        head.add(new Glyph('-', head.getLast().style(), false));
 +        return new Split(head, text.size() - hyphenated);
 +    }
 +
@@ -248,12 +386,13 @@ index 0000000000000000000000000000000000000000..6f3e65598c54259b7bccc18da83fb4df
 +        };
 +    }
 +
-+    record Glyph(int codePoint, Style style) {}
++    /** {@code styleStart} marks the first glyph after a formatting code. */
++    record Glyph(int codePoint, Style style, boolean styleStart) {}
 +
 +    private record Split(List<Glyph> head, int tail) {}
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 6e72a10cb3b05fe829edbbc6800fb1ef8d20cada..1f678f0adf8dc8c84a7bab29b50b503b80cad4c7 100644
+index 6e72a10cb3b05fe829edbbc6800fb1ef8d20cada..e30c7b99c25390ccf956e36f39f6d1d3e8558d8b 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -124,6 +124,7 @@
@@ -264,12 +403,21 @@ index 6e72a10cb3b05fe829edbbc6800fb1ef8d20cada..1f678f0adf8dc8c84a7bab29b50b503b
      "features.render.MixinPlayerTabOverlay",
      "features.render.MixinBedrockActorPipelines",
      "features.render.MixinBedrockActorRenderType",
+@@ -234,6 +235,8 @@
+     "features.movement.MixinPlayer",
+     "features.sound.MixinBedrockMiningAudio",
+     "features.block.MixinBedrockCommandBlockSettings",
++    "features.block.MixinSignBlockEntity",
++    "features.block.MixinSignText",
+     "features.inventory.MixinBedrockCommandBlockScreen",
+     "features.block.MixinBedrockMovingPistonBlock",
+     "features.block.MixinBedrockPistonMovingBlockEntity",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignTextTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignTextTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..6522cdeec2f346d91cf65f75bbb76ca7ea6fab43
+index 0000000000000000000000000000000000000000..2074fb855b4a160ab3289a77c00122de75fbd7b4
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSignTextTest.java
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,112 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -303,16 +451,31 @@ index 0000000000000000000000000000000000000000..6522cdeec2f346d91cf65f75bbb76ca7
 +        final var red = Style.EMPTY.withColor(ChatFormatting.RED);
 +        final FormattedCharSequence[] rows = BedrockSignText.rows(
 +            List.of(Component.literal("abcdefghijkl").setStyle(red), Component.empty(), Component.empty(), Component.empty()),
-+            30, BedrockSignTextTest::width);
++            30, true, BedrockSignTextTest::width);
 +        assertEquals(List.of("abcd-", "efgh-", "ijkl", ""), text(rows));
 +        final Set<TextColor> colors = new HashSet<>();
-+        for (final FormattedCharSequence row : rows) {
-+            row.accept((index, style, codePoint) -> {
-+                colors.add(style.getColor());
-+                return true;
-+            });
-+        }
++        for (final FormattedCharSequence row : rows) colors.addAll(colors(row));
 +        assertEquals(Set.of(red.getColor()), colors);
++    }
++
++    @Test
++    void withoutPersistFormattingWrappedRowsKeepOnlyTheirOwnFormatting() {
++        // ViaBedrock gives the line's root the sign color and each formatting code its own part.
++        final Style black = Style.EMPTY.withColor(0x000000);
++        final Style red = Style.EMPTY.withColor(ChatFormatting.RED);
++        final List<Component> messages = List.of(
++            Component.empty().setStyle(black).append(Component.literal("abcdefgh").setStyle(red)),
++            Component.empty().setStyle(black).append(Component.literal("aa ")).append(Component.literal("bbbb").setStyle(red)),
++            Component.empty(), Component.empty());
++        final FormattedCharSequence[] reset = BedrockSignText.rows(messages, 30, false, BedrockSignTextTest::width);
++        assertEquals(List.of("abcd-", "efgh", "aa ", "bbbb"), text(reset));
++        assertEquals(Set.of(red.getColor()), colors(reset[0]));
++        assertEquals(Set.of(black.getColor()), colors(reset[1]));
++        // A code inside a continuation row still applies, as the native row keeps that code.
++        assertEquals(Set.of(red.getColor()), colors(reset[3]));
++
++        final FormattedCharSequence[] persisted = BedrockSignText.rows(messages, 30, true, BedrockSignTextTest::width);
++        assertEquals(Set.of(red.getColor()), colors(persisted[1]));
 +    }
 +
 +    @Test
@@ -335,7 +498,7 @@ index 0000000000000000000000000000000000000000..6522cdeec2f346d91cf65f75bbb76ca7
 +        final List<Component> messages = new ArrayList<>();
 +        for (final String line : lines) messages.add(Component.literal(line));
 +        while (messages.size() < 4) messages.add(Component.empty());
-+        return text(BedrockSignText.rows(messages, width, BedrockSignTextTest::width));
++        return text(BedrockSignText.rows(messages, width, true, BedrockSignTextTest::width));
 +    }
 +
 +    private static List<String> text(final FormattedCharSequence[] rows) {
@@ -349,6 +512,15 @@ index 0000000000000000000000000000000000000000..6522cdeec2f346d91cf65f75bbb76ca7
 +            result.add(text.toString());
 +        }
 +        return result;
++    }
++
++    private static Set<TextColor> colors(final FormattedCharSequence row) {
++        final Set<TextColor> colors = new HashSet<>();
++        row.accept((index, style, codePoint) -> {
++            colors.add(style.getColor());
++            return true;
++        });
++        return colors;
 +    }
 +
 +    /** Spaces are 4 units, wide characters 9 and other glyphs 6, as in the Bedrock bitmap font. */

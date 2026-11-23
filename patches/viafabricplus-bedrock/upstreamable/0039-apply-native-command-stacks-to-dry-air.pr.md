@@ -22,7 +22,7 @@ Native 1.26.60.5 / BDS 1.26.60.6 controls establish base fog, command priority, 
 Prior direct and ViaProxy controls cover these paths and shutdown.
 Native Fancy controls also expose missing night modulation for custom fog colors.
 `BedrockFogTest` checks day, midnight, and twilight vectors, dimension boundaries, dragon policy, and the per-frame blend.
-`FogStackTest` checks weighted biome samples, command precedence, and mixed distance units.
+`FogStackTest` checks weighted biome samples, the zeroed fill without a data default, command precedence, and mixed distance units.
 Focused tests and the complete four-project build pass.
 Fresh direct and ViaProxy renderer samples match native day, midnight, night-vision, and fixed twilight RGBA within 0.00001.
 Both recordings exit normally.

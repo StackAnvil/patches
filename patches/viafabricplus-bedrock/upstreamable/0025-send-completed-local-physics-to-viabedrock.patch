@@ -1131,6 +1131,32 @@ then keeps the rider in control (jump bar, ridden rotation) but skips
 travel, applies server moves and sends no MOVE_VEHICLE. Rider input
 still reaches the server through PlayerAuthInput's move vector and flags.
 
+Pick the sneaking body and camera from the world's base game version.
+The native Player constructor 0x1402b5670 stores a 1.49 sneak height and
+a 0.35 camera drop only when the StartGame base game version is not
+below 1.20.10 (threshold built at 0x140d3cec7, SemVersion less-than
+0x1403a2750). Older valid versions keep 1.8 and 0.125, so a player in
+such a world cannot crouch under a 1.5 block gap. A wildcard or
+unparsable version falls back to the static "any" version (initializer
+0x1419da660) and keeps the current shape.
+
+Native ridden jump execution 0x147b3dec0 sets the vertical motion to
+strength * pendingScale * f + (amplifier + 1) * 0.1 * f, where f is 0.6
+for the TriggerJumpRequest jump-reducing flag and 1.0 otherwise. Java
+scales only the strength by the block jump factor, so a predicted horse
+with Jump Boost on honey jumped higher than native. Apply the same factor
+to the boost for client-predicted Bedrock horses.
+
+Native PassengerJumpTriggerSystem (callback 0x147b8e130) advances the
+riding-jump charge only while VanillaClientGameplayComponent+0x15, the
+previous tick's jump bit copied from MoveInputComponent by 0x147cb9d90,
+is set. It has no press-edge reset, so a re-press during the -10 tick
+release cooldown keeps counting from the cooldown, and
+VehicleJumpTriggerSystem (0x147b908e0) requests no jump for a negative
+power. Java reset the charge to zero on press and turned a negative
+power into a 0.4 jump. For predicted Bedrock horses, keep the charge on
+press and skip onPlayerJump for a negative power.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index adde34af196c0411209255d462328f77b0125752..92d333c40059b2d490dde8ef7a39c24c8e3375f0 100644
 --- a/build.gradle.kts
@@ -1339,10 +1365,10 @@ index 0000000000000000000000000000000000000000..4f709fe51affc36eeb8c782861592545
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2f91b4c53e90a6af4ef3842045d34440fd8d16c
+index 0000000000000000000000000000000000000000..ef3a48fd808b8114b2ec120994996672016c1e30
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,29 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1363,10 +1389,12 @@ index 0000000000000000000000000000000000000000..e2f91b4c53e90a6af4ef3842045d3444
 +public abstract class MixinAvatar {
 +
 +    @ModifyReturnValue(method = "getDefaultDimensions", at = @At("RETURN"))
-+    private EntityDimensions useNativeCrouchingHeight(final EntityDimensions dimensions, final Pose pose) {
-+        return pose == Pose.CROUCHING && BedrockInputPermissions.isBedrockConnection()
-+                ? new EntityDimensions(dimensions.width(), BedrockPlayerPosture.CROUCHING_HEIGHT,
-+                        dimensions.eyeHeight(), dimensions.attachments(), dimensions.fixed()) : dimensions;
++    private EntityDimensions useNativeCrouchingShape(final EntityDimensions dimensions, final Pose pose) {
++        if (pose != Pose.CROUCHING || !BedrockInputPermissions.isBedrockConnection()) {
++            return dimensions;
++        }
++        final var sneak = BedrockPlayerPosture.sneakShape();
++        return new EntityDimensions(dimensions.width(), sneak.height(), sneak.eyeHeight(), dimensions.attachments(), dimensions.fixed());
 +    }
 +
 +}
@@ -2464,10 +2492,10 @@ index 0000000000000000000000000000000000000000..32666b0656016d3e566f166c863c6621
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinHorsePhysicsState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinHorsePhysicsState.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..9d9d3e418a8278e23388c799bef4177654fb5ff6
+index 0000000000000000000000000000000000000000..370b478ec036e89890e50e99c848f758a9f09c14
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinHorsePhysicsState.java
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2514,6 +2542,11 @@ index 0000000000000000000000000000000000000000..9d9d3e418a8278e23388c799bef41776
 +        final Vec2 rotation = original.call(horse, controller);
 +        // Native eases a locally simulated rider's horse toward the rider yaw instead of snapping to it.
 +        return BedrockHorseMovement.applies(horse) ? new Vec2(rotation.x, BedrockHorseMovement.easeYaw(horse.getYRot(), rotation.y)) : rotation;
++    }
++
++    @WrapOperation(method = "executeRidersJump", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/animal/equine/AbstractHorse;getJumpPower(F)F"), require = 1, allow = 1)
++    private float reduceNativeJumpBoostOnHoney(final AbstractHorse horse, final float scale, final Operation<Float> original) {
++        return BedrockHorseMovement.applies(horse) ? BedrockHorseMovement.jumpPower(horse, scale) : original.call(horse, scale);
 +    }
 +
 +    @Override
@@ -3042,10 +3075,10 @@ index 0000000000000000000000000000000000000000..3cad3f3a81e545446723cd6b9af1d702
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index 0e466e5bd9422b0dd55d16e0b147875b8854a2ae..a87167115c404077b8ecba48e86db338b2d8870f 100644
+index 0e466e5bd9422b0dd55d16e0b147875b8854a2ae..79deb23e8323ac6be9d175cf41b7ee9b8606b3b3 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,431 @@
+@@ -21,22 +21,451 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -3058,6 +3091,7 @@ index 0e466e5bd9422b0dd55d16e0b147875b8854a2ae..a87167115c404077b8ecba48e86db338
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockTeleportTravel;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockTeleportTravel;
 +import com.mojang.authlib.GameProfile;
++import com.viaversion.viafabricplus.bedrock.input.BedrockHorseMovement;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockPlayerModes;
 +import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
@@ -3090,6 +3124,7 @@ index 0e466e5bd9422b0dd55d16e0b147875b8854a2ae..a87167115c404077b8ecba48e86db338
 +import net.minecraft.world.item.component.UseEffects;
 +import net.minecraft.core.registries.Registries;
 +import net.minecraft.world.entity.EquipmentSlot;
++import net.minecraft.world.entity.PlayerRideableJumping;
 +import net.minecraft.world.InteractionHand;
 +import net.minecraft.world.item.enchantment.EnchantmentHelper;
 +import net.minecraft.world.item.enchantment.Enchantments;
@@ -3099,6 +3134,7 @@ index 0e466e5bd9422b0dd55d16e0b147875b8854a2ae..a87167115c404077b8ecba48e86db338
 +import net.raphimc.viabedrock.api.model.PlayerPosture;
 +import net.raphimc.viabedrock.api.model.SneakingInputState;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.objectweb.asm.Opcodes;
  import org.spongepowered.asm.mixin.Mixin;
  import org.spongepowered.asm.mixin.Shadow;
 +import org.spongepowered.asm.mixin.Unique;
@@ -3421,6 +3457,23 @@ index 0e466e5bd9422b0dd55d16e0b147875b8854a2ae..a87167115c404077b8ecba48e86db338
 +    @WrapOperation(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;tick()V"))
 +    private void pollRecordedPhysicalInput(final ClientInput input, final Operation<Void> original) {
 +        PhysicalReplayContext.poll(input, () -> original.call(input));
++    }
++
++    // The press-edge branch is the third jumpRidingTicks write and the second jumpRidingScale write in aiStep.
++    @WrapWithCondition(method = "aiStep", at = @At(value = "FIELD", target = "Lnet/minecraft/client/player/LocalPlayer;jumpRidingTicks:I", opcode = Opcodes.PUTFIELD, ordinal = 2), require = 1, allow = 1)
++    private boolean keepNativeRidingJumpTicksOnPress(final LocalPlayer player, final int ticks) {
++        return !BedrockHorseMovement.chargesFromCooldown(player.getVehicle());
++    }
++
++    @WrapWithCondition(method = "aiStep", at = @At(value = "FIELD", target = "Lnet/minecraft/client/player/LocalPlayer;jumpRidingScale:F", opcode = Opcodes.PUTFIELD, ordinal = 1), require = 1, allow = 1)
++    private boolean keepNativeRidingJumpScaleOnPress(final LocalPlayer player, final float scale) {
++        return !BedrockHorseMovement.chargesFromCooldown(player.getVehicle());
++    }
++
++    @WrapWithCondition(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/PlayerRideableJumping;onPlayerJump(I)V"), require = 1, allow = 1)
++    private boolean skipNativeRidingJumpDuringCooldown(final PlayerRideableJumping vehicle, final int power) {
++        // Native requests a ridden jump only for a non-negative power; Java would turn it into a 0.4 jump.
++        return power >= 0 || !BedrockHorseMovement.chargesFromCooldown(this.getVehicle());
 +    }
 +
 +    @WrapWithCondition(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;handlePortalTransitionEffect(Z)V"))
@@ -4279,10 +4332,10 @@ index 0000000000000000000000000000000000000000..dceb8cc4a10b223f928d573844d18c63
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovement.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovement.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..48b336a3b7f6ead133c71a4418351df7f7c19529
+index 0000000000000000000000000000000000000000..a629f674095555134d473e92705996a6b08caf18
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovement.java
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,68 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -4290,6 +4343,8 @@ index 0000000000000000000000000000000000000000..48b336a3b7f6ead133c71a4418351df7
 + */
 +package com.viaversion.viafabricplus.bedrock.input;
 +
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.ai.attributes.Attributes;
 +import net.minecraft.world.entity.animal.equine.AbstractHorse;
 +import net.minecraft.world.entity.animal.equine.Donkey;
 +import net.minecraft.world.entity.animal.equine.Horse;
@@ -4315,10 +4370,25 @@ index 0000000000000000000000000000000000000000..48b336a3b7f6ead133c71a4418351df7
 +
 +    /** The ridden step height, limited on blocks that also reduce the native jump factor. */
 +    public static float maxUpStep(final AbstractHorse horse) {
++        return blockJumpFactor(horse) < 1F ? JUMP_REDUCED_STEP : RIDDEN_STEP;
++    }
++
++    /** The ridden jump velocity; native applies the block jump factor to the jump boost as well. */
++    public static float jumpPower(final AbstractHorse horse, final float scale) {
++        final float factor = blockJumpFactor(horse);
++        return (float) horse.getAttributeValue(Attributes.JUMP_STRENGTH) * scale * factor + horse.getJumpBoostPower() * factor;
++    }
++
++    /** Whether native keeps counting this vehicle's jump charge from the cooldown when jump is pressed again. */
++    public static boolean chargesFromCooldown(final Entity vehicle) {
++        return vehicle instanceof AbstractHorse horse && applies(horse);
++    }
++
++    private static float blockJumpFactor(final AbstractHorse horse) {
 +        final var level = horse.level();
 +        final float here = level.getBlockState(horse.blockPosition()).getBlock().getJumpFactor();
 +        final float below = level.getBlockState(horse.getBlockPosBelowThatAffectsMyMovement()).getBlock().getJumpFactor();
-+        return (here == 1F ? below : here) < 1F ? JUMP_REDUCED_STEP : RIDDEN_STEP;
++        return here == 1F ? below : here;
 +    }
 +
 +    /** Move the horse yaw part of the way toward the rider yaw, as native ground rotation does each tick. */
@@ -6517,10 +6587,10 @@ index 0000000000000000000000000000000000000000..f15e016d6360a6088b37106cdfb1bc01
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..0f102d60a826ae1869d5b9e80d2ea725c33140b5
+index 0000000000000000000000000000000000000000..ca91bdd7e71c079fa605c6a1c59886650331791a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,97 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -6528,16 +6598,21 @@ index 0000000000000000000000000000000000000000..0f102d60a826ae1869d5b9e80d2ea725
 + */
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockNativeBlocks;
 +import net.minecraft.world.entity.Pose;
 +import net.minecraft.world.entity.player.Player;
 +import net.minecraft.world.phys.AABB;
 +import net.raphimc.viabedrock.api.model.PlayerPosture;
 +
++import java.util.regex.Pattern;
++
 +/** Native block-space probes. Entity overlap does not prevent a native posture change. */
 +public final class BedrockPlayerPosture {
 +
-+    public static final float CROUCHING_HEIGHT = 1.49F;
 +    private static final float PROBE_INSET = 0.01F;
++    // Matches the native SemVersion grammar: numeric core components with optional pre-release and build parts.
++    private static final Pattern VERSION = Pattern.compile("(0|[1-9]\\d{0,4})(?:\\.(0|[1-9]\\d{0,4})(?:\\.(0|[1-9]\\d{0,4})"
++            + "(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?)?)?");
 +
 +    private BedrockPlayerPosture() {
 +    }
@@ -6549,7 +6624,7 @@ index 0000000000000000000000000000000000000000..0f102d60a826ae1869d5b9e80d2ea725
 +    }
 +
 +    public static boolean fits(final Player player, final Pose pose) {
-+        final AABB probe = probe(player.getBoundingBox(), pose);
++        final AABB probe = probe(player.getBoundingBox(), pose, sneakShape());
 +        for (final var collision : player.level().getBlockCollisions(player, probe)) {
 +            if (!collision.isEmpty()) {
 +                return false;
@@ -6558,10 +6633,16 @@ index 0000000000000000000000000000000000000000..0f102d60a826ae1869d5b9e80d2ea725
 +        return true;
 +    }
 +
-+    static AABB probe(final AABB body, final Pose pose) {
++    /** The sneaking body and camera for the current world, or the current shape before its StartGame version arrives. */
++    public static SneakShape sneakShape() {
++        final String version = BedrockNativeBlocks.baseGameVersion();
++        return version == null ? SneakShape.CURRENT : SneakShape.forBaseGameVersion(version);
++    }
++
++    static AABB probe(final AABB body, final Pose pose, final SneakShape sneak) {
 +        final float height = switch (pose) {
 +            case STANDING -> 1.8F;
-+            case CROUCHING -> CROUCHING_HEIGHT;
++            case CROUCHING -> sneak.height();
 +            case SWIMMING -> 0.6F;
 +            default -> throw new IllegalArgumentException("Unsupported posture probe");
 +        };
@@ -6581,6 +6662,29 @@ index 0000000000000000000000000000000000000000..0f102d60a826ae1869d5b9e80d2ea725
 +            minZ = maxZ = (minZ + maxZ) * 0.5F;
 +        }
 +        return new AABB(minX, minY, minZ, maxX, maxY, maxZ);
++    }
++
++    /**
++     * Native Player construction (0x1402b5670) keeps the 1.8 block sneaking body and 0.125 camera drop when the world's
++     * base game version is a valid version below 1.20.10. A wildcard or unparsable version uses the current shape.
++     */
++    public record SneakShape(float height, float eyeHeight) {
++
++        public static final SneakShape CURRENT = new SneakShape(1.49F, 1.27F);
++        public static final SneakShape LEGACY = new SneakShape(1.8F, 1.62F - 0.125F);
++
++        static SneakShape forBaseGameVersion(final String version) {
++            final var matcher = VERSION.matcher(version);
++            if (!matcher.matches()) {
++                return CURRENT;
++            }
++            final int major = Integer.parseInt(matcher.group(1));
++            final int minor = matcher.group(2) == null ? 0 : Integer.parseInt(matcher.group(2));
++            final int patch = matcher.group(3) == null ? 0 : Integer.parseInt(matcher.group(3));
++            final boolean legacy = major != 1 ? major < 1 : minor != 20 ? minor < 20 : patch < 10;
++            return legacy ? LEGACY : CURRENT;
++        }
++
 +    }
 +
 +}
@@ -8547,10 +8651,10 @@ index 0000000000000000000000000000000000000000..e67ba0e73e7f1cbaa0943c4a10aba5fa
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovementTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovementTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..1367d9e8733aa140e6f06bedb93c3fe7c4017afd
+index 0000000000000000000000000000000000000000..619f1ced1a214e8072c77f6395b10a00369ab116
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockHorseMovementTest.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,102 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -8561,6 +8665,7 @@ index 0000000000000000000000000000000000000000..1367d9e8733aa140e6f06bedb93c3fe7
 +import net.minecraft.SharedConstants;
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.ai.attributes.Attributes;
 +import net.minecraft.world.entity.animal.camel.Camel;
 +import net.minecraft.world.entity.animal.equine.AbstractHorse;
 +import net.minecraft.world.entity.animal.equine.Horse;
@@ -8590,6 +8695,14 @@ index 0000000000000000000000000000000000000000..1367d9e8733aa140e6f06bedb93c3fe7
 +        assertEquals(1.0625F, BedrockHorseMovement.maxUpStep(horseOn(Blocks.AIR, Blocks.STONE)));
 +        assertEquals(0.5625F, BedrockHorseMovement.maxUpStep(horseOn(Blocks.HONEY_BLOCK, Blocks.STONE)));
 +        assertEquals(0.5625F, BedrockHorseMovement.maxUpStep(horseOn(Blocks.AIR, Blocks.HONEY_BLOCK)));
++    }
++
++    @Test
++    void jumpReducingBlocksAlsoReduceTheRiddenJumpBoost() {
++        final float onStone = BedrockHorseMovement.jumpPower(jumpingHorse(horseOn(Blocks.AIR, Blocks.STONE)), 0.5F);
++        final float onHoney = BedrockHorseMovement.jumpPower(jumpingHorse(horseOn(Blocks.AIR, Blocks.HONEY_BLOCK)), 0.5F);
++        assertEquals(0.7F * 0.5F + 0.2F, onStone, 1.0E-6F);
++        assertEquals(Blocks.HONEY_BLOCK.getJumpFactor() * onStone, onHoney, 1.0E-6F);
 +    }
 +
 +    @Test
@@ -8625,6 +8738,12 @@ index 0000000000000000000000000000000000000000..1367d9e8733aa140e6f06bedb93c3fe7
 +        assertTrue(BedrockHorseMovement.isNativeHorse(mock(Mule.class)));
 +        assertFalse(BedrockHorseMovement.isNativeHorse(mock(Camel.class)));
 +        assertFalse(BedrockHorseMovement.isNativeHorse(mock(Llama.class)));
++    }
++
++    private static AbstractHorse jumpingHorse(final AbstractHorse horse) {
++        when(horse.getAttributeValue(Attributes.JUMP_STRENGTH)).thenReturn(0.7D);
++        when(horse.getJumpBoostPower()).thenReturn(0.2F);
++        return horse;
 +    }
 +
 +    private static AbstractHorse horseOn(final Block feet, final Block below) {
@@ -10919,10 +11038,10 @@ index 0000000000000000000000000000000000000000..e8dce9b9995e5d7a8638e5c3333a0798
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..b9f9d2313c3f9e31b90b41855a605c88e339bc24
+index 0000000000000000000000000000000000000000..34c0db4c2e30e7337e4d1253e924ef499778ce51
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,61 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10930,6 +11049,7 @@ index 0000000000000000000000000000000000000000..b9f9d2313c3f9e31b90b41855a605c88
 + */
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
++import com.viaversion.viafabricplus.bedrock.movement.BedrockPlayerPosture.SneakShape;
 +import net.minecraft.world.entity.Pose;
 +import net.minecraft.world.phys.AABB;
 +import org.junit.jupiter.api.Test;
@@ -10942,7 +11062,7 @@ index 0000000000000000000000000000000000000000..b9f9d2313c3f9e31b90b41855a605c88
 +    void usesNativeFloatRoundingAndInsetAtWorldCoordinates() {
 +        final var body = new AABB(-7.3, 104.5, 15.7, -6.7, 105.1, 16.3);
 +        for (final var pose : new Pose[]{Pose.STANDING, Pose.CROUCHING, Pose.SWIMMING}) {
-+            final var probe = BedrockPlayerPosture.probe(body, pose);
++            final var probe = BedrockPlayerPosture.probe(body, pose, SneakShape.CURRENT);
 +            final float height = pose == Pose.STANDING ? 1.8F : pose == Pose.CROUCHING ? 1.49F : 0.6F;
 +            assertEquals((double) ((float) body.minX + 0.01F), probe.minX);
 +            assertEquals((double) ((float) body.maxX - 0.01F), probe.maxX);
@@ -10952,19 +11072,34 @@ index 0000000000000000000000000000000000000000..b9f9d2313c3f9e31b90b41855a605c88
 +            assertEquals((double) ((float) body.maxZ - 0.01F), probe.maxZ);
 +        }
 +        final var ceiling = new AABB(-8, 106, 15, -6, 107, 17);
-+        assertTrue(BedrockPlayerPosture.probe(body, Pose.STANDING).intersects(ceiling));
-+        assertFalse(BedrockPlayerPosture.probe(body, Pose.CROUCHING).intersects(ceiling));
-+        assertFalse(BedrockPlayerPosture.probe(body, Pose.SWIMMING).intersects(ceiling));
++        assertTrue(BedrockPlayerPosture.probe(body, Pose.STANDING, SneakShape.CURRENT).intersects(ceiling));
++        assertFalse(BedrockPlayerPosture.probe(body, Pose.CROUCHING, SneakShape.CURRENT).intersects(ceiling));
++        assertFalse(BedrockPlayerPosture.probe(body, Pose.SWIMMING, SneakShape.CURRENT).intersects(ceiling));
 +    }
 +
 +    @Test
 +    void collapsesInvertedInsetAxesAndRejectsUnrelatedPoses() {
-+        final var probe = BedrockPlayerPosture.probe(new AABB(0, 0, 0, 0.01, 1, 0.01), Pose.SWIMMING);
++        final var probe = BedrockPlayerPosture.probe(new AABB(0, 0, 0, 0.01, 1, 0.01), Pose.SWIMMING, SneakShape.CURRENT);
 +        assertEquals(probe.minX, probe.maxX);
 +        assertEquals(probe.minZ, probe.maxZ);
 +        assertTrue(probe.minY < probe.maxY);
 +        assertThrows(IllegalArgumentException.class,
-+                () -> BedrockPlayerPosture.probe(new AABB(0, 0, 0, 1, 1, 1), Pose.SLEEPING));
++                () -> BedrockPlayerPosture.probe(new AABB(0, 0, 0, 1, 1, 1), Pose.SLEEPING, SneakShape.CURRENT));
++    }
++
++    @Test
++    void worldsBelowOnePointTwentyTenKeepTheFullHeightSneakingBody() {
++        for (final String version : new String[]{"1.20.0", "1.20", "1.19.80", "1.20.9-beta.1", "0.16.0"}) {
++            assertSame(SneakShape.LEGACY, SneakShape.forBaseGameVersion(version), version);
++        }
++        for (final String version : new String[]{"1.20.10", "1.21.0", "2.0.0", "*", "", "1.x", "01.19.0"}) {
++            assertSame(SneakShape.CURRENT, SneakShape.forBaseGameVersion(version), version);
++        }
++        final var body = new AABB(0.2, 64, 0.2, 0.8, 65.8, 0.8);
++        final var ceiling = new AABB(0, 65.5, 0, 1, 66.5, 1);
++        assertTrue(BedrockPlayerPosture.probe(body, Pose.CROUCHING, SneakShape.LEGACY).intersects(ceiling));
++        assertFalse(BedrockPlayerPosture.probe(body, Pose.CROUCHING, SneakShape.CURRENT).intersects(ceiling));
++        assertEquals(1.495F, SneakShape.LEGACY.eyeHeight());
 +    }
 +
 +}
