@@ -224,6 +224,7 @@ test("a malformed exception directory blocks declared spans but not manual range
 test("REA Evidence must bind to both the extracted bytes and requested procedure", () => {
   const slice = {
     sourceSha256: "a".repeat(64),
+    machine: "0x8664",
     procedureAddress: "0x140001000",
     endExclusive: "0x140001010",
     derivedPath: "/fixture",
@@ -329,6 +330,38 @@ test("a REA executable on PATH retains a byte-bound result without replacing ear
     if (oldPath === undefined) delete process.env["PATH"];
     else process.env["PATH"] = oldPath;
   }
+});
+
+test("analysis refuses to decompile a non-AMD64 slice as x86_64", async () => {
+  const bytes = image();
+  bytes.writeUInt16LE(0xaa64, 0x84);
+  const f = await fixture(bytes);
+  const provider = join(f.directory, "rea-fixture");
+  const called = join(f.directory, "called");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env bun\nawait Bun.write(${JSON.stringify(called)}, "");\nconsole.log("{}");\n`,
+  );
+  await chmod(provider, 0o700);
+  const old = process.env["REA_CLI"];
+  process.env["REA_CLI"] = provider;
+  try {
+    await expectRejection(
+      Effect.runPromise(
+        analyzeReaFunction({
+          address: "140001000",
+          end: "140001010",
+          target: f.manifest,
+          directory: join(f.directory, "analyses"),
+        }),
+      ),
+      "AMD64",
+    );
+  } finally {
+    if (old === undefined) delete process.env["REA_CLI"];
+    else process.env["REA_CLI"] = old;
+  }
+  expect(await Bun.file(called).exists()).toBe(false);
 });
 
 test("PistonDecompiler paths and aliases are rejected before reading artifact contents", async () => {

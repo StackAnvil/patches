@@ -44,6 +44,7 @@ const isTarget = Schema.is(TargetSchema);
 
 const SliceSchema = Schema.Struct({
   sourceSha256: Schema.String,
+  machine: Schema.String,
   procedureAddress: Schema.String,
   endExclusive: Schema.String,
   derivedPath: Schema.String,
@@ -328,6 +329,11 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
   // Bind this run to the target read before extraction, even if selection changes concurrently.
   if (slice.sourceSha256 !== target.artifact.sha256)
     return yield* error("The selected REA target changed during extraction");
+  // REA receives a headerless slice, so it cannot detect the CPU itself.
+  if (slice.machine !== "0x8664")
+    return yield* error(
+      `analyze supports AMD64 PE images only. This image's machine is ${slice.machine}`,
+    );
   yield* Effect.tryPromise({
     try: () => privateJson(join(run, "source.json"), { target, slice }),
     catch: error,

@@ -201,6 +201,7 @@ class PE:
             sourceSha256=self.sha256,
             sourcePath=str(self.path),
             imageBase=hex(self.image_base),
+            machine=hex(self.machine),
             requestedAddress=hex(va),
             procedureAddress=hex(begin),
             endExclusive=hex(stop),
