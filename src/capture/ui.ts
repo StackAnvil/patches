@@ -74,10 +74,58 @@ const spawnRecorder: UiRecorder = (program, args, env) => {
   };
 };
 
-const checkId = (id: string) => {
+// The commands and scenario steps share these bounds.
+export function checkId(id: string): void {
   if (!/^[a-z0-9][a-z0-9-]{0,90}$/u.test(id))
     throw new Error("Use lowercase letters, digits, and hyphens for a screenshot name.");
-};
+}
+
+export function checkFps(fps: number): void {
+  if (!Number.isInteger(fps) || fps < 1 || fps > 120)
+    throw new Error("Video frame rate must be an integer from 1 to 120.");
+}
+
+export function checkRatios(subject: string, values: readonly number[]): void {
+  if (!values.every((value) => Number.isFinite(value) && value >= 0 && value <= 1))
+    throw new Error(`${subject} coordinates must be ratios between 0 and 1.`);
+}
+
+export function checkHold(subject: string, durationMs: number): void {
+  if (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > 10_000)
+    throw new Error(`${subject} hold must be 1 to 10000 ms.`);
+}
+
+export function checkKeyName(name: string): void {
+  if (!/^[A-Za-z0-9_+]{1,32}$/u.test(name))
+    throw new Error("Use a key name such as Escape, Return, Tab, or Control+b.");
+}
+
+export function checkDrag(points: readonly DragPoint[], dwellMs: number): void {
+  if (
+    points.length < 2 ||
+    points.length > 64 ||
+    !points.every((point) =>
+      [point.x, point.y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1),
+    )
+  ) {
+    throw new Error("Drag needs 2 to 64 points with coordinates between 0 and 1.");
+  }
+  if (
+    !Number.isInteger(dwellMs) ||
+    dwellMs < 1 ||
+    dwellMs > 1000 ||
+    points.length * dwellMs > 10_000
+  ) {
+    throw new Error("Drag dwell must be 1 to 1000 ms per point, totaling at most 10000 ms.");
+  }
+}
+
+export function checkText(value: string): void {
+  if (!/^[a-z0-9 .-]{1,120}$/u.test(value))
+    throw new Error(
+      "Text must contain 1 to 120 lowercase ASCII letters, digits, spaces, periods, or hyphens.",
+    );
+}
 
 /** One UI session binds its display once and emits input without starting another Bun process. */
 export function createCaptureUi(
@@ -198,8 +246,7 @@ export function createCaptureUi(
     checkId(name);
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > 120)
       throw new Error("Record 1 to 120 seconds.");
-    if (!Number.isInteger(fps) || fps < 1 || fps > 120)
-      throw new Error("Video frame rate must be an integer from 1 to 120.");
+    checkFps(fps);
     if (!outputDir) throw new Error("Supply --output-dir for a recording.");
     const env = await uiEnvironment();
     if (env["STACKANVIL_UI_ISOLATED"] !== "1")
@@ -220,9 +267,7 @@ export function createCaptureUi(
   }
 
   async function pixel(x: number, y: number, windowId?: string, client?: Client): Promise<string> {
-    if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
-      throw new Error("Pixel coordinates must be ratios between 0 and 1.");
-    }
+    checkRatios("Pixel", [x, y]);
     const window = await chosenWindow(windowId, client);
     const localX = Math.floor(x * (window.width - 1));
     const localY = Math.floor(y * (window.height - 1));
@@ -235,8 +280,7 @@ export function createCaptureUi(
   }
 
   async function move(x: number, y: number, windowId?: string, client?: Client): Promise<void> {
-    if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1))
-      throw new Error("Pointer coordinates must be ratios between 0 and 1.");
+    checkRatios("Pointer", [x, y]);
     const env = await uiEnvironment();
     if (env["STACKANVIL_UI_ISOLATED"] !== "1")
       throw new Error("Pointer positioning requires the private Wayland display.");
@@ -274,15 +318,8 @@ export function createCaptureUi(
     durationMs?: number,
     doubleClick = false,
   ): Promise<void> {
-    if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
-      throw new Error("Click coordinates must be ratios between 0 and 1.");
-    }
-    if (
-      durationMs !== undefined &&
-      (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > 10_000)
-    ) {
-      throw new Error("Mouse hold must be 1 to 10000 ms.");
-    }
+    checkRatios("Click", [x, y]);
+    if (durationMs !== undefined) checkHold("Mouse", durationMs);
     const window = await chosenWindow(windowId, client);
     const localX = Math.floor(x * (window.width - 1));
     const localY = Math.floor(y * (window.height - 1));
@@ -330,14 +367,8 @@ export function createCaptureUi(
     durationMs?: number,
     doubleTap = false,
   ): Promise<void> {
-    if (!/^[A-Za-z0-9_+]{1,32}$/u.test(name))
-      throw new Error("Use a key name such as Escape, Return, Tab, or Control+b.");
-    if (
-      durationMs !== undefined &&
-      (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > 10_000)
-    ) {
-      throw new Error("Key hold must be 1 to 10000 ms.");
-    }
+    checkKeyName(name);
+    if (durationMs !== undefined) checkHold("Key", durationMs);
     const window = await chosenWindow(windowId, client);
     const env = await uiEnvironment();
     const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";
@@ -363,8 +394,7 @@ export function createCaptureUi(
     client?: Client,
     allowFocus = false,
   ): Promise<void> {
-    if (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > 10_000)
-      throw new Error("Button hold must be 1 to 10000 ms.");
+    checkHold("Button", durationMs);
     const window = await chosenWindow(windowId, client);
     const env = await uiEnvironment();
     const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";
@@ -384,23 +414,7 @@ export function createCaptureUi(
     client?: Client,
     allowFocus = false,
   ): Promise<void> {
-    if (
-      points.length < 2 ||
-      points.length > 64 ||
-      !points.every((point) =>
-        [point.x, point.y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1),
-      )
-    ) {
-      throw new Error("Drag needs 2 to 64 points with coordinates between 0 and 1.");
-    }
-    if (
-      !Number.isInteger(dwellMs) ||
-      dwellMs < 1 ||
-      dwellMs > 1000 ||
-      points.length * dwellMs > 10_000
-    ) {
-      throw new Error("Drag dwell must be 1 to 1000 ms per point, totaling at most 10000 ms.");
-    }
+    checkDrag(points, dwellMs);
     const window = await chosenWindow(windowId, client);
     const env = await uiEnvironment();
     const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";
@@ -427,10 +441,7 @@ export function createCaptureUi(
     client?: Client,
     allowFocus = false,
   ): Promise<void> {
-    if (!/^[a-z0-9 .-]{1,120}$/u.test(value))
-      throw new Error(
-        "Text must contain 1 to 120 lowercase ASCII letters, digits, spaces, periods, or hyphens.",
-      );
+    checkText(value);
     const window = await chosenWindow(windowId, client);
     const env = await uiEnvironment();
     const isolated = env["STACKANVIL_UI_ISOLATED"] === "1";

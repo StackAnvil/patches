@@ -11,7 +11,8 @@ import { parseJson } from "../guards.ts";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
-import { createCaptureUi, type Client } from "./ui.ts";
+import { checkFps, createCaptureUi, type Client } from "./ui.ts";
+import { checkMarker, parseScenario } from "./scenario.ts";
 import { print, printError } from "../output.ts";
 import { execFileAsync as execute } from "../process.ts";
 
@@ -85,44 +86,6 @@ interface Session {
   stoppedAt?: string;
 }
 
-const MouseButton = Schema.Literals(["left", "right"]);
-const isStep = Schema.is(
-  Schema.Union([
-    Schema.Struct({ action: Schema.Literal("mark"), label: Schema.String }),
-    Schema.Struct({ action: Schema.Literal("wait"), ms: Schema.Finite }),
-    Schema.Struct({ action: Schema.Literal("screenshot"), name: Schema.String }),
-    Schema.Struct({
-      action: Schema.Literals(["click", "doubleClick"]),
-      x: Schema.Finite,
-      y: Schema.Finite,
-      button: Schema.optionalKey(MouseButton),
-    }),
-    Schema.Struct({
-      action: Schema.Literal("mouseHold"),
-      x: Schema.Finite,
-      y: Schema.Finite,
-      button: MouseButton,
-      ms: Schema.Finite,
-    }),
-    Schema.Struct({ action: Schema.Literal("buttonHold"), button: MouseButton, ms: Schema.Finite }),
-    Schema.Struct({
-      action: Schema.Literal("drag"),
-      points: Schema.Array(Schema.Struct({ x: Schema.Finite, y: Schema.Finite })),
-      button: MouseButton,
-      ms: Schema.Finite,
-    }),
-    Schema.Struct({ action: Schema.Literal("type"), text: Schema.String }),
-    Schema.Struct({ action: Schema.Literals(["key", "doubleKey"]), key: Schema.String }),
-    Schema.Struct({ action: Schema.Literal("keyHold"), key: Schema.String, ms: Schema.Finite }),
-    Schema.Struct({
-      action: Schema.Literal("videoStart"),
-      name: Schema.String,
-      fps: Schema.optionalKey(Schema.Finite),
-    }),
-    Schema.Struct({ action: Schema.Literal("videoStop") }),
-  ]),
-);
-const RecipeSchema = Schema.Struct({ name: Schema.String, steps: Schema.Array(Schema.Unknown) });
 const CurrentSessionSchema = Schema.Struct({ id: Schema.String });
 const VideoSchema = Schema.Struct({
   pid: Schema.Finite,
@@ -423,8 +386,7 @@ async function prepareLauncher(): Promise<string> {
 async function mark(label: string): Promise<void> {
   const session = await load();
   if (session.stoppedAt) throw new Error("This capture is stopped.");
-  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]{0,80}$/u.test(label))
-    throw new Error("Use a short marker with letters, digits, spaces, or hyphens.");
+  checkMarker(label);
   await appendFile(
     join(capturePath(session.id), "markers.jsonl"),
     `${JSON.stringify({ time: Date.now() / 1000, label })}\n`,
@@ -461,8 +423,7 @@ async function startVideo(
   fps = 15,
 ): Promise<void> {
   checkId(name);
-  if (!Number.isInteger(fps) || fps < 1 || fps > 120)
-    throw new Error("Video frame rate must be an integer from 1 to 120.");
+  checkFps(fps);
   const session = await load();
   if (session.stoppedAt) throw new Error("Start a capture before recording video.");
   const isolated = await displayEnv();
@@ -590,20 +551,15 @@ async function scenario(
   client: Client = "bedrock",
   allowFocus = false,
 ): Promise<void> {
-  const path = resolve(root, file);
-  const recipe: unknown = JSON.parse(await readFile(path, "utf8"));
-  if (!Schema.is(RecipeSchema)(recipe)) throw new Error("Scenario needs a name and a steps array.");
+  const recipe = parseScenario(await readFile(resolve(root, file), "utf8"));
   print(`Running ${recipe.name}`);
   for (const step of recipe.steps) {
-    if (!isStep(step)) throw new Error("Unknown scenario action.");
     switch (step.action) {
       case "mark": {
         await mark(step.label);
         break;
       }
       case "wait": {
-        if (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 120_000)
-          throw new Error("Wait must be 0 to 120000 ms.");
         await Bun.sleep(step.ms);
         break;
       }
