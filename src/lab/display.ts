@@ -153,11 +153,7 @@ export async function ensureDisplay(): Promise<DisplayState> {
     throw new Error("Set XDG_RUNTIME_DIR to your session's private runtime directory.");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   const lock = join(privateRoot, "display-start.lock");
-  await mkdir(lock, { mode: 0o700 }).catch((error: unknown) => {
-    if (errorCode(error) === "EEXIST")
-      throw new Error("Another lab display startup is in progress.");
-    throw error;
-  });
+  await acquireStartLock(lock);
   let runtime: string | undefined;
   let state: DisplayState | undefined;
   try {
@@ -263,6 +259,31 @@ export async function ensureDisplay(): Promise<DisplayState> {
     if (runtime) await rm(runtime, { recursive: true, force: true });
     throw error;
   } finally {
+    await rm(lock, { recursive: true, force: true });
+  }
+}
+
+/**
+ * A startup can end without its finally block, for example after a second Ctrl+C, SIGHUP, or
+ * SIGKILL during the first input service build. Record the owner so a later start can replace a
+ * lock whose process no longer exists.
+ */
+export async function acquireStartLock(lock: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await writeFile(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+      return;
+    } catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+    }
+    // Earlier versions used an ownerless directory lock. An empty file is still being written.
+    const owner = await readFile(lock, "utf8").catch((error: unknown) => {
+      if (errorCode(error) === "EISDIR" || errorCode(error) === "ENOENT") return "0";
+      throw error;
+    });
+    const pid = Number(owner);
+    if (attempt > 0 || owner === "" || (Number.isInteger(pid) && pid > 0 && alive(pid)))
+      throw new Error("Another lab display startup is in progress.");
     await rm(lock, { recursive: true, force: true });
   }
 }

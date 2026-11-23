@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { releaseDisplay, unloadSilentModule } from "../src/lab/display.ts";
+import { acquireStartLock, releaseDisplay, unloadSilentModule } from "../src/lab/display.ts";
 
 const silent = "sink_name=stackanvil_silent sink_properties=device.description=StackAnvil-Silent";
 
@@ -70,3 +70,22 @@ test("display stop leaves unrelated processes that reuse saved display PIDs runn
     await rm(directory, { recursive: true, force: true });
   }
 }, 20_000);
+
+test("display startup replaces a lock left by an interrupted startup but not one held by a live process", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sa-display-lock-"));
+  const lock = join(directory, "display-start.lock");
+  try {
+    const exited = spawn("true");
+    await new Promise((settle) => exited.on("exit", settle));
+    await writeFile(lock, `${exited.pid}\n`);
+    await acquireStartLock(lock);
+    expect(await readFile(lock, "utf8")).toBe(`${process.pid}\n`);
+    await expect(acquireStartLock(lock)).rejects.toThrow("in progress");
+    await rm(lock);
+    await mkdir(lock);
+    await acquireStartLock(lock);
+    expect(await readFile(lock, "utf8")).toBe(`${process.pid}\n`);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
