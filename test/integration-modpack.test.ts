@@ -82,3 +82,20 @@ test("extracts override names containing unzip wildcard characters literally", a
     },
   );
 });
+
+test("client overrides replace shared overrides even when the archive lists them first", async () => {
+  await withPack(
+    {
+      "client-overrides/options.txt": "client",
+      "overrides/options.txt": "shared",
+      "overrides/config/shared.txt": "kept",
+    },
+    async (pack, entries) => {
+      const overrides = await packOverrides(pack, entries);
+      expect(Object.fromEntries([...overrides].map(([path, bytes]) => [path, Buffer.from(bytes).toString("utf8")]))).toEqual({
+        "options.txt": "client",
+        "config/shared.txt": "kept",
+      });
+    },
+  );
+});

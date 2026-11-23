@@ -213,12 +213,14 @@ export async function packOverrides(
   entries: readonly string[],
 ): Promise<Map<string, Uint8Array>> {
   const overrides = new Map<string, Uint8Array>();
-  for (const entry of entries) {
-    const prefix = entry.startsWith("client-overrides/") ? "client-overrides/" : "overrides/";
-    if (!entry.startsWith(prefix) || entry.endsWith("/")) continue;
-    const path = entry.slice(prefix.length);
-    if (!safePath(path)) throw new Error(`Unsafe modpack override path: ${entry}`);
-    overrides.set(path, await zipEntry(file, entry));
+  // Client overrides take precedence over shared overrides, whatever the archive order.
+  for (const prefix of ["overrides/", "client-overrides/"]) {
+    for (const entry of entries) {
+      if (!entry.startsWith(prefix) || entry.endsWith("/")) continue;
+      const path = entry.slice(prefix.length);
+      if (!safePath(path)) throw new Error(`Unsafe modpack override path: ${entry}`);
+      overrides.set(path, await zipEntry(file, entry));
+    }
   }
   return overrides;
 }
