@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { buildOrder } from "../src/dependencies.ts";
 import { required } from "../src/guards.ts";
-import { getTargets } from "../src/model.ts";
+import { getTarget, getTargets } from "../src/model.ts";
 
 test("dependent targets build after their patched dependencies", async () => {
   const order = buildOrder(await getTargets(), "viafabricplus-bedrock");
@@ -29,4 +29,11 @@ test("dependency cycles and unknown targets stop the build", async () => {
     ),
   ).toThrow(/Dependency cycle/);
   expect(() => buildOrder(targets, "missing")).toThrow(/Unknown target/);
+});
+
+test("inherited object members are unknown targets", async () => {
+  const targets = await getTargets();
+  expect(() => buildOrder(targets, "constructor")).toThrow("Unknown target constructor");
+  expect(() => buildOrder(targets, "__proto__")).toThrow("Unknown target __proto__");
+  await expect(getTarget("toString")).rejects.toThrow(/^Unknown target toString\./u);
 });

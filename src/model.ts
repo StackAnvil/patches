@@ -89,7 +89,13 @@ const SeriesSchema = Schema.Struct({
 });
 
 export async function getTargets(repository = root): Promise<Record<string, Target>> {
-  return parseJson(TargetsSchema, await readFile(join(repository, "targets.json"), "utf8"));
+  const targets = parseJson(
+    TargetsSchema,
+    await readFile(join(repository, "targets.json"), "utf8"),
+  );
+  // Without a prototype, ids such as "constructor" are unknown targets instead of inherited members.
+  Object.setPrototypeOf(targets, null);
+  return targets;
 }
 
 export async function getTarget(id: string): Promise<Target> {
