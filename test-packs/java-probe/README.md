@@ -6,25 +6,9 @@ The Paper plugin prepares and verifies gameplay cases. The Geyser extension repl
 
 ## Run the suite
 
-Install the repository dependencies with `bun install --frozen-lockfile`. The fixture build needs JDK 25, including `javac` and `jar`. The game runner also needs PrismLauncher and the private display tools from the [capture lab](../../docs/capture-lab.md).
+The live `java-geyser` route is disabled. The pinned Geyser fixture does not provide NetherNet, so the integration runner rejects that route before it starts servers. See [Geyser fixtures](../../docs/bedrock-test-packs.md#geyser-fixtures). Use the `java-bedrock` route for live gameplay tests.
 
-```bash
-bun run test:geyser
-```
-
-The route is Java client → ViaBedrock → Geyser → Paper. It starts no native Bedrock client or server. Each run creates a fresh server under `.stackanvil/integration/runs/`. TCP and UDP listeners bind to `127.0.0.1`. Authentication is disabled only in this disposable local fixture.
-
-The runner first uses the plain Java client. After the gameplay cases, it restarts that client and checks reconnect. It also runs a Fabulously Optimized join. Use `--plain-only` to omit the modpack join. Use `--reuse-build` to reuse existing StackAnvil artifacts.
-
-If another lab uses the default display, select a free display with `STACKANVIL_LAB_DISPLAY`, such as `:100`.
-
-To run only the custom content cases and their negative controls, use:
-
-```bash
-bun run test:integration -- --route java-geyser --geyser-probe --negative-controls --plain-only --reuse-build
-```
-
-This also checks chest transfer and reconnect. Omit `--reuse-build` when the StackAnvil artifacts need a fresh build.
+The fixture still builds and compiles. The build needs JDK 25, including `javac` and `jar`. See [Build and version pins](#build-and-version-pins).
 
 ## Fixtures and commands
 

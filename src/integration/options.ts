@@ -27,7 +27,7 @@ export const integrationHelp = `Usage: bun run test:integration [options]
 
   --help, -h              Show help without building or starting services
   --reuse-build           Use the current verified build artifacts
-  --route <route>         java-java, java-bedrock, bedrock-bedrock, or java-geyser
+  --route <route>         java-java, java-bedrock, or bedrock-bedrock
   --plain-only            Test the plain Java client
   --modpack-only          Test the optimized Java client
   --shaders               Test the pinned shader profile
@@ -36,8 +36,6 @@ export const integrationHelp = `Usage: bun run test:integration [options]
   --gameplay-probe        Run the backend's gameplay cases
   --gameplay-complex      Include complex Bedrock gameplay cases
   --gameplay-cases <ids>  Run comma-separated gameplay case IDs
-  --geyser-probe          Include Geyser custom-content cases
-  --negative-controls    Include Geyser negative controls
 
 The default run builds all projects and starts private test services.
 Unknown options and missing option values stop before the build.`;
