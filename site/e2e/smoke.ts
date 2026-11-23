@@ -81,3 +81,19 @@ test("theme preferences persist and missing pages remain useful", async ({ page 
   ).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test.describe("guide navigation on a wide screen", () => {
+  test.use({ viewport: { width: 1440, height: 1000 } });
+
+  test("the guide sidebar starts on the header logo edge", async ({ page }) => {
+    await page.goto("/projects/");
+    const logo = await page
+      .getByRole("link", { name: "StackAnvil home", exact: true })
+      .boundingBox();
+    const item = await page
+      .locator("#nd-sidebar")
+      .getByRole("link", { name: "Projects", exact: true })
+      .boundingBox();
+    expect(Math.abs((logo?.x ?? 0) - (item?.x ?? Infinity))).toBeLessThanOrEqual(1);
+  });
+});
