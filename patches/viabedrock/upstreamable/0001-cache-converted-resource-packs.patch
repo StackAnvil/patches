@@ -106,6 +106,16 @@ Read converted entity scales through Number.floatValue(). Pack metadata can
 contain boxed doubles, and casting them to Float disconnects clients while
 spawning custom actors. The numeric conversion accepts both representations.
 
+Bound the disk cache to 1 GiB, about ten converted packs of the largest
+recorded size. Each server pack set and each conversion format change
+added a converted ZIP and index that no join removed. After a disk miss,
+remove the least recently used archives and indexes until the directory
+fits. Disk hits refresh both modification times. Keep the new archive,
+archives in the memory cache and files used in the last hour, because
+connected Java clients may still request them. An index whose archive was
+removed rebuilds on its next use. A regression ages the files of earlier
+conversions and checks that only the newest archive and index remain.
+
 BREAKING CHANGE: Content subclasses implement protected putBytes instead
 of overriding put. The public put method now maintains ZIP metadata.
 
@@ -265,7 +275,7 @@ index 0000000000000000000000000000000000000000..abc19f6cba0ca3e96cbd95862c3b6341
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index e63777a30940cf189dee7dd2743ebe6c31018356..b136b6058f98011c413a0f9aef9c869ce8c75aad 100644
+index 68836e0dcb13be825303e4a494ba913e0a928544..c7fea8d5e7fa650f55e5467c652bbbfaa275db97 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 @@ -21,6 +21,8 @@ import com.viaversion.viaversion.libs.gson.JsonObject;
@@ -275,9 +285,9 @@ index e63777a30940cf189dee7dd2743ebe6c31018356..b136b6058f98011c413a0f9aef9c869c
 +import org.apache.commons.io.output.UnsynchronizedByteArrayOutputStream;
 +
  import javax.imageio.ImageIO;
+ import javax.imageio.ImageReader;
  import javax.imageio.stream.MemoryCacheImageInputStream;
- import javax.imageio.stream.MemoryCacheImageOutputStream;
-@@ -28,17 +30,18 @@ import java.awt.image.BufferedImage;
+@@ -29,17 +31,18 @@ import java.awt.image.BufferedImage;
  import java.io.ByteArrayInputStream;
  import java.io.ByteArrayOutputStream;
  import java.io.IOException;
@@ -300,7 +310,7 @@ index e63777a30940cf189dee7dd2743ebe6c31018356..b136b6058f98011c413a0f9aef9c869c
  
      public abstract List<String> getFilesShallow(final String path, final String extension);
  
-@@ -61,7 +64,24 @@ public abstract class Content {
+@@ -62,7 +65,24 @@ public abstract class Content {
  
      public abstract byte[] get(final String path);
  
@@ -326,7 +336,7 @@ index e63777a30940cf189dee7dd2743ebe6c31018356..b136b6058f98011c413a0f9aef9c869c
  
      public String getString(final String path) {
          final byte[] bytes = this.get(path);
-@@ -159,22 +179,22 @@ public abstract class Content {
+@@ -160,22 +180,22 @@ public abstract class Content {
      }
  
      public void copyFrom(final Content content, final String sourcePath, final String targetPath) {
@@ -612,10 +622,10 @@ index 4264b66bc87997e443e3ac7dc426ce4d962e6d43..d16e08e63d7e68c91043c71bb5874fe4
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..3b0f9270fd6df4bce6663368c0c31ca7536b4dca
+index 0000000000000000000000000000000000000000..e5918129b8e3f0e4c2ac22d3e5dca9445a426094
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-@@ -0,0 +1,292 @@
+@@ -0,0 +1,355 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -651,17 +661,22 @@ index 0000000000000000000000000000000000000000..3b0f9270fd6df4bce6663368c0c31ca7
 +import java.nio.charset.StandardCharsets;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
++import java.nio.file.attribute.FileTime;
 +import java.security.DigestOutputStream;
 +import java.security.MessageDigest;
 +import java.security.NoSuchAlgorithmException;
 +import java.util.ArrayList;
 +import java.util.Collection;
++import java.util.Comparator;
++import java.util.HashSet;
 +import java.util.HexFormat;
 +import java.util.List;
 +import java.util.LinkedHashMap;
 +import java.util.HashMap;
 +import java.util.UUID;
 +import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.TimeUnit;
 +import java.util.function.Function;
 +import java.util.concurrent.CompletableFuture;
 +import java.util.concurrent.CompletionException;
@@ -679,6 +694,10 @@ index 0000000000000000000000000000000000000000..3b0f9270fd6df4bce6663368c0c31ca7
 +    private final Function<ResourcePackStorage, Content> converter;
 +    private static final int MAX_COMPLETED_PACKS = 4;
 +    private static final long MAX_COMPLETED_BYTES = 64L * 1024 * 1024;
++    // Keep about ten converted server packs of the largest recorded size, about 100 MB each.
++    private static final long MAX_DISK_BYTES = 1L << 30;
++    // Java clients request an advertised archive while joining, possibly after it leaves the memory cache.
++    private static final long RECENT_USE_MILLIS = TimeUnit.HOURS.toMillis(1);
 +
 +    private final ResourcePackExecutor executor = new ResourcePackExecutor(2, 64, "ViaBedrock Resource Pack Converter");
 +    private final Map<String, CompletableFuture<Pack>> pending = new HashMap<>();
@@ -687,6 +706,7 @@ index 0000000000000000000000000000000000000000..3b0f9270fd6df4bce6663368c0c31ca7
 +    private final long maxCompletedBytes;
 +    private long completedBytes;
 +    private boolean stopped;
++    long maxDiskBytes = MAX_DISK_BYTES;
 +
 +    public ConvertedResourcePackCache(final Path directory, final ViaBedrockConfig.PackCacheMode mode) {
 +        this(directory, mode, storage -> {
@@ -800,6 +820,8 @@ index 0000000000000000000000000000000000000000..3b0f9270fd6df4bce6663368c0c31ca7
 +                    if (Files.isRegularFile(cachedPath)) {
 +                        final Pack pack = describe(cachedPath, cached.converterData());
 +                        if (pack.sha1().equals(cached.sha1())) {
++                            touch(index);
++                            touch(cachedPath);
 +                            return pack;
 +                        }
 +                    }
@@ -823,12 +845,52 @@ index 0000000000000000000000000000000000000000..3b0f9270fd6df4bce6663368c0c31ca7
 +                final byte[] entry = ConverterDataManifest.encodeIndex(sha1, metadata);
 +                FileSystemUtil.moveAtomically(temporary, path);
 +                FileSystemUtil.writeAtomically(index, entry);
++                this.evictDiskEntries(path);
 +                return new Pack(path, null, size, sha1, id, metadata);
 +            } finally {
 +                Files.deleteIfExists(temporary);
 +            }
 +        } catch (final Exception e) {
 +            throw new CompletionException("Failed to prepare converted resource pack", e);
++        }
++    }
++
++    /**
++     * Removes the least recently used archives and indexes above the disk budget. Archives that the memory cache or a
++     * recent join may still serve stay; an index whose archive was removed rebuilds on its next use.
++     */
++    private void evictDiskEntries(final Path written) {
++        final Set<Path> retained = new HashSet<>();
++        retained.add(written);
++        synchronized (this) {
++            this.completed.values().forEach(pack -> retained.add(pack.path()));
++        }
++        final long recent = System.currentTimeMillis() - RECENT_USE_MILLIS;
++        try (var paths = Files.list(this.directory)) {
++            final List<DiskEntry> entries = paths.filter(path -> {
++                final String name = path.getFileName().toString();
++                return name.endsWith(".zip") || name.endsWith(ConverterDataManifest.SUFFIX);
++            }).map(DiskEntry::of).sorted(Comparator.comparingLong(DiskEntry::modified)).toList();
++            long bytes = entries.stream().mapToLong(DiskEntry::bytes).sum();
++            for (final DiskEntry entry : entries) {
++                if (bytes <= this.maxDiskBytes) {
++                    break;
++                }
++                if (entry.modified() < recent && !retained.contains(entry.path())) {
++                    Files.deleteIfExists(entry.path());
++                    bytes -= entry.bytes();
++                }
++            }
++        } catch (final IOException | RuntimeException unavailable) {
++            // Eviction cannot fail a completed conversion.
++        }
++    }
++
++    private static void touch(final Path path) {
++        try {
++            Files.setLastModifiedTime(path, FileTime.fromMillis(System.currentTimeMillis()));
++        } catch (final IOException readOnly) {
++            // A read-only cache still serves its verified archive.
 +        }
 +    }
 +
@@ -897,6 +959,17 @@ index 0000000000000000000000000000000000000000..3b0f9270fd6df4bce6663368c0c31ca7
 +            return MessageDigest.getInstance(algorithm);
 +        } catch (final NoSuchAlgorithmException e) {
 +            throw new IllegalStateException(algorithm + " is not available", e);
++        }
++    }
++
++    private record DiskEntry(Path path, long bytes, long modified) {
++
++        private static DiskEntry of(final Path path) {
++            try {
++                return new DiskEntry(path, Files.size(path), Files.getLastModifiedTime(path).toMillis());
++            } catch (final IOException missing) {
++                return new DiskEntry(path, 0, Long.MAX_VALUE);
++            }
 +        }
 +    }
 +
@@ -2721,10 +2794,10 @@ index 0000000000000000000000000000000000000000..d3f917b7b17673b4d9153b0bbbf331a1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..24076c2c01025c6b031548070ff4b073884f0fe9
+index 0000000000000000000000000000000000000000..5fda15a68870bb1d047e1467e14be2697a2b10b3
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-@@ -0,0 +1,439 @@
+@@ -0,0 +1,478 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -2758,6 +2831,7 @@ index 0000000000000000000000000000000000000000..24076c2c01025c6b031548070ff4b073
 +import java.io.OutputStream;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
++import java.nio.file.attribute.FileTime;
 +import java.util.List;
 +import java.util.UUID;
 +import java.util.Map;
@@ -3152,6 +3226,44 @@ index 0000000000000000000000000000000000000000..24076c2c01025c6b031548070ff4b073
 +            assertEquals(1, conversions.get());
 +        } finally {
 +            release.countDown();
++            cache.stop();
++        }
++    }
++
++    @Test
++    void diskBudgetEvictsLeastRecentlyUsedArchivesButKeepsRecentOnes() throws Exception {
++        final AtomicInteger conversions = new AtomicInteger();
++        final ConvertedResourcePackCache cache = new ConvertedResourcePackCache(this.directory, ViaBedrockConfig.PackCacheMode.DISK, storage -> {
++            final InMemoryContent content = new InMemoryContent();
++            final byte[] data = new byte[4096];
++            new Random(conversions.incrementAndGet()).nextBytes(data);
++            content.put("data", data);
++            return content;
++        }, 0, 0);
++        cache.maxDiskBytes = 1;
++        try {
++            final var sources = java.util.stream.IntStream.range(0, 3)
++                    .mapToObj(index -> new ResourcePackStorage(List.of(pack(UUID.randomUUID(), new byte[]{(byte) index}))))
++                    .toList();
++            final Path first = cache.prepare(sources.get(0)).join().path();
++            cache.prepare(sources.get(1)).join();
++            assertTrue(Files.isRegularFile(first), "archives used within the last hour stay on disk");
++
++            try (var paths = Files.list(this.directory)) {
++                for (final Path path : paths.toList()) {
++                    Files.setLastModifiedTime(path, FileTime.fromMillis(System.currentTimeMillis() - TimeUnit.HOURS.toMillis(2)));
++                }
++            }
++            final Path latest = cache.prepare(sources.get(2)).join().path();
++            assertFalse(Files.exists(first));
++            assertTrue(Files.isRegularFile(latest));
++            try (var paths = Files.list(this.directory)) {
++                assertEquals(2, paths.count(), "only the latest archive and its index remain");
++            }
++
++            cache.prepare(sources.get(0)).join();
++            assertEquals(4, conversions.get());
++        } finally {
 +            cache.stop();
 +        }
 +    }

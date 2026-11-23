@@ -7,20 +7,31 @@ Resource image bytes already reside in memory, but the ImageIO stream convenienc
 
 Use memory-backed input and output streams for Content images without changing global ImageIO cache settings. Respect ImageIO input ownership and retain the original PNG passthrough. Test pixel decoding and both PNG export paths with an unwritable disk cache.
 
+Read the image header with the same in-memory reader before decoding.
+A few compressed PNG or JPEG bytes can declare dimensions that make
+ImageIO allocate gigabytes, for example while item model conversion
+copies pack textures. Reject images above 4096 x 4096 pixels, the bound
+that TGA decoding uses. The native 1.26.60.5 client initializes
+libpng's default 1,000,000-pixel side limits (store at 0x14e985fb7,
+IHDR check at 0x14e987000), and no limit setter appears in its libpng
+code, so there is no lower native bound to match. A regression rejects
+a header one pixel row and column past the limit without decoding it.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e97a8c62883d5333a26fd368ae333bfe..e63777a30940cf189dee7dd2743ebe6c31018356 100644
+index 622e99d2e97a8c62883d5333a26fd368ae333bfe..68836e0dcb13be825303e4a494ba913e0a928544 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-@@ -22,6 +22,8 @@ import com.viaversion.viaversion.util.GsonUtil;
+@@ -22,6 +22,9 @@ import com.viaversion.viaversion.util.GsonUtil;
  import net.raphimc.viabedrock.api.util.JsonUtil;
  
  import javax.imageio.ImageIO;
++import javax.imageio.ImageReader;
 +import javax.imageio.stream.MemoryCacheImageInputStream;
 +import javax.imageio.stream.MemoryCacheImageOutputStream;
  import java.awt.image.BufferedImage;
  import java.io.ByteArrayInputStream;
  import java.io.ByteArrayOutputStream;
-@@ -142,8 +144,8 @@ public abstract class Content {
+@@ -142,8 +145,8 @@ public abstract class Content {
  
      public boolean putPngImage(final String path, final BufferedImage image) {
          final ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -31,21 +42,43 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..e63777a30940cf189dee7dd2743ebe6c
          } catch (final IOException e) {
              throw new UncheckedIOException(e);
          }
-@@ -189,7 +191,12 @@ public abstract class Content {
+@@ -177,6 +180,8 @@ public abstract class Content {
+ 
+     public static class LazyImage {
+ 
++        private static final long MAX_PIXELS = 4096L * 4096;
++
+         private final byte[] bytes;
+         private final String format;
+         private BufferedImage image;
+@@ -188,8 +193,24 @@ public abstract class Content {
+ 
          public BufferedImage getImage() {
              if (this.image == null) {
-                 try {
+-                try {
 -                    this.image = ImageIO.read(new ByteArrayInputStream(this.bytes));
-+                    final var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(this.bytes));
-+                    this.image = ImageIO.read(input);
-+                    // ImageIO closes the stream when it selects a reader, but leaves unmatched input open.
-+                    if (this.image == null) {
-+                        input.close();
++                try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(this.bytes))) {
++                    final Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
++                    if (!readers.hasNext()) {
++                        return null;
++                    }
++                    final ImageReader reader = readers.next();
++                    try {
++                        reader.setInput(input, true, true);
++                        // A few compressed bytes can declare dimensions that need gigabytes once decoded.
++                        final int width = reader.getWidth(0);
++                        final int height = reader.getHeight(0);
++                        if ((long) width * height > MAX_PIXELS) {
++                            throw new IllegalArgumentException("Image dimensions " + width + "x" + height + " exceed the decoding limit");
++                        }
++                        this.image = reader.read(0);
++                    } finally {
++                        reader.dispose();
 +                    }
                  } catch (final IOException e) {
                      throw new RuntimeException(e);
                  }
-@@ -207,8 +214,8 @@ public abstract class Content {
+@@ -207,8 +228,8 @@ public abstract class Content {
              } else {
                  final BufferedImage image = this.getImage();
                  final ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -58,10 +91,10 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..e63777a30940cf189dee7dd2743ebe6c
                  }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..5b14f400b931b6cae62323fd93f9aed0b01c5cfd
+index 0000000000000000000000000000000000000000..90834da47fa12b77789fd0cfd20316ec0812c192
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,87 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -74,11 +107,14 @@ index 0000000000000000000000000000000000000000..5b14f400b931b6cae62323fd93f9aed0
 +import org.junit.jupiter.api.parallel.Isolated;
 +
 +import javax.imageio.ImageIO;
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
 +import java.nio.file.attribute.PosixFileAttributeView;
 +import java.nio.file.attribute.PosixFilePermissions;
 +import java.util.Base64;
++import java.util.zip.CRC32;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -117,6 +153,32 @@ index 0000000000000000000000000000000000000000..5b14f400b931b6cae62323fd93f9aed0
 +            ImageIO.setUseCache(previousPolicy);
 +            Files.setPosixFilePermissions(cache, PosixFilePermissions.fromString("rwx------"));
 +        }
++    }
++
++    @Test
++    void rejectsImageHeadersDeclaringMorePixelsThanTheDecodingLimitBeforeAllocating() {
++        final var content = new InMemoryContent();
++        content.put("oversized.png", pngHeader(4097, 4097));
++        content.put("bounded.png", pngHeader(4096, 4096));
++        assertThrows(IllegalArgumentException.class, () -> content.getImage("oversized.png").getImage());
++        // The bounded header passes the limit and fails only on its missing pixel data.
++        final RuntimeException missingPixels = assertThrows(RuntimeException.class, () -> content.getImage("bounded.png").getImage());
++        assertFalse(missingPixels instanceof IllegalArgumentException);
++    }
++
++    private static byte[] pngHeader(final int width, final int height) {
++        final ByteBuffer png = ByteBuffer.allocate(8 + 25 + 12);
++        png.put(new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'});
++        chunk(png, "IHDR", ByteBuffer.allocate(13).putInt(width).putInt(height).put(new byte[]{8, 6, 0, 0, 0}).array());
++        chunk(png, "IEND", new byte[0]);
++        return png.array();
++    }
++
++    private static void chunk(final ByteBuffer png, final String type, final byte[] data) {
++        final CRC32 crc = new CRC32();
++        crc.update(type.getBytes(StandardCharsets.US_ASCII));
++        crc.update(data);
++        png.putInt(data.length).put(type.getBytes(StandardCharsets.US_ASCII)).put(data).putInt((int) crc.getValue());
 +    }
 +
 +}

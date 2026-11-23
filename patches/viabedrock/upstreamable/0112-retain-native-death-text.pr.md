@@ -10,7 +10,7 @@ The full 109-patch core build and Checkstyle pass: 2,148 tests pass and 176 skip
 
 Installed software controls use an isolated screen candidate on direct and freshly rebuilt ViaProxy routes.
 Both routes pass 25 stages covering packet order, visibility, capability changes, source updates with identical Java components, and usable fallback for oversized sources.
-Declared searching/ready respawn responses at the loaded spawn verify retry cancellation and source retirement across Java player replacement, followed by another death.
+Declared searching/ready respawn responses at the loaded spawn verify retry cancellation across Java player replacement, followed by another death.
 Complete journals retain the original bootstrap and all 26 declared Bedrock packets in order.
 
 Screen presentation remains a separate patch. BDS respawn readiness, native activation timing, complete styled layout and native final pixels remain unverified.

@@ -157,6 +157,15 @@ controllers select. With them the atlas needed about 18,200 pixels per
 side, beyond the GPU limit, so Java dropped every server pack. The
 add-on still draws those frames natively from the payload pack.
 
+Omit an entity model whose fitted scale is not finite. Cubes whose
+widths each fit a float can still overflow the converter's fitted
+bounds, which yields an infinite scale. The default disk cache rejects
+that value while writing converter metadata, so the whole join failed;
+the memory cache would spawn a part entity with an infinite scale.
+Without a stored scale the actor spawns no part for that model. A
+regression gives the test entity cube widths of 3e38 and checks that
+no scale is stored.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 index 4e87e6acb64959a57107788013245c8a7caf630d..ed84a7aebe626036f4b66ada6bf08f69b4947558 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
@@ -644,7 +653,7 @@ index 40083952199718da35b75d191b00130764a43712..736e2ada4f709e08536acb22f5a3f850
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
-index 6007035031ec4a6c4200301852d5c63e5ea1d17d..9c15e9f560150c4ed7d85a85b75bf83fa96a6dbd 100644
+index 6007035031ec4a6c4200301852d5c63e5ea1d17d..a2719b950f7e05615c1c7d6a0f0da8ae861e254d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomEntityResourceRewriter.java
 @@ -19,16 +19,15 @@ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
@@ -666,7 +675,7 @@ index 6007035031ec4a6c4200301852d5c63e5ea1d17d..9c15e9f560150c4ed7d85a85b75bf83f
  import java.util.function.Consumer;
  import java.util.function.Supplier;
  
-@@ -46,32 +45,30 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
+@@ -46,32 +45,34 @@ public class CustomEntityResourceRewriter extends ItemModelResourceRewriter {
  
      @Override
      public void submitTasks(final ResourcePackStorage resourcePackStorage, final Consumer<Supplier<Content>> submitter) {
@@ -688,17 +697,6 @@ index 6007035031ec4a6c4200301852d5c63e5ea1d17d..9c15e9f560150c4ed7d85a85b75bf83f
 -                    javaContent.putPngImage("assets/viabedrock/textures/" + this.getJavaTexturePath(bedrockPath) + ".png", texture);
 -                    break;
 -                }
--            }
--        }
--        for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
--            final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
--            if (bedrockGeometry != null) {
--                for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
--                    final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
--                    final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()), RotationType.POST_1_21_11);
--                    javaContent.putModel(modelKey, itemModelData.compile());
--                    resourcePackStorage.getConverterData().put("ce_" + entityDefinition.identifier() + '_' + modelKey + "_scale", itemModelData.getScale());
--                }
 +        final Set<String> textures = this.copyTextures(resourcePackStorage, entityDefinition.entityData().getTextures().values(), javaContent);
 +        for (final var binding : EntityModelBindings.collect(entityDefinition.entityData(), resourcePackStorage.getRenderControllers()::get)) {
 +            final String geometryName = entityDefinition.entityData().getGeometries().get(binding.geometry());
@@ -710,7 +708,21 @@ index 6007035031ec4a6c4200301852d5c63e5ea1d17d..9c15e9f560150c4ed7d85a85b75bf83f
 +            if (bedrockGeometry == null || !hasTexture) {
 +                continue;
              }
+-        }
+-        for (Map.Entry<String, String> modelEntry : entityDefinition.entityData().getGeometries().entrySet()) {
+-            final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
+-            if (bedrockGeometry != null) {
+-                for (Map.Entry<String, String> textureEntry : entityDefinition.entityData().getTextures().entrySet()) {
+-                    final String modelKey = modelEntry.getKey() + "_" + textureEntry.getKey();
+-                    final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + this.getJavaTexturePath(textureEntry.getValue()), RotationType.POST_1_21_11);
+-                    javaContent.putModel(modelKey, itemModelData.compile());
+-                    resourcePackStorage.getConverterData().put("ce_" + entityDefinition.identifier() + '_' + modelKey + "_scale", itemModelData.getScale());
+-                }
 +            final CompiledGeometry geometry = geometries.computeIfAbsent(bedrockGeometry, CompiledGeometry::compile);
++            if (!Float.isFinite(geometry.scale())) {
++                // Cubes near the float limit overflow the fitted bounds. Without a scale the actor spawns no part for this model.
++                continue;
+             }
 +            javaContent.putGeometry(geometry);
 +            javaContent.putModel(modelKey, geometry.withTexture("viabedrock:" + this.getJavaTexturePath(textureName)));
 +            resourcePackStorage.getConverterData().put("ce_" + entityDefinition.identifier() + '_' + modelKey + "_scale", geometry.scale());
@@ -1504,10 +1516,10 @@ index 0000000000000000000000000000000000000000..5eb876a05e9cd09fb2675864136e92bb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..492456606b352e2ace343734439d4fb54aaf1969
+index 0000000000000000000000000000000000000000..7a28eabd599adf2615aad2aa085eb7dc039f0c10
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,419 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1604,6 +1616,28 @@ index 0000000000000000000000000000000000000000..492456606b352e2ace343734439d4fb5
 +        assertEquals(sourcePosition.getX(), position.getX());
 +        assertEquals(sourcePosition.getY(), position.getY());
 +        assertEquals(sourcePosition.getZ(), position.getZ());
++    }
++
++    @Test
++    void omitsEntityModelsWhoseFittedScaleOverflowsInsteadOfStoringIt() {
++        final ResourcePack pack = pack("example:actor", false);
++        final JsonObject source = pack.content().getJson("models/entity/test.json");
++        final var size = source.getAsJsonArray("minecraft:geometry").get(0).getAsJsonObject().getAsJsonArray("bones").get(0).getAsJsonObject()
++                .getAsJsonArray("cubes").get(0).getAsJsonObject().getAsJsonArray("size");
++        // Each width fits a float, but their sum in the fitted bounds does not.
++        size.set(0, new JsonPrimitive(3e38));
++        size.set(2, new JsonPrimitive(3e38));
++        pack.content().putJson("models/entity/test.json", source);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack));
++
++        convert(storage, new CustomEntityResourceRewriter());
++
++        assertFalse(storage.getConverterData().containsKey("ce_example:actor_default_resolved_scale"));
++        storage.getConverterData().forEach((key, value) -> {
++            if (key.endsWith("_scale")) {
++                assertTrue(Float.isFinite(((Number) value).floatValue()), key);
++            }
++        });
 +    }
 +
 +    @Test

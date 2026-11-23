@@ -20,19 +20,26 @@ retained text, live rule changes and repeated unchanged rules. This fixes
 reason projection; the OreUI screen layout and lifecycle remain separate
 work.
 
-A retained reason belongs to one death. Clear it when ReadyToSpawn
-respawns the player, so a later ActorEvent DEATH waits for its own
-DeathInfo instead of showing the previous reason. Native gameplay routing
-marks the local player alive again on respawn (listener 0x146f41e40) and
-routes the death screen only while it is dead (0x146f42b00). The
-executable analysis did not locate where native clears its reason, so
-this follows the per-death lifetime rather than a traced store.
+Open the death screen when the spawned local player dies, even without
+DeathInfo. Native LocalPlayer (vtable 0x14f2def10) calls its die slot
++0x3c8 from tick slot +0xc8 (0x142c241c0) once getHealth (0x142977d40)
+reaches zero. That slot sends sendLocalPlayerDeath, and the gameplay
+router then selects the death route (0x146f41d30, 0x146f42b00). Health
+from UpdateAttributes or ActorEvent DEATH therefore opens one screen per
+death. A later DeathInfo or rule change only refreshes its reason.
+
+Keep the last reason across respawns. The active OreUI query
+(0x14a014390) reads a translated string at LocalPlayer+0x1148. Only the
+constructor (0x146d9d790), DeathInfo handler (0x146bc07d0) and destructor
+(0x146dc2e80) write it on that path. The classic controller clear
+(0x1454861a0) is not on the OreUI route. A death without DeathInfo shows
+the previous reason, or no reason before the first DeathInfo.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
-index f67b7f7d84376ec70870cf93357f5e59127d6f41..68fa4fac1f37dab14f4a01d8a8dfde51a1593e3b 100644
+index f67b7f7d84376ec70870cf93357f5e59127d6f41..75115fb67dc48c9f29212bebbeec02ba3c33a1f5 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
-@@ -38,10 +38,26 @@ import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
+@@ -38,10 +38,38 @@ import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.CustomChatCompletionsAction;
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
@@ -45,34 +52,34 @@ index f67b7f7d84376ec70870cf93357f5e59127d6f41..68fa4fac1f37dab14f4a01d8a8dfde51
  
 +    public static void sendJavaDeathMessage(final UserConnection user) {
 +        final var player = user.get(EntityTracker.class).getClientPlayer();
-+        final var message = user.get(GameSessionStorage.class).getDeathMessage();
-+        if (!player.isDead() || message == null) {
++        if (!player.isDead()) {
 +            return;
 +        }
-+        final boolean showReason = Boolean.TRUE.equals(user.get(GameRulesStorage.class).getGameRule("showDeathMessages"));
++        final var message = user.get(GameSessionStorage.class).getDeathMessage();
++        final boolean showReason = message != null && Boolean.TRUE.equals(user.get(GameRulesStorage.class).getGameRule("showDeathMessages"));
 +        final PacketWrapper death = PacketWrapper.create(ClientboundPackets26_3.PLAYER_COMBAT_KILL, user);
 +        death.write(Types.VAR_INT, player.javaId()); // entity id
 +        death.write(Types.TAG, showReason ? TextUtil.textComponentToNbt(message) : TextUtil.stringToNbt("")); // message
 +        death.send(BedrockProtocol.class);
 +    }
 +
++    /**
++     * Opens the death screen when the spawned local player dies, whether or not DeathInfo arrives.
++     *
++     * @param wasAlive whether the player was alive before the packet that may have killed it
++     */
++    public static void sendJavaLocalDeath(final UserConnection user, final boolean wasAlive) {
++        final var player = user.get(EntityTracker.class).getClientPlayer();
++        if (wasAlive && player.isInitiallySpawned()) {
++            sendJavaDeathMessage(user);
++        }
++    }
++
      public static void sendJavaBlockDestroyProgress(final UserConnection user, final int id, final BlockPosition position, final int stage) {
          final PacketWrapper blockDestruction = PacketWrapper.create(ClientboundPackets26_3.BLOCK_DESTRUCTION, user);
          blockDestruction.write(Types.VAR_INT, id); // id
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index d7c69522bf0a6912c9900810542b6ab3ee8cc5f9..2e3a3bc50d72482835076851ba271f2029cb809e 100644
---- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -106,6 +106,7 @@ public final class ClientPlayerPackets {
-                             // TODO: InventoryTransactionPacket(legacyRequestId=0, legacySlots=[], actions=[], transactionType=INVENTORY_MISMATCH, actionType=0, entityRuntimeId=0, blockPosition=null, blockFace=0, hotbarSlot=0, itemInHand=null, playerPosition=null, clickPosition=null, headPosition=null, usingNetIds=false, blockDefinition=null)
-                         }
-                         clientPlayer.clearEffects();
-+                        gameSession.clearDeathMessage(); // The reason belongs to the death that this respawn ends
- 
-                         clientPlayer.setHealth(clientPlayer.attributes().get("minecraft:health").maxValue());
-                         clientPlayer.sendPlayerActionPacketToServer(PlayerActionType.Respawn, -1);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index 39c8bf5fa83c84c0911b6596aa310d0f0b8bd6ac..63b06dce828c64ee6f4b6b6c40e839cd578560fb 100644
+index 39c8bf5fa83c84c0911b6596aa310d0f0b8bd6ac..4b03e31fc218d4a732614934ef9e8dd77957884d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 @@ -45,7 +45,6 @@ import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
@@ -83,7 +90,12 @@ index 39c8bf5fa83c84c0911b6596aa310d0f0b8bd6ac..63b06dce828c64ee6f4b6b6c40e839cd
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.enums.Direction;
-@@ -452,11 +451,8 @@ public final class EntityPackets {
+@@ -448,15 +447,13 @@ public final class EntityPackets {
+                 }
+                 case DEATH -> {
+                     wrapper.cancel();
++                    final boolean wasAlive = entity instanceof LivingEntity livingEntity && !livingEntity.isDead();
+                     if (entity instanceof LivingEntity livingEntity) {
                          livingEntity.setHealth(0F);
                          livingEntity.sendAttribute("minecraft:health");
                      }
@@ -93,10 +105,22 @@ index 39c8bf5fa83c84c0911b6596aa310d0f0b8bd6ac..63b06dce828c64ee6f4b6b6c40e839cd
 -                        playerCombatKill.write(Types.TAG, TextUtil.textComponentToNbt(gameSession.getDeathMessage())); // message
 -                        playerCombatKill.send(BedrockProtocol.class);
 +                    if (entity == entityTracker.getClientPlayer()) {
-+                        PacketFactory.sendJavaDeathMessage(wrapper.user());
++                        PacketFactory.sendJavaLocalDeath(wrapper.user(), wasAlive);
                      }
                      if (entity != entityTracker.getClientPlayer()) {
                          entity.playSound("death");
+@@ -498,7 +495,11 @@ public final class EntityPackets {
+ 
+             final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
+             if (entity instanceof LivingEntity livingEntity) {
++                final boolean wasAlive = !livingEntity.isDead();
+                 livingEntity.updateAttributes(attributes, wrapper);
++                if (entity == entityTracker.getClientPlayer() && livingEntity.isDead()) {
++                    PacketFactory.sendJavaLocalDeath(wrapper.user(), wasAlive);
++                }
+             } else {
+                 wrapper.cancel();
+             }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 index 1e09425260bfcec673076215eedda82cdfbec05a..4b40f209b770e89e6108a8ea4a7ab4657267975a 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
@@ -134,25 +158,12 @@ index 9dcfed5b7e6acd84625c53a094b094110910ab10..9d4df8515fcaae96d22c774ffa317309
                      } else if (gameRule.name().equalsIgnoreCase("doLimitedCrafting")) {
                          PacketFactory.sendJavaGameEvent(this.user(), GameEventType.LIMITED_CRAFTING, (boolean) gameRule.value() ? 1F : 0F);
                      }
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
-index b86fa99038a86c90e14fe881abe15a2659ecdfb3..b0a810b0246895d944ffb08c08049aad39cab01e 100644
---- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameSessionStorage.java
-@@ -188,4 +188,8 @@ public class GameSessionStorage extends StoredObject {
-         this.deathMessage = deathMessage;
-     }
- 
-+    public void clearDeathMessage() {
-+        this.deathMessage = null;
-+    }
-+
- }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..47c256855e65a2aa6d8b8bda6168da239753d3f9
+index 0000000000000000000000000000000000000000..4733a63dd4033da1be6288312bd4330af419a15f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/DeathMessagePacketsTest.java
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,281 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -219,7 +230,7 @@ index 0000000000000000000000000000000000000000..47c256855e65a2aa6d8b8bda6168da23
 +                if (!infoFirst) {
 +                    fixture.info();
 +                }
-+                assertEquals(List.of(""), fixture.messages);
++                assertEquals(infoFirst ? List.of("") : List.of("", ""), fixture.messages);
 +                assertEquals("Controlled death reason", fixture.session.getDeathMessage().asUnformattedString());
 +            }
 +        }
@@ -243,16 +254,27 @@ index 0000000000000000000000000000000000000000..47c256855e65a2aa6d8b8bda6168da23
 +    }
 +
 +    @Test
-+    void laterDeathWaitsForItsOwnReasonAfterRespawn() throws Exception {
++    void laterDeathShowsTheRetainedReasonUntilItsOwnArrives() throws Exception {
 +        try (var fixture = new Fixture()) {
 +            fixture.info("First reason");
 +            fixture.death();
 +            fixture.respawn();
-+            assertNull(fixture.session.getDeathMessage());
 +            fixture.death();
-+            assertEquals(List.of("First reason"), fixture.messages, "A later death must wait for its own reason");
++            assertEquals(List.of("First reason", "First reason"), fixture.messages,
++                    "Native keeps the previous reason until DeathInfo replaces it");
 +            fixture.info("Second reason");
-+            assertEquals(List.of("First reason", "Second reason"), fixture.messages);
++            assertEquals(List.of("First reason", "First reason", "Second reason"), fixture.messages);
++        }
++    }
++
++    @Test
++    void zeroHealthOpensOneDeathScreenWithoutDeathInfo() throws Exception {
++        try (var fixture = new Fixture()) {
++            fixture.health(0F);
++            assertEquals(List.of(""), fixture.messages);
++            fixture.death();
++            fixture.health(0F);
++            assertEquals(List.of(""), fixture.messages, "Later packets for the same death must not reopen the screen");
 +        }
 +    }
 +
@@ -305,6 +327,14 @@ index 0000000000000000000000000000000000000000..47c256855e65a2aa6d8b8bda6168da23
 +                return null;
 +            })
 +                    .when(this.player).setHealth(anyFloat());
++            doAnswer(call -> {
++                for (final EntityAttribute attribute : (EntityAttribute[]) call.getArgument(0)) {
++                    if (attribute.name().equals("minecraft:health")) {
++                        this.dead.set(attribute.computeClampedValue() <= 0);
++                    }
++                }
++                return null;
++            }).when(this.player).updateAttributes(any(EntityAttribute[].class), any(PacketWrapper.class));
 +            when(resources.getTexts()).thenReturn(texts);
 +            when(texts.lookup()).thenReturn(Function.identity());
 +            this.packets.when(() -> PacketWrapper.create(any(PacketType.class), any(UserConnection.class)))
@@ -355,6 +385,19 @@ index 0000000000000000000000000000000000000000..47c256855e65a2aa6d8b8bda6168da23
 +            });
 +        }
 +
++        private void health(final float health) throws Exception {
++            this.receive(ClientboundBedrockPackets.UPDATE_ATTRIBUTES, false, buffer -> {
++                BedrockTypes.UNSIGNED_VAR_LONG.write(buffer, 42L);
++                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
++                for (final float value : new float[]{0F, 20F, health, 0F, 20F, 20F}) {
++                    BedrockTypes.FLOAT_LE.write(buffer, value);
++                }
++                BedrockTypes.STRING.write(buffer, "minecraft:health");
++                BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0);
++                BedrockTypes.UNSIGNED_VAR_LONG.write(buffer, 0L);
++            });
++        }
++
 +        private void respawn() throws Exception {
 +            this.receive(ClientboundBedrockPackets.RESPAWN, buffer -> {
 +                BedrockTypes.POSITION_3F.write(buffer, new Position3f(0F, 64F, 0F));
@@ -364,6 +407,10 @@ index 0000000000000000000000000000000000000000..47c256855e65a2aa6d8b8bda6168da23
 +        }
 +
 +        private void receive(final ClientboundBedrockPackets type, final Consumer<ByteBuf> encode) throws Exception {
++            this.receive(type, true, encode);
++        }
++
++        private void receive(final ClientboundBedrockPackets type, final boolean cancelled, final Consumer<ByteBuf> encode) throws Exception {
 +            final var input = Unpooled.buffer();
 +            try {
 +                encode.accept(input);
@@ -372,7 +419,7 @@ index 0000000000000000000000000000000000000000..47c256855e65a2aa6d8b8bda6168da23
 +                final var mapping = this.protocol.mapping(packet);
 +                mapping.applyType(packet);
 +                mapping.handler().handle(packet);
-+                assertTrue(packet.isCancelled());
++                assertEquals(cancelled, packet.isCancelled());
 +                assertFalse(input.isReadable());
 +            } finally {
 +                input.release();

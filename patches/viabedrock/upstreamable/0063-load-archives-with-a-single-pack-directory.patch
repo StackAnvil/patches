@@ -11,6 +11,36 @@ Archive regressions cover nested roots, root preference, Windows paths, stored d
 
 The central directory size bounds each read. A server archive can declare a one-byte entry whose DEFLATE data expands to gigabytes, and reading the whole stream before the size check exhausts the heap. Read at most one byte past the declared size, as the native source decoder does, and reject unknown sizes or sizes beyond a Java array. The regression declares one byte for a stream that expands past Integer.MAX_VALUE.
 
+Bound the whole archive and its download as well. A server can send
+honest entries that each pass the size checks but together exhaust the
+heap, declare a 2 GiB pack in any number of RESOURCE_PACK_DATA_INFO
+packets, or serve an endless HTTP response from its pack CDN URL. Check
+the declared entry sizes before inflating and reject archives that
+expand beyond 1 GiB. Count every pack of a connection, from the game
+protocol or HTTP, against a shared 1 GiB budget before allocating it,
+and read an HTTP response only up to the length its HEAD request
+reported. The largest recorded server pack is a 65 MB archive that
+converts to about 110 MB, so both limits stay far above real packs. A string search of the native
+1.26.60.5 client found pack size fields and disk space errors, but no
+pack size limit to match. Regressions cover the expanded limit, the
+shared budget with replaced and invalid packs, and a chunked response
+longer than expected.
+
+Bound the whole archive and its download as well. A server can send
+honest entries that each pass the size checks but together exhaust the
+heap, declare a 2 GiB pack in any number of RESOURCE_PACK_DATA_INFO
+packets, or serve an endless HTTP response from its pack CDN URL. Check
+the declared entry sizes before inflating and reject archives that
+expand beyond 1 GiB. Count every pack of a connection, from the game
+protocol or HTTP, against a shared 1 GiB budget before allocating it,
+and read an HTTP response only up to the length its HEAD request
+reported. The largest recorded server pack is a 65 MB archive that
+converts to about 110 MB, so both limits stay far above real packs. A string search of the native
+1.26.60.5 client found pack size fields and disk space errors, but no
+pack size limit to match. Regressions cover the expanded limit, the
+shared budget with replaced and invalid packs, and a chunked response
+longer than expected.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
 index ebab0034b6df6b92e05c0f09547245d7ac5c1680..e4632f65fdbf2fa7735b06769edbdff059d46cc6 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
@@ -45,10 +75,10 @@ index ebab0034b6df6b92e05c0f09547245d7ac5c1680..e4632f65fdbf2fa7735b06769edbdff0
                  throw new IllegalStateException("Missing manifest.json");
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
-index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..37135f5dffb30e7ce9baf3fd69d1bf8a1087d1c7 100644
+index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..234d22c9e82d7880befc3cb91c9773b020a95c30 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
-@@ -17,28 +17,45 @@
+@@ -17,28 +17,64 @@
   */
  package net.raphimc.viabedrock.api.resourcepack.content;
  
@@ -56,51 +86,173 @@ index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..37135f5dffb30e7ce9baf3fd69d1bf8a
  import java.io.IOException;
  import java.security.MessageDigest;
  import java.security.NoSuchAlgorithmException;
++import java.util.ArrayList;
  import java.util.Arrays;
++import java.util.Collections;
  import java.util.HashMap;
++import java.util.List;
  import java.util.Map;
 -import java.util.zip.ZipEntry;
 -import java.util.zip.ZipInputStream;
 +import java.util.zip.CRC32;
 +import java.util.zip.CheckedInputStream;
 +import java.util.zip.ZipException;
++import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 +import org.apache.commons.compress.archivers.zip.ZipFile;
 +import org.apache.commons.compress.utils.SeekableInMemoryByteChannel;
  
  public class ZipContent extends InMemoryContent {
  
 +    private static final int MAX_ENTRY_BYTES = Integer.MAX_VALUE - 8;
++    // Far above the largest recorded server pack, whose converted archive is about 110 MB.
++    private static final long MAX_EXPANDED_BYTES = 1L << 30;
 +
      private final byte[] sourceZip;
      private final Map<String, byte[]> sourceHashes = new HashMap<>();
  
      public ZipContent(final byte[] zipData) throws IOException {
++        this(zipData, MAX_EXPANDED_BYTES);
++    }
++
++    ZipContent(final byte[] zipData, final long maxExpandedBytes) throws IOException {
          this.sourceZip = zipData.clone();
 -        try (ZipInputStream zipInputStream = new ZipInputStream(new ByteArrayInputStream(this.sourceZip))) {
 -            ZipEntry zipEntry;
 -            while ((zipEntry = zipInputStream.getNextEntry()) != null) {
+-                if (!zipEntry.isDirectory()) {
+-                    this.content.put(zipEntry.getName(), zipInputStream.readAllBytes());
 +        try (var channel = new SeekableInMemoryByteChannel(this.sourceZip);
 +             var archive = ZipFile.builder().setSeekableByteChannel(channel).get()) {
-+            final var entries = archive.getEntriesInPhysicalOrder();
-+            while (entries.hasMoreElements()) {
-+                final var zipEntry = entries.nextElement();
-                 if (!zipEntry.isDirectory()) {
--                    this.content.put(zipEntry.getName(), zipInputStream.readAllBytes());
-+                    final String path = zipEntry.getName().replace('\\', '/').replaceAll("/{2,}", "/");
-+                    if (zipEntry.getSize() < 0 || zipEntry.getSize() > MAX_ENTRY_BYTES) {
-+                        throw new ZipException("ZIP entry size is unknown or exceeds the array limit");
++            // Check every declared size before inflating, so many honest but huge entries cannot exhaust the heap either.
++            final List<ZipArchiveEntry> files = new ArrayList<>();
++            long expandedBytes = 0;
++            for (final ZipArchiveEntry zipEntry : Collections.list(archive.getEntriesInPhysicalOrder())) {
++                if (zipEntry.isDirectory()) {
++                    continue;
++                }
++                if (zipEntry.getSize() < 0 || zipEntry.getSize() > MAX_ENTRY_BYTES) {
++                    throw new ZipException("ZIP entry size is unknown or exceeds the array limit");
++                }
++                expandedBytes += zipEntry.getSize();
++                if (expandedBytes > maxExpandedBytes) {
++                    throw new ZipException("ZIP entries expand beyond the archive size limit");
++                }
++                files.add(zipEntry);
++            }
++            for (final ZipArchiveEntry zipEntry : files) {
++                final String path = zipEntry.getName().replace('\\', '/').replaceAll("/{2,}", "/");
++                try (var input = new CheckedInputStream(archive.getInputStream(zipEntry), new CRC32())) {
++                    // Inflate at most one byte past the declared size, so a forged size cannot exhaust the heap.
++                    final byte[] data = input.readNBytes((int) zipEntry.getSize() + 1);
++                    if (data.length != zipEntry.getSize() || input.getChecksum().getValue() != zipEntry.getCrc()) {
++                        throw new ZipException("ZIP entry size or checksum does not match its central directory");
 +                    }
-+                    try (var input = new CheckedInputStream(archive.getInputStream(zipEntry), new CRC32())) {
-+                        // Inflate at most one byte past the declared size, so a forged size cannot exhaust the heap.
-+                        final byte[] data = input.readNBytes((int) zipEntry.getSize() + 1);
-+                        if (data.length != zipEntry.getSize() || input.getChecksum().getValue() != zipEntry.getCrc()) {
-+                            throw new ZipException("ZIP entry size or checksum does not match its central directory");
-+                        }
-+                        this.content.put(path, data);
-+                    }
++                    this.content.put(path, data);
                  }
              }
          }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloader.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloader.java
+index 001e7eaf96874faa181603bf4b5761b9591be321..5db6a9f34ccf7f41c74996cdc7ab50dc82a1348d 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloader.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloader.java
+@@ -42,12 +42,19 @@ public class BedrockPackDownloader {
+         return connection.getContentLength();
+     }
+ 
+-    public byte[] download() throws IOException {
++    /** Reads at most the expected length, so a response cannot grow past the size checked before the download. */
++    public byte[] download(final int maxBytes) throws IOException {
+         final HttpURLConnection connection = this.createConnection();
+         connection.setRequestMethod("GET");
+         connection.connect();
+         this.checkResponseCode(connection);
+-        return connection.getInputStream().readAllBytes();
++        try (var input = connection.getInputStream()) {
++            final byte[] data = input.readNBytes(maxBytes + 1);
++            if (data.length > maxBytes) {
++                throw new IOException("Resource pack response exceeds " + maxBytes + " bytes");
++            }
++            return data;
++        }
+     }
+ 
+     private HttpURLConnection createConnection() throws IOException {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java
+index 62030195fdb659bd6dc25b2306c7714ddc99542e..7b4e26f739a060d6f2b5887145e10335f6d0f128 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTracker.java
+@@ -29,14 +29,48 @@ import java.util.Map;
+ 
+ public class ResourcePackDownloadTracker implements StorableObject {
+ 
++    // Far above the largest recorded server pack archive, about 65 MB.
++    private static final long MAX_DOWNLOADED_BYTES = 1L << 30;
++
+     private final Map<String, Download> downloads = new HashMap<>();
++    private final long maxDownloadedBytes;
++    private long downloadedBytes;
++
++    public ResourcePackDownloadTracker() {
++        this(MAX_DOWNLOADED_BYTES);
++    }
+ 
++    ResourcePackDownloadTracker(final long maxDownloadedBytes) {
++        this.maxDownloadedBytes = maxDownloadedBytes;
++    }
++
++    /** Allocates a server-declared pack only while every pack of the connection stays within the download budget. */
+     public Download add(final String key, final long size, final long chunkSize, final byte[] hash, final boolean premium, final PackType type) {
++        if (chunkSize <= 0) {
++            throw new IllegalStateException("Invalid resource pack chunk size");
++        }
++        final Download replaced = this.downloads.remove(key);
++        if (replaced != null) {
++            this.release(replaced.data.length);
++        }
++        this.reserve(size);
+         final Download download = new Download(hash, premium, type, chunkSize, new boolean[Math.toIntExact((long) Math.ceil((double) size / chunkSize))], new byte[Math.toIntExact(size)]);
+         this.downloads.put(key, download);
+         return download;
+     }
+ 
++    /** Counts pack bytes that this connection keeps, including packs downloaded over HTTP. */
++    public synchronized void reserve(final long bytes) {
++        if (bytes < 0 || bytes > this.maxDownloadedBytes - this.downloadedBytes) {
++            throw new IllegalStateException("Resource packs exceed the download limit of " + this.maxDownloadedBytes + " bytes");
++        }
++        this.downloadedBytes += bytes;
++    }
++
++    public synchronized void release(final long bytes) {
++        this.downloadedBytes -= bytes;
++    }
++
+     public Download get(final String key) {
+         return this.downloads.get(key);
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
+index 5bc485dc8109c2547027b5db39d00d0982c4aa24..8d8489290f917ae98644f01fb08493a11d1e0ff7 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
+@@ -131,8 +131,16 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+                 asyncTasks.add(() -> {
+                     try {
+                         final BedrockPackDownloader downloader = new BedrockPackDownloader(info.httpUrl());
+-                        downloader.getContentLength(); // Check if the pack is available before downloading
+-                        this.addRemoteResourcePack(new ResourcePack(new ZipContent(downloader.download())));
++                        final int length = downloader.getContentLength(); // Check if the pack is available before downloading
++                        final ResourcePackDownloadTracker downloads = this.user().get(ResourcePackDownloadTracker.class);
++                        downloads.reserve(length);
++                        try {
++                            this.addRemoteResourcePack(new ResourcePack(new ZipContent(downloader.download(length))));
++                        } catch (final Throwable e) {
++                            // The protocol fallback reserves the pack again.
++                            downloads.release(length);
++                            throw e;
++                        }
+                     } catch (final Throwable e) {
+                         if (!(e.getCause() instanceof InterruptedException)) {
+                             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to download resource pack: " + info.key(), e);
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..f18f0459654a8d66b0c33dcf0d21b65f713c3898
@@ -315,3 +467,107 @@ index 0000000000000000000000000000000000000000..f18f0459654a8d66b0c33dcf0d21b65f
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContentTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContentTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5199c0446fe0b9e4038e14d281848e6edd31c3ae
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContentTest.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.zip.ZipException;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ZipContentTest {
++
++    @Test
++    void rejectsArchivesWhoseHonestEntriesTogetherExceedTheExpandedLimit() throws Exception {
++        final InMemoryContent content = new InMemoryContent();
++        content.put("first", new byte[600]);
++        content.put("second", new byte[600]);
++        final byte[] archive = content.toZip();
++
++        assertThrows(ZipException.class, () -> new ZipContent(archive, 1199));
++        assertEquals(600, new ZipContent(archive, 1200).get("second").length);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloaderTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloaderTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c811c0eb1c9876249ef8306ef837ebfd2a1706e8
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/BedrockPackDownloaderTest.java
+@@ -0,0 +1,40 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.http;
++
++import com.sun.net.httpserver.HttpServer;
++import org.junit.jupiter.api.Test;
++
++import java.io.IOException;
++import java.net.InetAddress;
++import java.net.InetSocketAddress;
++import java.net.URI;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockPackDownloaderTest {
++
++    @Test
++    void stopsReadingResponsesThatGrowPastTheExpectedLength() throws Exception {
++        final HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
++        server.createContext("/pack.zip", exchange -> {
++            // A chunked response has no length that the client could check before reading.
++            exchange.sendResponseHeaders(200, 0);
++            try (var body = exchange.getResponseBody()) {
++                body.write(new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
++            }
++        });
++        server.start();
++        try {
++            final var downloader = new BedrockPackDownloader(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/pack.zip").toURL());
++            assertThrows(IOException.class, () -> downloader.download(7));
++            assertArrayEquals(new byte[]{1, 2, 3, 4, 5, 6, 7, 8}, downloader.download(8));
++        } finally {
++            server.stop(0);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTrackerTest.java
+index bd7fd6bb2f074040545d097ed563b77d4ba6bc7b..7c8255a34a44009a22cba2beb7c05f2f8949f0eb 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTrackerTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackDownloadTrackerTest.java
+@@ -101,6 +101,20 @@ class ResourcePackDownloadTrackerTest {
+         assertArrayEquals(new byte[]{1, 2, 3}, download.processDataChunk(0, archive).content().get("payload"));
+     }
+ 
++    @Test
++    void packsOfOneConnectionShareTheDownloadLimitBeforeAllocating() {
++        final var tracker = new ResourcePackDownloadTracker(100);
++        tracker.add("first", 60, 10, new byte[32], false, PackType.Resources);
++        assertThrows(IllegalStateException.class, () -> tracker.add("second", 41, 10, new byte[32], false, PackType.Resources));
++        assertNull(tracker.get("second"));
++        // A repeated data info replaces the earlier allocation instead of adding to it.
++        tracker.add("first", 60, 10, new byte[32], false, PackType.Resources);
++        tracker.reserve(40);
++        assertThrows(IllegalStateException.class, () -> tracker.reserve(1));
++        assertThrows(IllegalStateException.class, () -> tracker.add("negative", -1, 10, new byte[32], false, PackType.Resources));
++        assertThrows(IllegalStateException.class, () -> tracker.add("empty", 0, 0, new byte[32], false, PackType.Resources));
++    }
++
+     private static byte[] archive() throws Exception {
+         final InMemoryContent content = new InMemoryContent();
+         content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID()

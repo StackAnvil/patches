@@ -12,9 +12,14 @@ Read the central directory with the existing Commons Compress dependency and an 
 Keep physical entry order, normalized paths, entry sizes, and CRC checks.
 Read each entry only up to its declared size, so a forged size cannot inflate a small archive until the heap runs out.
 [Apache's ZIP guide](https://commons.apache.org/proper/commons-compress/zip) explains why a seekable reader handles these descriptors reliably.
+Reject archives whose declared entries expand beyond 1 GiB before inflating any entry.
+Count every pack of a connection, from the game protocol or HTTP, against a shared 1 GiB download budget before allocating it.
+Read an HTTP response only up to the length that its HEAD request reported.
+The largest recorded server pack is a 65 MB archive, so these limits stay far above real packs.
 
 The regression includes a stored entry whose payload is another ZIP, with embedded header and descriptor signatures.
 It also rejects changed payload bytes.
+Further regressions cover the expanded archive limit, the shared download budget and a chunked HTTP response longer than expected.
 The private server archive reproduces the original exception and loads all 58 files with the new reader.
 All four projects build successfully, with 2,133 passing tests and 152 optional skips.
 A fresh live Enchanted run loads the pack and reaches its authored hub UI.
