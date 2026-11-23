@@ -229,13 +229,21 @@ export function validationMarkdown(report: ValidationReport): string {
   ].join("\n");
 }
 
+/** A report is a JSON file with its Markdown summary beside it, such as health.json and health.md. */
+export function reportMarkdownPath(path: string): string {
+  if (!path.endsWith(".json"))
+    throw new Error(`Choose a report path ending in .json, not ${path}.`);
+  return `${path.slice(0, -".json".length)}.md`;
+}
+
 export async function writeReport(path: string, value: unknown, markdown: string): Promise<void> {
+  const markdownPath = reportMarkdownPath(path);
   await mkdir(dirname(path), { recursive: true });
   // Readers see either the previous complete JSON file or the new complete file.
   const temporary = `${path}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
   await rename(temporary, path);
-  await writeFile(`${path.replace(/\.json$/u, "")}.md`, markdown);
+  await writeFile(markdownPath, markdown);
 }
 
 async function validate(profile: ValidationProfile, cycles: number): Promise<ValidationReport> {

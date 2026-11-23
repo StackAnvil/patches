@@ -13,6 +13,7 @@ bun run stack health all --output dist/patch-health.json
 
 The report lists prerequisites and missing PR context. It rejects dependency cycles and prerequisites absent from their project's series.
 It also verifies the patch subjects, commit bodies, and files through the existing series loader.
+The `--output` path must end in `.json`. The command writes a Markdown summary beside it, such as `dist/patch-health.md`.
 Without `--output`, the command writes JSON to standard output.
 
 For upstream application checks, run:

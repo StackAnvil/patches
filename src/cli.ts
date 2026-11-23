@@ -7,7 +7,7 @@ import { abortApply, addPatch, continueApply, edit, rebuild, sync, workdir } fro
 import { prBody, syncPr, updatePrParticipants } from "./pr.ts";
 import { devSetup } from "./dev.ts";
 import { healthFailed, healthMarkdown, patchHealth } from "./health.ts";
-import { writeReport } from "./validation.ts";
+import { reportMarkdownPath, writeReport } from "./validation.ts";
 import { print, printError } from "./output.ts";
 
 const [area, action] = process.argv.slice(2);
@@ -61,6 +61,8 @@ async function main(): Promise<void> {
       options: { upstream: { type: "boolean" }, output: { type: "string" } },
     });
     if (positionals.length > 1) throw new Error("Choose one project or all.");
+    // Reject an unusable report path before the upstream checks spend minutes cloning.
+    if (values.output) reportMarkdownPath(values.output);
     const report = await patchHealth(positionals[0] ?? "all", { upstream: values.upstream });
     if (values.output) {
       await writeReport(resolve(values.output), report, healthMarkdown(report));

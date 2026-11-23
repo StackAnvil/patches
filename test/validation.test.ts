@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { requireReleaseEvidence, runValidationSteps, validationSteps, type ValidationReport } from "../src/validation.ts";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { requireReleaseEvidence, runValidationSteps, validationSteps, writeReport, type ValidationReport } from "../src/validation.ts";
 
 function report(): ValidationReport {
   return {
@@ -67,4 +70,20 @@ test("lifecycle plans stay bounded and preserve the integration suite's private 
   const steps = validationSteps("lifecycle", 3);
   expect(new Set(steps.map((step) => step.id)).size).toBe(3);
   expect(steps.every((step) => step.args.includes("--resource-pack-probe") && step.args.includes("--reuse-build"))).toBe(true);
+});
+
+test("reports are written as JSON with a Markdown summary beside them", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-report-"));
+  try {
+    await expect(writeReport(join(directory, "health"), { ok: true }, "# Health\n")).rejects.toThrow(
+      "Choose a report path ending in .json",
+    );
+    expect(await readdir(directory)).toEqual([]);
+    await writeReport(join(directory, "health.json"), { ok: true }, "# Health\n");
+    expect((await readdir(directory)).sort()).toEqual(["health.json", "health.md"]);
+    expect(JSON.parse(await readFile(join(directory, "health.json"), "utf8"))).toEqual({ ok: true });
+    expect(await readFile(join(directory, "health.md"), "utf8")).toBe("# Health\n");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
