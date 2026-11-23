@@ -86,14 +86,25 @@ export async function bundlePrism(): Promise<string> {
   return file;
 }
 
-export async function prismProcess(instanceName: string): Promise<number | undefined> {
-  const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
-  for (const line of stdout.split("\n")) {
+/**
+ * Prism passes each game JVM `-Djava.library.path=<data>/instances/<name>/natives`. Match that
+ * whole path segment: one instance name can appear inside another, such as "StackAnvil
+ * Integration 26.3" inside "Fabulously Optimized StackAnvil Integration 26.3".
+ */
+export function findPrismProcess(processes: string, instanceName: string): number | undefined {
+  const natives = `/instances/${instanceName}/natives `;
+  for (const line of processes.split("\n")) {
     const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
-    if (match?.[2]?.includes("org.prismlauncher.EntryPoint") && match[2].includes(instanceName))
-      return Number(match[1]);
+    const args = match?.[2];
+    if (args?.includes("org.prismlauncher.EntryPoint") && `${args} `.includes(natives))
+      return Number(match?.[1]);
   }
   return undefined;
+}
+
+export async function prismProcess(instanceName: string): Promise<number | undefined> {
+  const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
+  return findPrismProcess(stdout, instanceName);
 }
 
 export async function installPrism(instanceName = prismInstance): Promise<string> {
