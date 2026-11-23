@@ -12,10 +12,14 @@ import { site } from "../lib/site";
 const page = requireDocument("releases");
 
 export const Route = createFileRoute("/releases")({
-  validateSearch: (search: Record<string, unknown>): { setup?: Setup } =>
-    search["setup"] === "proxy" || search["setup"] === "fabric" || search["setup"] === "modpack"
-      ? { setup: search["setup"] }
-      : {},
+  // TanStack merges the validated result over the raw query, so an unknown
+  // setup must be overwritten. Omitting it would keep `?setup=bogus`.
+  validateSearch: (search: Record<string, unknown>): { setup?: Setup | undefined } => ({
+    setup:
+      search["setup"] === "proxy" || search["setup"] === "fabric" || search["setup"] === "modpack"
+        ? search["setup"]
+        : undefined,
+  }),
   loader: async () => {
     await (await import("../lib/document-content")).documentLoader.preload(page.path);
   },

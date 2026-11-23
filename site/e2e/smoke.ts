@@ -25,6 +25,21 @@ test("shared download links hydrate, select a setup, and survive browser history
   expect(failed).toEqual([]);
 });
 
+test("an unknown shared setup falls back to ViaProxy", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await page.goto("/releases/?setup=bogus");
+  await expect(page.getByRole("radio", { name: /ViaProxy/u })).toBeChecked();
+  await expect(page.getByRole("link", { name: "Read the installation guide" })).toHaveAttribute(
+    "href",
+    "/getting-started/#use-viaproxy",
+  );
+  expect(errors).toEqual([]);
+});
+
 test("static search opens the matching guide section without a server", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
