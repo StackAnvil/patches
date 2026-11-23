@@ -109,24 +109,26 @@ function Home() {
       </section>
 
       <section className="works-section" aria-labelledby="what-works">
-        <div className="shell-width">
-          <div className="section-heading">
-            <h2 id="what-works">What already works</h2>
-            <p>
-              StackAnvil targets Bedrock {bedrockVersion}. Pick a slot to see what it translates.
-            </p>
+        <div className="shell-width works-layout">
+          <div className="works-intro">
+            <div className="section-heading">
+              <h2 id="what-works">What already works</h2>
+              <p>
+                StackAnvil targets Bedrock {bedrockVersion}. Pick a slot to see what it translates.
+              </p>
+            </div>
+            <aside className="experimental-note" aria-label="Experimental builds">
+              <p>
+                <strong>Still experimental.</strong> Some Bedrock behavior still fails or looks
+                different, and no area matches the Bedrock game exactly yet.
+              </p>
+              <p className="note-links">
+                <a href={site.coverage}>Known gaps</a>
+                <a href={site.issues}>Report a problem</a>
+              </p>
+            </aside>
           </div>
           <FeatureHotbar />
-          <aside className="experimental-note" aria-label="Experimental builds">
-            <p>
-              <strong>Still experimental.</strong> Some Bedrock behavior still fails or looks
-              different, and no area matches the Bedrock game exactly yet.
-            </p>
-            <p className="note-links">
-              <a href={site.coverage}>Known gaps</a>
-              <a href={site.issues}>Report a problem</a>
-            </p>
-          </aside>
         </div>
       </section>
 
