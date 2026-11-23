@@ -101,12 +101,18 @@ test.describe("guide navigation on a wide screen", () => {
 test.describe("guide navigation on a phone", () => {
   test.use({ viewport: { width: 390, height: 664 } });
 
-  test("the guide drawer closes from its own button", async ({ page }) => {
+  test("the site header opens the guide drawer, which closes from its own button", async ({
+    page,
+  }) => {
     await page.goto("/projects/");
     const drawer = page.locator("#nd-sidebar-mobile");
     // A click before hydration does nothing, so retry until the drawer opens.
     await expect(async () => {
-      await page.getByRole("button", { name: "Open Sidebar", exact: true }).click();
+      // One banner: Fumadocs adds no second bar above the page.
+      await page
+        .getByRole("banner")
+        .getByRole("button", { name: "Open Sidebar", exact: true })
+        .click();
       await expect(drawer.getByRole("link", { name: "Projects", exact: true })).toBeVisible({
         timeout: 1000,
       });

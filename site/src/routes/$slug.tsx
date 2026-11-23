@@ -2,6 +2,7 @@ import { createFileRoute, notFound } from "@tanstack/react-router";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { MessageCircle } from "lucide-react";
 import { Suspense } from "react";
+import { GuideMenuButton } from "../components/guide-menu";
 import { getDocument, pageTree } from "../lib/documents";
 import { documentLoader } from "../lib/document-content";
 import { pageHead } from "../lib/metadata";
@@ -31,6 +32,7 @@ function DocumentPage() {
       <DocsLayout
         tree={pageTree}
         nav={{ title: "Documentation", url: "/getting-started/" }}
+        slots={{ header: GuideMenuButton }}
         themeSwitch={{ enabled: false }}
         searchToggle={{ enabled: false }}
         links={[]}

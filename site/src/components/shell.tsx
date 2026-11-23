@@ -98,6 +98,7 @@ export function SiteHeader() {
           >
             {menuOpen ? <X size={21} /> : <Menu size={21} />}
           </button>
+          <span id="guide-menu-slot" />
           <Link
             className="button ghost header-download"
             to="/releases/"
