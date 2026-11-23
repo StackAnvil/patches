@@ -24,6 +24,7 @@ import { artifact } from "../client-artifacts.ts";
 import { pause, trapCancellation } from "./cancellation.ts";
 import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
 import { installModpack } from "../integration/modpack.ts";
+import { findPrismProcess } from "../prism.ts";
 import {
   configureShaders,
   graphicsFailures,
@@ -507,12 +508,9 @@ async function launchJava(
   const until = Date.now() + 60_000;
   while (Date.now() < until) {
     const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
-    const line = stdout
-      .split("\n")
-      .find((entry) => entry.includes("org.prismlauncher.EntryPoint") && entry.includes(name));
+    const pid = findPrismProcess(stdout, name);
     javaCleanup?.captureDescendants();
-    if (line) {
-      const pid = Number(line.trim().split(/\s/u)[0]);
+    if (pid !== undefined) {
       if (basename(await readlink(`/proc/${pid}/exe`)) !== "java" || !javaCleanup?.owns(pid)) {
         throw new Error("Matching Java process is not a captured private launcher descendant.");
       }
