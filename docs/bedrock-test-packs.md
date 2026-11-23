@@ -30,27 +30,54 @@ Resetting a dead player's health through the Script API can prevent BDS from com
 
 ## What each case checks
 
-The table describes selected cases. Run `/scriptevent vbprobe:cases` in a probe world to list every case ID.
+The table lists every case in the default gameplay run. To print every case ID that the runner accepts, pass an unknown ID. The runner stops before it starts any server:
 
-| Case                                                   | Java action                                                                                             | Bedrock result                                                                                                                   |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `movement-left`, `movement-right`                      | Hold A or D                                                                                             | The player moves at least 0.6 blocks in the requested local direction.                                                           |
-| `block-break`, `block-place`                           | Break or place a block                                                                                  | The target block has the expected type and the placed item count changes.                                                        |
-| `drop-item`, `inventory-script-slot`                   | Drop one emerald                                                                                        | The server inventory count decreases by one, including when the pack sets the slot through Script API.                           |
-| `chest-transfer`                                       | Move emeralds from a chest into the hotbar                                                              | The chest is empty and the player has four emeralds.                                                                             |
+```bash
+bun run test:integration -- --route java-bedrock --gameplay-cases list
+```
+
+That list also contains the [complex gameplay](#complex-gameplay) cases and the `offhand-block-place`, `custom-*`, and `complex-world` cases of the disabled [Geyser route](#geyser-fixtures). In a probe world, `/scriptevent vbprobe:cases` lists the cases that the behavior pack defines.
+
+| Case | Java action | Bedrock result |
+| --- | --- | --- |
+| `movement-left`, `movement-right` | Hold A or D | The player moves at least 0.6 blocks in the requested local direction. |
+| `block-break`, `creative-block-break` | Break a dirt block in Survival or Creative | The block becomes air. |
+| `block-place` | Place a dirt block against stone | Exactly one dirt block appears next to the stone and one dirt item remains. |
+| `tnt-explosion` | Light TNT with flint and steel in Creative | The TNT is gone and at least one nearby floor block is removed. |
+| `water-flow` | Empty a water bucket against stone | Water spreads into more than one block. |
+| `drop-item`, `inventory-script-slot` | Drop one emerald | The server inventory count decreases by one, including when the pack sets the slot through Script API. |
+| `creative-select` | Search for a nether star and place it in the hotbar | The server sees a nether star in the player inventory. |
+| `creative-replace` | Replace an emerald in the first hotbar slot with a nether star | The server sees the nether star in that slot. |
+| `creative-replace-main` | Replace an emerald in the first main inventory slot with a nether star | The server sees the nether star in that slot. |
+| `creative-replace-twice` | Replace an emerald in the first hotbar slot with a nether star, then with ender pearls | The slot holds ender pearls, and no emerald or nether star remains. |
+| `equip-helmet`, `equip-offhand`, `eat-golden-apple` | Use or swap the held item | The equipment slot or effect state changes. |
+| `offhand-remove` | Open the inventory and move the offhand shield into a slot | The offhand is empty and the inventory holds the shield. |
+| `entity-attack`, `entity-name` | Hit or name a cow | The cow loses health or has the expected name. |
+| `map-hold` | Use an empty map | The held item becomes a filled map. The runner saves a Java screenshot for visual review. |
+| `command-time`, `command-completion`, `command-denied` | Submit `/time set day`, including Tab completion | Time changes for an allowed player and stays at night for a denied player. |
+| `respawn`, `dimension-change` | The pack kills or moves the player | The server reports a respawn or a change to the Nether while Java remains connected. |
+| `chest-transfer` | Move emeralds from a chest into the hotbar | The chest is empty and the player has four emeralds. |
 | `chest-authored-one-empty`, `chest-authored-one-merge` | Place and open the named probe chest, click an omitted slot, then activate its authored count-one slot. | Three source emeralds and both hidden diamonds remain. Exactly one emerald reaches the empty hotbar cell or merges into slot 15. |
-| `lab-table-then-chest`                                 | Use a lab table, then transfer emeralds from a nearby chest                                             | The chest opens while the lab table remains in place, and the emeralds reach the player.                                         |
-| `chest-boat-transfer`, `chest-minecart-transfer`       | Open vehicle storage and shift-click emeralds                                                           | The vehicle storage is empty and the player has four emeralds.                                                                   |
-| `creative-select`                                      | Search for a nether star and place it in the hotbar                                                     | The server sees a nether star in the player inventory.                                                                           |
-| `creative-replace`                                     | Replace an emerald in the first hotbar slot with a nether star                                          | The server sees the nether star in that slot.                                                                                    |
-| `equip-helmet`, `equip-offhand`, `eat-golden-apple`    | Use or swap the held item                                                                               | The equipment slot or effect state changes.                                                                                      |
-| `offhand-ineligible-block`                             | Press F to swap dirt from the main hand to the offhand                                                  | Bedrock rejects offhand dirt. The offhand stays empty, the main hand keeps both dirt blocks, and no dirt is placed.              |
-| `offhand-elytra-rocket`                                | Glide and right-click with offhand rockets                                                              | Glide and movement samples exist, and all three offhand rockets remain unused.                                                   |
-| `mainhand-elytra-rocket`                               | Glide and use a mainhand rocket                                                                         | A rocket is consumed during glide and horizontal speed increases.                                                                |
-| `entity-attack`, `entity-name`                         | Hit or name a cow                                                                                       | The cow loses health or has the expected name.                                                                                   |
-| `map-hold`                                             | Use an empty map                                                                                        | The held item becomes a filled map. The runner saves a Java screenshot for visual review.                                        |
-| `command-time`, `command-completion`, `command-denied` | Submit `/time set day`, including Tab completion                                                        | Time changes for an allowed player and stays at night for a denied player.                                                       |
-| `respawn`, `dimension-change`                          | The pack kills or moves the player                                                                      | The server reports a respawn or a change to the Nether while Java remains connected.                                             |
+| `chest-rapid-transfer` | Shift-click emeralds and diamonds from two chest slots in quick succession | The chest is empty and the player has four emeralds and three diamonds. |
+| `chest-pickup-all` | Double-click one of three emerald stacks in a chest, then place the cursor stack | The chest is empty and the player has all nine emeralds. |
+| `lab-table-then-chest` | Use a lab table, then transfer emeralds from a nearby chest | The chest opens while the lab table remains in place, and the emeralds reach the player. |
+| `chest-boat-transfer`, `chest-minecart-transfer` | Open vehicle storage and shift-click emeralds | The vehicle storage is empty and the player has four emeralds. |
+| `furnace-quick-move-log` | Shift-click eight oak logs into a furnace whose input holds 63 logs | The input slot holds 64 logs, the fuel slot stays empty, and the player keeps seven logs. |
+| `furnace-quick-move-coal` | Shift-click eight coal into an empty furnace | All eight coal reach the fuel slot. |
+| `brewing-stand` | Add nether wart to a stand with three water bottles and blaze powder, then take the potions | The player has three identical brewed potions, and the stand holds no bottles or ingredient. |
+| `furnace-book-cook`, `smoker-book-cook`, `blast-furnace-book-cook` | Choose the recipe from the recipe book, then take the result | The player has one cooked beef, or one netherite scrap from the blast furnace. The input and output slots are empty. |
+| `enchant-basic` | Add an iron sword and lapis to an enchanting table and choose an enchantment | The sword is enchanted, two lapis remain, and the player's level drops below 30. |
+| `offhand-ineligible-block` | Press F to swap dirt from the main hand to the offhand | Bedrock rejects offhand dirt. The offhand stays empty, the main hand keeps both dirt blocks, and no dirt is placed. |
+| `offhand-shield-use` | Hold use with a shield in the offhand | Bedrock sees the sneak input that raises the shield. |
+| `offhand-elytra-rocket` | Glide and right-click with offhand rockets | Glide and movement samples exist, and all three offhand rockets remain unused. |
+| `mainhand-elytra-rocket` | Glide and use a mainhand rocket | A rocket is consumed during glide and horizontal speed increases. |
+| `boat-forward` | Hold W in a boat on water | The ridden boat stays on the water, moves at least 0.8 blocks, and never moves two blocks in one tick. |
+| `minecart-dismount` | Ride a minecart along powered rails, then press Shift | The player dismounts after the minecart travels more than two blocks and stays within three blocks of the dismount point. |
+| `shield-projectile-baseline` | Stand without a shield in front of a skeleton | An arrow hits the player and causes damage. |
+| `shield-projectile-block` | Hold the offhand shield up in front of a skeleton | An arrow hits while the shield is raised and causes no damage. |
+| `crafting-manual-sticks` | Place two planks in a crafting table grid and take the output | The player has four sticks and no planks. |
+| `crafting-book-sticks` | Choose the stick recipe from the recipe book and take the output | The player has four sticks and no planks. |
+| `crafting-bulk-sticks` | Fill two grid cells with four planks each and shift-click the output | The player has sixteen sticks and no planks. |
 
 The runner saves before and after screenshots, logs, and `gameplay-results.json` under `.stackanvil/integration/runs/`. It records each failure and continues through the remaining cases while both game processes are alive. The screenshots for maps, equipment, naming, and creative selection support visual review. The block and inventory cases check server state after Java input. The entity sweeps still need packet or client state inspection to prove that a specific translated Java entity update arrived.
 
