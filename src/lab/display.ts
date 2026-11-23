@@ -268,29 +268,57 @@ export async function ensureDisplay(): Promise<DisplayState> {
   }
 }
 
+async function createLock(path: string): Promise<boolean> {
+  try {
+    await writeFile(path, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+    return true;
+  } catch (error) {
+    if (errorCode(error) === "EEXIST") return false;
+    throw error;
+  }
+}
+
+// Earlier versions used an ownerless directory lock. An empty file is still being written.
+async function lockOwner(path: string): Promise<string> {
+  return readFile(path, "utf8").catch((error: unknown) => {
+    if (errorCode(error) === "EISDIR" || errorCode(error) === "ENOENT") return "0";
+    throw error;
+  });
+}
+
 /**
  * A startup can end without its finally block, for example after a second Ctrl+C, SIGHUP, or
  * SIGKILL during the first input service build. Record the owner so a later start can replace a
  * lock whose process no longer exists.
+ *
+ * Two starts can find the same stale lock. Removing a lock is not atomic with checking its owner,
+ * so the slower start could remove the lock the faster start had just created. A second lock
+ * therefore admits one replacement at a time, and the owner is checked again inside it.
  */
-export async function acquireStartLock(lock: string): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await writeFile(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
-      return;
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
-    }
-    // Earlier versions used an ownerless directory lock. An empty file is still being written.
-    const owner = await readFile(lock, "utf8").catch((error: unknown) => {
-      if (errorCode(error) === "EISDIR" || errorCode(error) === "ENOENT") return "0";
-      throw error;
-    });
-    const pid = Number(owner);
-    if (attempt > 0 || owner === "" || (Number.isInteger(pid) && pid > 0 && alive(pid)))
-      throw new Error("Another lab display startup is in progress.");
-    await rm(lock, { recursive: true, force: true });
+export async function acquireStartLock(
+  lock: string,
+  isAlive: (pid: number) => boolean | Promise<boolean> = alive,
+): Promise<void> {
+  const busy = new Error("Another lab display startup is in progress.");
+  if (await createLock(lock)) return;
+  const owner = await lockOwner(lock);
+  const pid = Number(owner);
+  if (owner === "" || (Number.isInteger(pid) && pid > 0 && (await isAlive(pid)))) throw busy;
+  const replacement = `${lock}.replace`;
+  if (!(await createLock(replacement))) {
+    const replacer = Number(await lockOwner(replacement));
+    if (replacer > 0 && !(await isAlive(replacer)))
+      throw new Error(
+        `A lab display startup stopped while it replaced a stale lock. Remove ${replacement} if no lab display is starting.`,
+      );
+    throw busy;
   }
+  try {
+    if ((await lockOwner(lock)) === owner) await rm(lock, { recursive: true, force: true });
+  } finally {
+    await rm(replacement, { force: true });
+  }
+  if (!(await createLock(lock))) throw busy;
 }
 
 async function startInput(state: DisplayState): Promise<void> {

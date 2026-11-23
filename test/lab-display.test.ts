@@ -111,3 +111,26 @@ test("display startup replaces a lock left by an interrupted startup but not one
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("two display starts that find the same stale lock do not both acquire it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sa-display-lock-"));
+  const lock = join(directory, "display-start.lock");
+  const stale = 999_999;
+  try {
+    await writeFile(lock, `${stale}\n`);
+    let faster: Promise<void> | undefined;
+    // The slower start has seen the stale owner. The faster start replaces it before the slower
+    // start continues.
+    const slower = acquireStartLock(lock, async (pid) => {
+      if (pid !== stale) return true;
+      faster ??= acquireStartLock(lock, (owner) => owner !== stale);
+      await faster;
+      return false;
+    });
+    await expect(slower).rejects.toThrow("in progress");
+    await faster;
+    expect(await readFile(lock, "utf8")).toBe(`${process.pid}\n`);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
