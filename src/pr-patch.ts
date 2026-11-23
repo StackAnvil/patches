@@ -127,6 +127,62 @@ function stripTestConfiguration(
   };
 }
 
+/** Finds the balanced block that opens at a hunk position, on one side of the hunk. */
+function gradleBlock(lines: string[], position: number, sign: string) {
+  const side = lines.flatMap((line, index) =>
+    index >= position && (line.startsWith(" ") || line.startsWith(sign))
+      ? [{ text: line.slice(1), index }]
+      : [],
+  );
+  let end = 0;
+  let balance = delimiterBalance(side[0]?.text ?? "");
+  while (balance > 0 && end + 1 < side.length) balance += delimiterBalance(side[++end]?.text ?? "");
+  return balance > 0 ? undefined : { side, end, last: side[end]?.index ?? position };
+}
+
+/**
+ * Restores upstream test blocks that the patch edits, so they stay in the PR as context.
+ * A production change after an edited test block then keeps its upstream anchor.
+ */
+function restoreUpstreamTestBlocks(hunk: string[]): { lines: string[]; restored: boolean } {
+  let lines = hunk;
+  let restored = false;
+  for (let position = 0; position < lines.length; position++) {
+    const opener = lines[position] ?? "";
+    if (
+      !opener.startsWith(" ") ||
+      !testConfiguration(opener.slice(1)) ||
+      delimiterBalance(opener.slice(1)) <= 0
+    )
+      continue;
+    const before = gradleBlock(lines, position, "-");
+    const after = gradleBlock(lines, position, "+");
+    if (!before || !after) continue;
+    const beforeBlock = before.side.slice(0, before.end + 1).map(({ text }) => text);
+    const afterBlock = after.side.slice(0, after.end + 1).map(({ text }) => text);
+    if (beforeBlock.join("\n") === afterBlock.join("\n")) {
+      position = before.last;
+      continue;
+    }
+    // Each side keeps the lines that follow its own block; only the test block reverts.
+    const last = Math.max(before.last, after.last);
+    const following = (side: NonNullable<typeof before>, sign: string) =>
+      side.side
+        .slice(side.end + 1)
+        .flatMap(({ text, index }) => (index <= last ? [sign + text] : []));
+    lines = [
+      ...lines.slice(0, position),
+      ...beforeBlock.map((text) => ` ${text}`),
+      ...following(before, "-"),
+      ...following(after, "+"),
+      ...lines.slice(last + 1),
+    ];
+    restored = true;
+    position += beforeBlock.length - 1;
+  }
+  return { lines, restored };
+}
+
 function filterGradleDiff(section: string): { diff: string; omittedTests: boolean } {
   const parts = section.split(/(?=^@@ )/mu);
   const header = parts.shift() ?? "";
@@ -135,13 +191,15 @@ function filterGradleDiff(section: string): { diff: string; omittedTests: boolea
   let offset = 0;
   let omittedTests = false;
   for (const part of parts) {
-    const lines = part.trimEnd().split("\n");
-    const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/u.exec(lines.shift() ?? "");
+    const hunk = part.trimEnd().split("\n");
+    const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/u.exec(hunk.shift() ?? "");
     const [, oldStartText, hunkContext] = match ?? [];
     if (oldStartText === undefined || hunkContext === undefined)
       throw new Error("Unsupported Gradle hunk in PR patch");
-    if (lines.some((line) => line.startsWith("\\")))
+    if (hunk.some((line) => line.startsWith("\\")))
       throw new Error("Gradle PR patches must end with a newline");
+    const { lines, restored } = restoreUpstreamTestBlocks(hunk);
+    omittedTests ||= restored;
     const context = hunkContext.trim();
     const inTestBlock =
       context.endsWith("{") &&
@@ -180,7 +238,7 @@ function filterGradleDiff(section: string): { diff: string; omittedTests: boolea
       after.lines.length > 0
     ) {
       throw new Error(
-        "Gradle production changes need non-test context before PR export. Expand the patch context or separate the test configuration.",
+        "Gradle production changes need non-test context before PR export. Keep the upstream test configuration next to them, or move the production change away from it.",
       );
     }
     let prefix = 0;

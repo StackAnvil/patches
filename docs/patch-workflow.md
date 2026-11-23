@@ -76,7 +76,9 @@ PR builds select the target JDK from `targets.json`, just like full builds.
 Set `STACKANVIL_JAVA_<version>` to select an installed JDK explicitly.
 Preparation stops if filtering leaves no production changes.
 For projects that keep tests local, conflict recovery and publication reject tests reintroduced into the PR checkout.
-If test exclusion removes all context from a production Gradle change, expand the patch context before PR preparation.
+When a patch edits an upstream Gradle test block, PR preparation keeps the upstream block and drops only the edit.
+Nearby production changes keep that block as context.
+If a production Gradle change still has no context after test exclusion, keep the upstream test configuration next to it or move the change away from it.
 
 If a patch requires an API from another unmerged patch, record that dependency in its `upstreamable` entry:
 

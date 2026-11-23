@@ -183,20 +183,69 @@ new file mode 100644
   ).toThrow(/No production changes/);
 });
 
-test("PR preparation does not guess where production code belongs after its test-only anchor disappears", () => {
-  expect(() =>
-    projectPrPatch(`diff --git a/build.gradle b/build.gradle
---- a/build.gradle
-+++ b/build.gradle
-@@ -20,3 +20,6 @@
- test {
-     useJUnitPlatform()
-+    maxHeapSize = "2G"
- }
-+
-+implementation("runtime:2")
-`),
-  ).toThrow(/need non-test context/);
+test("PR Gradle changes after an edited upstream test block keep that block as their anchor and apply", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-pr-anchor-"));
+  const git = (args: string[], trimOutput = true) =>
+    Effect.runPromise(
+      command(
+        "git",
+        args,
+        directory,
+        { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+        trimOutput,
+      ),
+    );
+  const upstream = `dependencies {
+    implementation("runtime:1")
+}
+
+tasks.test {
+    useJUnitPlatform()
+}
+`;
+  const production = `
+val bundledAssets = providers.gradleProperty("bundledAssets")
+if (bundledAssets.isPresent) {
+    sourceSets.main { resources.srcDir(bundledAssets) }
+}
+`;
+  try {
+    await git(["init", "-b", "main"]);
+    await git(["config", "user.name", "PR Test"]);
+    await git(["config", "user.email", "test@example.invalid"]);
+    await writeFile(join(directory, "build.gradle.kts"), upstream);
+    await git(["add", "."]);
+    await git(["commit", "-m", "chore: create fixture"]);
+    const base = await git(["rev-parse", "HEAD"]);
+    await writeFile(
+      join(directory, "build.gradle.kts"),
+      upstream.replace("useJUnitPlatform()", 'useJUnitPlatform()\n    maxHeapSize = "2G"') +
+        production,
+    );
+    await git(["commit", "-am", "feat: bundle assets", "-m", "Keep the test heap local."]);
+    const saved = await git(
+      [
+        "format-patch",
+        "--full-index",
+        "--zero-commit",
+        "--no-signature",
+        "--no-stat",
+        "--stdout",
+        "-1",
+      ],
+      false,
+    );
+    // The default three lines of context hold only the edited test block and a blank line.
+    expect(saved).toContain("@@ -4,4 +4,10 @@ dependencies {");
+    const projected = projectPrPatch(saved);
+    expect(projected.omittedTests).toBe(true);
+    await writeFile(join(directory, ".git/pr.patch"), projected.patch);
+    await git(["reset", "--hard", base]);
+    await git(["am", join(directory, ".git/pr.patch")]);
+    expect(await readFile(join(directory, "build.gradle.kts"), "utf8")).toBe(upstream + production);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("PR preparation keeps production sources in non-test source sets with a test package", () => {
