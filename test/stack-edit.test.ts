@@ -109,6 +109,70 @@ async function stackFixture(conflicting = false) {
   return { baseSha, checkout, patches, project, stack };
 }
 
+test("rebuild resumes after a replay conflict was committed by hand", async () => {
+  const { baseSha, checkout, patches, project, stack } = await stackFixture();
+  await stack(["edit", "fixture", "0001-first.patch"]);
+  await writeFile(join(checkout, "note.txt"), "uno\n");
+  await git(["add", "note.txt"], checkout);
+  // The later patch expects "one", so replaying it stops on a conflict.
+  await stack(["rebuild", "fixture"], true);
+  await writeFile(join(checkout, "note.txt"), "two\n");
+  await git(["add", "note.txt"], checkout);
+  await git(["cherry-pick", "--continue"], checkout);
+
+  await stack(["rebuild", "fixture"]);
+
+  expect(await git(["rev-list", "--count", `${baseSha}..HEAD`], checkout)).toBe("3");
+  expect(await readFile(join(checkout, "note.txt"), "utf8")).toBe("two\n");
+  expect(await readFile(join(patches, "upstreamable", "0001-first.patch"), "utf8")).toContain(
+    "\n+uno\n",
+  );
+  const second = await readFile(join(patches, "upstreamable", "0002-second.patch"), "utf8");
+  expect(second).toContain("\n-uno\n+two\n");
+  await rejects(readFile(join(project, ".stackanvil", "fixture.json"), "utf8"));
+}, 600_000);
+
+test("rebuild drops a later patch that the edited patch already contains", async () => {
+  const { baseSha, checkout, patches, stack } = await stackFixture();
+  await stack(["edit", "fixture", "0001-first.patch"]);
+  await writeFile(join(checkout, "note.txt"), "two\n");
+  await git(["add", "note.txt"], checkout);
+
+  expect(await stack(["rebuild", "fixture"], true)).toContain(
+    "rebuild dropped them: feat(test): second",
+  );
+  await rm(join(patches, "upstreamable", "0002-second.patch"));
+  await writeFile(
+    join(patches, "series.json"),
+    JSON.stringify({
+      setup: ["0001-setup.patch"],
+      upstreamable: [{ file: "0001-first.patch", title: "feat(test): first" }],
+      deferred: [],
+    }),
+  );
+  await stack(["rebuild", "fixture"]);
+
+  expect(await git(["rev-list", "--count", `${baseSha}..HEAD`], checkout)).toBe("2");
+  expect(await readFile(join(patches, "upstreamable", "0001-first.patch"), "utf8")).toContain(
+    "\n-base\n+two\n",
+  );
+}, 600_000);
+
+test("rebuild keeps an unstaged new file out of the replay until it is staged", async () => {
+  const { checkout, patches, stack } = await stackFixture();
+  await stack(["edit", "fixture", "0001-first.patch"]);
+  const edited = await git(["rev-parse", "HEAD"], checkout);
+  await writeFile(join(checkout, "added.txt"), "added\n");
+
+  expect(await stack(["rebuild", "fixture"], true)).toContain("Stage your edits");
+  expect(await git(["rev-parse", "HEAD"], checkout)).toBe(edited);
+  await git(["add", "added.txt"], checkout);
+  await stack(["rebuild", "fixture"]);
+
+  const first = await readFile(join(patches, "upstreamable", "0001-first.patch"), "utf8");
+  expect(first).toContain("+++ b/added.txt");
+}, 600_000);
+
 test("stack continue and abort recover after git am finished by hand", async () => {
   const { baseSha, checkout, project, stack } = await stackFixture(true);
   const apply = join(project, ".stackanvil", "fixture-full-apply.json");

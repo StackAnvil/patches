@@ -38,12 +38,15 @@ const EditSessionSchema = Schema.Struct({
   remaining: Schema.mutable(Schema.Array(Schema.String)),
   applied: Schema.Finite,
   backupRef: Schema.String,
+  dropped: Schema.optionalKey(Schema.mutable(Schema.Array(Schema.String))),
 });
 interface EditSession {
   patchIndex: number;
   remaining: string[];
   applied: number;
   backupRef: string;
+  /** Subjects of later commits whose changes the edited patch already contains. */
+  dropped?: string[] | undefined;
 }
 
 const ApplySessionSchema = Schema.Struct({
@@ -414,6 +417,66 @@ function writeSession(id: string, session: EditSession) {
   return Effect.promise(() => writeFile(sessionPath(id), encodeIndentedJson(session)));
 }
 
+const requireStagedEdits = Effect.fn("requireStagedEdits")(function* (dir: string) {
+  const unstaged = yield* git(["ls-files", "--modified", "--others", "--exclude-standard"], dir);
+  if (unstaged)
+    return yield* StackError.make({
+      message: `Stage your edits before rebuilding the patch.\n${unstaged}`,
+    });
+});
+
+const commitIdentities = Effect.fn("commitIdentities")(function* (
+  dir: string,
+  commits: readonly string[],
+) {
+  if (commits.length === 0) return [];
+  const output = yield* git(
+    ["log", "--no-walk=unsorted", "--date=raw", "--format=%an%x1f%ae%x1f%ad%x1f%s", ...commits],
+    dir,
+  );
+  return output.split("\n");
+});
+
+/**
+ * Counts pending replays that already sit at HEAD, for example after a manual
+ * `git cherry-pick --continue`. Cherry-picks keep the author, author date, and subject.
+ */
+const replayedOutsideRebuild = Effect.fn("replayedOutsideRebuild")(function* (
+  dir: string,
+  baseSha: string,
+  pending: readonly string[],
+) {
+  if (pending.length === 0) return 0;
+  const commits = yield* commitIds(dir, baseSha);
+  const actual = yield* commitIdentities(dir, commits.slice(-pending.length));
+  const expected = yield* commitIdentities(dir, pending);
+  for (let count = actual.length; count > 0; count--) {
+    if (actual.slice(-count).every((identity, index) => identity === expected[index])) return count;
+  }
+  return 0;
+});
+
+/** A replay that stopped without conflicts or staged changes adds nothing to the edited stack. */
+const replayIsEmpty = Effect.fn("replayIsEmpty")(function* (dir: string) {
+  if (!existsSync(join(dir, ".git", "CHERRY_PICK_HEAD"))) return false;
+  const unmerged = yield* git(["ls-files", "--unmerged"], dir);
+  const staged = yield* git(["diff", "--cached", "--name-only", "HEAD"], dir);
+  return !unmerged && !staged;
+});
+
+const dropEmptyReplay = Effect.fn("dropEmptyReplay")(function* (
+  id: string,
+  dir: string,
+  session: EditSession,
+) {
+  const commit = required(session.remaining[session.applied], "The replayed commit");
+  const subject = yield* git(["log", "-1", "--format=%s", commit], dir);
+  yield* git(["cherry-pick", "--skip"], dir);
+  session.dropped = [...(session.dropped ?? []), subject];
+  session.applied++;
+  yield* writeSession(id, session);
+});
+
 export const rebuild = Effect.fn("rebuild")(function* (id: string) {
   const target = yield* Effect.promise(() => getTarget(id));
   const series = yield* Effect.promise(() => getSeries(id));
@@ -423,18 +486,42 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
     const sessionText = yield* Effect.promise(() => readFile(sessionPath(id), "utf8"));
     session = parseJson(EditSessionSchema, sessionText);
     if (existsSync(join(dir, ".git", "CHERRY_PICK_HEAD"))) {
-      yield* git(["cherry-pick", "--continue"], dir);
-      session.applied++;
-      yield* writeSession(id, session);
-    } else if (session.applied === 0) {
-      const unstaged = yield* git(["diff", "--name-only"], dir);
-      if (unstaged)
-        return yield* StackError.make({ message: "Stage your edits before rebuilding the patch." });
-      const staged = yield* git(["diff", "--cached", "--name-only"], dir);
-      if (staged) yield* git(["commit", "--amend", "--no-edit"], dir);
+      if (yield* replayIsEmpty(dir)) yield* dropEmptyReplay(id, dir, session);
+      else {
+        yield* requireStagedEdits(dir);
+        yield* git(["cherry-pick", "--continue"], dir);
+        session.applied++;
+        yield* writeSession(id, session);
+      }
+    } else {
+      const replayed = yield* replayedOutsideRebuild(
+        dir,
+        target.baseSha,
+        session.remaining.slice(session.applied),
+      );
+      if (replayed > 0) {
+        session.applied += replayed;
+        yield* writeSession(id, session);
+      } else if (session.applied === 0) {
+        yield* requireStagedEdits(dir);
+        const staged = yield* git(["diff", "--cached", "--name-only"], dir);
+        if (staged) yield* git(["commit", "--amend", "--no-edit"], dir);
+      }
     }
     for (const commit of session.remaining.slice(session.applied)) {
-      yield* git(["cherry-pick", commit], dir);
+      const replay = yield* git(["cherry-pick", commit], dir).pipe(
+        Effect.as(undefined),
+        Effect.catch((cause) => Effect.succeed(cause)),
+      );
+      if (replay && (yield* replayIsEmpty(dir))) {
+        yield* dropEmptyReplay(id, dir, session);
+        continue;
+      }
+      if (replay)
+        return yield* StackError.make({
+          message: `${replay.message}\nResolve the conflict in ${dir}, stage the result, then run bun run stack rebuild ${id}.`,
+          cause: replay,
+        });
       session.applied++;
       yield* writeSession(id, session);
     }
@@ -443,8 +530,11 @@ export const rebuild = Effect.fn("rebuild")(function* (id: string) {
   const commits = yield* commitIds(dir, target.baseSha);
   const paths = patchPaths(id, series);
   if (commits.length !== paths.length) {
+    const dropped = session?.dropped?.length
+      ? `\nThe edited patch already contains these later commits, so rebuild dropped them: ${session.dropped.join("; ")}. Remove their patch files and series.json entries, then run bun run stack rebuild ${id} again.`
+      : "";
     return yield* StackError.make({
-      message: `Expected ${paths.length} commits, found ${commits.length}. No patch files changed.`,
+      message: `Expected ${paths.length} commits, found ${commits.length}. No patch files changed.${dropped}`,
     });
   }
   let titleChanged = false;
