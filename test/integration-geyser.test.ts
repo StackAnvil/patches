@@ -5,9 +5,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  cachedGeyserArtifact,
   geyserConfig,
   geyserEntityUpdatesMatch,
-  verifyGeyserArtifact,
 } from "../src/integration/geyser.ts";
 import { connectionFailure, joinedPlayer, waitForJoin } from "../src/integration/join.ts";
 import { runGameplayCases, waitForGameplayEvent } from "../src/integration/gameplay-probe.ts";
@@ -115,12 +115,30 @@ test("a disconnected client stops gameplay and records untouched cases as skippe
   }
 });
 
-test("fixture downloads reject corrupted bytes before installation", () => {
+test("fixture downloads replace a truncated cached artifact and reject corrupted bytes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "stackanvil-geyser-cache-"));
   const bytes = new Uint8Array([1, 2, 3, 4]);
-  const expected = createHash("sha256").update(bytes).digest("hex");
-  expect(() => verifyGeyserArtifact(bytes, expected)).not.toThrow();
-  bytes[2] = (bytes[2] ?? 0) ^ 1;
-  expect(() => verifyGeyserArtifact(bytes, expected)).toThrow();
+  const pin = { url: "https://example.invalid/geyser.jar", sha256: createHash("sha256").update(bytes).digest("hex") };
+  const file = join(dir, `geyser-${pin.sha256}.jar`);
+  let body = bytes;
+  let downloads = 0;
+  const download = (async () => {
+    downloads++;
+    return new Response(body);
+  }) as unknown as typeof fetch;
+  try {
+    await writeFile(file, bytes.subarray(0, 2));
+    expect(await cachedGeyserArtifact(file, pin, download)).toBe(file);
+    expect(new Uint8Array(await readFile(file))).toEqual(bytes);
+    await cachedGeyserArtifact(file, pin, download);
+    expect(downloads).toBe(1);
+    await rm(file);
+    body = new Uint8Array([1, 2, 7, 4]);
+    await expectRejection(cachedGeyserArtifact(file, pin, download), "checksum mismatch");
+    expect(await Bun.file(file).exists()).toBe(false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("Geyser rejects invalid ports before creating a server configuration", () => {

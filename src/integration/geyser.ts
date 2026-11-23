@@ -109,27 +109,31 @@ export async function convertedGeyserTexturesMatch(proxyHome: string): Promise<b
   return false;
 }
 
-export function verifyGeyserArtifact(bytes: Uint8Array, expected: string): void {
-  if (createHash("sha256").update(bytes).digest("hex") !== expected) {
-    throw new Error("Geyser fixture artifact checksum mismatch.");
-  }
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** An interrupted download leaves a partial file, so replace any cached copy that fails its checksum. */
+export async function cachedGeyserArtifact(
+  file: string,
+  pin: { url: string; sha256: string },
+  download: typeof fetch = fetch,
+): Promise<string> {
+  if ((await Bun.file(file).exists()) && sha256(await Bun.file(file).bytes()) === pin.sha256)
+    return file;
+  const response = await download(pin.url, {
+    headers: { "User-Agent": "StackAnvil/1.0 (https://github.com/StackAnvil/patches)" },
+  });
+  if (!response.ok) throw new Error(`Cannot download ${pin.url}: HTTP ${response.status}.`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (sha256(bytes) !== pin.sha256) throw new Error("Geyser fixture artifact checksum mismatch.");
+  await writeFile(file, bytes, { mode: 0o600 });
+  return file;
 }
 
 async function artifact(name: keyof typeof pins.artifacts): Promise<string> {
   const pin = pins.artifacts[name];
-  const file = join(cache, `${name}-${pin.sha256}.jar`);
-  if (await Bun.file(file).exists()) {
-    verifyGeyserArtifact(new Uint8Array(await Bun.file(file).arrayBuffer()), pin.sha256);
-    return file;
-  }
-  const response = await fetch(pin.url, {
-    headers: { "User-Agent": "StackAnvil/1.0 (https://github.com/StackAnvil/patches)" },
-  });
-  if (!response.ok) throw new Error(`Cannot download ${name}: HTTP ${response.status}.`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  verifyGeyserArtifact(bytes, pin.sha256);
-  await writeFile(file, bytes, { mode: 0o600 });
-  return file;
+  return cachedGeyserArtifact(join(cache, `${name}-${pin.sha256}.jar`), pin);
 }
 
 async function files(dir: string, suffix: string): Promise<string[]> {
