@@ -70,13 +70,16 @@ async function requireAbsent(path: string): Promise<void> {
 }
 
 /** Refuse profile changes while an owned launcher is using either installation. */
-export async function requireNativeProfileIdle(profile: string): Promise<void> {
+export async function requireNativeProfileIdle(
+  profile: string,
+  processes = "/proc",
+): Promise<void> {
   const expected = `BOL_HOME=${profile}`;
-  for (const name of await readdir("/proc")) {
+  for (const name of await readdir(processes)) {
     if (!/^\d+$/u.test(name) || Number(name) === process.pid) continue;
     let environment: Buffer;
     try {
-      environment = await readFile(`/proc/${name}/environ`);
+      environment = await readFile(join(processes, name, "environ"));
     } catch (error) {
       if (["ENOENT", "ESRCH", "EACCES", "EPERM"].includes(errorCode(error) ?? "")) continue;
       throw error;

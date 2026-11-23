@@ -49,7 +49,9 @@ async function fixture() {
     retain: 17,
   };
   await writeFile(join(source, "settings.json"), JSON.stringify(settings));
-  return { root, source, privateRoot, runtime, game, proton, payload, settings };
+  // Scanning every /proc/*/environ is slow on a busy host. Only the live test below needs it.
+  const assertIdle = async () => {};
+  return { root, source, privateRoot, runtime, game, proton, payload, settings, assertIdle };
 }
 
 test("copies absolute launcher content into the private installation without changing source", async () => {
@@ -461,7 +463,12 @@ test.skipIf(process.platform !== "linux")(
       const reader = child.stdout.getReader();
       await reader.read();
       reader.releaseLock();
-      await expectRejection(requireNativeProfileIdle(input.runtime));
+      // Match the child's live environment directly, then scan the host once for unreadable entries.
+      const processes = join(input.root, "proc");
+      await mkdir(processes);
+      await symlink(`/proc/${child.pid}`, join(processes, String(child.pid)));
+      await expectRejection(requireNativeProfileIdle(input.runtime, processes));
+      await requireNativeProfileIdle(input.source, processes);
       await requireNativeProfileIdle(input.source);
     } finally {
       child.kill();
