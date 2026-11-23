@@ -13,7 +13,7 @@ import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
 import { checkFps, createCaptureUi, type Client } from "./ui.ts";
 import { checkMarker, parseScenario } from "./scenario.ts";
-import { stopCaptureSession } from "./processes.ts";
+import { ownedProcessAlive, processStart, stopCaptureSession } from "./processes.ts";
 import { print, printError } from "../output.ts";
 import { execFileAsync as execute } from "../process.ts";
 
@@ -68,14 +68,17 @@ interface Session {
   name: string;
   startedAt: string;
   proxyPid: number;
+  proxyStartTicks?: string;
   port: number;
   mode: "regular" | "local";
   gamePid?: number;
+  gameStartTicks?: string;
   videos?: Partial<
     Record<
       Client,
       {
         pid: number;
+        startTicks?: string;
         name: string;
         file: string;
         startedAt: string;
@@ -90,6 +93,7 @@ interface Session {
 const CurrentSessionSchema = Schema.Struct({ id: Schema.String });
 const VideoSchema = Schema.Struct({
   pid: Schema.Finite,
+  startTicks: Schema.optionalKey(Schema.String),
   name: Schema.String,
   file: Schema.String,
   startedAt: Schema.String,
@@ -101,9 +105,11 @@ const SessionSchema = Schema.Struct({
   name: Schema.String,
   startedAt: Schema.String,
   proxyPid: Schema.Finite,
+  proxyStartTicks: Schema.optionalKey(Schema.String),
   port: Schema.Finite,
   mode: Schema.Literals(["regular", "local"]),
   gamePid: Schema.optionalKey(Schema.Finite),
+  gameStartTicks: Schema.optionalKey(Schema.String),
   videos: Schema.optionalKey(
     Schema.Struct({
       bedrock: Schema.optionalKey(VideoSchema),
@@ -133,14 +139,10 @@ async function load(id?: string): Promise<Session> {
   return parseJson(SessionSchema, await readFile(sessionFile(checkId(selected)), "utf8"));
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const proxyAlive = (session: Session) =>
+  ownedProcessAlive(session.proxyPid, session.proxyStartTicks);
+const gameAlive = (session: Session) =>
+  session.gamePid !== undefined && ownedProcessAlive(session.gamePid, session.gameStartTicks);
 
 async function run(
   program: string,
@@ -152,9 +154,9 @@ async function run(
   return stdout.trimEnd();
 }
 
-async function waitForPort(port: number, pid: number): Promise<void> {
+async function waitForPort(port: number, pid: number, startTicks?: string): Promise<void> {
   for (let attempt = 0; attempt < 60; attempt++) {
-    if (!alive(pid))
+    if (!ownedProcessAlive(pid, startTicks))
       throw new Error(
         "mitmdump stopped during startup. Read the private proxy.log in this session.",
       );
@@ -185,7 +187,7 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
   if (!existsSync(mitmdump)) throw new Error("Run bun run dev:setup to install mitmproxy first.");
   if (existsSync(currentPath)) {
     const old = await load();
-    if (!old.stoppedAt && alive(old.proxyPid))
+    if (!old.stoppedAt && proxyAlive(old))
       throw new Error(`Capture ${old.id} is active. Stop it first.`);
   }
   const stamp = new Date()
@@ -223,18 +225,16 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
   closeSync(log);
   child.unref();
   if (!child.pid) throw new Error("Could not start mitmdump.");
+  const proxyStartTicks = processStart(child.pid);
   try {
-    if (mode === "regular") await waitForPort(port, child.pid);
+    if (mode === "regular") await waitForPort(port, child.pid, proxyStartTicks);
     else {
       await Bun.sleep(2000);
-      if (!alive(child.pid)) throw new Error("Local capture stopped. Read proxy.log.");
+      if (!ownedProcessAlive(child.pid, proxyStartTicks))
+        throw new Error("Local capture stopped. Read proxy.log.");
     }
   } catch (error) {
-    try {
-      process.kill(child.pid, "SIGINT");
-    } catch {
-      /* The proxy already stopped. */
-    }
+    if (ownedProcessAlive(child.pid, proxyStartTicks)) process.kill(child.pid, "SIGINT");
     throw error;
   }
   const session: Session = {
@@ -242,6 +242,7 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
     name,
     startedAt: new Date().toISOString(),
     proxyPid: child.pid,
+    ...(proxyStartTicks === undefined ? {} : { proxyStartTicks }),
     port,
     mode,
   };
@@ -253,7 +254,7 @@ async function start(name: string, mode: "regular" | "local" = "regular"): Promi
 
 async function launchGame(): Promise<void> {
   const session = await load();
-  if (session.stoppedAt || !alive(session.proxyPid))
+  if (session.stoppedAt || !proxyAlive(session))
     throw new Error("Start a capture before launching Bedrock.");
   if (!existsSync(launcher)) throw new Error(`BedrockOnLinux launcher not found: ${launcher}`);
   const isolated = await displayEnv(true);
@@ -309,6 +310,9 @@ async function launchGame(): Promise<void> {
   child.unref();
   if (!child.pid) throw new Error("Could not launch BedrockOnLinux.");
   session.gamePid = child.pid;
+  const gameStartTicks = processStart(child.pid);
+  if (gameStartTicks === undefined) delete session.gameStartTicks;
+  else session.gameStartTicks = gameStartTicks;
   await save(session);
   print(`BedrockOnLinux launch started for ${session.id}. Read the private game.log if it stops.`);
 }
@@ -409,20 +413,17 @@ async function stop(): Promise<void> {
         print(`Capture ${session.id} is already stopped.`);
         return;
       }
-      if (alive(session.proxyPid)) {
+      if (proxyAlive(session)) {
         process.kill(session.proxyPid, "SIGINT");
-        for (let attempt = 0; attempt < 40 && alive(session.proxyPid); attempt++)
-          await Bun.sleep(250);
-        if (alive(session.proxyPid))
+        for (let attempt = 0; attempt < 40 && proxyAlive(session); attempt++) await Bun.sleep(250);
+        if (proxyAlive(session))
           throw new Error(
             `mitmdump ${session.proxyPid} did not stop. The capture remains active; run stop again.`,
           );
       }
       session.stoppedAt = new Date().toISOString();
       await save(session);
-      print(
-        `Capture ${session.id} stopped.${session.gamePid && alive(session.gamePid) ? " The game remains open." : ""}`,
-      );
+      print(`Capture ${session.id} stopped.${gameAlive(session) ? " The game remains open." : ""}`);
     },
   );
 }
@@ -443,7 +444,7 @@ async function startVideo(
       "Video recording requires the private display so your desktop is never captured.",
     );
   const previous = session.videos?.[client];
-  if (previous && !previous.stoppedAt && alive(previous.pid))
+  if (previous && !previous.stoppedAt && ownedProcessAlive(previous.pid, previous.startTicks))
     throw new Error(`${client} video is already recording.`);
   const window = await chosenWindow(windowId, client);
   const file = join(capturePath(session.id), `${name}-${client}.mp4`);
@@ -463,11 +464,19 @@ async function startVideo(
   closeSync(log);
   child.unref();
   if (!child.pid) throw new Error("Could not start the Wayland recorder.");
+  const startTicks = processStart(child.pid);
   await Bun.sleep(500);
-  if (!alive(child.pid))
+  if (!ownedProcessAlive(child.pid, startTicks))
     throw new Error(`Wayland recorder stopped. Read the private ${name}-${client}.video.log.`);
   session.videos ??= {};
-  session.videos[client] = { pid: child.pid, name, file, startedAt, fps };
+  session.videos[client] = {
+    pid: child.pid,
+    ...(startTicks === undefined ? {} : { startTicks }),
+    name,
+    file,
+    startedAt,
+    fps,
+  };
   await save(session);
   print(`Recording ${client}: ${file}`);
 }
@@ -479,7 +488,7 @@ async function stopVideo(client: Client): Promise<void> {
     print(`No active ${client} video.`);
     return;
   }
-  if (alive(video.pid)) process.kill(video.pid, "SIGINT");
+  if (ownedProcessAlive(video.pid, video.startTicks)) process.kill(video.pid, "SIGINT");
   for (let attempt = 0; attempt < 40; attempt++) {
     try {
       await run("ffprobe", [
@@ -541,7 +550,7 @@ async function compareVideo(before: string, after: string, client: Client): Prom
 
 async function stopGame(): Promise<void> {
   const session = await load();
-  if (!session.gamePid || !alive(session.gamePid)) {
+  if (!gameAlive(session)) {
     print("The captured Bedrock client is stopped.");
     return;
   }
@@ -550,8 +559,8 @@ async function stopGame(): Promise<void> {
       "Close a desktop Bedrock client manually. Virtual display input is the default safe stop path.",
     );
   await key("Alt+F4", undefined, "bedrock");
-  for (let attempt = 0; attempt < 40 && alive(session.gamePid); attempt++) await Bun.sleep(250);
-  if (alive(session.gamePid))
+  for (let attempt = 0; attempt < 40 && gameAlive(session); attempt++) await Bun.sleep(250);
+  if (gameAlive(session))
     throw new Error("Bedrock did not exit after Alt+F4. Check the private game.log.");
   print("Stopped the captured Bedrock client.");
 }
@@ -765,8 +774,8 @@ async function status(): Promise<void> {
     JSON.stringify(
       {
         ...session,
-        proxyAlive: alive(session.proxyPid),
-        gameAlive: session.gamePid ? alive(session.gamePid) : false,
+        proxyAlive: proxyAlive(session),
+        gameAlive: gameAlive(session),
         redactedResponses: events.length,
       },
       null,

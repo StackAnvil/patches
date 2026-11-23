@@ -14,7 +14,8 @@ interface ProcessSystem {
   signal: (pid: number, signal: NodeJS.Signals) => void;
 }
 
-function entry(pid: number): ProcessEntry | undefined {
+/** Reads a live process's parent and kernel start time; exited and zombie processes are undefined. */
+export function readProcess(pid: number): ProcessEntry | undefined {
   try {
     const value = readFileSync(`/proc/${pid}/stat`, "utf8");
     const fields = value.slice(value.lastIndexOf(")") + 2).split(" ");
@@ -29,7 +30,7 @@ function entry(pid: number): ProcessEntry | undefined {
 }
 
 const procfsSystem: ProcessSystem = {
-  read: entry,
+  read: readProcess,
   ids: () =>
     readdirSync("/proc")
       .filter((name) => /^\d+$/u.test(name))
