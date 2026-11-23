@@ -7,7 +7,11 @@ import { root } from "./model.ts";
 import { verifyPinnedManifest, type ViaFabricPlusPin } from "./viafabricplus.ts";
 import { execFileAsync as execute } from "./process.ts";
 
-const fabricLoader = "0.19.5";
+/**
+ * The Java client that StackAnvil targets. Managed Prism instances, bundles, and test servers use
+ * these versions, and the built client JARs must depend on this Minecraft version.
+ */
+export const javaTarget = { minecraft: "26.3", fabricLoader: "0.19.5" } as const;
 
 const ArtifactManifestSchema = Schema.Struct({
   baseSha: Schema.optionalKey(Schema.String),
@@ -77,8 +81,9 @@ export async function clientArtifacts(artifactsDir = join(root, "dist"), pin?: V
       throw new Error(`The add-on does not embed the StackAnvil ${name} JAR`);
     }
   }
-  const version = base.depends.minecraft;
-  if (!/^[A-Za-z0-9][A-Za-z0-9.+_-]*$/u.test(version))
-    throw new Error("The client must target one exact Minecraft version");
-  return { baseJar, addonJar, version, loader: fabricLoader };
+  if (base.depends.minecraft !== javaTarget.minecraft)
+    throw new Error(
+      `The client JARs target Minecraft ${base.depends.minecraft}, but javaTarget in src/client-artifacts.ts names ${javaTarget.minecraft}`,
+    );
+  return { baseJar, addonJar, version: javaTarget.minecraft, loader: javaTarget.fabricLoader };
 }

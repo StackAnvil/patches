@@ -2,12 +2,13 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { javaTarget } from "../../src/client-artifacts.ts";
 
 export async function writeClientJar(
   directory: string,
   file: string,
   project: string,
-  minecraft = "26.3",
+  minecraft: string = javaTarget.minecraft,
   converter = "vv-json-1-StackAnvil.jar",
 ) {
   const staging = join(directory, ".jar");

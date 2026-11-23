@@ -26,7 +26,7 @@ import { createCaptureUi } from "../capture/ui.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
 import { viaProxyTarget } from "../replay/targets.ts";
-import { artifact } from "../client-artifacts.ts";
+import { artifact, javaTarget } from "../client-artifacts.ts";
 import { installPrism, prismProcess } from "../prism.ts";
 import { installEntityProbe, waitForProbe } from "./entity-probe.ts";
 import { isAuthoredInventoryCase, installInventoryUiProbe } from "./inventory-ui-probe.ts";
@@ -166,11 +166,11 @@ const vanillaServerEffect = Effect.fn("Integration.vanillaServer")(function* () 
       versions: Schema.Array(Schema.Struct({ id: Schema.String, url: Schema.String })),
     }),
   );
-  const version = manifest.versions.find((entry) => entry.id === "26.3");
+  const version = manifest.versions.find((entry) => entry.id === javaTarget.minecraft);
   if (!version)
     return yield* labError(
       "vanillaServer",
-      new Error("Minecraft 26.3 is missing from Mojang's version manifest."),
+      new Error(`Minecraft ${javaTarget.minecraft} is missing from Mojang's version manifest.`),
     );
   const metadata = yield* labRequestJson(
     version.url,
@@ -180,7 +180,7 @@ const vanillaServerEffect = Effect.fn("Integration.vanillaServer")(function* () 
       }),
     }),
   );
-  const file = join(privateRoot, "cache", "minecraft-server-26.3.jar");
+  const file = join(privateRoot, "cache", `minecraft-server-${javaTarget.minecraft}.jar`);
   yield* downloadEffect(
     metadata.downloads.server.url,
     file,

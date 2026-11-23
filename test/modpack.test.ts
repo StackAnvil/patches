@@ -7,12 +7,13 @@ import { basename, join, relative } from "node:path";
 import { expect, test } from "bun:test";
 import { Effect } from "effect";
 import { assetZip } from "../scripts/bundle-bedrock-assets.ts";
+import { javaTarget } from "../src/client-artifacts.ts";
 import { bundleModpack, modpackTarget } from "../src/modpack.ts";
 import { root } from "../src/model.ts";
 import type { ViaFabricPlusPin } from "../src/viafabricplus.ts";
 import { writeClientJar } from "./helpers/client-artifacts.ts";
 
-// This runs zip and unzip 13 times, which can exceed the default limit on a loaded machine.
+// This runs zip and unzip about 16 times, which can exceed the default limit on a loaded machine.
 test("modpack preserves verified client bytes and refuses incompatible or corrupt rebuilds", async () => {
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-modpack-"));
   try {
@@ -21,7 +22,7 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
     ) as ViaFabricPlusPin;
     const artifacts = join(directory, "artifacts");
     const output = join(directory, "packs");
-    async function client(project: string, minecraft = "26.3", converter?: string) {
+    async function client(project: string, minecraft?: string, converter?: string) {
       const dir = join(artifacts, project);
       await mkdir(dir, { recursive: true });
       const file =
@@ -49,9 +50,12 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
     const index = JSON.parse(
       execFileSync("unzip", ["-p", pack, "modrinth.index.json"], { encoding: "utf8" }),
     );
-    expect(index.dependencies.minecraft).toBe("26.3");
-    expect(index.dependencies["fabric-loader"]).toBe("0.19.5");
-    expect(await modpackTarget(pack)).toMatchObject({ minecraft: "26.3", loader: "0.19.5" });
+    expect(index.dependencies.minecraft).toBe(javaTarget.minecraft);
+    expect(index.dependencies["fabric-loader"]).toBe(javaTarget.fabricLoader);
+    expect(await modpackTarget(pack)).toMatchObject({
+      minecraft: javaTarget.minecraft,
+      loader: javaTarget.fabricLoader,
+    });
     expect(index.files).toEqual([]);
     const entries = execFileSync("unzip", ["-Z1", pack], { encoding: "utf8" }).trim().split("\n");
     expect(entries.filter((entry) => !entry.endsWith("/"))).toHaveLength(3);
@@ -63,17 +67,24 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
           .digest("hex"),
       );
     }
-    await client("viafabricplus-bedrock", "26.3", "cubeconverter-1-StackAnvil.jar");
+    await client("viafabricplus-bedrock", undefined, "cubeconverter-1-StackAnvil.jar");
     await Effect.runPromise(bundleModpack(artifacts, output, pin));
     const legacy = await readFile(pack);
-    await client("viafabricplus-bedrock", "26.3", "vv-json-1.jar");
+    await client("viafabricplus-bedrock", undefined, "vv-json-1.jar");
     await rejects(
       Effect.runPromise(bundleModpack(artifacts, output, pin)),
       /does not embed.*cubeconverter/,
     );
     expect(await readFile(pack)).toEqual(legacy);
-    await client("viafabricplus-bedrock", "26.4");
+    await client("viafabricplus-bedrock", "0.0");
     await rejects(Effect.runPromise(bundleModpack(artifacts, output, pin)), /different Minecraft/);
+    expect(await readFile(pack)).toEqual(legacy);
+    // Instance names, test servers, and the Fabric Loader pin follow javaTarget, not the JARs.
+    await client("viafabricplus", "0.0");
+    await rejects(
+      Effect.runPromise(bundleModpack(artifacts, output, pin)),
+      /target Minecraft 0\.0, but javaTarget/,
+    );
     expect(await readFile(pack)).toEqual(legacy);
     await writeFile(addon, "Corrupted build");
     await rejects(Effect.runPromise(bundleModpack(artifacts, output, pin)), /checksum/);

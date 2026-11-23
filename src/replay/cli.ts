@@ -20,7 +20,7 @@ import { createServer, isIP } from "node:net";
 import { Effect, Schema } from "effect";
 import { isRecord, JsonObjectSchema, parseJson, required } from "../guards.ts";
 import { root } from "../model.ts";
-import { artifact } from "../client-artifacts.ts";
+import { artifact, javaTarget } from "../client-artifacts.ts";
 import { pause, trapCancellation } from "./cancellation.ts";
 import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
 import { installModpack } from "../integration/modpack.ts";
@@ -29,6 +29,7 @@ import {
   configureShaders,
   graphicsFailures,
   installGraphicsProfile,
+  integrationPrismNames,
   readGraphicsLock,
   type GraphicsProfile,
 } from "../integration/graphics.ts";
@@ -333,7 +334,7 @@ async function launchJava(
       javaCleanup.exclude(pid);
     }
   }
-  const sourceName = process.env["STACKANVIL_REPLAY_INSTANCE"] ?? "StackAnvil Integration 26.3";
+  const sourceName = process.env["STACKANVIL_REPLAY_INSTANCE"] ?? integrationPrismNames.plain;
   const source = join(prismData, "instances", sourceName);
   if (!existsSync(join(source, "instance.cfg")))
     throw new Error("Prepare the integration Prism instance with bun run test:integration first.");
@@ -418,7 +419,7 @@ async function launchJava(
     settingsFile,
     JSON.stringify({
       ...settings,
-      selected_protocol_version: client === "addon" ? "Bedrock 1.26.60" : "26.3",
+      selected_protocol_version: client === "addon" ? "Bedrock 1.26.60" : javaTarget.minecraft,
     }),
     { mode: 0o600 },
   );

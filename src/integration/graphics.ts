@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { root } from "../model.ts";
 import { installPrism } from "../prism.ts";
+import { javaTarget } from "../client-artifacts.ts";
 import { Schema } from "effect";
 import { parseJson } from "../guards.ts";
 import { installModpack, PackFileSchema, verifiedDownload, type PackFile } from "./modpack.ts";
@@ -10,9 +11,9 @@ import { print, printError } from "../output.ts";
 
 export type GraphicsProfile = "plain" | "optimized" | "shaders";
 export const integrationPrismNames: Record<GraphicsProfile, string> = {
-  plain: "StackAnvil Integration 26.3",
-  optimized: "Fabulously Optimized StackAnvil Integration 26.3",
-  shaders: "Fabulously Optimized Shaders StackAnvil Integration 26.3",
+  plain: `StackAnvil Integration ${javaTarget.minecraft}`,
+  optimized: `Fabulously Optimized StackAnvil Integration ${javaTarget.minecraft}`,
+  shaders: `Fabulously Optimized Shaders StackAnvil Integration ${javaTarget.minecraft}`,
 };
 
 const GraphicsLockSchema = Schema.Struct({

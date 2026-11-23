@@ -7,7 +7,7 @@ import { parseJson } from "./guards.ts";
 import { root } from "./model.ts";
 
 const InstalledModsSchema = Schema.Struct({ files: Schema.Array(Schema.String) });
-import { clientArtifacts } from "./client-artifacts.ts";
+import { clientArtifacts, javaTarget } from "./client-artifacts.ts";
 import { execFileAsync as execute } from "./process.ts";
 
 const bundleRoot = join(root, ".stackanvil", "prism-bundle");
@@ -20,7 +20,9 @@ const prismHome = join(
   "PrismLauncher",
   "instances",
 );
-const prismInstance = process.env["STACKANVIL_JAVA_INSTANCE"] ?? "StackAnvil 26.3";
+/** The Prism instance that `bun run lab` installs into and launches. */
+export const prismInstance =
+  process.env["STACKANVIL_JAVA_INSTANCE"] ?? `StackAnvil ${javaTarget.minecraft}`;
 
 async function prepareFiles(): Promise<{ directory: string; version: string }> {
   const { baseJar, addonJar, version, loader } = await clientArtifacts();

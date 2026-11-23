@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { Clock, type Config, DateTime, Effect, Schema } from "effect";
 import { root } from "../model.ts";
 import { artifact } from "../client-artifacts.ts";
-import { installPrism } from "../prism.ts";
+import { installPrism, prismInstance as javaInstance } from "../prism.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "./display.ts";
 import { vmMain } from "./vm.ts";
 import { isOneOf, parseJson, encodeIndentedJson, optionalEnv } from "../guards.ts";
@@ -29,7 +29,6 @@ const prismHome = join(
   "PrismLauncher",
   "instances",
 );
-const javaInstance = process.env["STACKANVIL_JAVA_INSTANCE"] ?? "StackAnvil 26.3";
 const services = ["server", "viaproxy", "java"] as const;
 type Service = (typeof services)[number];
 type Managed = Partial<

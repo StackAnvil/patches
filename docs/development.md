@@ -25,7 +25,7 @@ bun run bundle
 
 The add-on setup includes one compatibility patch for the current ViaBedrock API. The upstream PR branch does not include setup patches.
 
-`bun run bundle` creates `dist/modpack/StackAnvil-26.3.mrpack` with the verified ViaFabricPlus and Bedrock add-on JARs. Import it into a launcher that supports Modrinth modpacks. The pack pins Minecraft 26.3 and Fabric Loader 0.19.5.
+`bun run bundle` creates `dist/modpack/StackAnvil-<minecraft>.mrpack` with the verified ViaFabricPlus and Bedrock add-on JARs. Import it into a launcher that supports Modrinth modpacks. The pack pins the Minecraft and Fabric Loader versions in `javaTarget` in [`src/client-artifacts.ts`](../src/client-artifacts.ts). The bundle stops if the client JARs depend on another Minecraft version. Managed Prism instance names and the integration test server use the same Minecraft version.
 
 ## Bundled Bedrock resources
 
@@ -121,7 +121,7 @@ Record walking, sprinting, sneaking, jumps, falls, collisions, steps, climbing, 
 Retain server prediction errors, setbacks, violations, and disconnects as failures to investigate.
 Do not disable checks to make a case pass.
 
-The local join suite starts fresh servers on temporary ports. It launches the Java and Bedrock clients on a private Wayland display with silent audio. Each case waits for a player spawn in the server log. Then it checks that the client stays connected for 20 seconds. Each Java route runs with plain StackAnvil and with the full Fabulously Optimized modpack. The Java server case also summons a vanilla interaction entity near the player. The suite downloads the Minecraft 26.3 server from Mojang and checks its published hash.
+The local join suite starts fresh servers on temporary ports. It launches the Java and Bedrock clients on a private Wayland display with silent audio. Each case waits for a player spawn in the server log. Then it checks that the client stays connected for 20 seconds. Each Java route runs with plain StackAnvil and with the full Fabulously Optimized modpack. The Java server case also summons a vanilla interaction entity near the player. The suite downloads the target Minecraft server from Mojang and checks its published hash.
 
 The test modpack is the official Fabulously Optimized 15.0.0 alpha.3 `.mrpack` for Minecraft 26.3. The archive and its version lock are in [`integration/modpacks/`](../integration/modpacks/). The installer reads the pack manifest, downloads every client file, checks its SHA-512 hash, and installs the pack overrides. It adds the patched StackAnvil mods to a separate Prism instance. The pack's own Fabric loader version is used. The plain instance stays separate so the tests can catch pack-specific failures. Fabulously Optimized includes Iris, Sodium, and other client mods. The pack is under its [BSD-3-Clause license](../integration/modpacks/FABULOUSLY-OPTIMIZED-LICENSE.md).
 
