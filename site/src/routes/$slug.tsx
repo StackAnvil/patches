@@ -1,5 +1,6 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
+import { MessageCircle } from "lucide-react";
 import { Suspense } from "react";
 import { getDocument, pageTree } from "../lib/documents";
 import { documentLoader } from "../lib/document-content";
@@ -36,8 +37,8 @@ function DocumentPage() {
         sidebar={{
           footer: (
             <a className="sidebar-community" href={site.discord}>
-              Stuck on a step?
-              <span>Ask on Discord</span>
+              <MessageCircle size={16} aria-hidden="true" />
+              Stuck? Ask on Discord
             </a>
           ),
         }}
