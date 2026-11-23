@@ -976,6 +976,8 @@ disconnected the player after a shift-click craft.
 
 Keep an open menu when the server reopens it with the same type and id, and send no close. The 1.26.60.5 ContainerOpen lambda (0x146bf0450) rebinds an open manager of the same type to the new id and sends nothing. The ContainerClose handler (0x146bd7130) keeps the screen open on a close without serverInitiated and sends no reply. Mystrick's layout menu sends that close followed by a reopen. Our ContainerClose(-1) reply made the server repeat the cycle about 20 times per second until it closed the menu. Other reopens while a screen is open keep the previous close reply, because a different id or type needs a new Java window.
 
+Ignore a block-position CONTAINER open when the loaded block is not a storage block. For actor id -1, the 1.26.60.5 ContainerOpen lambda (CONTAINER case 0x146bf0835, block path 0x146bf0c89..0x146bf0d06) gets the chunk and its block actor, and returns at 0x146bf0f1d without a screen or packet when either is missing or the actor type is not Chest(2), EnderChest(23), ShulkerBox(25) or Barrel(42). This check runs before the open-screen handling at 0x146bf049f. Known air and other blocks in a complete chunk therefore no longer open a 27-slot chest. A missing or pending chunk still opens the menu and resolves its binding later, because native defers the open by chunk (0x146b94140, 0x146b952c0) and those rules are not resolved.
+
 diff --git a/build.gradle b/build.gradle
 index 3e53e6524ae2693f513c0f087f7844ca8aff7729..2e125d9329bad0f890e22eda94ece9603b2e4d46 100644
 --- a/build.gradle
@@ -1154,14 +1156,15 @@ index 0000000000000000000000000000000000000000..0ebbfc0a6a283c93db70130aadf4c124
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/ChestContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/ChestContainer.java
-index 913255f8f0451862d082539487ce31301a38a36b..33505624350f579262410e8517326a91890471bb 100644
+index 913255f8f0451862d082539487ce31301a38a36b..72a000a2ef6f17ee9803a12d94ce84ef55cc2ef0 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/ChestContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/ChestContainer.java
-@@ -20,14 +20,170 @@ package net.raphimc.viabedrock.api.model.container;
+@@ -20,14 +20,188 @@ package net.raphimc.viabedrock.api.model.container;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.BlockPosition;
  import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 +
++import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
 +import net.raphimc.viabedrock.api.resourcepack.ui.ContainerUi;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
@@ -1170,6 +1173,8 @@ index 913255f8f0451862d082539487ce31301a38a36b..33505624350f579262410e8517326a91
 +import net.raphimc.viabedrock.protocol.model.FullContainerName;
 +import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++
++import java.util.Set;
  
  public class ChestContainer extends Container {
  
@@ -1178,6 +1183,10 @@ index 913255f8f0451862d082539487ce31301a38a36b..33505624350f579262410e8517326a91
 -                CustomBlockTags.BARREL, CustomBlockTags.SHULKER_BOX, CustomBlockTags.ENDER_CHEST);
 +    /** The largest Java chest menu. A larger logical container shows its first slots there. */
 +    public static final int JAVA_WINDOW_SLOTS = 54;
++
++    /** Blocks whose native block actor is Chest, EnderChest, ShulkerBox or Barrel. */
++    private static final Set<String> BLOCK_TAGS = Set.of(CustomBlockTags.CHEST, CustomBlockTags.TRAPPED_CHEST,
++            CustomBlockTags.BARREL, CustomBlockTags.SHULKER_BOX, CustomBlockTags.ENDER_CHEST);
 +
 +    private ContainerEnumName requestName;
 +    private final int javaSlots;
@@ -1218,11 +1227,7 @@ index 913255f8f0451862d082539487ce31301a38a36b..33505624350f579262410e8517326a91
 +                title,
 +                position,
 +                size,
-+                CustomBlockTags.CHEST,
-+                CustomBlockTags.TRAPPED_CHEST,
-+                CustomBlockTags.BARREL,
-+                CustomBlockTags.SHULKER_BOX,
-+                CustomBlockTags.ENDER_CHEST);
++                BLOCK_TAGS.toArray(String[]::new));
 +        this.javaSlots = javaSlots;
 +        this.logical = logical;
 +        final String tag = position == null
@@ -1230,6 +1235,21 @@ index 913255f8f0451862d082539487ce31301a38a36b..33505624350f579262410e8517326a91
 +                : user.get(BlockStateRewriter.class)
 +                        .tag(user.get(ChunkTracker.class).getBlockState(position));
 +        this.requestName = requestName(tag);
++    }
++
++    /**
++     * Whether a block-position container open can show a menu at this position.
++     * Bedrock 1.26.60.5 ignores the open when the loaded chunk has no Chest, EnderChest, ShulkerBox or Barrel
++     * block actor there. An incomplete chunk cannot rule the block out yet, so binding resolves after it arrives.
++     */
++    public static boolean opensAt(final UserConnection user, final BlockPosition position) {
++        final ChunkTracker chunks = user.get(ChunkTracker.class);
++        final BedrockChunkSection section = chunks.getChunkSection(position);
++        if (section == null || section.hasPendingBlockUpdates()) {
++            return true;
++        }
++        final String tag = user.get(BlockStateRewriter.class).tag(chunks.getBlockState(position));
++        return tag != null && BLOCK_TAGS.contains(tag);
 +    }
 +
 +    /**
@@ -10146,7 +10166,7 @@ index 0000000000000000000000000000000000000000..7aa6cb26b0d499809eb21ac24fc6047b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index abf87838122405e207b093cce05df2c3a955170b..1058de06ff1402e8f3cfda6ec7c8d69af81d8f3c 100644
+index ed38ced3fe3629efd2f22e280258004496cb6d0b..142d9265ddc952eb0ba0fac9a0ff2386c166bd13 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -33,6 +33,7 @@ import com.viaversion.viaversion.util.Pair;
@@ -10154,10 +10174,10 @@ index abf87838122405e207b093cce05df2c3a955170b..1058de06ff1402e8f3cfda6ec7c8d69a
  import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
  import net.raphimc.viabedrock.api.model.NativeActorAttack;
 +import net.raphimc.viabedrock.api.model.container.player.OffhandContainer;
+ import net.raphimc.viabedrock.api.model.entity.AbstractHorseEntity;
  import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
  import net.raphimc.viabedrock.api.model.entity.Entity;
- import net.raphimc.viabedrock.api.util.BitSets;
-@@ -65,11 +66,17 @@ import net.raphimc.viabedrock.protocol.model.ItemUseModifiers;
+@@ -66,11 +67,17 @@ import net.raphimc.viabedrock.protocol.model.ItemUseModifiers;
  import net.raphimc.viabedrock.protocol.model.Position2f;
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
@@ -10175,7 +10195,7 @@ index abf87838122405e207b093cce05df2c3a955170b..1058de06ff1402e8f3cfda6ec7c8d69a
  import java.util.Set;
  import java.util.UUID;
  import java.util.logging.Level;
-@@ -175,6 +182,18 @@ public final class ClientPlayerPackets {
+@@ -176,6 +183,18 @@ public final class ClientPlayerPackets {
          entityTracker.getClientPlayer().cancelNextSwingPacket();
      }
  
@@ -10194,7 +10214,7 @@ index abf87838122405e207b093cce05df2c3a955170b..1058de06ff1402e8f3cfda6ec7c8d69a
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_3.RESPAWN, wrapper -> {
              final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
-@@ -510,6 +529,11 @@ public final class ClientPlayerPackets {
+@@ -512,6 +531,11 @@ public final class ClientPlayerPackets {
                  case START_RIDING_JUMP, STOP_RIDING_JUMP -> {
                      // Native riding jumps send only the held jump input flags, which PLAYER_INPUT already carries.
                  }
@@ -10206,7 +10226,7 @@ index abf87838122405e207b093cce05df2c3a955170b..1058de06ff1402e8f3cfda6ec7c8d69a
                  default -> throw new IllegalStateException("Unhandled PlayerCommandAction: " + action);
              }
          });
-@@ -572,8 +596,7 @@ public final class ClientPlayerPackets {
+@@ -574,8 +598,7 @@ public final class ClientPlayerPackets {
                      chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
                      PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, ProtocolConstants.JAVA_AIR_ID);
                  }
@@ -10216,7 +10236,7 @@ index abf87838122405e207b093cce05df2c3a955170b..1058de06ff1402e8f3cfda6ec7c8d69a
                  case STAB -> {
                      final InventoryContainer inventory = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
                      final PacketWrapper jab = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
-@@ -964,6 +987,39 @@ public final class ClientPlayerPackets {
+@@ -968,6 +991,39 @@ public final class ClientPlayerPackets {
          return new CompletedPredictions(player, mounted, vehicle == null ? player : mounted != null ? frame : null);
      }
  
@@ -10336,7 +10356,7 @@ index 223db3d9c3319342213924f8029e19f4aa6de0d5..d8e307df87c32391df91560ad819e21c
              }
              chunkTracker.trackBlockPrediction(sequence, position, placedPosition);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c005106950 100644
+index e434dca1e0375788da5e59a7418e203e63fa8f09..efba2d104a6e9dc9e67f1dd5c30df7238f927b37 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -17,7 +17,7 @@
@@ -10574,7 +10594,7 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
              wrapper.cancel();
          }
      }
-@@ -255,363 +373,897 @@ public final class InventoryPackets {
+@@ -255,363 +373,903 @@ public final class InventoryPackets {
      }
  
      public static void register(final BedrockProtocol protocol) {
@@ -10754,6 +10774,12 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
 +                        return;
 +                    }
 +
++                    if (screenType == ContainerType.CONTAINER && containerPosition != null
++                            && !ChestContainer.opensAt(wrapper.user(), containerPosition)) {
++                        // Native returns before any screen check and sends no reply.
++                        wrapper.cancel();
++                        return;
++                    }
 +                    if (inventoryTracker.isAnyScreenOpen()) {
 +                        final Container current = inventoryTracker.getCurrentContainer();
 +                        if (current != null && current.containerId() == containerId && current.type() == type
@@ -11796,7 +11822,7 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
          protocol.registerServerbound(
                  ServerboundPackets26_3.EDIT_BOOK,
                  null,
-@@ -662,34 +1314,57 @@ public final class InventoryPackets {
+@@ -662,34 +1320,57 @@ public final class InventoryPackets {
                      updatedTag.put("pages", updatedPages);
                      book.setTag(updatedTag);
                  });
@@ -11877,7 +11903,7 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
              final String filtered = actorTitle(actor, ActorDataIds.FILTERED_NAME);
              final String name = filtered.isEmpty() ? actorTitle(actor, ActorDataIds.NAME) : filtered;
              if (!name.isEmpty()) {
-@@ -700,7 +1375,20 @@ public final class InventoryPackets {
+@@ -700,7 +1381,20 @@ public final class InventoryPackets {
              final String raw = customName.getValue();
              return new ContainerTitle(TextUtil.stringToTextComponent(user.get(ResourcePackStorage.class).getTexts().translate(raw)), raw, false);
          }
@@ -11899,7 +11925,7 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
      }
  
      private static String actorTitle(final Entity actor, final ActorDataIds field) {
-@@ -726,21 +1414,28 @@ public final class InventoryPackets {
+@@ -726,21 +1420,28 @@ public final class InventoryPackets {
              case HOPPER, MINECART_HOPPER -> size == 5 ? ContainerUi.Kind.HOPPER : null;
              case DISPENSER -> size == 9 ? ContainerUi.Kind.DISPENSER : null;
              case DROPPER -> size == 9 ? ContainerUi.Kind.DROPPER : null;
@@ -11932,7 +11958,7 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
              return;
          }
          final var resources = wrapper.user().get(ResourcePackStorage.class);
-@@ -751,20 +1446,36 @@ public final class InventoryPackets {
+@@ -751,20 +1452,36 @@ public final class InventoryPackets {
          }
          final var state = wrapper.user().get(NativeContainerUiState.class);
          final var ui = resources.getContainerUi();
@@ -11974,7 +12000,7 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
      }
  
      /**
-@@ -1060,13 +1771,148 @@ public final class InventoryPackets {
+@@ -1060,13 +1777,148 @@ public final class InventoryPackets {
          }
      }
  
@@ -12125,7 +12151,7 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
                  for (String line : BedrockTextUtils.split(text, "\n")) {
                      final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(line));
                      textInput.setMaxLength(Integer.MAX_VALUE);
-@@ -1074,11 +1920,51 @@ public final class InventoryPackets {
+@@ -1074,11 +1926,51 @@ public final class InventoryPackets {
                      dialog.getInputs().add(new Input("dummy", textInput));
                  }
              } else { // VB compatibility
@@ -12178,7 +12204,7 @@ index e434dca1e0375788da5e59a7418e203e63fa8f09..fc9150afa2ae358cc658abfabb3ee0c0
      /**
       * Native clients write a whole-number slider value without a fraction, such as {@code 6}. The forms library
       * serializes the Java float as {@code 6.0}, which servers that compare or parse the raw value can reject.
-@@ -1100,8 +1986,7 @@ public final class InventoryPackets {
+@@ -1100,8 +1992,7 @@ public final class InventoryPackets {
          return response.toString();
      }
  
@@ -13251,10 +13277,10 @@ index 0000000000000000000000000000000000000000..73165b0067d246b4e1e9ace42a9520dd
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-index ac123173174125febbb25f55cc67ebfdc09876f2..fcf47a35a7c705e70a051d9b756d02b0033bd55f 100644
+index 0ef4a461f94dff9261894aaa413a344b8c9f0c1c..3962f89bc4ea53f9b253327576b940e5c158c893 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
-@@ -160,6 +160,10 @@ public class EntityTracker extends StoredObject {
+@@ -159,6 +159,10 @@ public class EntityTracker extends StoredObject {
          }
  
          this.entities.remove(entity.uniqueId());
@@ -35485,10 +35511,10 @@ index 0000000000000000000000000000000000000000..2a2bc650b4bd2b46f8d5f9ed200c5719
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerLifecyclePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerLifecyclePacketTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..030f9acb834b15b02b9e0867d5ce1c8ac15cd588
+index 0000000000000000000000000000000000000000..b12216494b707eb6f67f73cb7d3c01db2777b119
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ContainerLifecyclePacketTest.java
-@@ -0,0 +1,435 @@
+@@ -0,0 +1,451 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -35595,6 +35621,7 @@ index 0000000000000000000000000000000000000000..030f9acb834b15b02b9e0867d5ce1c8a
 +    @Test
 +    void sameMenuReopenedAfterUnflaggedCloseStaysOpenWithoutClientClose() throws Exception {
 +        try (var f = new Fixture()) {
++            f.tag = CustomBlockTags.CHEST;
 +            f.open(-1, "container.chest");
 +            final Container menu = f.inventory.getCurrentContainer();
 +            for (int cycle = 0; cycle < 3; cycle++) {
@@ -35616,9 +35643,31 @@ index 0000000000000000000000000000000000000000..030f9acb834b15b02b9e0867d5ce1c8a
 +    }
 +
 +    @Test
-+    void knownAirMenuRetainsContentsAndDoesNotInheritPhysicalDistanceChecks() throws Exception {
++    void loadedBlockWithoutStorageActorIgnoresOpenWithoutReply() throws Exception {
++        for (final String tag : new String[]{null, CustomBlockTags.FURNACE}) {
++            try (var f = new Fixture()) {
++                f.tag = tag;
++                assertTrue(f.translate(ClientboundBedrockPackets.CONTAINER_OPEN, input -> openAtPosition(input, 8)));
++                assertNull(f.inventory.getCurrentContainer());
++
++                // The block check precedes the open-screen check, so an open menu gets no client close either.
++                f.tag = CustomBlockTags.CHEST;
++                f.open(-1, "container.chest");
++                final Container menu = f.inventory.getCurrentContainer();
++                f.tag = tag;
++                assertTrue(f.translate(ClientboundBedrockPackets.CONTAINER_OPEN, input -> openAtPosition(input, 9)));
++                assertSame(menu, f.inventory.getCurrentContainer());
++                f.packets.verifyNoInteractions();
++            }
++        }
++    }
++
++    @Test
++    void lateKnownAirMenuRetainsContentsAndDoesNotInheritPhysicalDistanceChecks() throws Exception {
 +        try (var f = new Fixture()) {
++            f.section = null;
 +            f.open(-1, "container.chest");
++            f.section = new BedrockChunkSectionImpl(true);
 +            final Container menu = f.inventory.getCurrentContainer();
 +            final BedrockItem item = new BedrockItem(1);
 +            item.setNetId(47);
@@ -35735,20 +35784,6 @@ index 0000000000000000000000000000000000000000..030f9acb834b15b02b9e0867d5ce1c8a
 +    }
 +
 +    @Test
-+    void lateKnownAirResolvesToServerMenuWithoutClosingIt() throws Exception {
-+        try (var f = new Fixture()) {
-+            f.section = null;
-+            f.open(-1, "container.chest");
-+            f.section = new BedrockChunkSectionImpl(true);
-+            f.player.setPosition(new Position3f(500, 64, 500));
-+            f.inventory.tick();
-+            assertNotNull(f.inventory.getCurrentContainer());
-+            assertFalse(f.inventory.getCurrentContainer().isBlockBound());
-+            f.packets.verifyNoInteractions();
-+        }
-+    }
-+
-+    @Test
 +    void lateBarrelAndShulkerBindingUpdateTheActualPickupRequestAddress() throws Exception {
 +        for (final String tag : new String[]{CustomBlockTags.BARREL, CustomBlockTags.SHULKER_BOX}) {
 +            try (var f = new Fixture()) {
@@ -35780,6 +35815,13 @@ index 0000000000000000000000000000000000000000..030f9acb834b15b02b9e0867d5ce1c8a
 +            f.open(-1, null);
 +            assertEquals("Social Menu", f.inventory.getCurrentContainer().title().asUnformattedString());
 +        }
++    }
++
++    private static void openAtPosition(final ByteBuf input, final int containerId) throws Exception {
++        input.writeByte(containerId);
++        input.writeByte(ContainerType.CONTAINER.getValue());
++        BedrockTypes.BLOCK_POSITION.write(input, POSITION);
++        BedrockTypes.VAR_LONG.write(input, -1L);
 +    }
 +
 +    private static InputStreamReader resource(final String path) {

@@ -80,14 +80,12 @@ Partial movement packets preserve every omitted coordinate. This applies to remo
 
 The [Mojang 1.26.51 metadata archive](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.51) defines protocol 2193 `MotionPredictionHintsPacketPayload`.
 It carries an unsigned runtime ID, three float motion components, and a ground-state boolean.
-Unlike `SetActorMotion`, this packet has no tick field. Servers use it when spatial optimizations omit ordinary velocity updates.
-
-Both packets share the Java velocity writer. Prediction hints also update the tracked ground state without changing actor position.
-Unknown or removed actors produce no Java update. Their packets are still consumed completely.
+The 1.26.60.5 client handler `146bd64e0` only looks up the actor and marks the packet as handled.
+It does not apply the motion or the ground state, so the Java translation cancels the packet.
 
 ## Verification
 
-Registered-handler tests decode the resulting Java velocity packet and verify signed motion, runtime IDs above 32 bits, ground transitions, and removed actors.
+A registered-handler test verifies that prediction hints send no Java velocity and keep the tracked ground state.
 The existing tests verify omitted position coordinates. These checks establish translation behavior, not native movement parity across every entity.
 
 The replayed ViaBedrock build passes 341 tests without failures or skips, plus Checkstyle.
