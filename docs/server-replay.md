@@ -35,7 +35,7 @@ The Hive guard also applies to its hostnames supplied through `record public`.
 
 The default login comes from the separate `StackAnvil Desktop 26.3` profile. Use `--account /absolute/path/bedrock.json` for another saved MinecraftAuth Bedrock account. The tool copies that account into its private client or proxy directory. It does not change the source account file.
 
-The Java client uses a private copy of the integration instance. Its runtime libraries stay shared, while settings, mods, logs, and account files stay isolated. The client runs on the lab's private virtual display with silent audio. A recording lasts between 20 and 300 seconds. It allows one connection and blocks automatic reconnects. The tool accepts the Java pack prompt, saves a screenshot, and stops its processes.
+The Java client uses a private copy of the integration instance. Its runtime libraries stay shared, while settings, mods, logs, and account files stay isolated. The client runs on the lab's private virtual display with silent audio. A recording lasts between 20 and 3600 seconds. A replay session allows 20 to 300 seconds. It allows one connection and blocks automatic reconnects. The tool accepts the Java pack prompt, saves a screenshot, and stops its processes.
 
 For a local fixture, use:
 
@@ -104,7 +104,7 @@ bun run server-replay replay .stackanvil/replay/<recording> --seconds 150
 bun run server-replay selftest
 ```
 
-Allow enough time for client startup, pack conversion, and the full recorded scene. The scene clock starts at the recorded resource-pack stack. Earlier scene packets keep their order and arrive immediately after local pack negotiation. This skips the captured download delay and preserves world timing. A recorded subchunk reply batch waits until at least one entry matches a local request. Clients can group or omit requests differently, so the replay does not require every recorded batch entry to be requested. It sends the whole batch unchanged. This also lets slower clients finish loading packs before replies arrive. The scene clock pauses during that wait; a batch with no matching request fails after 15 seconds. Packet bytes and order stay unchanged.
+Allow enough time for client startup, pack conversion, and the full recorded scene. The scene clock starts at the recorded resource-pack stack. Earlier scene packets keep their order and arrive immediately after local pack negotiation. This skips the captured download delay and preserves world timing. A recorded subchunk reply batch waits until at least one entry matches a local request. Clients can group or omit requests differently, so the replay does not require every recorded batch entry to be requested. It sends the whole batch unchanged. This also lets slower clients finish loading packs before replies arrive. The scene clock pauses during that wait; a batch with no matching request fails after 45 seconds. Packet bytes and order stay unchanged.
 
 The replay server binds only to loopback. Native and Java replay both use NetherNet.
 It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
