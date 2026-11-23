@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, spyOn, test } from "bun:test";
 import {
+  assertNoPatchedModCollisions,
   inspectPinnedModpack,
   packOverrides,
   replacePackFiles,
@@ -140,4 +141,17 @@ test("a downloaded modpack that fails validation leaves no file in the tracked m
   });
   expect((await readdir(modpacks)).toSorted()).toEqual(before);
   expect((await readFile(join(modpacks, "fabulously-optimized.mrpack"))).equals(pinned)).toBe(true);
+});
+
+test("rejects a ViaFabricPlus jar that the pack ships as a mods/ override", async () => {
+  await withPack({ "fabric.mod.json": JSON.stringify({ id: "viafabricplus" }) }, async (jar) => {
+    const bytes = new Uint8Array(await readFile(jar));
+    await expect(assertNoPatchedModCollisions(new Map([["mods/ViaFabricPlus.jar", bytes]]))).rejects.toThrow(
+      "includes viafabricplus",
+    );
+    await assertNoPatchedModCollisions(new Map([["config/ViaFabricPlus.jar", bytes]]));
+  });
+  await withPack({ "fabric.mod.json": JSON.stringify({ id: "sodium" }) }, async (jar) => {
+    await assertNoPatchedModCollisions(new Map([["mods/sodium.jar", new Uint8Array(await readFile(jar))]]));
+  });
 });

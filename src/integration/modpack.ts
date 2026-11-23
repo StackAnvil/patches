@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { Schema } from "effect";
 import { isRecord, parseJson, required } from "../guards.ts";
 import { root } from "../model.ts";
+import { zipEntries as archiveEntries } from "../zip.ts";
 import { print, printError } from "../output.ts";
 import { execFileAsync as execute } from "../process.ts";
 
@@ -227,19 +228,30 @@ export async function packOverrides(
   return overrides;
 }
 
-async function assertNoPatchedModCollision(file: string, path: string): Promise<void> {
-  if (!path.startsWith("mods/") || !path.endsWith(".jar")) return;
-  let metadata: unknown;
-  try {
-    metadata = JSON.parse(Buffer.from(await zipEntry(file, "fabric.mod.json")).toString("utf8"));
-  } catch {
-    return;
-  }
-  if (!isRecord(metadata)) return;
-  if (metadata["id"] === "viafabricplus" || metadata["id"] === "viafabricplus-bedrock") {
-    throw new Error(
-      `Fabulously Optimized includes ${metadata["id"]}. Remove that mod from the pack before overlaying StackAnvil builds.`,
-    );
+/**
+ * The pinned ViaFabricPlus and the StackAnvil add-on replace a pack's copies. A pack can ship a jar
+ * in its index or as an override under mods/, so check both before installing either.
+ */
+export async function assertNoPatchedModCollisions(
+  incoming: ReadonlyMap<string, string | Uint8Array>,
+): Promise<void> {
+  for (const [path, source] of incoming) {
+    if (!path.startsWith("mods/") || !path.endsWith(".jar")) continue;
+    const bytes = typeof source === "string" ? await readFile(source) : Buffer.from(source);
+    let metadata: unknown;
+    try {
+      const entry = archiveEntries(bytes).get("fabric.mod.json");
+      if (!entry) continue;
+      metadata = JSON.parse(entry().toString("utf8"));
+    } catch {
+      continue;
+    }
+    if (!isRecord(metadata)) continue;
+    if (metadata["id"] === "viafabricplus" || metadata["id"] === "viafabricplus-bedrock") {
+      throw new Error(
+        `Fabulously Optimized includes ${metadata["id"]}. Remove that mod from the pack before overlaying StackAnvil builds.`,
+      );
+    }
   }
 }
 
@@ -298,10 +310,10 @@ export async function installModpack(
   for (const file of files) {
     const cached = join(cacheDirectory, file.hashes.sha512);
     await verifiedDownload(file.downloads, cached, file.hashes.sha512);
-    await assertNoPatchedModCollision(cached, file.path);
     incoming.set(file.path, cached);
   }
   for (const [path, bytes] of overrides) incoming.set(path, bytes);
+  await assertNoPatchedModCollisions(incoming);
   const patched = parseJson(
     InstalledFilesSchema,
     await readFile(join(instance, ".stackanvil-managed"), "utf8"),
