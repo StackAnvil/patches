@@ -14,7 +14,12 @@ export const Route = createFileRoute("/$slug")({
     await (await import("../lib/document-content")).documentLoader.preload(page.path);
     return { path: page.path, slug: page.slug, title: page.title, description: page.description };
   },
-  head: ({ loaderData }) => (loaderData ? pageHead(loaderData, loaderData.slug) : {}),
+  head: ({ loaderData }) =>
+    loaderData
+      ? pageHead(loaderData, loaderData.slug)
+      : {
+          meta: [{ title: "Page not found · StackAnvil" }, { name: "robots", content: "noindex" }],
+        },
   component: DocumentPage,
 });
 
