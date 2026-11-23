@@ -8,31 +8,33 @@ import { projectPrPatch } from "../src/pr-patch.ts";
 import { command } from "../src/process.ts";
 import { assertPrProductionChanges } from "../src/stack.ts";
 
+const fixtureEnv = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_AUTHOR_NAME: "PR Test",
+  GIT_AUTHOR_EMAIL: "test@example.invalid",
+  GIT_COMMITTER_NAME: "PR Test",
+  GIT_COMMITTER_EMAIL: "test@example.invalid",
+};
+/** Runs Git in a fixture repository without the developer's global config. */
+const fixtureGit =
+  (directory: string) =>
+  (args: string[], trimOutput = true) =>
+    Effect.runPromise(command("git", args, directory, fixtureEnv, trimOutput));
+// Each Git case starts up to 20 Git processes. On a loaded machine they reached Bun's 5 second
+// default timeout, so the Git cases allow 30 seconds.
+
 test.each(["legacy", "lean"])(
   "%s PR commits keep runtime changes while local tests and Gradle test setup remain in the saved patch",
   async (format) => {
     const directory = await mkdtemp(join(tmpdir(), "stackanvil-pr-patch-"));
-    const git = (args: string[], trimOutput = true) =>
-      Effect.runPromise(
-        command(
-          "git",
-          args,
-          directory,
-          {
-            ...process.env,
-            GIT_CONFIG_GLOBAL: "/dev/null",
-          },
-          trimOutput,
-        ),
-      );
+    const git = fixtureGit(directory);
     const write = async (path: string, content: string | Uint8Array) => {
       await mkdir(join(directory, path, ".."), { recursive: true });
       await writeFile(join(directory, path), content);
     };
     try {
       await git(["init", "-b", "main"]);
-      await git(["config", "user.name", "PR Test"]);
-      await git(["config", "user.email", "test@example.invalid"]);
       const original = 'dependencies {\n    implementation("runtime:1")\n}\n';
       await write("build.gradle", original);
       await write("build.gradle.kts", original);
@@ -169,6 +171,7 @@ class MockitoAgentArgumentProvider implements org.gradle.process.CommandLineArgu
       await rm(directory, { recursive: true, force: true });
     }
   },
+  30_000,
 );
 
 test("PR preparation rejects a change that contains only local tests", () => {
@@ -185,16 +188,7 @@ new file mode 100644
 
 test("PR Gradle changes after an edited upstream test block keep that block as their anchor and apply", async () => {
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-pr-anchor-"));
-  const git = (args: string[], trimOutput = true) =>
-    Effect.runPromise(
-      command(
-        "git",
-        args,
-        directory,
-        { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
-        trimOutput,
-      ),
-    );
+  const git = fixtureGit(directory);
   const upstream = `dependencies {
     implementation("runtime:1")
 }
@@ -211,8 +205,6 @@ if (bundledAssets.isPresent) {
 `;
   try {
     await git(["init", "-b", "main"]);
-    await git(["config", "user.name", "PR Test"]);
-    await git(["config", "user.email", "test@example.invalid"]);
     await writeFile(join(directory, "build.gradle.kts"), upstream);
     await git(["add", "."]);
     await git(["commit", "-m", "chore: create fixture"]);
@@ -246,7 +238,7 @@ if (bundledAssets.isPresent) {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test("PR preparation keeps production sources in non-test source sets with a test package", () => {
   const tool = "src/tool/java/net/raphimc/viabedrock/test/ResourcePackConverterTest.java";
@@ -270,16 +262,7 @@ diff --git a/src/test/java/StorageTest.java b/src/test/java/StorageTest.java
 
 test("PR Gradle changes keep upstream test configuration and blank lines as context and apply", async () => {
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-pr-context-"));
-  const git = (args: string[], trimOutput = true) =>
-    Effect.runPromise(
-      command(
-        "git",
-        args,
-        directory,
-        { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
-        trimOutput,
-      ),
-    );
+  const git = fixtureGit(directory);
   const upstream = `dependencies {
     implementation("runtime:1")
     testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
@@ -294,8 +277,6 @@ tasks.test {
 `;
   try {
     await git(["init", "-b", "main"]);
-    await git(["config", "user.name", "PR Test"]);
-    await git(["config", "user.email", "test@example.invalid"]);
     await writeFile(join(directory, "build.gradle.kts"), upstream);
     await git(["add", "."]);
     await git(["commit", "-m", "chore: create fixture"]);
@@ -334,4 +315,4 @@ tasks.test {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-});
+}, 30_000);
