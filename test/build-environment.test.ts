@@ -2,9 +2,18 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildEnvironment } from "../src/build.ts";
+import { buildEnvironment, prepareBuildInputs } from "../src/build.ts";
+import { buildOrder } from "../src/dependencies.ts";
+import { getTargets } from "../src/model.ts";
 
-const variables = ["STACKANVIL_JAVA_17", "STACKANVIL_JAVA_99", "JAVA_HOME", "HOME"] as const;
+const variables = [
+  "STACKANVIL_JAVA_17",
+  "STACKANVIL_JAVA_25",
+  "STACKANVIL_JAVA_99",
+  "STACKANVIL_OREUI_SHAPER_RESOURCES",
+  "JAVA_HOME",
+  "HOME",
+] as const;
 const saved = Object.fromEntries(variables.map((name) => [name, process.env[name]]));
 const directories: string[] = [];
 
@@ -55,4 +64,19 @@ test("the host JAVA_HOME is used only when it has the requested version", async 
   await expect(buildEnvironment("99")).rejects.toThrow("Java 99 is missing");
   process.env["JAVA_HOME"] = await jdk("99.0.1");
   expect((await buildEnvironment("99"))["JAVA_HOME"]).toBe(process.env["JAVA_HOME"]);
+});
+
+test("a full build reports every missing input before the first Gradle build", async () => {
+  const repository = await mkdtemp(join(tmpdir(), "stackanvil-build-inputs-"));
+  directories.push(repository);
+  await writeFile(join(repository, "bedrock-assets.json"), '{"version":"1.26.60.5"}');
+  process.env["STACKANVIL_OREUI_SHAPER_RESOURCES"] = join(repository, "shaper");
+  process.env["STACKANVIL_JAVA_17"] = await jdk("21.0.11");
+  process.env["STACKANVIL_JAVA_25"] = await jdk("25.0.1");
+  const targets = await getTargets();
+  const result = prepareBuildInputs(buildOrder(targets, "all"), targets, repository);
+  // CubeConverter and ViaBedrock come first in the order, but the add-on's inputs are still checked.
+  await expect(result).rejects.toThrow("STACKANVIL_JAVA_17 must name a Java 17 JDK home");
+  await expect(result).rejects.toThrow("Bundled Bedrock UI is missing for 1.26.60.5");
+  await expect(result).rejects.toThrow("OreUI shaper resources are missing for linux-x64");
 });

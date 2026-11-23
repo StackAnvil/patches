@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { Effect, Schema } from "effect";
-import { parseJson, encodeIndentedJson } from "./guards.ts";
+import { parseJson, encodeIndentedJson, required } from "./guards.ts";
 import { buildOrder } from "./dependencies.ts";
 import { getTarget, getTargets, listArtifacts, root, type Target } from "./model.ts";
 import { command } from "./process.ts";
@@ -59,16 +59,15 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     );
     return [`-PbedrockBuiltinUi=${path}`, `-PbedrockBuiltinImages=${images}`];
   }
+  // The shaper libraries are small and often missing locally, so check them before hashing the assets.
+  const shaper = await oreUiShaperArguments(
+    id,
+    oreUiShaperDirectory(repository),
+    join(repository, "native", "oreui-shaper"),
+  );
   await verifyBuiltinAssets(join(directory, builtinAssetsResource), version);
   await verifyBuiltinOreUi(join(directory, builtinOreUiResource), version);
-  return [
-    `-PbedrockBuiltinAssets=${directory}`,
-    ...(await oreUiShaperArguments(
-      id,
-      oreUiShaperDirectory(repository),
-      join(repository, "native", "oreui-shaper"),
-    )),
-  ];
+  return [`-PbedrockBuiltinAssets=${directory}`, ...shaper];
 }
 
 /** Read the major version from a JDK home's release file. */
@@ -112,6 +111,41 @@ export async function buildEnvironment(version: string): Promise<NodeJS.ProcessE
     JAVA_HOME: jdk,
     PATH: `${join(jdk, "bin")}:${process.env["PATH"] ?? ""}`,
   };
+}
+
+interface BuildInputs {
+  target: Target;
+  environment: NodeJS.ProcessEnv;
+  assetArguments: string[];
+}
+
+/**
+ * Check every JDK and bundled resource before the first Gradle build, so a missing add-on input
+ * cannot fail after the earlier targets have built. Report every problem at once.
+ */
+export async function prepareBuildInputs(
+  order: readonly string[],
+  targets: Record<string, Target>,
+  repository = root,
+): Promise<Map<string, BuildInputs>> {
+  const inputs = new Map<string, BuildInputs>();
+  const problems = new Set<string>();
+  const report = (error: unknown) => {
+    problems.add(error instanceof Error ? error.message : String(error));
+    return undefined;
+  };
+  // Check targets one at a time because the bundled asset checks read large archives.
+  for (const id of order) {
+    const target = required(targets[id], `The ${id} target`);
+    const environment = await buildEnvironment(target.java).catch(report);
+    const assetArguments = await builtinAssetArguments(id, repository).catch(report);
+    if (environment && assetArguments) inputs.set(id, { target, environment, assetArguments });
+  }
+  if (problems.size > 0)
+    throw new Error(
+      ["Build inputs are not ready:", ...[...problems].map((problem) => `- ${problem}`)].join("\n"),
+    );
+  return inputs;
 }
 
 function pomValue(pom: string, tag: string): string {
@@ -167,12 +201,13 @@ async function publishLocal(artifact: string, pom: string, coordinate: Coordinat
   await writeFile(join(directory, `${stem}.pom`), pom);
 }
 
-const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string, Coordinates>) {
-  const target = yield* Effect.promise(() => getTarget(id));
+const buildOne = Effect.fn("buildOne")(function* (
+  id: string,
+  { target, environment, assetArguments }: BuildInputs,
+  built: Map<string, Coordinates>,
+) {
   const dir = yield* sync(id);
   artifactProjectDirectory(dir, target.artifactProject);
-  const environment = yield* Effect.promise(() => buildEnvironment(target.java));
-  const builtinAssets = yield* Effect.promise(() => builtinAssetArguments(id));
   const viaFabricPlusVersion =
     id === "viafabricplus-bedrock" ? built.get("viafabricplus")?.version : undefined;
   if (id === "viafabricplus-bedrock" && !viaFabricPlusVersion) {
@@ -188,7 +223,7 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
       "--stacktrace",
       `-PstackanvilMavenRepo=${localRepo}`,
       ...(viaFabricPlusVersion ? [`-PstackanvilViaFabricPlusVersion=${viaFabricPlusVersion}`] : []),
-      ...builtinAssets,
+      ...assetArguments,
       "clean",
       target.buildTask,
       `${target.artifactProject ?? ""}:generatePomFileFor${target.publication}Publication`,
@@ -272,6 +307,8 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
 export const build = Effect.fn("build")(function* (id: string) {
   const targets = id === "viafabricplus" ? undefined : yield* Effect.promise(() => getTargets());
   const order = targets === undefined ? [] : buildOrder(targets, id);
+  if (order.length > 0) print("Checking JDKs and bundled resources");
+  const inputs = yield* Effect.promise(() => prepareBuildInputs(order, targets ?? {}));
   yield* Effect.promise(() => rm(localRepo, { recursive: true, force: true }));
   const built = new Map<string, Coordinates>();
   const includeViaFabricPlus = id === "viafabricplus" || order.includes("viafabricplus-bedrock");
@@ -284,9 +321,9 @@ export const build = Effect.fn("build")(function* (id: string) {
       version: pin.version,
     });
   }
-  for (const [index, target] of order.entries()) {
-    print(`Building ${target} (${index + 1}/${order.length})`);
-    yield* buildOne(target, built);
+  for (const [index, [target, input]] of [...inputs].entries()) {
+    print(`Building ${target} (${index + 1}/${inputs.size})`);
+    yield* buildOne(target, input, built);
   }
   return [...(includeViaFabricPlus ? ["viafabricplus"] : []), ...order]
     .map((target) => join(root, "dist", target))
@@ -295,9 +332,9 @@ export const build = Effect.fn("build")(function* (id: string) {
 
 export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: string) {
   const target = yield* Effect.promise(() => getTarget(id));
-  const dir = yield* sync(id, "pr", patchFile);
   const builtinAssets = yield* Effect.promise(() => builtinAssetArguments(id));
   const environment = yield* Effect.promise(() => buildEnvironment(target.java));
+  const dir = yield* sync(id, "pr", patchFile);
   yield* command(
     "bash",
     ["./gradlew", "--no-daemon", "--stacktrace", ...builtinAssets, "clean", target.buildTask],

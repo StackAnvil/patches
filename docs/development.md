@@ -11,6 +11,7 @@ The build reads each JDK's `release` file and stops if a variable names a JDK wi
 Without a variable, it also accepts `JAVA_HOME` when that JDK has the required version.
 Prepare the six [OreUI shaping libraries](../native/oreui-shaper/README.md) before building the add-on.
 The CI and release workflows build these libraries automatically.
+Before the first Gradle build, `bun run build` checks the JDKs and bundled resources of every selected target and lists all missing inputs.
 
 Install the [native Wayland lab dependencies](capture-lab.md#prepare-the-clients) for focus free local tests. Then run:
 
