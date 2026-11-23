@@ -7,6 +7,8 @@ Use this guide to build the four patch targets with pinned ViaFabricPlus and sta
 Install Bun, Git, JDK 17, and JDK 25. ViaBedrock, ViaProxy, and the Bedrock add-on require Java 25. CubeConverter still builds with JDK 17.
 
 Set `STACKANVIL_JAVA_17` and `STACKANVIL_JAVA_25` if the JDKs are not in the standard paths.
+The build reads each JDK's `release` file and stops if a variable names a JDK with another version.
+Without a variable, it also accepts `JAVA_HOME` when that JDK has the required version.
 Prepare the six [OreUI shaping libraries](../native/oreui-shaper/README.md) before building the add-on.
 The CI and release workflows build these libraries automatically.
 

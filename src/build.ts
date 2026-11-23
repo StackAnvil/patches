@@ -71,21 +71,38 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
   ];
 }
 
+/** Read the major version from a JDK home's release file. */
+async function jdkVersion(home: string): Promise<string | undefined> {
+  if (!existsSync(join(home, "bin", "java"))) return undefined;
+  const release = await readFile(join(home, "release"), "utf8").catch(() => "");
+  // Java 8 reports 1.8.0_x; later releases start with their major version.
+  return /^JAVA_VERSION="(?:1\.)?(\d+)/mu.exec(release)?.[1];
+}
+
 async function javaHome(version: string): Promise<string> {
-  const explicit =
-    process.env[`STACKANVIL_JAVA_${version}`] ?? process.env[`JAVA_HOME_${version}_X64`];
-  const candidates = [explicit, join("/usr/lib/jvm", `java-${version}-openjdk`)];
+  for (const variable of [`STACKANVIL_JAVA_${version}`, `JAVA_HOME_${version}_X64`]) {
+    const path = process.env[variable];
+    if (!path) continue;
+    const found = await jdkVersion(path);
+    if (found !== version)
+      throw new Error(
+        `${variable} must name a Java ${version} JDK home, but ${path} ${found ? `is Java ${found}` : "is not a JDK home with bin/java and a release file"}.`,
+      );
+    return path;
+  }
+  const candidates = [join("/usr/lib/jvm", `java-${version}-openjdk`)];
   const gradleJdks = join(homedir(), ".gradle", "jdks");
   if (existsSync(gradleJdks)) {
     for (const entry of await readdir(gradleJdks)) {
       if (entry.includes(`-${version}-`)) candidates.push(join(gradleJdks, entry));
     }
   }
-  if (version === "25") candidates.push(process.env["JAVA_HOME"]);
-  const selected = candidates.find((path) => path && existsSync(join(path, "bin", "java")));
-  if (!selected)
-    throw new Error(`Java ${version} is missing. Set STACKANVIL_JAVA_${version} to a JDK home.`);
-  return selected;
+  const host = process.env["JAVA_HOME"];
+  if (host) candidates.push(host);
+  for (const candidate of candidates) {
+    if ((await jdkVersion(candidate)) === version) return candidate;
+  }
+  throw new Error(`Java ${version} is missing. Set STACKANVIL_JAVA_${version} to a JDK home.`);
 }
 
 export async function buildEnvironment(version: string): Promise<NodeJS.ProcessEnv> {
