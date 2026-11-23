@@ -264,25 +264,39 @@ export const continueApply = Effect.fn("continueApply")(function* (
       message: "This PR apply predates test exclusion. Abort the apply, then run pr check again.",
     });
   }
-  if (!existsSync(join(dir, ".git", "rebase-apply"))) {
-    return yield* StackError.make({
-      message: `Git has no active am operation in ${dir}. Inspect it before removing ${path}.`,
-    });
-  }
-  const commits = yield* commitIds(dir, target.baseSha);
-  if (commits.length !== session.nextIndex) {
-    return yield* StackError.make({
-      message: `Expected ${session.nextIndex} applied patches, found ${commits.length}. Inspect ${dir} before continuing.`,
-    });
-  }
-  if (mode === "pr") yield* assertPrProductionChanges(dir, target.baseSha, true, id);
   const patch = session.prPatch ?? session.patches[session.nextIndex];
   if (patch === undefined) {
     return yield* StackError.make({
       message: `No patch remains after ${session.nextIndex} applied patches. Inspect ${dir} before continuing.`,
     });
   }
-  yield* applyPatch(["am", "--continue"], dir, patch);
+  const commits = yield* commitIds(dir, target.baseSha);
+  if (existsSync(join(dir, ".git", "rebase-apply"))) {
+    if (commits.length !== session.nextIndex) {
+      return yield* StackError.make({
+        message: `Expected ${session.nextIndex} applied patches, found ${commits.length}. Inspect ${dir} before continuing.`,
+      });
+    }
+    if (mode === "pr") yield* assertPrProductionChanges(dir, target.baseSha, true, id);
+    yield* applyPatch(["am", "--continue"], dir, patch);
+  } else {
+    // A manual `git am --continue` already committed the stopped patch.
+    const { title } = yield* Effect.tryPromise({
+      try: () => readFile(patch, "utf8").then(parsePatchMessage),
+      catch: stackError,
+    });
+    const subject =
+      commits.length === session.nextIndex + 1
+        ? yield* git(["log", "-1", "--format=%s"], dir)
+        : undefined;
+    if (subject !== title) {
+      return yield* StackError.make({
+        message: `Git has no active am operation in ${dir}, and HEAD is not the stopped patch ${title}. If the apply was skipped or aborted, run ${abortCommand(id, mode, patchFile)}.`,
+      });
+    }
+    yield* ensureClean(dir);
+    if (mode === "pr") yield* assertPrProductionChanges(dir, target.baseSha, false, id);
+  }
   session.nextIndex++;
   yield* Effect.promise(() => writeFile(path, encodeIndentedJson(session)));
   return yield* applyRemaining(id, dir, path, mode, modeKey, session, patchFile);
@@ -319,16 +333,26 @@ export const abortApply = Effect.fn("abortApply")(function* (
   if (!existsSync(path))
     return yield* StackError.make({ message: `No unfinished ${mode} patch apply for ${id}.` });
   const dir = workdir(id, modeKey);
-  if (!existsSync(join(dir, ".git", "rebase-apply"))) {
-    return yield* StackError.make({
-      message: `Git has no active am operation in ${dir}. Inspect it before removing ${path}.`,
-    });
+  if (existsSync(join(dir, ".git", "rebase-apply"))) yield* git(["am", "--abort"], dir);
+  else {
+    // A manual `git am --abort` or `git am --skip` leaves HEAD at the last applied patch.
+    const sessionText = yield* Effect.promise(() => readFile(path, "utf8"));
+    const session: ApplySession = parseJson(ApplySessionSchema, sessionText);
+    const commits = yield* commitIds(dir, session.baseSha);
+    if (commits.length !== session.nextIndex) {
+      return yield* StackError.make({
+        message: `Git has no active am operation in ${dir}, and HEAD is not where the apply stopped. Inspect it before removing ${path}.`,
+      });
+    }
   }
-  yield* git(["am", "--abort"], dir);
   yield* git(["update-ref", syncedRef(modeKey), "HEAD"], dir);
   yield* Effect.promise(() => rm(path));
   return `Aborted the patch apply in ${dir}. Run bun run ${mode === "pr" ? "pr check" : "stack sync"} ${id}${patchFile ? ` --patch ${patchFile}` : ""} to start again.`;
 });
+
+function abortCommand(id: string, mode: "full" | "pr", patchFile?: string) {
+  return `bun run stack abort ${id}${mode === "pr" ? " --pr" : ""}${patchFile ? ` --patch ${patchFile}` : ""}`;
+}
 
 const commitIds = Effect.fn("commitIds")(function* (dir: string, baseSha: string) {
   const output = yield* git(["rev-list", "--reverse", `${baseSha}..HEAD`], dir);
