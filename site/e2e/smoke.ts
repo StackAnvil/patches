@@ -98,6 +98,18 @@ test.describe("guide navigation on a wide screen", () => {
   });
 });
 
+test("the skip link on a guide page passes the header and the sidebar", async ({ page }) => {
+  await page.goto("/projects/");
+  await page.keyboard.press("Tab");
+  const skip = page.getByRole("link", { name: "Skip to content", exact: true });
+  await expect(skip).toBeFocused();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  expect(await page.evaluate(() => document.activeElement?.closest("#nd-page") !== null)).toBe(
+    true,
+  );
+});
+
 test.describe("guide navigation on a phone", () => {
   test.use({ viewport: { width: 390, height: 664 } });
 

@@ -35,7 +35,11 @@ export const documentLoader = createClientLoader<
         </DocsBody>
       );
     return (
-      <DocsPage toc={toc}>
+      <DocsPage
+        toc={toc}
+        tableOfContent={{ container: { role: "navigation", "aria-labelledby": "toc-title" } }}
+        tableOfContentPopover={{ container: { role: "navigation", "aria-label": "On this page" } }}
+      >
         <DocsTitle id={frontmatter.title.toLowerCase().replaceAll(/\s+/gu, "-")}>
           {frontmatter.title}
         </DocsTitle>

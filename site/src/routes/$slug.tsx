@@ -28,7 +28,7 @@ function DocumentPage() {
   const page = Route.useLoaderData();
   const content = documentLoader.useContent(page.path, { slug: page.slug });
   return (
-    <div id="main-content" className="docs-shell" tabIndex={-1}>
+    <div className="docs-shell">
       <DocsLayout
         tree={pageTree}
         nav={{ title: "Documentation", url: "/getting-started/" }}

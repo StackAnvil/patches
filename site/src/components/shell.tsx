@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useMatch } from "@tanstack/react-router";
 import { useSearchContext } from "fumadocs-ui/contexts/search";
 import { useTheme } from "fumadocs-ui/provider/base";
 import { ArrowDownToLine, Menu, Moon, Search, Sun, X } from "lucide-react";
@@ -44,9 +44,15 @@ export function SiteHeader() {
   const { setOpenSearch } = useSearchContext();
   const { resolvedTheme, setTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Guide pages skip the sidebar too and land on the article.
+  const guide = useMatch({
+    from: "/$slug",
+    shouldThrow: false,
+    select: (match) => match.status === "success",
+  });
   return (
     <header className="site-header">
-      <a href="#main-content" className="skip-link">
+      <a href={guide ? "#nd-page" : "#main-content"} className="skip-link">
         Skip to content
       </a>
       <div className="header-inner">
