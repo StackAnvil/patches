@@ -75,3 +75,14 @@ test("missing or unpublished release metadata leaves a usable GitHub fallback", 
   expect(setupDownloads(null, "proxy")).toEqual([]);
   expect(releaseLink(null)).toBe("https://github.com/StackAnvil/patches/releases/latest");
 });
+
+test("two modpacks or an invalid publish date leave the page without guessed details", () => {
+  const parsed = parseRelease({
+    ...release([asset("StackAnvil-26.3.mrpack"), asset("StackAnvil-26.4.mrpack")]),
+    published_at: "not a date",
+  });
+  expect(parsed?.minecraft).toBeUndefined();
+  expect(setupDownloads(parsed, "modpack")).toEqual([]);
+  expect(parsed?.publishedAt).toBe("");
+  expect(parseRelease(release([]))?.publishedAt).toBe("2026-11-14T12:00:00Z");
+});

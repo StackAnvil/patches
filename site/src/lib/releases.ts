@@ -35,6 +35,8 @@ function githubUrl(value: unknown, prefix: string) {
     : undefined;
 }
 
+const modpackPattern = /^StackAnvil-.+\.mrpack$/u;
+
 export function parseRelease(value: unknown): Release | null {
   if (!value || typeof value !== "object") return null;
   if (
@@ -72,12 +74,15 @@ export function parseRelease(value: unknown): Release | null {
     if (!new URL(download).pathname.startsWith(expected)) return [];
     return [{ name: asset.name, url: download, size: asset.size }];
   });
-  const modpack = assets.find((asset) => /^StackAnvil-(.+)\.mrpack$/u.test(asset.name));
+  // Two packs make the target ambiguous, so the page names no version rather than a guessed one.
+  const modpack = only(assets, modpackPattern);
+  const publishedAt =
+    "published_at" in value && typeof value.published_at === "string" ? value.published_at : "";
   return {
     tag: value.tag_name,
     url,
-    publishedAt:
-      "published_at" in value && typeof value.published_at === "string" ? value.published_at : "",
+    // The page formats this date during rendering, where an invalid date throws.
+    publishedAt: Number.isNaN(Date.parse(publishedAt)) ? "" : publishedAt,
     assets,
     ...(modpack ? { minecraft: modpack.name.slice("StackAnvil-".length, -".mrpack".length) } : {}),
   };
@@ -96,7 +101,7 @@ export function setupDownloads(release: Release | null, setup: Setup) {
     /^ViaFabricPlus-(?!.*(?:-sources|-javadoc|-api)\.jar$).+\.jar$/u,
   );
   const addon = only(assets, /^viafabricplus-bedrock-.+-StackAnvil\.jar$/u);
-  const modpack = only(assets, /^StackAnvil-.+\.mrpack$/u);
+  const modpack = only(assets, modpackPattern);
   if (setup === "proxy") return proxy ? [{ title: "ViaProxy", asset: proxy }] : [];
   if (setup === "modpack") return modpack ? [{ title: "Client modpack", asset: modpack }] : [];
   return viafabricplus && addon
