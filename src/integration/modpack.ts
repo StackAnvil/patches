@@ -371,10 +371,11 @@ export async function updateModpack(versionNumber?: string): Promise<void> {
     throw new Error(
       `No Fabulously Optimized .mrpack for Minecraft ${current.minecraft}${versionNumber ? ` version ${versionNumber}` : ""}.`,
     );
-  const temporary = join(packDirectory, `${project}.mrpack.tmp`);
-  await verifiedDownload([file.url], temporary, file.hashes.sha512);
+  // Download into the private cache so a pack that fails validation never lands in the repository.
+  const downloaded = join(cacheDirectory, file.hashes.sha512);
+  await verifiedDownload([file.url], downloaded, file.hashes.sha512);
   const raw: unknown = JSON.parse(
-    Buffer.from(await zipEntry(temporary, "modrinth.index.json")).toString("utf8"),
+    Buffer.from(await zipEntry(downloaded, "modrinth.index.json")).toString("utf8"),
   );
   const fabricLoader =
     isRecord(raw) && isRecord(raw["dependencies"])
@@ -385,13 +386,12 @@ export async function updateModpack(versionNumber?: string): Promise<void> {
   const index = validatePackIndex(raw, { minecraft: current.minecraft, fabricLoader });
   if (index.versionId !== version.version_number)
     throw new Error("Modrinth version and modpack index disagree.");
-  const entries = await zipEntries(temporary);
+  const entries = await zipEntries(downloaded);
   for (const entry of entries) {
     const path = entry.endsWith("/") ? entry.slice(0, -1) : entry;
     if (!safePath(path)) throw new Error(`Unsafe modpack archive path: ${entry}`);
   }
-  await copyFile(temporary, packFile);
-  await rm(temporary);
+  await copyFile(downloaded, packFile);
   await writeFile(
     lockFile,
     `${JSON.stringify(

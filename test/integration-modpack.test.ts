@@ -1,16 +1,18 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
   inspectPinnedModpack,
   packOverrides,
   replacePackFiles,
+  updateModpack,
   validatePackIndex,
   verifiedDownload,
 } from "../src/integration/modpack.ts";
+import { root } from "../src/model.ts";
 
 const target = { minecraft: "26.3", fabricLoader: "0.19.5" };
 
@@ -116,4 +118,26 @@ test("accepts a cached download whose index spells the SHA-512 in uppercase", as
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("a downloaded modpack that fails validation leaves no file in the tracked modpack directory", async () => {
+  const modpacks = join(root, "integration", "modpacks");
+  const before = (await readdir(modpacks)).toSorted();
+  const pinned = await readFile(join(modpacks, "fabulously-optimized.mrpack"));
+  await withPack({ "modrinth.index.json": JSON.stringify({ ...index(), dependencies: { minecraft: "26.3" } }) }, async (pack) => {
+    const bytes = await readFile(pack);
+    const sha512 = createHash("sha512").update(bytes).digest("hex");
+    const cached = join(root, ".stackanvil", "integration", "cache", "modpack", sha512);
+    const version = { id: "fake", version_number: "15.0.0-alpha.3", files: [{ filename: "pack.mrpack", url: "https://cdn.modrinth.com/pack.mrpack", primary: true, hashes: { sha512 } }] };
+    const fetch = spyOn(globalThis, "fetch").mockImplementation((async (url: string | URL | Request) =>
+      String(url).startsWith("https://api.modrinth.com/") ? Response.json([version]) : new Response(bytes)) as typeof globalThis.fetch);
+    try {
+      await expect(updateModpack()).rejects.toThrow("does not specify a Fabric loader");
+    } finally {
+      fetch.mockRestore();
+      await rm(cached, { force: true });
+    }
+  });
+  expect((await readdir(modpacks)).toSorted()).toEqual(before);
+  expect((await readFile(join(modpacks, "fabulously-optimized.mrpack"))).equals(pinned)).toBe(true);
 });
