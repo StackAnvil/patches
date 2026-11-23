@@ -193,3 +193,18 @@ test("addon packaging requires all engines and preserves their exact resources",
     verifyEmbeddedOreUiShaper(artifact, first.directory),
   ).rejects.toThrow("Unexpected");
 });
+
+test("addon packaging names every missing engine instead of a raw file error", async () => {
+  const absent = join(tmpdir(), `stackanvil-oreui-shaper-absent-${process.pid}`);
+  const missingAll = oreUiShaperArguments("viafabricplus-bedrock", absent);
+  await expect(missingAll).rejects.toThrow(
+    `OreUI shaper resources are missing for ${oreUiShaperPlatforms.join(", ")} in ${absent}.`,
+  );
+  await expect(missingAll).rejects.toThrow("native/oreui-shaper/README.md");
+  const host = await installation("linux-x64");
+  await expect(
+    oreUiShaperArguments("viafabricplus-bedrock", host.directory),
+  ).rejects.toThrow(
+    `missing for ${oreUiShaperPlatforms.filter((target) => target !== "linux-x64").join(", ")} in`,
+  );
+});

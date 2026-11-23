@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Schema } from "effect";
@@ -127,6 +128,15 @@ export async function oreUiShaperArguments(
   sourceDirectory = join(repository, "native", "oreui-shaper"),
 ): Promise<string[]> {
   if (id !== "viafabricplus-bedrock") return [];
+  const missing = oreUiShaperPlatforms.filter(
+    (target) => !existsSync(join(directory, oreUiShaperResource, target, "manifest.json")),
+  );
+  if (missing.length > 0)
+    throw new Error(
+      `OreUI shaper resources are missing for ${missing.join(", ")} in ${resolve(directory)}. ` +
+        "Combine the six oreui-shaper-* workflow artifacts there or set STACKANVIL_OREUI_SHAPER_RESOURCES. " +
+        "See native/oreui-shaper/README.md.",
+    );
   await Promise.all(
     oreUiShaperPlatforms.map((target) => verifyOreUiShaper(directory, target, sourceDirectory)),
   );
