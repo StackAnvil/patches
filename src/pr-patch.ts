@@ -58,12 +58,20 @@ function testConfiguration(line: string): boolean {
   );
 }
 
-function stripTestConfiguration(lines: string[], changed: Set<number>): FilteredLines {
+function stripTestConfiguration(
+  lines: string[],
+  changed: Set<number>,
+  unchanged: (start: number, end: number) => boolean,
+  synthetic: boolean,
+): FilteredLines {
   const removed = new Set<number>();
+  // Drop the blank separator the patch added with a test block, never an upstream blank line.
+  const addedBlank = (index: number) =>
+    changed.has(index) && !removed.has(index) && !lines[index]?.trim();
   const remove = (start: number, end: number) => {
     for (let index = start; index <= end; index++) removed.add(index);
-    if (start > 0 && !lines[start - 1]?.trim()) removed.add(start - 1);
-    else if (end + 1 < lines.length && !lines[end + 1]?.trim()) removed.add(end + 1);
+    if (addedBlank(start - 1)) removed.add(start - 1);
+    else if (addedBlank(end + 1)) removed.add(end + 1);
   };
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index] ?? "";
@@ -71,6 +79,11 @@ function stripTestConfiguration(lines: string[], changed: Set<number>): Filtered
     let end = index;
     let balance = delimiterBalance(line);
     while (balance > 0 && end + 1 < lines.length) balance += delimiterBalance(lines[++end] ?? "");
+    // Upstream test configuration that the patch leaves alone is context the PR patch needs.
+    if (unchanged(index, end)) {
+      index = end;
+      continue;
+    }
     if (
       balance > 0 &&
       lines.slice(index, end + 1).some((_, offset) => changed.has(index + offset))
@@ -96,8 +109,20 @@ function stripTestConfiguration(lines: string[], changed: Set<number>): Filtered
       remove(index, end);
     }
   }
+  // When a run of patch lines holds only test configuration, its blank separators go with it.
+  for (let start = 0; start < lines.length; start++) {
+    if (!changed.has(start)) continue;
+    let end = start;
+    while (changed.has(end + 1)) end++;
+    const run = Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
+    const code = run.filter((index) => lines[index]?.trim());
+    if (code.length > 0 && code.every((index) => removed.has(index)))
+      for (const index of run) removed.add(index);
+    start = end;
+  }
   return {
-    lines: lines.filter((_, index) => !removed.has(index)),
+    // A synthetic block opener from the hunk header is never part of the hunk itself.
+    lines: lines.filter((_, index) => !removed.has(index) && !(synthetic && index === 0)),
     removed: lines.filter((_, index) => removed.has(index)),
   };
 }
@@ -124,19 +149,36 @@ function filterGradleDiff(section: string): { diff: string; omittedTests: boolea
       !lines.some((line) => line.slice(1).trim() === context);
     const side = (sign: string) => {
       const source = [
-        ...(inTestBlock ? [` ${context}`] : []),
-        ...lines.filter((line) => line.startsWith(" ") || line.startsWith(sign)),
+        ...(inTestBlock ? [{ line: ` ${context}`, position: -1 }] : []),
+        ...lines.flatMap((line, position) =>
+          line.startsWith(" ") || line.startsWith(sign) ? [{ line, position }] : [],
+        ),
       ];
+      // Only consecutive hunk context is unchanged; the other side may insert lines in between.
+      const unchanged = (start: number, end: number) =>
+        source
+          .slice(start, end + 1)
+          .every(
+            ({ line, position }, index) =>
+              line.startsWith(" ") &&
+              (index === 0 || position === (source[start + index - 1]?.position ?? 0) + 1),
+          );
       return stripTestConfiguration(
-        source.map((line) => line.slice(1)),
-        new Set(source.flatMap((line, index) => (line.startsWith(sign) ? [index] : []))),
+        source.map(({ line }) => line.slice(1)),
+        new Set(source.flatMap(({ line }, index) => (line.startsWith(sign) ? [index] : []))),
+        unchanged,
+        inTestBlock,
       );
     };
     const before = side("-");
     const after = side("+");
     omittedTests ||= before.removed.join("\n") !== after.removed.join("\n");
     if (before.lines.join("\n") === after.lines.join("\n")) continue;
-    if (before.lines.length === 0 && before.removed.length > 0 && after.lines.length > 0) {
+    if (
+      before.lines.every((line) => !line.trim()) &&
+      before.removed.length > 0 &&
+      after.lines.length > 0
+    ) {
       throw new Error(
         "Gradle production changes need non-test context before PR export. Expand the patch context or separate the test configuration.",
       );

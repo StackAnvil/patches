@@ -188,9 +188,10 @@ test("PR preparation does not guess where production code belongs after its test
     projectPrPatch(`diff --git a/build.gradle b/build.gradle
 --- a/build.gradle
 +++ b/build.gradle
-@@ -20,3 +20,5 @@
+@@ -20,3 +20,6 @@
  test {
      useJUnitPlatform()
++    maxHeapSize = "2G"
  }
 +
 +implementation("runtime:2")
@@ -216,4 +217,72 @@ diff --git a/src/test/java/StorageTest.java b/src/test/java/StorageTest.java
   expect(projected.omittedTests).toBe(true);
   expect(projected.patch).toContain(`+new ResourcePackStorage(packs, servers);`);
   expect(projected.patch).not.toContain("StorageTest.java");
+});
+
+test("PR Gradle changes keep upstream test configuration and blank lines as context and apply", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-pr-context-"));
+  const git = (args: string[], trimOutput = true) =>
+    Effect.runPromise(
+      command(
+        "git",
+        args,
+        directory,
+        { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+        trimOutput,
+      ),
+    );
+  const upstream = `dependencies {
+    implementation("runtime:1")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
+    implementation("library:1")
+
+    implementation("other:1")
+}
+
+tasks.test {
+    useJUnitPlatform()
+}
+`;
+  try {
+    await git(["init", "-b", "main"]);
+    await git(["config", "user.name", "PR Test"]);
+    await git(["config", "user.email", "test@example.invalid"]);
+    await writeFile(join(directory, "build.gradle.kts"), upstream);
+    await git(["add", "."]);
+    await git(["commit", "-m", "chore: create fixture"]);
+    const base = await git(["rev-parse", "HEAD"]);
+    await writeFile(
+      join(directory, "build.gradle.kts"),
+      upstream
+        .replace(
+          'library:1")',
+          'library:2")\n    testImplementation("org.mockito:mockito-core:5.24.0")',
+        )
+        .concat('\ntesting.suites.test {\n    useJUnitJupiter("6.1.3")\n}\n'),
+    );
+    await git(["commit", "-am", "fix: update library", "-m", "Keep the regression local."]);
+    const saved = await git(
+      [
+        "format-patch",
+        "--full-index",
+        "--zero-commit",
+        "--no-signature",
+        "--no-stat",
+        "--stdout",
+        "-1",
+      ],
+      false,
+    );
+    const projected = projectPrPatch(saved);
+    expect(projected.omittedTests).toBe(true);
+    await writeFile(join(directory, ".git/pr.patch"), projected.patch);
+    await git(["reset", "--hard", base]);
+    await git(["am", join(directory, ".git/pr.patch")]);
+    expect(await readFile(join(directory, "build.gradle.kts"), "utf8")).toBe(
+      upstream.replace('library:1")', 'library:2")'),
+    );
+    await Effect.runPromise(assertPrProductionChanges(directory, base));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
