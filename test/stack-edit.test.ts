@@ -232,3 +232,11 @@ test("stack sync names a patch whose changes the stack already contains", async 
     "deferred/0001-setup.patch added no commit",
   );
 }, 600_000);
+
+test("stack edit refuses a filename that names patches in two groups", async () => {
+  const { patches, stack } = await stackFixture();
+  await deferSetupCopy(patches);
+
+  const output = await stack(["edit", "fixture", "0001-setup.patch"], true);
+  expect(output).toContain("setup/0001-setup.patch, deferred/0001-setup.patch");
+}, 600_000);

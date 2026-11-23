@@ -393,9 +393,22 @@ export const edit = Effect.fn("edit")(function* (id: string, file: string) {
   const target = yield* Effect.promise(() => getTarget(id));
   const series = yield* Effect.promise(() => getSeries(id));
   const paths = patchPaths(id, series);
-  const patchIndex = paths.findIndex((path) => path.endsWith(`/${file}`));
-  if (patchIndex < 0)
+  // Each group numbers its own files, so a bare filename can name patches in two groups.
+  const entries = [
+    ...series.setup.map((name) => ({ group: "setup", name })),
+    ...series.upstreamable.map(({ file: name }) => ({ group: "upstreamable", name })),
+    ...series.deferred.map(({ file: name }) => ({ group: "deferred", name })),
+  ].map(({ group, name }) => ({ name, entry: `${group}/${name}` }));
+  const matches = entries.flatMap(({ name, entry }, index) =>
+    file === name || file === entry ? [index] : [],
+  );
+  const [patchIndex] = matches;
+  if (patchIndex === undefined)
     return yield* StackError.make({ message: `Patch ${file} is not in ${id}/series.json` });
+  if (matches.length > 1)
+    return yield* StackError.make({
+      message: `Patch ${file} is ambiguous in ${id}/series.json. Name one of: ${matches.map((index) => entries[index]?.entry).join(", ")}`,
+    });
   const dir = yield* sync(id);
   const commits = yield* commitIds(dir, target.baseSha);
   const commit = commits[patchIndex];

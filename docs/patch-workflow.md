@@ -31,6 +31,7 @@ The saved patches and full-stack checkouts retain these local tests.
 After upstream merges a feature, remove its local tests when retiring the owning patch.
 Do not submit those tests as a separate upstream PR.
 The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
+If two groups use the same filename, name the patch as `<group>/<patch-file>` in `stack edit`.
 
 Both `stack add` and `stack rebuild` export with `git format-patch --binary --full-index --zero-commit --no-signature --no-stat`.
 Full blob object IDs keep new and changed exports stable as the object store grows or `core.abbrev` changes.
