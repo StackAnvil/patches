@@ -64,11 +64,11 @@ Use a different run ID for each attempt. The runner matches the case ID, run ID,
 
 The default gameplay run includes the creative case. The map case checks that an empty map becomes filled. Review the saved screenshot to check the map image.
 
-The offhand placement and rocket cases require native Bedrock 1.26.51.1 behavior. Dirt remains in the offhand without placement. All three offhand rockets remain during a valid glide. The mainhand cases still require placement or a rocket boost. Native client captures through the official Geyser fixture established these expectations on October 1, 2026.
+The `offhand-ineligible-block` case requires Bedrock to reject dirt in the offhand. The main hand keeps both dirt blocks, and no dirt is placed. The `offhand-elytra-rocket` case requires all three offhand rockets to remain during a valid glide, as native Bedrock 1.26.51.1 captures showed. The mainhand cases require placement or a rocket boost.
 
 ## Authored inventory actions
 
-Run the two authored-action cases against BDS 1.26.51.1 with matching StackAnvil builds:
+Run the two authored-action cases against a BDS that matches the StackAnvil target version:
 
 ```bash
 bun run test:integration -- --route java-bedrock --plain-only --reuse-build --gameplay-cases chest-authored-one-empty,chest-authored-one-merge
@@ -96,7 +96,7 @@ The opt-in complex suite adds ranged use and hits, potion effects, fireball inte
 bun run test:integration -- --route java-bedrock --gameplay-complex
 ```
 
-The [probe guide](../../docs/bedrock-test-packs.md#complex-gameplay) lists its 38 cases and observation limits.
+The [probe guide](../../docs/bedrock-test-packs.md#complex-gameplay) lists its cases and observation limits.
 The [coverage matrix](../../docs/bedrock-complex-gameplay.md) tracks the broader movement and combat requirements.
 Headless BDS probes verify selected server controls.
 Translated Java gameplay and native client comparisons remain required.

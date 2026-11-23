@@ -21,7 +21,7 @@ Use `--gameplay-cases` to select cases. This command runs a short movement and b
 bun run test:integration -- --route java-bedrock --gameplay-cases movement-left,movement-right,block-break
 ```
 
-The default gameplay run includes movement, block actions, inventory, creative selection, chest transfer, equipment, item use, entity interaction, maps, commands, respawn, and dimension change. Each case uses a fresh arena so a client-predicted block from one case cannot interfere with the next.
+The default gameplay run includes movement, block actions, inventory, creative selection, container transfers, cooking, brewing, enchanting, crafting, equipment, shields, vehicles, item use, entity interaction, maps, commands, respawn, and dimension change. Each case uses a fresh arena so a client-predicted block from one case cannot interfere with the next.
 
 Arena preparation requires a living player, including after asynchronous tick boundaries.
 It rejects a dead player before changing their position or resetting health.
@@ -29,6 +29,8 @@ The runner must complete an actual respawn before it prepares the next arena.
 Resetting a dead player's health through the Script API can prevent BDS from completing the respawn handshake.
 
 ## What each case checks
+
+The table describes selected cases. Run `/scriptevent vbprobe:cases` in a probe world to list every case ID.
 
 | Case                                                   | Java action                                                                                             | Bedrock result                                                                                                                   |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -42,7 +44,7 @@ Resetting a dead player's health through the Script API can prevent BDS from com
 | `creative-select`                                      | Search for a nether star and place it in the hotbar                                                     | The server sees a nether star in the player inventory.                                                                           |
 | `creative-replace`                                     | Replace an emerald in the first hotbar slot with a nether star                                          | The server sees the nether star in that slot.                                                                                    |
 | `equip-helmet`, `equip-offhand`, `eat-golden-apple`    | Use or swap the held item                                                                               | The equipment slot or effect state changes.                                                                                      |
-| `offhand-block-place`                                  | Right-click with dirt in the offhand and an empty main hand                                             | Both dirt blocks remain in the offhand and no dirt block appears, matching native Bedrock.                                       |
+| `offhand-ineligible-block`                             | Press F to swap dirt from the main hand to the offhand                                                  | Bedrock rejects offhand dirt. The offhand stays empty, the main hand keeps both dirt blocks, and no dirt is placed.              |
 | `offhand-elytra-rocket`                                | Glide and right-click with offhand rockets                                                              | Glide and movement samples exist, and all three offhand rockets remain unused.                                                   |
 | `mainhand-elytra-rocket`                               | Glide and use a mainhand rocket                                                                         | A rocket is consumed during glide and horizontal speed increases.                                                                |
 | `entity-attack`, `entity-name`                         | Hit or name a cow                                                                                       | The cow loses health or has the expected name.                                                                                   |
@@ -56,49 +58,52 @@ After the gameplay cases, the runner restarts the Java client and checks that it
 
 ## Complex gameplay
 
-Run the 44 BDS cases for ranged use, projectile combat, slowing terrain, fluids, and creative flight:
+Run the BDS cases for ranged use, projectile combat, slowing terrain, fluids, creative flight, moving item use, and fishing:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
 ```
 
 You can combine `--gameplay-complex` with `--gameplay-probe` or select individual IDs with `--gameplay-cases`.
-The Java/Geyser probe does not implement these new fixtures; the runner rejects that route before starting servers.
+The Java/Geyser probe does not implement these fixtures; the runner rejects that route before starting servers.
 
-| Case                                                                            | Java action                                                                  | Server assertion                                                                                                |
-| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `bow-release`                                                                   | Hold use, then release                                                       | Ordered start/release events, one moving owned arrow, and one consumed arrow.                                   |
-| `bow-cancel`                                                                    | Change hotbar slot while drawing                                             | Charging started, no arrow spawned, and ammunition remained unchanged.                                          |
-| `bow-no-ammo`                                                                   | Attempt to draw without arrows                                               | No projectile or ammunition change. Compare with `bow-release` to detect missing input handling.                |
-| `crossbow-load`                                                                 | Charge without firing                                                        | Start/completion events, one consumed arrow, and no projectile.                                                 |
-| `crossbow-fire`                                                                 | Load, release, then use again                                                | A completed load precedes one owned arrow, with one arrow consumed in total.                                    |
-| `crossbow-retain`                                                               | Load, switch away and back, then fire                                        | Server slot samples witness the round trip between completion and the shot.                                     |
-| `splash-potion-throw`, `lingering-potion-throw`                                 | Throw the default potion                                                     | A use event, one matching owned projectile, and one consumed potion.                                            |
-| `powder-snow-sink`                                                              | Remain on powder snow without boots                                          | At least ten samples and descent into the snow.                                                                 |
-| `powder-snow-boots`                                                             | Remain on powder snow with leather boots                                     | At least ten samples and no descent through the surface.                                                        |
-| `water-forward`                                                                 | Hold forward while submerged                                                 | At least ten water samples and 0.6 blocks of forward travel.                                                    |
-| `creative-flight-ascend`                                                        | Toggle flight and hold jump                                                  | At least ten flight samples and ascent above one block.                                                         |
-| `bow-short-release`                                                             | Release after a short draw                                                   | One consumed arrow and an owned projectile after a draw of at most twelve server ticks.                         |
-| `bow-water-release`                                                             | Draw and release while submerged                                             | A valid shot and at least ten water samples during use.                                                         |
-| `bow-hit`, `crossbow-hit`                                                       | Fire at a stationary cow                                                     | The owned arrow hits the fixture target, causes damage, and lowers its health.                                  |
-| `crossbow-cancel`                                                               | Change slot during loading                                                   | A witnessed slot change, no completed load, no projectile, and unchanged ammunition.                            |
-| `crossbow-no-ammo`                                                              | Attempt to load without arrows                                               | No projectile or ammunition change. Compare with the positive loading case.                                     |
-| `bow-infinity`                                                                  | Draw and release an Infinity bow with arrows                                 | One owned arrow, ordered charging events, and no ammunition consumption.                                        |
-| `bow-infinity-no-ammo`                                                          | Attempt to draw an Infinity bow without arrows                               | No projectile or ammunition change.                                                                             |
-| `crossbow-multishot`                                                            | Load and fire a Multishot crossbow                                           | Three distinct owned arrows in one volley, after completion, with one arrow consumed.                           |
-| `crossbow-quick-charge-1`, `crossbow-quick-charge-2`, `crossbow-quick-charge-3` | Load and fire each Quick Charge level                                        | One consumed arrow and one owned shot, with completion inside the target BDS timing window.                     |
-| `crossbow-piercing-0`, `crossbow-piercing-1`, `crossbow-piercing-4`             | Fire one crossbow arrow through a stationary target chain                    | The same arrow damages one, two, or five targets in order. The next target remains untouched.                   |
-| `bow-knockback-release`, `crossbow-knockback-fire`                              | Charge through a scripted knockback, then release or fire                    | Airborne displacement occurs during charging, followed by one owned shot and one consumed arrow.                |
-| `bow-knockback-cancel`, `crossbow-knockback-cancel`                             | Change slot after knockback during charging                                  | Airborne displacement precedes cancellation, with no projectile and unchanged ammunition.                       |
-| `bow-server-slot-use`, `crossbow-server-slot-use`                               | Let the server select snowballs during charging, then use the selected stack | Charging cancels without spending an arrow; the new stack loses one snowball and launches one owned projectile. |
-| `splash-potion-speed`                                                           | Throw a swiftness potion downward                                            | One consumed potion, its owned impact, and a later speed effect with positive duration.                         |
-| `lingering-potion-slowness`                                                     | Throw a lingering slowness potion downward                                   | The matching impact, a nearby cloud, and a later slowness effect.                                               |
-| `fireball-hit`, `small-fireball-hit`                                            | Remain in the firing lane                                                    | A natural ghast or blaze shot hits the player and causes health loss.                                           |
-| `fireball-dodge`, `small-fireball-dodge`                                        | Move aside after launch                                                      | Player samples show sideways movement before the shot passes the original position, without contact or damage.  |
-| `fireball-reflect`                                                              | Attack after launch                                                          | The player's attack changes projectile ownership and reverses its motion without player damage.                 |
-| `water-current`                                                                 | Remain idle in flowing water                                                 | At least ten flowing-water samples and downstream displacement.                                                 |
-| `lava-forward`                                                                  | Hold forward with fire resistance                                            | At least ten lava samples and forward displacement.                                                             |
-| `bubble-column-up`, `bubble-column-down`                                        | Remain idle above soul sand or magma                                         | At least ten bubble-column samples and displacement in the column's direction.                                  |
+| Case                                                                            | Java action                                                                  | Server assertion                                                                                                               |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `bow-release`                                                                   | Hold use, then release                                                       | Ordered start/release events, one moving owned arrow, and one consumed arrow.                                                  |
+| `bow-cancel`                                                                    | Change hotbar slot while drawing                                             | Charging started, no arrow spawned, and ammunition remained unchanged.                                                         |
+| `bow-no-ammo`                                                                   | Attempt to draw without arrows                                               | No projectile or ammunition change. Compare with `bow-release` to detect missing input handling.                               |
+| `crossbow-load`                                                                 | Charge without firing                                                        | Start/completion events, one consumed arrow, and no projectile.                                                                |
+| `crossbow-fire`                                                                 | Load, release, then use again                                                | A completed load precedes one owned arrow, with one arrow consumed in total.                                                   |
+| `crossbow-retain`                                                               | Load, switch away and back, then fire                                        | Server slot samples witness the round trip between completion and the shot.                                                    |
+| `splash-potion-throw`, `lingering-potion-throw`                                 | Throw the default potion                                                     | A use event, one matching owned projectile, and one consumed potion.                                                           |
+| `powder-snow-sink`                                                              | Remain on powder snow without boots                                          | At least ten samples and descent into the snow.                                                                                |
+| `powder-snow-boots`                                                             | Remain on powder snow with leather boots                                     | At least ten samples and no descent through the surface.                                                                       |
+| `water-forward`                                                                 | Hold forward while submerged                                                 | At least ten water samples and 0.6 blocks of forward travel.                                                                   |
+| `creative-flight-ascend`                                                        | Toggle flight and hold jump                                                  | At least ten flight samples and ascent above one block.                                                                        |
+| `bow-short-release`                                                             | Release after a short draw                                                   | One consumed arrow and an owned projectile after a draw of at most twelve server ticks.                                        |
+| `bow-water-release`                                                             | Draw and release while submerged                                             | A valid shot and at least ten water samples during use.                                                                        |
+| `bow-hit`, `crossbow-hit`                                                       | Fire at a stationary cow                                                     | The owned arrow hits the fixture target, causes damage, and lowers its health.                                                 |
+| `crossbow-cancel`                                                               | Change slot during loading                                                   | A witnessed slot change, no completed load, no projectile, and unchanged ammunition.                                           |
+| `crossbow-no-ammo`                                                              | Attempt to load without arrows                                               | No projectile or ammunition change. Compare with the positive loading case.                                                    |
+| `bow-infinity`                                                                  | Draw and release an Infinity bow with arrows                                 | One owned arrow, ordered charging events, and no ammunition consumption.                                                       |
+| `bow-infinity-no-ammo`                                                          | Attempt to draw an Infinity bow without arrows                               | No projectile or ammunition change.                                                                                            |
+| `crossbow-multishot`                                                            | Load and fire a Multishot crossbow                                           | Three distinct owned arrows in one volley, after completion, with one arrow consumed.                                          |
+| `crossbow-quick-charge-1`, `crossbow-quick-charge-2`, `crossbow-quick-charge-3` | Load and fire each Quick Charge level                                        | One consumed arrow and one owned shot, with completion inside the target BDS timing window.                                    |
+| `crossbow-piercing-0`, `crossbow-piercing-1`, `crossbow-piercing-4`             | Fire one crossbow arrow through a stationary target chain                    | The same arrow damages one, two, or five targets in order. The next target remains untouched.                                  |
+| `bow-knockback-release`, `crossbow-knockback-fire`                              | Charge through a scripted knockback, then release or fire                    | Airborne displacement occurs during charging, followed by one owned shot and one consumed arrow.                               |
+| `bow-knockback-cancel`, `crossbow-knockback-cancel`                             | Change slot after knockback during charging                                  | Airborne displacement precedes cancellation, with no projectile and unchanged ammunition.                                      |
+| `bow-server-slot-use`, `crossbow-server-slot-use`                               | Let the server select snowballs during charging, then use the selected stack | Charging cancels without spending an arrow; the new stack loses one snowball and launches one owned projectile.                |
+| `splash-potion-speed`                                                           | Throw a swiftness potion downward                                            | One consumed potion, its owned impact, and a later speed effect with positive duration.                                        |
+| `lingering-potion-slowness`                                                     | Throw a lingering slowness potion downward                                   | The matching impact, a nearby cloud, and a later slowness effect.                                                              |
+| `fireball-hit`, `small-fireball-hit`                                            | Remain in the firing lane                                                    | A natural ghast or blaze shot hits the player and causes health loss.                                                          |
+| `fireball-dodge`, `small-fireball-dodge`                                        | Move aside after launch                                                      | Player samples show sideways movement before the shot passes the original position, without contact or damage.                 |
+| `fireball-reflect`                                                              | Attack after launch                                                          | The player's attack changes projectile ownership and reverses its motion without player damage.                                |
+| `water-current`                                                                 | Remain idle in flowing water                                                 | At least ten flowing-water samples and downstream displacement.                                                                |
+| `lava-forward`                                                                  | Hold forward with fire resistance                                            | At least ten lava samples and forward displacement.                                                                            |
+| `bubble-column-up`, `bubble-column-down`                                        | Remain idle above soul sand or magma                                         | At least ten bubble-column samples and displacement in the column's direction.                                                 |
+| `pearl-wind-charge`, `pearl-wind-charge-moving`                                 | Throw an ender pearl, then a wind charge, standing still or while walking    | A pearl teleport, a wind-charge launch, and a settled landing. The moving case also requires walking before the throw.         |
+| `eat-moving-repeat`, `eat-moving-last`                                          | Hold use on golden apples while walking                                      | Eating completes while moving, grants absorption, and stops when the last apple is consumed.                                   |
+| `fishing-early-reel`, `fishing-entity-reel`                                     | Cast a fishing rod, then reel in early or after hooking a cow                | One cast and one reel remove the hook without a reward. The cow case also requires a live pull and three points of rod damage. |
 
 Ranged observations include event ticks, remaining use duration, ammunition counts, projectile IDs, and sampled projectile speed.
 Incoming-shot observations also retain player positions and velocities after launch.
@@ -124,29 +129,16 @@ They do not prove local trajectory accuracy, complete charge or damage formulas,
 
 The runner detects the drawn selection in any hotbar cell, then selects cell zero before input.
 Cancellation can leave another cell selected.
-That state no longer causes a false loading-screen timeout.
 
-The target headless BDS accepts the fixture APIs and passes the large and small fireball hit controls.
-The initial 29 fixture preparations pass on that server.
-The six enchantment cases also prepare and pass through a synthetic protocol client on BDS 1.26.51.1, protocol 2193.
-Quick Charge levels 1, 2, and 3 report remaining durations of 20, 15, and 10 ticks.
-Their measured start-to-completion intervals are 19, 14, and 9 ticks.
-The assertions allow windows of 19–21, 14–16, and 9–11 ticks.
-They reject both an ordinary reload and an immediate completion.
-The three Piercing controls each pass three attempts through the synthetic client on the same strict BDS build.
-They require one consumed arrow, one owned projectile, ordered contacts, attributed damage, health loss, and an untouched target after the chain.
-Target spacing avoids repeated contact with one wide actor across consecutive ticks.
-The initial wider overlap produced repeated BDS damage against that actor and exhausted its piercing allowance early.
-That overlap behavior remains a separate client parity requirement.
-All three Piercing cases also pass with actual Java mouse input through direct and ViaProxy connections.
-Native packet probes also pass the splash-speed and lingering-slowness effect checks.
-Bow and crossbow target damage and large-fireball reflection also pass these server controls.
-The earlier potion and reflection probes use a synthetic protocol client, not the translated Java client.
-Java input, client rendering, native client comparisons, and direct or ViaProxy gameplay remain unverified for the new cases.
-Crossbow rockets still need an ownership and launch assertion that works with the target server APIs.
-The isolated probe spawns one rocket, or three with Multishot, and consumes one offhand rocket.
-Its generic projectile observer cannot establish ownership, and the initial actor motion does not establish a crossbow trajectory.
-These observations do not qualify as passing rocket fixtures.
+Quick Charge levels 1, 2, and 3 must complete 19–21, 14–16, and 9–11 ticks after the start event.
+These windows reject both an ordinary reload and an immediate completion.
+Piercing targets are spaced so that one wide actor cannot take repeated contact across consecutive ticks.
+Repeated contact against overlapping actors remains a separate client parity requirement.
+
+Headless BDS controls, some through a synthetic protocol client, cover the fireball, reflection, target damage, enchantment, and potion effect assertions.
+The Piercing cases also pass with Java mouse input through direct and ViaProxy connections.
+For the other cases, Java input, client rendering, native comparisons, and direct or ViaProxy gameplay remain unverified.
+Crossbow rockets have no fixture. The generic projectile observer cannot establish rocket ownership, and the initial actor motion does not establish a crossbow trajectory.
 The [complex gameplay matrix](bedrock-complex-gameplay.md) retains the remaining combat, flight, mount, inventory, fluid, and network requirements.
 
 ## Resource pack conversion

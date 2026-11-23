@@ -8,7 +8,7 @@ The Paper plugin prepares and verifies gameplay cases. The Geyser extension repl
 
 The live `java-geyser` route is disabled. The pinned Geyser fixture does not provide NetherNet, so the integration runner rejects that route before it starts servers. See [Geyser fixtures](../../docs/bedrock-test-packs.md#geyser-fixtures). Use the `java-bedrock` route for live gameplay tests.
 
-The fixture still builds and compiles. The build needs JDK 25, including `javac` and `jar`. See [Build and version pins](#build-and-version-pins).
+The fixture builds and compiles. The build needs JDK 25, including `javac` and `jar`. See [Build and version pins](#build-and-version-pins).
 
 ## Fixtures and commands
 
@@ -46,7 +46,7 @@ bun run test-pack:java:build
 
 This command builds the plugin and extension. It installs them, the mappings, and the resource pack under `dist/test-packs/java-probe/plugins/`. An optional positional argument selects another destination. The integration runner builds and installs the same files automatically.
 
-[The fixture manifest](../../integration/geyser.json) pins Paper 26.2 build 129, Geyser 2.11.3 build 1247, and ViaVersion 5.12.0. Downloads require matching SHA-256 checksums. Paperclip resolves the pinned server's runtime dependencies, which also supply the plugin compilation classpath. ViaVersion accepts the Java 26.3 client on the Paper 26.2 server. Geyser exposes Bedrock 1.26.51, matching the current ViaBedrock target.
+[The fixture manifest](../../integration/geyser.json) pins Paper 26.2 build 129, Geyser 2.11.3 build 1247, and ViaVersion 5.12.0. Downloads require matching SHA-256 checksums. Paperclip resolves the pinned server's runtime dependencies, which also supply the plugin compilation classpath. ViaVersion accepts the Java 26.3 client on the Paper 26.2 server. Geyser exposes Bedrock 1.26.51, which is older than the current ViaBedrock target.
 
 The suite uses the official Geyser JAR without source changes. The plugin and extension provide test content and assertions. Protocol fixes belong in ViaBedrock.
 
@@ -58,7 +58,7 @@ Server assertions prove the result of client input on Paper. Extension logs esta
 
 Boat verification requires forward movement, limited lateral drift, and an uninterrupted ride. Mainhand rocket verification averages horizontal movement over four server ticks before consumption and eight ticks afterward. It requires movement samples on both sides, plus a speed increase. Teleports and world changes reset those samples.
 
-The offhand use cases follow native Bedrock 1.26.51.1 behavior. Captures used protocol 2193 and the pinned official Geyser on October 1, 2026. The native inventory contained two offhand dirt blocks or three offhand rockets. Right-click placed no dirt and consumed no offhand rocket during a valid glide. Mainhand controls placed one dirt block and consumed a rocket with a speed increase. The offhand cases require unchanged item counts, and the rocket case also requires glide and movement samples.
+The offhand use cases follow native Bedrock 1.26.51.1 behavior. Captures used protocol 2193 and the pinned official Geyser. The native inventory contained two offhand dirt blocks or three offhand rockets. Right-click placed no dirt and consumed no offhand rocket during a valid glide. Mainhand controls placed one dirt block and consumed a rocket with a speed increase. The offhand cases require unchanged item counts, and the rocket case also requires glide and movement samples.
 
 Negative controls change server state after a successful case and require verification to reject the result. Controls restore entity health, reset its phase, strip an item's custom model, undo block actions, remove a stress entity, or refill a chest. An error or timeout does not count as a successful control.
 
