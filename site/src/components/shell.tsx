@@ -99,7 +99,7 @@ export function SiteHeader() {
             {menuOpen ? <X size={21} /> : <Menu size={21} />}
           </button>
           <Link
-            className="button forge header-download"
+            className="button ghost header-download"
             to="/releases/"
             onClick={() => {
               setMenuOpen(false);

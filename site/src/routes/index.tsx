@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useHydrated } from "@tanstack/react-router";
-import { ArrowDownToLine, GitPullRequestArrow, Server, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowDownToLine, GitPullRequestArrow, Server, Sparkles } from "lucide-react";
 import release from "virtual:stackanvil-release";
 import { useState } from "react";
 import { NextSteps, SetupStage } from "../components/downloads";
@@ -67,6 +67,15 @@ function Home() {
               StackAnvil translates between the two editions on your computer. Keep your Java client
               and join Bedrock servers, Realms, and friends&apos; worlds.
             </p>
+            <div className="actions hero-actions">
+              <a className="button forge large" href="#choose-how-to-connect">
+                <ArrowDown size={20} aria-hidden="true" />
+                Choose your setup
+              </a>
+              <Link className="text-link" to="/$slug/" params={{ slug: "getting-started" }}>
+                Read the play guide
+              </Link>
+            </div>
             <ul className="hero-facts">
               <li>
                 <Server size={18} aria-hidden="true" />
