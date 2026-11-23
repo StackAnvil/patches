@@ -305,9 +305,11 @@ def references(pe, target, limit=200):
                         | windows[:, 3].astype(np.int64) << 24
                     )
                     disp = np.where(disp >= 1 << 31, disp - (1 << 32), disp)
-                    ends = start + offset + np.arange(len(disp), dtype=np.int64) + 4
-                    for index in np.flatnonzero(ends + disp == target):
-                        add("possible-rip-disp32", int(ends[index]))
+                    # Keep the int64 arrays chunk-relative. Absolute addresses
+                    # of an image based at or above 2**63 do not fit in int64.
+                    ends = np.arange(len(disp), dtype=np.int64) + 4
+                    for index in np.flatnonzero(ends + disp == target - start - offset):
+                        add("possible-rip-disp32", start + offset + int(ends[index]))
         if name in (".rdata", ".data"):
             offset = blob.find(struct.pack("<Q", target))
             while offset >= 0:

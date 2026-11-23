@@ -171,6 +171,18 @@ test("PE helpers resolve import slots and label reference patterns as tentative"
   expect(refs.candidates).toContainEqual({ kind: "absolute-u64", address: "0x140002020" });
 });
 
+test("reference scans support an image base above the signed 64-bit range", async () => {
+  const bytes = image();
+  bytes.writeBigUInt64LE(0xffff800000000000n, 0x98 + 24);
+  const f = await fixture(bytes);
+  const refs = await pe(f.manifest, "refs", "--va", "ffff800000001000");
+  expect(refs.candidates).toContainEqual({ kind: "call-rel32", address: "0xffff800000001002" });
+  expect(refs.candidates).toContainEqual({
+    kind: "possible-rip-disp32",
+    address: "0xffff800000001017",
+  });
+});
+
 test("malformed PE directories fail before a slice is written", async () => {
   const bytes = image();
   bytes.writeUInt32LE(13, 0x98 + 116 + 3 * 8);
