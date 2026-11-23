@@ -9,6 +9,8 @@ Enchanted advertises a valid 1,251,017-byte ZIP with 58 stored files using data 
 
 Archive regressions cover nested roots, root preference, Windows paths, stored descriptors with embedded ZIP signatures, and corrupted entry data. The private Enchanted download reproduces the old failure and loads all 58 files with this reader. Commons documents the seekable reader behavior at https://commons.apache.org/proper/commons-compress/zip .
 
+The central directory size bounds each read. A server archive can declare a one-byte entry whose DEFLATE data expands to gigabytes, and reading the whole stream before the size check exhausts the heap. Read at most one byte past the declared size, as the native source decoder does, and reject unknown sizes or sizes beyond a Java array. The regression declares one byte for a stream that expands past Integer.MAX_VALUE.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
 index ebab0034b6df6b92e05c0f09547245d7ac5c1680..e4632f65fdbf2fa7735b06769edbdff059d46cc6 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
@@ -43,10 +45,10 @@ index ebab0034b6df6b92e05c0f09547245d7ac5c1680..e4632f65fdbf2fa7735b06769edbdff0
                  throw new IllegalStateException("Missing manifest.json");
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
-index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..63b75bed74e056a44e54fa947f1ddc2e037efb4a 100644
+index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..37135f5dffb30e7ce9baf3fd69d1bf8a1087d1c7 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
-@@ -17,15 +17,17 @@
+@@ -17,28 +17,45 @@
   */
  package net.raphimc.viabedrock.api.resourcepack.content;
  
@@ -67,7 +69,10 @@ index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..63b75bed74e056a44e54fa947f1ddc2e
  
  public class ZipContent extends InMemoryContent {
  
-@@ -34,11 +36,20 @@ public class ZipContent extends InMemoryContent {
++    private static final int MAX_ENTRY_BYTES = Integer.MAX_VALUE - 8;
++
+     private final byte[] sourceZip;
+     private final Map<String, byte[]> sourceHashes = new HashMap<>();
  
      public ZipContent(final byte[] zipData) throws IOException {
          this.sourceZip = zipData.clone();
@@ -82,8 +87,12 @@ index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..63b75bed74e056a44e54fa947f1ddc2e
                  if (!zipEntry.isDirectory()) {
 -                    this.content.put(zipEntry.getName(), zipInputStream.readAllBytes());
 +                    final String path = zipEntry.getName().replace('\\', '/').replaceAll("/{2,}", "/");
++                    if (zipEntry.getSize() < 0 || zipEntry.getSize() > MAX_ENTRY_BYTES) {
++                        throw new ZipException("ZIP entry size is unknown or exceeds the array limit");
++                    }
 +                    try (var input = new CheckedInputStream(archive.getInputStream(zipEntry), new CRC32())) {
-+                        final byte[] data = input.readAllBytes();
++                        // Inflate at most one byte past the declared size, so a forged size cannot exhaust the heap.
++                        final byte[] data = input.readNBytes((int) zipEntry.getSize() + 1);
 +                        if (data.length != zipEntry.getSize() || input.getChecksum().getValue() != zipEntry.getCrc()) {
 +                            throw new ZipException("ZIP entry size or checksum does not match its central directory");
 +                        }
@@ -94,10 +103,10 @@ index 44de0670585ffff0d8a0e4cbd27e208f80fbe26e..63b75bed74e056a44e54fa947f1ddc2e
          }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2a287957002f8ca79ed2c91b69219f3f8f1ce47e
+index 0000000000000000000000000000000000000000..f18f0459654a8d66b0c33dcf0d21b65f713c3898
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,208 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -125,6 +134,7 @@ index 0000000000000000000000000000000000000000..2a287957002f8ca79ed2c91b69219f3f
 +
 +import java.util.UUID;
 +import java.awt.image.BufferedImage;
++import java.io.ByteArrayOutputStream;
 +import java.nio.ByteBuffer;
 +import java.nio.ByteOrder;
 +import java.nio.charset.StandardCharsets;
@@ -165,6 +175,48 @@ index 0000000000000000000000000000000000000000..2a287957002f8ca79ed2c91b69219f3f
 +        final int directory = zip.position();
 +        zip.putInt(0x02014B50).putShort((short) 20).putShort((short) 20).putShort((short) 8).putShort((short) 0)
 +                .putInt(0).putInt(crc).putInt(content.length).putInt(content.length)
++                .putShort((short) name.length).putShort((short) 0).putShort((short) 0).putShort((short) 0)
++                .putShort((short) 0).putInt(0).putInt(0).put(name);
++        final int directorySize = zip.position() - directory;
++        zip.putInt(0x06054B50).putShort((short) 0).putShort((short) 0).putShort((short) 1).putShort((short) 1)
++                .putInt(directorySize).putInt(directory).putShort((short) 0);
++        return zip.array();
++    }
++
++    @Test
++    void entryThatInflatesPastItsDeclaredSizeIsRejectedWithoutExpandingIt() {
++        // The central directory declares one byte, but the deflated data expands past the largest Java array.
++        final long expanded = Integer.MAX_VALUE + 1024L;
++        assertThrows(ZipException.class, () -> new ZipContent(deflatedWithDeclaredSize("bomb.bin", zeroRun(expanded), 1)));
++    }
++
++    /** A fixed-Huffman DEFLATE stream of zeros: one literal, then repeated 258-byte copies at distance one. */
++    private static byte[] zeroRun(final long bytes) {
++        final long copies = (bytes - 1 + 257) / 258;
++        final BitWriter output = new BitWriter((int) (copies * 13 / 8 + 16));
++        output.write(0b011, 3); // final block with fixed Huffman codes
++        output.writeCode(0b00110000, 8); // literal 0
++        for (long copy = 0; copy < copies; copy++) {
++            output.writeCode(0b11000101, 8); // length 258
++            output.writeCode(0b00000, 5); // distance 1
++        }
++        output.writeCode(0b0000000, 7); // end of block
++        return output.finish();
++    }
++
++    private static byte[] deflatedWithDeclaredSize(final String path, final byte[] deflated, final int declaredSize) {
++        final byte[] name = path.getBytes(StandardCharsets.UTF_8);
++        final CRC32 checksum = new CRC32();
++        checksum.update(new byte[declaredSize]);
++        final int crc = (int) checksum.getValue();
++        final ByteBuffer zip = ByteBuffer.allocate(30 + name.length + deflated.length + 46 + name.length + 22)
++                .order(ByteOrder.LITTLE_ENDIAN);
++        zip.putInt(0x04034B50).putShort((short) 20).putShort((short) 0).putShort((short) 8)
++                .putInt(0).putInt(crc).putInt(deflated.length).putInt(declaredSize).putShort((short) name.length).putShort((short) 0)
++                .put(name).put(deflated);
++        final int directory = zip.position();
++        zip.putInt(0x02014B50).putShort((short) 20).putShort((short) 20).putShort((short) 0).putShort((short) 8)
++                .putInt(0).putInt(crc).putInt(deflated.length).putInt(declaredSize)
 +                .putShort((short) name.length).putShort((short) 0).putShort((short) 0).putShort((short) 0)
 +                .putShort((short) 0).putInt(0).putInt(0).put(name);
 +        final int directorySize = zip.position() - directory;
@@ -227,6 +279,39 @@ index 0000000000000000000000000000000000000000..2a287957002f8ca79ed2c91b69219f3f
 +        manifest.addProperty("format_version", 2);
 +        manifest.add("header", header);
 +        return manifest;
++    }
++
++    /** DEFLATE packs values from the least significant bit and Huffman codes from their most significant bit. */
++    private static final class BitWriter {
++        private final ByteArrayOutputStream output;
++        private int buffer;
++        private int count;
++
++        private BitWriter(final int capacity) {
++            this.output = new ByteArrayOutputStream(capacity);
++        }
++
++        private void write(final int value, final int bits) {
++            for (int bit = 0; bit < bits; bit++) {
++                this.buffer |= (value >>> bit & 1) << this.count;
++                if (++this.count == 8) {
++                    this.output.write(this.buffer);
++                    this.buffer = 0;
++                    this.count = 0;
++                }
++            }
++        }
++
++        private void writeCode(final int code, final int bits) {
++            this.write(Integer.reverse(code) >>> (32 - bits), bits);
++        }
++
++        private byte[] finish() {
++            if (this.count > 0) {
++                this.output.write(this.buffer);
++            }
++            return this.output.toByteArray();
++        }
 +    }
 +
 +}

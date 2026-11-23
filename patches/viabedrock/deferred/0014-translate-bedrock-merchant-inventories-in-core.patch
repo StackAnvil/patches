@@ -30,8 +30,14 @@ loading would bypass missing-state admission and restore a Block after
 zero-count invalidation. Keep the complete NBT conversion in its inventory
 owner and remove the duplicate merchant decoder.
 
+Resume a temporary-input close that the interaction queue refused. A
+close forced by distance, a removed block or a server form while a Java
+close waits for a drag reply cannot enter the queue. When the deferred
+close later runs, beginClose must continue instead of treating the menu
+as already closing, or the Bedrock menu never closes.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index f83ecb301f745bc81e72523848e7758e1f7f79de..7da5cfa48ff62b693926c3afe276c77ff70fe1b9 100644
+index 7286d944ecce973ca74ab4c73287c81ea309d8d4..ab5aaa9e0405ecbef79897c74ae5fe9ac197a05a 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -1103,7 +1103,6 @@ public abstract class Container {
@@ -42,7 +48,7 @@ index f83ecb301f745bc81e72523848e7758e1f7f79de..7da5cfa48ff62b693926c3afe276c77f
      protected List<QuickMoveRange> quickMoveRanges(final short javaSlot, final SlotRef source) {
          final InventoryTracker inventoryTracker = this.user.get(InventoryTracker.class);
          final InventoryContainer inventory = inventoryTracker.getInventoryContainer();
-@@ -1637,10 +1636,12 @@ public abstract class Container {
+@@ -1655,10 +1654,12 @@ public abstract class Container {
          }
      }
  
@@ -59,10 +65,10 @@ index f83ecb301f745bc81e72523848e7758e1f7f79de..7da5cfa48ff62b693926c3afe276c77f
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/InputContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/InputContainer.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..528da4133bbae4be511eb1bdc63efa2bf5327360
+index 0000000000000000000000000000000000000000..43b27441581f42b2f5b45d4b6e8ee82aeb3072bd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/InputContainer.java
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,124 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -120,7 +126,9 @@ index 0000000000000000000000000000000000000000..528da4133bbae4be511eb1bdc63efa2b
 +    }
 +
 +    public void beginClose() {
-+        if (this.closing) {
++        // A close the interaction queue refused, such as one forced during a deferred drag close, resumes here.
++        if (this.closing && (this.closeQueued || this.closingRequestId != null
++                || this.user.get(InventoryTracker.class).getCurrentContainer() != this)) {
 +            return;
 +        }
 +        this.closing = true;
@@ -1665,6 +1673,89 @@ index 0000000000000000000000000000000000000000..2cc3fc5b5c2927cf78debe5d192b8f9d
 +    private static TradeOffer offer(final int cost, final int base, final int tier) {
 +        return new TradeOffer(4925, tier, new TradeOffer.Ingredient(new BedrockItem(1, (short) 0, (byte) cost), true, base),
 +                null, new BedrockItem(3), 0, 16, 2);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InputContainerCloseTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InputContainerCloseTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0620f447a7141790e5c953baba0ef1b8505d59c1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InputContainerCloseTest.java
+@@ -0,0 +1,77 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.entity.MerchantContainer;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.platform.ViaBedrockPlatform;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.TradeOffer;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.packet.InventoryPackets;
++import org.junit.jupiter.api.Test;
++import org.mockito.MockedStatic;
++
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.logging.Logger;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class InputContainerCloseTest {
++
++    @Test
++    void forcedCloseDuringDeferredDragCloseStillClosesTheMenu() {
++        final Map<Class<?>, Object> storage = new HashMap<>();
++        final UserConnection user = mock(UserConnection.class);
++        when(user.get(any())).thenAnswer(call -> storage.computeIfAbsent(call.getArgument(0), key -> mock(key)));
++        try (MockedStatic<PacketFactory> packets = mockStatic(PacketFactory.class);
++             MockedStatic<ViaBedrock> platform = mockStatic(ViaBedrock.class)) {
++            final ViaBedrockPlatform api = mock(ViaBedrockPlatform.class);
++            when(api.getLogger()).thenReturn(Logger.getAnonymousLogger());
++            platform.when(ViaBedrock::getPlatform).thenReturn(api);
++            final InventoryTracker inventory = new InventoryTracker(user);
++            final InventoryRequestTracker requests = new InventoryRequestTracker(user);
++            final ChannelStorage channels = new ChannelStorage();
++            channels.addChannels(List.of(Container.INCREMENTAL_DRAG_CHANNEL));
++            storage.put(InventoryTracker.class, inventory);
++            storage.put(InventoryRequestTracker.class, requests);
++            storage.put(ChannelStorage.class, channels);
++            when(user.get(GameSessionStorage.class).isInventoryServerAuthoritative()).thenReturn(true);
++
++            final MerchantContainer merchant = new MerchantContainer(user, (byte) 2, null, -42, true, true, 0,
++                    List.of(new TradeOffer(4925, 0, new TradeOffer.Ingredient(new BedrockItem(1, (short) 0, (byte) 24), true, 24),
++                            null, new BedrockItem(3), 0, 16, 2)));
++            inventory.setCurrentContainer(merchant);
++            final int pending = requests.nextRequestId();
++            requests.addRequest(new InventoryRequestStorage(new ItemStackRequestInfo(pending, List.of(), List.of(),
++                    TextProcessingEventOrigin.unknown), 0, inventory.getHudContainer(), List.of(inventory.getInventoryContainer())));
++            // A native drag starts while a request is in flight, then the Java screen closes.
++            assertTrue(requests.queueClick(merchant, 0, (short) 3, (byte) 0, ContainerInput.QUICK_CRAFT));
++            InventoryPackets.handleContainerClose(user, merchant);
++            assertTrue(requests.isWaitingForDragClose());
++
++            // The trader walks away before the drag settles.
++            merchant.beginClose();
++            requests.removeRequest(pending);
++            requests.drainQueuedInteractions();
++
++            assertFalse(requests.isWaitingForDragClose());
++            assertSame(merchant, inventory.getPendingCloseContainer());
++            assertNull(inventory.getCurrentContainer());
++            packets.verify(() -> PacketFactory.sendBedrockContainerClose(user, (byte) 2, ContainerType.NONE), times(1));
++        }
 +    }
 +
 +}

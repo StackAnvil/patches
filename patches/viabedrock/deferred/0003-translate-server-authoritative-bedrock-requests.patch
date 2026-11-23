@@ -978,6 +978,14 @@ Keep an open menu when the server reopens it with the same type and id, and send
 
 Ignore a block-position CONTAINER open when the loaded block is not a storage block. For actor id -1, the 1.26.60.5 ContainerOpen lambda (CONTAINER case 0x146bf0835, block path 0x146bf0c89..0x146bf0d06) gets the chunk and its block actor, and returns at 0x146bf0f1d without a screen or packet when either is missing or the actor type is not Chest(2), EnderChest(23), ShulkerBox(25) or Barrel(42). This check runs before the open-screen handling at 0x146bf049f. Known air and other blocks in a complete chunk therefore no longer open a 27-slot chest. A missing or pending chunk still opens the menu and resolves its binding later, because native defers the open by chunk (0x146b94140, 0x146b952c0) and those rules are not resolved.
 
+Compare request snapshots through each container's storage slots. Anvil,
+grindstone, enchanting, beacon, smithing and other menus store named
+slots such as 16, 17 and 50 at indexes 0 to 2. Iterating 0..size() as
+slots read index -16 or an invalid anvil slot when a transfer batch or a
+reported-slot response reconciled the open menu. Unknown anvil and
+smithing slots now map to -1 like every other menu, so an unexpected
+slot update is refused instead of throwing.
+
 diff --git a/build.gradle b/build.gradle
 index 3e53e6524ae2693f513c0f087f7844ca8aff7729..2e125d9329bad0f890e22eda94ece9603b2e4d46 100644
 --- a/build.gradle
@@ -1352,7 +1360,7 @@ index 913255f8f0451862d082539487ce31301a38a36b..72a000a2ef6f17ee9803a12d94ce84ef
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404ee60ac82 100644
+index 26f1724179e66088c41a14c02bc613533b97d3b5..e22c7035e8cdcbda9c9c47752d413992dabfa9e9 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -21,18 +21,56 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -1972,9 +1980,8 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
 +    /** A retired source publication must not cancel a later cursor-origin gesture. */
 +    public boolean hasSelectedSourceDrag() {
 +        return this.nativeDrag != null && !this.nativeDrag.cursorSource;
-     }
- 
--    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++    }
++
 +    public boolean supportsIncrementalDrag() {
 +        return this.incrementalDragEnabled()
 +                && !this.user.get(ItemRewriter.class).isBundle(this.user.get(InventoryTracker.class).getHudContainer().getItem(0));
@@ -2577,8 +2584,9 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
 +        final BedrockItem copy = item.copy();
 +        copy.setAmount(amount);
 +        return copy;
-+    }
-+
+     }
+ 
+-    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
 +    protected BedrockItem itemAfterRemovingAmount(
 +            final BedrockItem item, final int amountToRemove) {
 +        if (amountToRemove >= item.amount()) {
@@ -2604,7 +2612,7 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
          return false;
      }
  
-@@ -76,41 +1274,270 @@ public abstract class Container {
+@@ -76,41 +1274,288 @@ public abstract class Container {
      }
  
      public Item[] getJavaItems() {
@@ -2672,6 +2680,24 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
          return Arrays.copyOf(this.items, this.items.length);
      }
  
++    /**
++     * Returns a Bedrock slot that addresses each stored item, in storage order, or -1 for an unaddressed index.
++     * Menus store named slots such as 16, 17 and 50 at indexes 0 to 2, so a snapshot comparison cannot use the
++     * storage index as a slot.
++     */
++    public int[] storageSlots() {
++        final int[] slots = new int[this.items.length];
++        Arrays.fill(slots, -1);
++        // Item stack requests address a slot with one byte. Larger containers store every slot at its own index.
++        for (int slot = 0; slot < Math.max(this.items.length, 256); slot++) {
++            final int index = this.itemIndex(slot);
++            if (index >= 0 && index < slots.length && slots[index] < 0) {
++                slots[index] = slot;
++            }
++        }
++        return slots;
++    }
++
 +    /**
 +     * Keeps a server-assigned stack identity when an authoritative update repeats the same stack
 +     * without one. Some servers follow a crafting response with a slot update that omits the
@@ -2754,10 +2780,10 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
 +            if (!previous[i].equals(items[i])) {
 +                this.onSlotChanged(i, previous[i], items[i]);
 +            }
-+        }
-+        return true;
-+    }
-+
+         }
+         return true;
+     }
+ 
 +    public FullContainerName getFullContainerName(final int slot) {
 +        return new FullContainerName(ContainerEnumName.LevelEntityContainer, null);
 +    }
@@ -2860,11 +2886,11 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
 +        final Integer previous = this.data.put(id, value);
 +        if (previous != null && previous == value) {
 +            return false;
-         }
++        }
 +        this.serverDataRevision++;
-         return true;
-     }
- 
++        return true;
++    }
++
 +    public Integer getData(final int id) {
 +        return this.data.get(id);
 +    }
@@ -2884,7 +2910,7 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
      public int javaSlot(final int slot) {
          return slot;
      }
-@@ -123,6 +1550,10 @@ public abstract class Container {
+@@ -123,6 +1568,10 @@ public abstract class Container {
          return this.items.length;
      }
  
@@ -2895,7 +2921,7 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
      public byte containerId() {
          return this.containerId;
      }
-@@ -139,6 +1570,28 @@ public abstract class Container {
+@@ -139,6 +1588,28 @@ public abstract class Container {
          return this.position;
      }
  
@@ -2924,7 +2950,7 @@ index 26f1724179e66088c41a14c02bc613533b97d3b5..487b53072b8636955d5c7d80bacf5404
      public boolean isValidBlockTag(final String tag) {
          if (tag == null) {
              return false;
-@@ -147,7 +1600,90 @@ public abstract class Container {
+@@ -147,7 +1618,90 @@ public abstract class Container {
          }
      }
  
@@ -3916,7 +3942,7 @@ index 0000000000000000000000000000000000000000..d7c863992e43bcf1ac80df1e47bd2291
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ddbf1bd7aa84371c644de674675b35028834fafb
+index 0000000000000000000000000000000000000000..85a86e5b1e8ba439f8153d765e4020e2ee3c8677
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
 @@ -0,0 +1,178 @@
@@ -4008,7 +4034,7 @@ index 0000000000000000000000000000000000000000..ddbf1bd7aa84371c644de674675b3502
 +            case 1 -> 0;
 +            case 2 -> 1;
 +            case 50 -> 2;
-+            default -> throw new IllegalArgumentException("Invalid slot for Anvil Container: " + slot);
++            default -> -1;
 +        };
 +    }
 +
@@ -5467,7 +5493,7 @@ index 0000000000000000000000000000000000000000..db220be4cd8e23be853ab7af1293ef89
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/SmithingContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/SmithingContainer.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..690c2fab4fcb645312206ca86d7886e55b74e76c
+index 0000000000000000000000000000000000000000..5159ea67aec0e1d6d2ec0595d0b6b4b1119d8e10
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/SmithingContainer.java
 @@ -0,0 +1,223 @@
@@ -5577,7 +5603,7 @@ index 0000000000000000000000000000000000000000..690c2fab4fcb645312206ca86d7886e5
 +            case INPUT_SLOT -> 1;
 +            case MATERIAL_SLOT -> 2;
 +            case RESULT_SLOT -> 3;
-+            default -> throw new IllegalArgumentException("Invalid slot for Smithing Container: " + slot);
++            default -> -1;
 +        };
 +    }
 +
@@ -10166,7 +10192,7 @@ index 0000000000000000000000000000000000000000..7aa6cb26b0d499809eb21ac24fc6047b
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index ed38ced3fe3629efd2f22e280258004496cb6d0b..142d9265ddc952eb0ba0fac9a0ff2386c166bd13 100644
+index 9b6bace7e71dc67eab3a53b7e2c6132c4b1eb8bf..9810284bb9f59ea02f1d91fa96a57f1deeeec4dc 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -33,6 +33,7 @@ import com.viaversion.viaversion.util.Pair;
@@ -10236,7 +10262,7 @@ index ed38ced3fe3629efd2f22e280258004496cb6d0b..142d9265ddc952eb0ba0fac9a0ff2386
                  case STAB -> {
                      final InventoryContainer inventory = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
                      final PacketWrapper jab = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
-@@ -968,6 +991,39 @@ public final class ClientPlayerPackets {
+@@ -970,6 +993,39 @@ public final class ClientPlayerPackets {
          return new CompletedPredictions(player, mounted, vehicle == null ? player : mounted != null ? frame : null);
      }
  
@@ -13379,7 +13405,7 @@ index 0000000000000000000000000000000000000000..afdbf134f6844a0336778f067c9b06e2
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestStorage.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f6de3b14363eb6e04adc9cd6b58fcd8bd5720480
+index 0000000000000000000000000000000000000000..7e15d8560be58c7a27f68f44516ff5d6fee4b98b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestStorage.java
 @@ -0,0 +1,295 @@
@@ -13501,8 +13527,8 @@ index 0000000000000000000000000000000000000000..f6de3b14363eb6e04adc9cd6b58fcd8b
 +                || owner.serverRevision() != snapshot.before().serverRevision()) {
 +            return;
 +        }
-+        for (int slot = 0; slot < owner.size(); slot++) {
-+            if (this.acceptsResponse(tracker, owner, slot)
++        for (final int slot : owner.storageSlots()) {
++            if (slot >= 0 && this.acceptsResponse(tracker, owner, slot)
 +                    && !snapshot.before().getItem(slot).equals(snapshot.after().getItem(slot))) {
 +                owner.setItem(slot, snapshot.after().getItem(slot).copy());
 +                changed.add(owner);
@@ -13639,8 +13665,8 @@ index 0000000000000000000000000000000000000000..f6de3b14363eb6e04adc9cd6b58fcd8b
 +        }
 +        final Set<Integer> acknowledged = reported.getOrDefault(owner, Set.of());
 +        final Set<Integer> redirected = remapped.getOrDefault(owner, Set.of());
-+        for (int slot = 0; slot < owner.size(); slot++) {
-+            if (!this.acceptsResponse(tracker, owner, slot)) {
++        for (final int slot : owner.storageSlots()) {
++            if (slot < 0 || !this.acceptsResponse(tracker, owner, slot)) {
 +                continue;
 +            }
 +            final BedrockItem before = snapshot.before().getItem(slot);
@@ -39505,10 +39531,10 @@ index 0000000000000000000000000000000000000000..628f6cedac51e18c432695a7da82a9e4
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..9ac62a26d9772fe7a328603251554d60d4662dbf
+index 0000000000000000000000000000000000000000..48a82385ab0ae1b81f0e9262e43236a7f598c22b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/IncrementalInventoryDragTest.java
-@@ -0,0 +1,699 @@
+@@ -0,0 +1,725 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -39522,6 +39548,8 @@ index 0000000000000000000000000000000000000000..9ac62a26d9772fe7a328603251554d60
 +import com.viaversion.viaversion.api.protocol.packet.State;
 +import net.raphimc.viabedrock.ViaBedrock;
 +import net.raphimc.viabedrock.api.model.container.ChestContainer;
++import net.raphimc.viabedrock.api.model.container.block.AnvilContainer;
++import net.raphimc.viabedrock.api.model.container.block.GrindstoneContainer;
 +import net.raphimc.viabedrock.api.model.container.block.FurnaceContainer;
 +import net.raphimc.viabedrock.api.model.container.Container;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
@@ -39548,6 +39576,7 @@ index 0000000000000000000000000000000000000000..9ac62a26d9772fe7a328603251554d60
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.function.Function;
 +import java.util.logging.Logger;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -39843,6 +39872,25 @@ index 0000000000000000000000000000000000000000..9ac62a26d9772fe7a328603251554d60
 +        }
 +    }
 +
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void dragInMenuWithNamedSlotsAppliesEveryAcceptedTransfer(final boolean anvil) {
++        try (var f = new Fixture(user -> anvil ? new AnvilContainer(user, (byte) 6, null, null)
++                : new GrindstoneContainer(user, (byte) 6, null, null))) {
++            f.input(-999, 0);
++            f.input(3, 1);
++            f.input(4, 1);
++            f.input(-999, 2);
++            int replies = 0;
++            while (f.requests.hasPending() && replies++ < 10) {
++                f.accept();
++            }
++            assertFalse(f.requests.hasPending());
++            assertEquals(List.of(4, 4, 1), List.of(f.menu.getItemInJavaSlot((short) 3).amount(),
++                    f.menu.getItemInJavaSlot((short) 4).amount(), f.inventory.getHudContainer().getItem(0).amount()));
++        }
++    }
++
 +    @Test
 +    void queuedVisitsCannotCrossTheReleaseAndStartOfAnotherDrag() {
 +        try (var f = new Fixture()) {
@@ -40093,6 +40141,11 @@ index 0000000000000000000000000000000000000000..9ac62a26d9772fe7a328603251554d60
 +        }
 +
 +        private Fixture(final boolean furnace) {
++            this(user -> furnace ? new FurnaceContainer(user, (byte) 6, null, null)
++                    : new ChestContainer(user, (byte) 6, null, null, 27));
++        }
++
++        private Fixture(final Function<UserConnection, Container> menu) {
 +            when(this.user.get(any())).thenAnswer(call -> this.storage.computeIfAbsent(call.getArgument(0), key -> mock(key)));
 +            final var api = mock(ViaBedrockPlatform.class);
 +            when(api.getLogger()).thenReturn(Logger.getAnonymousLogger());
@@ -40111,8 +40164,7 @@ index 0000000000000000000000000000000000000000..9ac62a26d9772fe7a328603251554d60
 +            when(items.maxStackSize(any())).thenReturn(64);
 +            when(items.canMerge(any(), any())).thenAnswer(call -> !((BedrockItem) call.getArgument(0)).isDifferent(call.getArgument(1)));
 +            this.requests.setPredictingClick(true);
-+            this.menu = furnace ? new FurnaceContainer(this.user, (byte) 6, null, null)
-+                    : new ChestContainer(this.user, (byte) 6, null, null, 27);
++            this.menu = menu.apply(this.user);
 +            this.inventory.setCurrentContainer(this.menu);
 +            this.inventory.getHudContainer().setItem(0, item(9, 11));
 +            this.requests.setPredictingClick(false);

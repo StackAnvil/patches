@@ -10,6 +10,7 @@ Java's streaming reader rejects it before resource negotiation can finish.
 
 Read the central directory with the existing Commons Compress dependency and an in-memory seekable channel.
 Keep physical entry order, normalized paths, entry sizes, and CRC checks.
+Read each entry only up to its declared size, so a forged size cannot inflate a small archive until the heap runs out.
 [Apache's ZIP guide](https://commons.apache.org/proper/commons-compress/zip) explains why a seekable reader handles these descriptors reliably.
 
 The regression includes a stored entry whose payload is another ZIP, with embedded header and descriptor signatures.
