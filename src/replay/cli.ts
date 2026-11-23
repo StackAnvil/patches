@@ -39,6 +39,7 @@ import {
   rebindReplayJavaConfig,
   validateReplayProfile,
 } from "./java-profile.ts";
+import { requireSessionOptions } from "./options.ts";
 import { OwnedProcesses, requireOwnedSilentModule } from "./owned-processes.ts";
 import {
   requireNativeOfflineReplay,
@@ -761,6 +762,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
     throw new Error(
       "Run bun run server-replay --help for recording, replay, and form-fixture usage.",
     );
+  requireSessionOptions(args);
   const option = (name: string) => {
     const at = args.indexOf(name);
     return at < 0 ? undefined : args[at + 1];
