@@ -21,8 +21,19 @@ threads, so accepted images stay within half of the heap. A 2 GiB heap
 accepts 8192 x 8192 textures. Regressions cover the heap scaling and a
 header past the array bound that is rejected without decoding.
 
+Repair a PNG whose zlib Adler-32 trailer is wrong and decode it again.
+libpng 1.6 reports an inflate error that occurs after the last row as a
+benign error, which read structs downgrade to a warning, and stb_image
+does not check the trailer at all. Bedrock and the Java client therefore
+load such textures, while ImageIO throws and aborted the whole pack
+conversion, which kicked the player. The repair inflates the IDAT data
+without the zlib wrapper, counts at most the bytes the IHDR allows, and
+writes one IDAT with the recomputed checksum. Any other inflate defect
+still fails as before. Regressions decode a texture with a wrong
+checksum and still reject one with an invalid deflate block.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e97a8c62883d5333a26fd368ae333bfe..fc0af980a3f6e375095fc471edc89d5a25e738b3 100644
+index 622e99d2e97a8c62883d5333a26fd368ae333bfe..fb14da9a69cb9ef59ee4bf5a1bf450bd7c6dd4e4 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 @@ -22,6 +22,9 @@ import com.viaversion.viaversion.util.GsonUtil;
@@ -46,32 +57,54 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..fc0af980a3f6e375095fc471edc89d5a
          } catch (final IOException e) {
              throw new UncheckedIOException(e);
          }
-@@ -188,8 +191,22 @@ public abstract class Content {
- 
+@@ -189,14 +192,44 @@ public abstract class Content {
          public BufferedImage getImage() {
              if (this.image == null) {
--                try {
+                 try {
 -                    this.image = ImageIO.read(new ByteArrayInputStream(this.bytes));
-+                try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(this.bytes))) {
-+                    final Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
-+                    if (!readers.hasNext()) {
-+                        return null;
-+                    }
-+                    final ImageReader reader = readers.next();
-+                    try {
-+                        reader.setInput(input, true, true);
-+                        // A few compressed bytes can declare dimensions that need gigabytes once decoded.
-+                        final int width = reader.getWidth(0);
-+                        final int height = reader.getHeight(0);
-+                        ImageDecodingLimit.require(width, height);
-+                        this.image = reader.read(0);
-+                    } finally {
-+                        reader.dispose();
-+                    }
++                    this.image = decode(this.bytes);
                  } catch (final IOException e) {
-                     throw new RuntimeException(e);
+-                    throw new RuntimeException(e);
++                    // Bedrock's libpng and Java's stb_image ignore a bad zlib checksum after the last row; ImageIO does not.
++                    final byte[] repaired = PngZlibChecksum.repair(this.bytes);
++                    if (repaired == null) {
++                        throw new RuntimeException(e);
++                    }
++                    try {
++                        this.image = decode(repaired);
++                    } catch (final IOException retry) {
++                        e.addSuppressed(retry);
++                        throw new RuntimeException(e);
++                    }
                  }
-@@ -207,8 +224,8 @@ public abstract class Content {
+             }
+             return this.image;
+         }
+ 
++        private static BufferedImage decode(final byte[] bytes) throws IOException {
++            try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
++                final Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
++                if (!readers.hasNext()) {
++                    return null;
++                }
++                final ImageReader reader = readers.next();
++                try {
++                    reader.setInput(input, true, true);
++                    // A few compressed bytes can declare dimensions that need gigabytes once decoded.
++                    final int width = reader.getWidth(0);
++                    final int height = reader.getHeight(0);
++                    ImageDecodingLimit.require(width, height);
++                    return reader.read(0);
++                } finally {
++                    reader.dispose();
++                }
++            }
++        }
++
+         public byte[] getPngBytes() {
+             return this.getPngBytes(false);
+         }
+@@ -207,8 +240,8 @@ public abstract class Content {
              } else {
                  final BufferedImage image = this.getImage();
                  final ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -121,6 +154,136 @@ index 0000000000000000000000000000000000000000..0813669e3c6e8042cbdc115b27f5d9fb
 +        if (width <= 0 || height <= 0 || pixels > MAX_ARRAY_PIXELS || pixels * 4 > maxMemory / 8) {
 +            throw new IllegalArgumentException("Image dimensions " + width + "x" + height + " exceed the decoding limit");
 +        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksum.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksum.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..034bfbc303296b8a36ddf81aa48ce9788105f28e
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksum.java
+@@ -0,0 +1,124 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import java.io.ByteArrayOutputStream;
++import java.nio.ByteBuffer;
++import java.util.Arrays;
++import java.util.zip.Adler32;
++import java.util.zip.CRC32;
++import java.util.zip.DataFormatException;
++import java.util.zip.Inflater;
++
++/**
++ * Recomputes the zlib Adler-32 trailer of PNG image data. libpng reports a checksum error after the last row only as a
++ * benign warning, and stb_image does not check it, so Bedrock and Java clients load such textures while ImageIO rejects
++ * them.
++ */
++final class PngZlibChecksum {
++
++    private static final byte[] SIGNATURE = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
++    private static final int IHDR = 0x49484452;
++    private static final int IDAT = 0x49444154;
++    private static final int IEND = 0x49454E44;
++
++    private PngZlibChecksum() {
++    }
++
++    /**
++     * Returns the PNG with one IDAT chunk whose zlib trailer matches the inflated data, or null when the image data has
++     * a defect other than a wrong checksum.
++     */
++    static byte[] repair(final byte[] png) {
++        if (png.length < SIGNATURE.length || !Arrays.equals(png, 0, SIGNATURE.length, SIGNATURE, 0, SIGNATURE.length)) {
++            return null;
++        }
++        final ByteBuffer buffer = ByteBuffer.wrap(png);
++        buffer.position(SIGNATURE.length);
++        final ByteArrayOutputStream zlib = new ByteArrayOutputStream();
++        long maxRawBytes = -1;
++        int firstIdat = -1;
++        int afterIdat = -1;
++        while (buffer.remaining() >= 12) {
++            final int start = buffer.position();
++            final int length = buffer.getInt();
++            final int type = buffer.getInt();
++            if (length < 0 || length > buffer.remaining() - 4) {
++                return null;
++            }
++            if (type == IHDR && length >= 13) {
++                final long width = Integer.toUnsignedLong(buffer.getInt(start + 8));
++                final long height = Integer.toUnsignedLong(buffer.getInt(start + 12));
++                ImageDecodingLimit.require(width, height);
++                // Up to eight bytes per pixel, one filter byte per row, and at most twice the rows when interlaced.
++                maxRawBytes = height * (width * 8 + 2) + 8;
++            } else if (type == IDAT) {
++                if (maxRawBytes < 0 || (firstIdat >= 0 && afterIdat != start)) {
++                    return null;
++                }
++                if (firstIdat < 0) {
++                    firstIdat = start;
++                }
++                zlib.write(png, start + 8, length);
++                afterIdat = start + 12 + length;
++            }
++            buffer.position(start + 12 + length);
++            if (type == IEND) {
++                break;
++            }
++        }
++        if (firstIdat < 0) {
++            return null;
++        }
++
++        final byte[] stream = zlib.toByteArray();
++        if (stream.length < 6 || (stream[0] & 0x0F) != 8 || (stream[1] & 0x20) != 0 || (((stream[0] & 0xFF) << 8) | (stream[1] & 0xFF)) % 31 != 0) {
++            return null;
++        }
++        final Adler32 adler = new Adler32();
++        final long end;
++        final Inflater inflater = new Inflater(true);
++        try {
++            inflater.setInput(stream, 2, stream.length - 2);
++            final byte[] chunk = new byte[64 * 1024];
++            long total = 0;
++            while (!inflater.finished()) {
++                final int read = inflater.inflate(chunk);
++                if (read == 0 && !inflater.finished()) {
++                    return null;
++                }
++                total += read;
++                if (total > maxRawBytes) {
++                    return null;
++                }
++                adler.update(chunk, 0, read);
++            }
++            end = 2 + inflater.getBytesRead();
++        } catch (final DataFormatException e) {
++            return null;
++        } finally {
++            inflater.end();
++        }
++        if (end + 4 > stream.length) {
++            return null;
++        }
++        final int checksum = (int) adler.getValue();
++        if (ByteBuffer.wrap(stream, (int) end, 4).getInt() == checksum) {
++            return null;
++        }
++
++        final ByteBuffer data = ByteBuffer.allocate((int) end + 4).put(stream, 0, (int) end).putInt(checksum);
++        final CRC32 crc = new CRC32();
++        crc.update(ByteBuffer.allocate(4).putInt(IDAT).array());
++        crc.update(data.array());
++        final ByteBuffer repaired = ByteBuffer.allocate(firstIdat + 12 + data.capacity() + png.length - afterIdat);
++        repaired.put(png, 0, firstIdat);
++        repaired.putInt(data.capacity()).putInt(IDAT).put(data.array()).putInt((int) crc.getValue());
++        repaired.put(png, afterIdat, png.length - afterIdat);
++        return repaired.array();
 +    }
 +
 +}
@@ -223,6 +386,97 @@ index 0000000000000000000000000000000000000000..877e97f27981f3728a3abe831114b738
 +        crc.update(type.getBytes(StandardCharsets.US_ASCII));
 +        crc.update(data);
 +        png.putInt(data.length).put(type.getBytes(StandardCharsets.US_ASCII)).put(data).putInt((int) crc.getValue());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksumTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksumTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5a7e681d1d19335097ee759418d841b73f820acf
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksumTest.java
+@@ -0,0 +1,85 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import org.junit.jupiter.api.Test;
++
++import javax.imageio.IIOException;
++import javax.imageio.ImageIO;
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.util.function.Consumer;
++import java.util.zip.CRC32;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class PngZlibChecksumTest {
++
++    @Test
++    void decodesPackPngWhoseImageDataHasAWrongZlibChecksum() throws Exception {
++        final byte[] png = withIdat(texture(), data -> data[data.length - 1] ^= 0x5A);
++        assertThrows(IIOException.class, () -> ImageIO.read(new ByteArrayInputStream(png)));
++
++        final var content = new InMemoryContent();
++        content.put("entity.png", png);
++        final BufferedImage image = content.getImage("entity.png").getImage();
++
++        assertEquals(0xFF12AB34, image.getRGB(0, 0));
++        assertEquals(0x7F765432, image.getRGB(1, 0));
++        assertEquals(0xFF000000, image.getRGB(0, 1));
++        assertEquals(0x00FFFFFF, image.getRGB(1, 1));
++    }
++
++    @Test
++    void stillRejectsPackPngWithCorruptCompressedPixels() throws Exception {
++        // Block type 3 is reserved, so the pixels cannot be inflated.
++        final byte[] png = withIdat(texture(), data -> data[2] |= 0x06);
++        final var content = new InMemoryContent();
++        content.put("entity.png", png);
++
++        assertThrows(RuntimeException.class, () -> content.getImage("entity.png").getImage());
++    }
++
++    private static byte[] texture() throws Exception {
++        final BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, 0xFF12AB34);
++        image.setRGB(1, 0, 0x7F765432);
++        image.setRGB(0, 1, 0xFF000000);
++        image.setRGB(1, 1, 0x00FFFFFF);
++        final ByteArrayOutputStream output = new ByteArrayOutputStream();
++        ImageIO.write(image, "png", output);
++        return output.toByteArray();
++    }
++
++    /** Edits the single IDAT payload in place and keeps its chunk CRC valid. */
++    private static byte[] withIdat(final byte[] png, final Consumer<byte[]> edit) {
++        final ByteBuffer buffer = ByteBuffer.wrap(png);
++        buffer.position(8);
++        while (buffer.remaining() >= 12) {
++            final int start = buffer.position();
++            final int length = buffer.getInt();
++            final byte[] type = new byte[4];
++            buffer.get(type);
++            if (new String(type, StandardCharsets.US_ASCII).equals("IDAT")) {
++                final byte[] data = new byte[length];
++                buffer.get(data);
++                edit.accept(data);
++                final CRC32 crc = new CRC32();
++                crc.update(type);
++                crc.update(data);
++                buffer.position(start + 8);
++                buffer.put(data).putInt((int) crc.getValue());
++                return png;
++            }
++            buffer.position(start + 12 + length);
++        }
++        throw new IllegalArgumentException("PNG has no IDAT chunk");
 +    }
 +
 +}
