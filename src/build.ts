@@ -10,6 +10,7 @@ import { getTarget, getTargets, listArtifacts, root, type Target } from "./model
 import { command } from "./process.ts";
 import { StackError, sync } from "./stack.ts";
 import { prepareViaFabricPlus } from "./viafabricplus.ts";
+import { installLibDataChannel, readLibDataChannelPin } from "./libdatachannel.ts";
 import { verifyBuiltinUi, verifyEmbeddedBuiltinUi, builtinUiResource } from "./bedrock-ui.ts";
 import {
   builtinOreUiResource,
@@ -211,6 +212,7 @@ const buildOne = Effect.fn("buildOne")(function* (
   id: string,
   { target, environment, assetArguments }: BuildInputs,
   built: Map<string, Coordinates>,
+  libDataChannelVersion?: string,
 ) {
   const dir = yield* sync(id);
   artifactProjectDirectory(dir, target.artifactProject);
@@ -229,6 +231,9 @@ const buildOne = Effect.fn("buildOne")(function* (
       "--stacktrace",
       `-PstackanvilMavenRepo=${localRepo}`,
       ...(viaFabricPlusVersion ? [`-PstackanvilViaFabricPlusVersion=${viaFabricPlusVersion}`] : []),
+      ...(libDataChannelVersion
+        ? [`-PstackanvilLibDataChannelVersion=${libDataChannelVersion}`]
+        : []),
       ...assetArguments,
       "clean",
       target.buildTask,
@@ -327,9 +332,17 @@ export const build = Effect.fn("build")(function* (id: string) {
       version: pin.version,
     });
   }
+  // The NetherNet natives come from the pinned release of the StackAnvil libdatachannel-java fork
+  let libDataChannelVersion: string | undefined;
+  if (order.includes("viaproxy") || order.includes("viafabricplus-bedrock")) {
+    print("Fetching pinned libdatachannel-java release");
+    const pin = yield* Effect.promise(() => readLibDataChannelPin());
+    yield* Effect.promise(() => installLibDataChannel(localRepo, pin));
+    libDataChannelVersion = pin.version;
+  }
   for (const [index, [target, input]] of [...inputs].entries()) {
     print(`Building ${target} (${index + 1}/${inputs.size})`);
-    yield* buildOne(target, input, built);
+    yield* buildOne(target, input, built, libDataChannelVersion);
   }
   return [...(includeViaFabricPlus ? ["viafabricplus"] : []), ...order]
     .map((target) => join(root, "dist", target))
