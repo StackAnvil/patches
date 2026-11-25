@@ -59,14 +59,17 @@ export const releaseIntegrationResources = Effect.fn("Integration.releaseResourc
     (release) => labIO("release server dependencies", release).pipe(Effect.result),
     { concurrency: 4 },
   );
-  const display = yield* labIO("stop integration display", stopDisplay).pipe(Effect.result);
+  // Call without arguments: labIO passes an AbortSignal that stopDisplay would read as its process guard.
+  const display = yield* labIO("stop integration display", async () => stopDisplay()).pipe(
+    Effect.result,
+  );
   const failures = [...results, display]
     .filter((value) => Result.isFailure(value))
     .map((result) => result.failure);
   if (failures.length > 0)
     return yield* LabError.make({
       operation: "release integration",
-      message: "Integration cleanup failed.",
+      message: `Integration cleanup failed: ${failures.map((failure) => failure.message).join("; ")}`,
       cause: new AggregateError(failures, "Resource setup failed."),
     });
 }, Effect.uninterruptible);

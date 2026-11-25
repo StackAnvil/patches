@@ -86,6 +86,16 @@ test("independent cleanup failures still attempt all releases and the display", 
   expect(calls).toEqual(["first", "second", "display"]);
 });
 
+test("cleanup stops the display without passing it the abort signal", async () => {
+  const received: unknown[][] = [];
+  await Effect.runPromise(
+    releaseIntegrationResources([], [], async (...args: unknown[]) => {
+      received.push(args);
+    }),
+  );
+  expect(received).toEqual([[]]);
+});
+
 test("ephemeral TCP and UDP reservations release their sockets", async () => {
   const ports = await Effect.runPromise(
     Effect.all([tcpPortEffect, udpPortEffect], { concurrency: 2 }),
