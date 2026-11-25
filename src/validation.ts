@@ -77,6 +77,7 @@ const buildSteps = [
   { id: "pr-addon", args: ["run", "pr", "check", "viafabricplus-bedrock"] },
   { id: "java-probe", args: ["run", "test-pack:java:build"] },
   { id: "build", args: ["run", "build", "all"] },
+  { id: "viaproxy-startup", args: ["src/viaproxy-startup.ts"] },
   { id: "replay-selftest", args: ["run", "server-replay", "selftest"] },
   { id: "bundle", args: ["run", "bundle"] },
 ];

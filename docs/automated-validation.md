@@ -64,7 +64,8 @@ For the existing build checks, run:
 bun run validate build
 ```
 
-This profile runs the two north-star application checks, Java probe build, full stack build, replay self-tests, and modpack creation.
+This profile runs the two north-star application checks, Java probe build, full stack build, ViaProxy startup check, replay self-tests, and modpack creation.
+The startup check starts the built ViaProxy and fails if ViaVersion could not load a protocol, such as when ViaVersion and ViaBackwards builds do not match.
 It requires the build dependencies from [the development guide](development.md).
 
 The CI workflow runs the offline and build profiles in separate jobs.
