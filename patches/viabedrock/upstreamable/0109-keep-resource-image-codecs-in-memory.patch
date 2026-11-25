@@ -28,12 +28,20 @@ does not check the trailer at all. Bedrock and the Java client therefore
 load such textures, while ImageIO throws and aborted the whole pack
 conversion, which kicked the player. The repair inflates the IDAT data
 without the zlib wrapper, counts at most the bytes the IHDR allows, and
-writes one IDAT with the recomputed checksum. Any other inflate defect
-still fails as before. Regressions decode a texture with a wrong
-checksum and still reject one with an invalid deflate block.
+writes one IDAT with the recomputed checksum. Regressions decode a
+texture with a wrong checksum.
+
+Report an image that cannot be decoded, even after the checksum repair,
+as no image. libpng also rejects image data that is corrupt or ends
+before the last row, and Bedrock then draws that texture as missing and
+keeps the rest of the pack. Throwing instead failed the whole pack
+conversion and disconnected the player. The decoding size limit still
+throws, because it protects the heap rather than reporting bad data.
+Regressions report no image for an invalid deflate block and for a
+stream that ends before the last row.
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e97a8c62883d5333a26fd368ae333bfe..fb14da9a69cb9ef59ee4bf5a1bf450bd7c6dd4e4 100644
+index 622e99d2e97a8c62883d5333a26fd368ae333bfe..2a2d224a4b8404b920f8375a5b806cbf130b845a 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 @@ -22,6 +22,9 @@ import com.viaversion.viaversion.util.GsonUtil;
@@ -57,9 +65,21 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..fb14da9a69cb9ef59ee4bf5a1bf450bd
          } catch (final IOException e) {
              throw new UncheckedIOException(e);
          }
-@@ -189,14 +192,44 @@ public abstract class Content {
+@@ -180,23 +183,56 @@ public abstract class Content {
+         private final byte[] bytes;
+         private final String format;
+         private BufferedImage image;
++        private boolean undecodable;
+ 
+         public LazyImage(final byte[] bytes, final String format) {
+             this.bytes = bytes;
+             this.format = format;
+         }
+ 
++        /** Returns null when no reader supports the format or the image data cannot be decoded. */
          public BufferedImage getImage() {
-             if (this.image == null) {
+-            if (this.image == null) {
++            if (this.image == null && !this.undecodable) {
                  try {
 -                    this.image = ImageIO.read(new ByteArrayInputStream(this.bytes));
 +                    this.image = decode(this.bytes);
@@ -67,14 +87,15 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..fb14da9a69cb9ef59ee4bf5a1bf450bd
 -                    throw new RuntimeException(e);
 +                    // Bedrock's libpng and Java's stb_image ignore a bad zlib checksum after the last row; ImageIO does not.
 +                    final byte[] repaired = PngZlibChecksum.repair(this.bytes);
-+                    if (repaired == null) {
-+                        throw new RuntimeException(e);
-+                    }
 +                    try {
++                        if (repaired == null) {
++                            throw e;
++                        }
 +                        this.image = decode(repaired);
-+                    } catch (final IOException retry) {
-+                        e.addSuppressed(retry);
-+                        throw new RuntimeException(e);
++                    } catch (final IOException unreadable) {
++                        // libpng also rejects image data that ends early or is corrupt. Bedrock then shows the
++                        // texture as missing and keeps the rest of the pack, so report no image instead of failing.
++                        this.undecodable = true;
 +                    }
                  }
              }
@@ -104,7 +125,7 @@ index 622e99d2e97a8c62883d5333a26fd368ae333bfe..fb14da9a69cb9ef59ee4bf5a1bf450bd
          public byte[] getPngBytes() {
              return this.getPngBytes(false);
          }
-@@ -207,8 +240,8 @@ public abstract class Content {
+@@ -207,8 +243,8 @@ public abstract class Content {
              } else {
                  final BufferedImage image = this.getImage();
                  final ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -289,10 +310,10 @@ index 0000000000000000000000000000000000000000..034bfbc303296b8a36ddf81aa48ce978
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..877e97f27981f3728a3abe831114b7386cea08f0
+index 0000000000000000000000000000000000000000..3d92ab2007a7522c6dcf8250ebcd223059528710
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentImageCacheTest.java
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,95 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -359,9 +380,8 @@ index 0000000000000000000000000000000000000000..877e97f27981f3728a3abe831114b738
 +        content.put("oversized.png", pngHeader(23171, 23171));
 +        content.put("bounded.png", pngHeader(1024, 1024));
 +        assertThrows(IllegalArgumentException.class, () -> content.getImage("oversized.png").getImage());
-+        // The bounded header passes the limit and fails only on its missing pixel data.
-+        final RuntimeException missingPixels = assertThrows(RuntimeException.class, () -> content.getImage("bounded.png").getImage());
-+        assertFalse(missingPixels instanceof IllegalArgumentException);
++        // The bounded header passes the limit and fails only on its missing pixel data, which leaves no image.
++        assertNull(content.getImage("bounded.png").getImage());
 +    }
 +
 +    @Test
@@ -391,10 +411,10 @@ index 0000000000000000000000000000000000000000..877e97f27981f3728a3abe831114b738
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksumTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksumTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2d16d763ab764a2f9f426249d55c785d445d0afd
+index 0000000000000000000000000000000000000000..aa14dce5af3706cdf92034d728f8761cd7b82477
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/PngZlibChecksumTest.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -411,8 +431,10 @@ index 0000000000000000000000000000000000000000..2d16d763ab764a2f9f426249d55c785d
 +import java.io.ByteArrayOutputStream;
 +import java.nio.ByteBuffer;
 +import java.nio.charset.StandardCharsets;
++import java.util.Arrays;
 +import java.util.function.Consumer;
 +import java.util.zip.CRC32;
++import java.util.zip.Deflater;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -434,13 +456,31 @@ index 0000000000000000000000000000000000000000..2d16d763ab764a2f9f426249d55c785d
 +    }
 +
 +    @Test
-+    void stillRejectsPackPngWithCorruptCompressedPixels() throws Exception {
++    void treatsPackPngWithCorruptCompressedPixelsAsMissing() throws Exception {
 +        // Block type 3 is reserved, so the pixels cannot be inflated.
 +        final byte[] png = withIdat(texture(), data -> data[2] |= 0x06);
 +        final var content = new InMemoryContent();
 +        content.put("entity.png", png);
 +
-+        assertThrows(RuntimeException.class, () -> content.getImage("entity.png").getImage());
++        assertNull(content.getImage("entity.png").getImage());
++    }
++
++    @Test
++    void treatsPackPngWhoseImageDataEndsBeforeTheLastRowAsMissing() throws Exception {
++        // A complete zlib stream that holds only the first of two RGBA rows, with a trailer that does not match it.
++        final byte[] firstRow = {0, 0x12, (byte) 0xAB, 0x34, (byte) 0xFF, 0x76, 0x54, 0x32, 0x7F};
++        final Deflater deflater = new Deflater();
++        deflater.setInput(firstRow);
++        deflater.finish();
++        final byte[] compressed = new byte[64];
++        final int length = deflater.deflate(compressed);
++        deflater.end();
++        final byte[] stream = Arrays.copyOf(compressed, length);
++        stream[length - 1] ^= 0x5A;
++        final var content = new InMemoryContent();
++        content.put("entity.png", replaceIdat(texture(), stream));
++
++        assertNull(content.getImage("entity.png").getImage());
 +    }
 +
 +    private static byte[] texture() throws Exception {
@@ -452,6 +492,27 @@ index 0000000000000000000000000000000000000000..2d16d763ab764a2f9f426249d55c785d
 +        final ByteArrayOutputStream output = new ByteArrayOutputStream();
 +        ImageIO.write(image, "png", output);
 +        return output.toByteArray();
++    }
++
++    /** Replaces the single IDAT payload with data of any length and a valid chunk CRC. */
++    private static byte[] replaceIdat(final byte[] png, final byte[] data) {
++        final ByteBuffer buffer = ByteBuffer.wrap(png);
++        buffer.position(8);
++        while (buffer.remaining() >= 12) {
++            final int start = buffer.position();
++            final int length = buffer.getInt();
++            if (buffer.getInt() == 0x49444154) {
++                final CRC32 crc = new CRC32();
++                crc.update("IDAT".getBytes(StandardCharsets.US_ASCII));
++                crc.update(data);
++                final int after = start + 12 + length;
++                return ByteBuffer.allocate(png.length - length + data.length)
++                        .put(png, 0, start).putInt(data.length).put("IDAT".getBytes(StandardCharsets.US_ASCII)).put(data)
++                        .putInt((int) crc.getValue()).put(png, after, png.length - after).array();
++            }
++            buffer.position(start + 12 + length);
++        }
++        throw new IllegalArgumentException("PNG has no IDAT chunk");
 +    }
 +
 +    /** Edits the single IDAT payload in place and keeps its chunk CRC valid. */
