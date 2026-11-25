@@ -644,7 +644,6 @@ whole native HUD.
 
 The HUD controller publishes the sidebar objective it shows: its
 visibility, display name and row count as #scoreboard_sidebar_visible,
-#objective_sidebar_name and #scoreboard_sidebar_size, its rows as the
 scoreboard_players collection, and #hud_visible. A decoration panel whose
 control_name factory creates rows over an owned collection expands like
 that collection when its row template draws only panels, images and
@@ -13772,7 +13771,7 @@ index 12f36ddbd6e312c71526af5f50aaad388f51eed7..92252e3b10b0a57fb107954bac6312f7
                  case HURT -> {
                      final CompoundTag damageTypeRegistry = gameSession.getJavaRegistries().getCompoundTag(RegistryKeys.DAMAGE_TYPE);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 3b52b395ef8312c70f384678e2fe234c68462efc..dd1bb278057c7d550283020bb3b0155eb1f1c696 100644
+index ddbfd567f835e1b848e91e5fe68a050329c1b8f3..5cfa4da1f1745730c1e23c3981d1576c8deda776 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -30,6 +30,9 @@ import net.raphimc.viabedrock.ViaBedrock;
@@ -13850,7 +13849,7 @@ index 3b52b395ef8312c70f384678e2fe234c68462efc..dd1bb278057c7d550283020bb3b0155e
      private static boolean shouldTranslate(final UserConnection user) {
          return ViaBedrock.getConfig().shouldTranslateResourcePacks() && user.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION);
      }
-@@ -428,25 +446,35 @@ public final class ResourcePackPackets {
+@@ -428,27 +446,37 @@ public final class ResourcePackPackets {
          if (publication == null || !user.get(ChannelStorage.class).hasChannel(NativeResourcePayloadPack.CHANNEL) || !publication.request()) {
              return;
          }
@@ -13864,14 +13863,16 @@ index 3b52b395ef8312c70f384678e2fe234c68462efc..dd1bb278057c7d550283020bb3b0155e
 -            }
 -            final UUID httpToken = UUID.randomUUID();
 -            ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
--            final PacketWrapper resourcePack = PacketWrapper.create(user.getProtocolInfo().getClientState() == State.PLAY
+-            // Java decodes play IDs as soon as it receives FINISH_CONFIGURATION, before it acknowledges the switch.
+-            // Follow the state of the clientbound stream and write now, so no state change can come in between.
+-            final PacketWrapper resourcePack = PacketWrapper.create(user.getProtocolInfo().getServerState() == State.PLAY
 -                    ? ClientboundPackets26_3.RESOURCE_PACK_PUSH : ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH, user);
 -            resourcePack.write(Types.UUID, pack.id()); // id
 -            resourcePack.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
 -            resourcePack.write(Types.STRING, pack.sha1()); // hash
 -            resourcePack.write(Types.BOOLEAN, false); // required
 -            resourcePack.write(Types.OPTIONAL_TAG, null); // prompt
--            resourcePack.scheduleSend(BedrockProtocol.class);
+-            resourcePack.send(BedrockProtocol.class);
 -        }, user.getChannel().eventLoop());
 +        final ResourcePackStorage storage = publication.storage();
 +        ViaBedrock.getResourcePackServer().prepareNativePayload(storage)
@@ -13894,14 +13895,16 @@ index 3b52b395ef8312c70f384678e2fe234c68462efc..dd1bb278057c7d550283020bb3b0155e
 +        }
 +        final UUID httpToken = UUID.randomUUID();
 +        ViaBedrock.getResourcePackServer().addConnection(httpToken, user, pack);
-+        final PacketWrapper resourcePack = PacketWrapper.create(user.getProtocolInfo().getClientState() == State.PLAY
++        // Java decodes play IDs as soon as it receives FINISH_CONFIGURATION, before it acknowledges the switch.
++        // Follow the state of the clientbound stream and write now, so no state change can come in between.
++        final PacketWrapper resourcePack = PacketWrapper.create(user.getProtocolInfo().getServerState() == State.PLAY
 +                ? ClientboundPackets26_3.RESOURCE_PACK_PUSH : ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH, user);
 +        resourcePack.write(Types.UUID, pack.id()); // id
 +        resourcePack.write(Types.STRING, ViaBedrock.getResourcePackServer().getUrl() + "?token=" + httpToken); // url
 +        resourcePack.write(Types.STRING, pack.sha1()); // hash
 +        resourcePack.write(Types.BOOLEAN, false); // required
 +        resourcePack.write(Types.OPTIONAL_TAG, null); // prompt
-+        resourcePack.scheduleSend(BedrockProtocol.class);
++        resourcePack.send(BedrockProtocol.class);
      }
  
      private static void sendJavaResourcePack(final UserConnection user, final ConvertedResourcePackCache.Pack pack, final UUID httpToken,
@@ -24752,6 +24755,93 @@ index 0000000000000000000000000000000000000000..013a659422451308d68798c9bfebc062
 +        final var output = new ByteArrayOutputStream();
 +        assertTrue(ImageIO.write(image, format, output));
 +        return output.toByteArray();
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativePayloadPushTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativePayloadPushTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..a08f46d8fc5bbbc6de78ef3e8c3331e7402b1c37
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativePayloadPushTest.java
+@@ -0,0 +1,81 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundConfigurationPackets26_3;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.channel.Channel;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.resourcepack.http.ConvertedResourcePackCache;
++import net.raphimc.viabedrock.api.resourcepack.http.ResourcePackHttpServer;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.storage.NativeResourcePublication;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.mockito.Mockito.*;
++
++class NativePayloadPushTest {
++
++    @Test
++    void usesPlayIdOnceFinishConfigurationWasSentEvenBeforeJavaAcknowledgesIt() throws Exception {
++        assertEquals(List.of(ClientboundPackets26_3.RESOURCE_PACK_PUSH), push(State.PLAY, State.CONFIGURATION));
++    }
++
++    @Test
++    void usesConfigurationIdWhileConfigurationContinues() throws Exception {
++        assertEquals(List.of(ClientboundConfigurationPackets26_3.RESOURCE_PACK_PUSH), push(State.CONFIGURATION, State.CONFIGURATION));
++    }
++
++    /** Returns the packet types written immediately. A deferred write could follow a later FINISH_CONFIGURATION. */
++    private static List<PacketType> push(final State serverState, final State clientState) throws Exception {
++        final UserConnection user = mock(UserConnection.class);
++        final ProtocolInfo protocolInfo = mock(ProtocolInfo.class);
++        when(protocolInfo.getServerState()).thenReturn(serverState);
++        when(protocolInfo.getClientState()).thenReturn(clientState);
++        when(user.getProtocolInfo()).thenReturn(protocolInfo);
++        final Channel channel = mock(Channel.class);
++        when(channel.isActive()).thenReturn(true);
++        when(user.getChannel()).thenReturn(channel);
++        final NativeResourcePublication publication = new NativeResourcePublication(null);
++        when(user.get(NativeResourcePublication.class)).thenReturn(publication);
++        final var pack = new ConvertedResourcePackCache.Pack(null, new byte[0], 0, "payload-hash", UUID.randomUUID(), Map.of());
++        final var server = mock(ResourcePackHttpServer.class);
++        when(server.getUrl()).thenReturn("http://localhost/packs");
++        final List<PacketType> sent = new ArrayList<>();
++        try (var via = mockStatic(ViaBedrock.class);
++             var packets = mockStatic(PacketWrapper.class)) {
++            via.when(ViaBedrock::getResourcePackServer).thenReturn(server);
++            packets.when(() -> PacketWrapper.create(any(PacketType.class), same(user))).thenAnswer(call -> {
++                final PacketType type = call.getArgument(0);
++                final PacketWrapper wrapper = spy(new PacketWrapperImpl(type, null, user));
++                doAnswer(ignored -> {
++                    sent.add(type);
++                    return null;
++                }).when(wrapper).send(BedrockProtocol.class);
++                doNothing().when(wrapper).scheduleSend(BedrockProtocol.class);
++                return wrapper;
++            });
++            final var push = ResourcePackPackets.class.getDeclaredMethod("pushNativePayload", UserConnection.class,
++                    NativeResourcePublication.class, ConvertedResourcePackCache.Pack.class, Throwable.class);
++            push.setAccessible(true);
++            push.invoke(null, user, publication, pack, null);
++        }
++        return sent;
 +    }
 +
 +}
