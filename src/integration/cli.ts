@@ -54,6 +54,7 @@ import { complexGameplayCaseIds } from "./ranged-observation.ts";
 import { integrationHelp, integrationOptions } from "./options.ts";
 import { installModpack } from "./modpack.ts";
 import { copyBedrockServerInstallation } from "./server-installation.ts";
+import { pinnedBedrockRelease, unsupportedServerRelease } from "../bedrock-release.ts";
 import {
   configureShaders,
   graphicsFailures,
@@ -356,6 +357,9 @@ const viaProxyEffect = Effect.fn("Integration.viaProxy")(function* (
   name: string = "viaproxy",
   homeName: string = name,
 ) {
+  const release = yield* labIO("viaProxy", async () => pinnedBedrockRelease());
+  const unsupported = unsupportedServerRelease(version, release);
+  if (unsupported) return yield* labError("viaProxy", new Error(unsupported));
   const configuredJar = yield* optionalEnv("VIAPROXY_JAR");
   const jar = configuredJar
     ? resolve(configuredJar)
@@ -381,7 +385,7 @@ const viaProxyEffect = Effect.fn("Integration.viaProxy")(function* (
       "--target-address",
       viaProxyTarget(`nethernet://127.0.0.1:${bedrockPort}`),
       "--target-version",
-      `Bedrock ${version}`,
+      `Bedrock ${release}`,
       "--auth-method",
       "NONE",
       "--log-ips",

@@ -14,6 +14,7 @@ import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "./display
 import { vmMain } from "./vm.ts";
 import { isOneOf, parseJson, encodeIndentedJson, optionalEnv } from "../guards.ts";
 import { print, printError } from "../output.ts";
+import { pinnedBedrockRelease } from "../bedrock-release.ts";
 const privateRoot = join(root, ".stackanvil", "lab");
 const processFile = join(privateRoot, "processes.json");
 const serverHome = resolve(process.env["BEDROCK_SERVER_HOME"] ?? join(homedir(), "bedrock-server"));
@@ -144,7 +145,9 @@ const serviceCommandEffect = Effect.fn("Lab.serviceCommand")(function* (
       );
     const bind = (yield* optionalEnv("STACKANVIL_VIAPROXY_BIND")) ?? "127.0.0.1:25568";
     const target = (yield* optionalEnv("STACKANVIL_BEDROCK_TARGET")) ?? "127.0.0.1:19132";
-    const version = (yield* optionalEnv("STACKANVIL_BEDROCK_VERSION")) ?? "Bedrock 1.26.51";
+    const version =
+      (yield* optionalEnv("STACKANVIL_BEDROCK_VERSION")) ??
+      `Bedrock ${yield* labIO("serviceCommand", async () => pinnedBedrockRelease())}`;
     const auth = (yield* optionalEnv("STACKANVIL_VIAPROXY_AUTH")) ?? "NONE";
     return {
       program: Bun.which("java") ?? "java",
