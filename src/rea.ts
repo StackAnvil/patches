@@ -3,6 +3,7 @@ import { constants, createReadStream, existsSync } from "node:fs";
 import {
   chmod,
   copyFile,
+  link,
   mkdir,
   readFile,
   realpath,
@@ -18,7 +19,7 @@ import { Effect, Schema } from "effect";
 import { runLabCommand } from "./lab/effect-runtime.ts";
 import { root } from "./model.ts";
 import { command, execFileAsync as execute } from "./process.ts";
-import { parseJson, stringProperty, decodeJson, optionalEnv } from "./guards.ts";
+import { errorCode, parseJson, stringProperty, decodeJson, optionalEnv } from "./guards.ts";
 import { print, printError } from "./output.ts";
 
 const reader = join(root, "native", "rea-controls", "pe.py");
@@ -173,8 +174,9 @@ async function privateJson(path: string, value: unknown): Promise<void> {
 }
 
 /**
- * Copy into a unique temporary file and rename it into place, so concurrent imports from several
- * agents never expose a partial copy. Identical content may replace identical content.
+ * Copy into a unique temporary file and hard-link it into place, so concurrent imports from several
+ * agents never expose a partial copy. A link fails when the artifact exists, so a finished copy is
+ * never replaced while another import resolves or hashes it.
  */
 async function storedArtifact(home: string, sha256: string, source?: string): Promise<string> {
   independentName(home);
@@ -196,7 +198,10 @@ async function storedArtifact(home: string, sha256: string, source?: string): Pr
       await chmod(temporary, 0o400);
       if ((await artifactSha256(temporary)) !== sha256)
         throw new Error("Artifact SHA-256 changed while it was copied");
-      await rename(temporary, path);
+      await link(temporary, path).catch((cause: unknown) => {
+        // Another import finished first. Its copy passed the same checksum before it was linked.
+        if (errorCode(cause) !== "EEXIST") throw cause;
+      });
     } finally {
       await rm(temporary, { force: true });
     }
