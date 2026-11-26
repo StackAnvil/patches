@@ -144,6 +144,12 @@ export function SetupStage({
               list the required Fabric Loader.
             </p>
           )}
+          {setup !== "proxy" && (
+            <p className="compatibility-line">
+              The download is large because the Bedrock add-on carries Bedrock&apos;s own sounds,
+              music, textures, and interface.
+            </p>
+          )}
         </div>
         <div>
           <DownloadFiles release={release} setup={setup} />

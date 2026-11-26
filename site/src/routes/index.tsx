@@ -66,6 +66,11 @@ const questions = [
     answer: `The current stack targets Bedrock ${bedrockVersion}${release?.minecraft ? `. The Fabric setups use Minecraft Java Edition ${release.minecraft}` : ""}. Choose the Bedrock version the server uses in ViaProxy or ViaFabricPlus.`,
   },
   {
+    question: "Why is the Bedrock add-on download so large?",
+    answer:
+      "The add-on carries the Bedrock game's own resources, so Java Edition can play and show them the way Bedrock does. More than a third is Bedrock's sound and music. Most of the rest is textures, interface screens, and their fonts, plus network libraries for Windows, macOS, and Linux that Bedrock connections use. You download it once per release.",
+  },
+  {
     question: "Does it change my singleplayer worlds?",
     answer:
       "No. StackAnvil only changes how your client talks to a Bedrock server. It does not convert worlds or turn a Java server into a Bedrock server.",
