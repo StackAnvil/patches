@@ -51,6 +51,7 @@ import {
 } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
+import { acceptNativeTrust, revealNativeTitle, scrollToNativeAddServer } from "./native-menu.ts";
 import {
   cleanupReplaySession,
   requestReplayJavaStop,
@@ -618,12 +619,42 @@ async function launchNative(
     await wait(400);
     await ui(["mouse-hold", String(x), contentY(y), "left", "150"], directory, "bedrock");
   };
+  const pixel = async (x: number, y: number): Promise<number[]> => {
+    const sample = await execute(
+      "bun",
+      [
+        join(root, "src/capture/cli.ts"),
+        "ui",
+        "pixel",
+        String(x),
+        contentY(y),
+        "--client",
+        "bedrock",
+      ],
+      { cwd: root },
+    );
+    return sample.stdout.trim().split(/\s+/u).map(Number);
+  };
+  await revealNativeTitle(pixel, () => ui(["key", "Escape"], directory, "bedrock"), wait).catch(
+    async (cause: unknown) => {
+      await ui(["screenshot", "native-menu"], directory, "bedrock");
+      throw cause;
+    },
+  );
   await click(0.5, 0.5);
   // The Play screen opens several seconds later and ignores input while it animates in.
   await wait(12_000);
   await click(0.82, 0.11);
   await wait(2500);
-  await click(0.17, 0.22);
+  // Featured servers fill the tab. Arrow keys move focus down until Add server shows at the bottom.
+  await ui(["move", "0.5", contentY(0.7)], directory, "bedrock");
+  await scrollToNativeAddServer(pixel, () => ui(["key", "Down"], directory, "bedrock"), wait).catch(
+    async (cause: unknown) => {
+      await ui(["screenshot", "native-servers"], directory, "bedrock");
+      throw cause;
+    },
+  );
+  await click(0.646, 0.938);
   await wait(2000);
   for (const [row, value] of [
     [0.17, "stackanvil-native-recording"],
@@ -638,16 +669,9 @@ async function launchNative(
     await wait(250);
   }
   await click(0.69, 0.57);
-  await wait(4000);
-  await ui(["screenshot", "native-before-trust"], directory, "bedrock");
-  // A first connection asks to trust the server. Sample its light header right of the title text.
-  const pixel = await execute(
-    "bun",
-    [join(root, "src/capture/cli.ts"), "ui", "pixel", "0.6", contentY(0.28), "--client", "bedrock"],
-    { cwd: root },
-  );
-  const rgb = pixel.stdout.trim().split(/\s+/u).map(Number);
-  if (rgb.length === 3 && rgb.every((value) => value > 150)) await click(0.5, 0.59);
+  if (!(await acceptNativeTrust(pixel, () => click(0.5, 0.59), wait)))
+    print("The native client did not ask to trust the loopback server.");
+  await ui(["screenshot", "native-after-trust"], directory, "bedrock");
   return { pid: child.pid, log };
 }
 
