@@ -31,13 +31,13 @@ The add-on setup includes one compatibility patch for the current ViaBedrock API
 ## Bundled Bedrock resources
 
 [`bedrock-assets.json`](../bedrock-assets.json) pins the built-in resource bundle to Bedrock 1.26.60.5.
-The build adds [`assets/bedrock/1.26.60.5/`](../assets/bedrock/1.26.60.5/) to the add-on's resources.
-The JAR contains the pinned archives, their checksum manifest, and the native copyright notice.
+[`assets/bedrock/1.26.60.5/`](../assets/bedrock/1.26.60.5/) holds the tracked archives, their checksum manifest, and the native copyright notice.
+The add-on JAR contains these resources once, as described in [the shared image bundle](#share-images-with-the-core).
 Runtime loading uses these resources without Store sign-in or a downloaded asset cache.
 
 The core also embeds `assets/viabedrock/builtin_ui.zip` from the same versioned resource directory.
 This tracked bundle contains native UI templates, textures, image metadata, font metadata, font faces, and bitmap font pages.
-ViaProxy includes it through its core dependency. The Fabric add-on includes it in its embedded core JAR.
+ViaProxy includes it through its core dependency. The Fabric add-on reads it from its embedded core JAR and does not repeat it.
 The stack build verifies its version, checksum, required templates, textures, and referenced font faces.
 Missing or incomplete assets stop the build. Each finished JAR must contain the exact verified bundle before publication.
 
@@ -80,8 +80,20 @@ The build verifies the exact image bundle in the core and both consumers.
 Core builds require the full pinned native archive inputs alongside the tracked UI bundle.
 Generated image bundles remain outside Git.
 
+### Share images with the core
+
+The add-on's embedded core JAR already carries `builtin_images.zip` and `builtin_ui.zip`.
+A full stack build therefore gives the add-on a prepared resource directory under `.stackanvil/addon-assets/<version>/`.
+It repacks the add-on archives without the images in the core bundle and leaves out the core UI bundle.
+Its manifest keeps the complete library totals and records the image bundle's SHA-256 and counts.
+At runtime, the add-on reads the remaining archives, then the core image bundle, and requires the same totals.
+The build checks that the finished JAR holds the complete library this way and no top-level `assets/viabedrock/` copy.
+
+`bun run pr` builds use the tracked directory unchanged, because upstream ViaBedrock does not carry these bundles.
+
 The normal stack build passes the resource directory to Gradle.
 For a direct add-on Gradle build, pass `-PbedrockBuiltinAssets=/absolute/path/to/assets/bedrock/1.26.60.5`.
+That self-contained directory works with any core, but repeats the core images and UI bundle in the JAR.
 Also pass `-PbedrockOreUiShaper=/absolute/path/to/oreui-shaper-resources` for the [OreUI shaping libraries](../native/oreui-shaper/README.md).
 For a direct core Gradle build, pass `-PbedrockBuiltinUi=/absolute/path/to/assets/bedrock/1.26.60.5/assets/viabedrock/builtin_ui.zip`.
 To include the required image bundle in a direct core Gradle build, also pass `-PbedrockBuiltinImages=/absolute/path/to/builtin_images.zip`.

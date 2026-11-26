@@ -18,6 +18,7 @@ import {
   verifyEmbeddedBuiltinOreUi,
 } from "./bedrock-oreui.ts";
 import {
+  prepareSharedAddOnAssets,
   verifyBuiltinAssets,
   verifyEmbeddedBuiltinAssets,
   builtinAssetsResource,
@@ -42,7 +43,21 @@ const localRepo = join(root, ".stackanvil", "maven");
 
 const BedrockAssetsSchema = Schema.Struct({ version: Schema.String });
 
-export async function builtinAssetArguments(id: string, repository = root): Promise<string[]> {
+const builtinImagesPath = (repository: string, version: string) =>
+  join(repository, ".stackanvil", "builtin-images", version, "builtin_images.zip");
+const sharedAddOnAssetsPath = (repository: string, version: string) =>
+  join(repository, ".stackanvil", "addon-assets", version);
+
+/**
+ * Resource arguments for a target build. A full-stack add-on build shares the core UI and images
+ * with its nested ViaBedrock JAR. A PR build keeps the self-contained library, because upstream
+ * ViaBedrock does not carry those bundles.
+ */
+export async function builtinAssetArguments(
+  id: string,
+  repository = root,
+  { shareCoreResources = false } = {},
+): Promise<string[]> {
   if (id !== "viafabricplus-bedrock" && id !== "viabedrock") return [];
   const { version } = parseJson(
     BedrockAssetsSchema,
@@ -58,13 +73,25 @@ export async function builtinAssetArguments(id: string, repository = root): Prom
     const images = await prepareBuiltinImages(
       join(directory, builtinAssetsResource),
       version,
-      join(repository, ".stackanvil", "builtin-images", version, "builtin_images.zip"),
+      builtinImagesPath(repository, version),
     );
     return [`-PbedrockBuiltinUi=${path}`, `-PbedrockBuiltinImages=${images}`];
   }
   await verifyBuiltinAssets(join(directory, builtinAssetsResource), version);
   await verifyBuiltinOreUi(join(directory, builtinOreUiResource), version);
-  return [`-PbedrockBuiltinAssets=${directory}`];
+  if (!shareCoreResources) return [`-PbedrockBuiltinAssets=${directory}`];
+  const images = await prepareBuiltinImages(
+    join(directory, builtinAssetsResource),
+    version,
+    builtinImagesPath(repository, version),
+  );
+  const shared = await prepareSharedAddOnAssets(
+    directory,
+    version,
+    images,
+    sharedAddOnAssetsPath(repository, version),
+  );
+  return [`-PbedrockBuiltinAssets=${shared}`];
 }
 
 /** Read the major version from a JDK home's release file. */
@@ -142,7 +169,9 @@ export async function prepareBuildInputs(
       oreUiShaperDirectory(repository),
       repository,
     ).catch(report);
-    const assetArguments = await builtinAssetArguments(id, repository).catch(report);
+    const assetArguments = await builtinAssetArguments(id, repository, {
+      shareCoreResources: true,
+    }).catch(report);
     if (environment && shaperArguments && assetArguments)
       inputs.set(id, {
         target,
@@ -259,11 +288,7 @@ const buildOne = Effect.fn("buildOne")(function* (
       ),
     );
     yield* Effect.promise(() =>
-      verifyEmbeddedBuiltinImages(
-        artifact,
-        id,
-        join(root, ".stackanvil", "builtin-images", version, "builtin_images.zip"),
-      ),
+      verifyEmbeddedBuiltinImages(artifact, id, builtinImagesPath(root, version)),
     );
     if (id === "viafabricplus-bedrock") {
       yield* Effect.promise(() => verifyEmbeddedOreUiShaper(artifact, oreUiShaperDirectory()));
@@ -277,7 +302,7 @@ const buildOne = Effect.fn("buildOne")(function* (
       yield* Effect.promise(() =>
         verifyEmbeddedBuiltinAssets(
           artifact,
-          join(root, "assets", "bedrock", version, builtinAssetsResource),
+          join(sharedAddOnAssetsPath(root, version), builtinAssetsResource),
           version,
         ),
       );

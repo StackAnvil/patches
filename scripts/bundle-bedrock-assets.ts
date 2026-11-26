@@ -124,6 +124,44 @@ export function assetZip(files: ReadonlyMap<string, Uint8Array>): Buffer {
   return Buffer.concat([...local, directory, end]);
 }
 
+export interface ArchiveRecord {
+  name: string;
+  sha256: string;
+  files: number;
+  expandedBytes: number;
+}
+
+/** Split resources into numbered stable archives in path order, each below the archive limit. */
+export async function writeArchives(
+  files: ReadonlyMap<string, Uint8Array>,
+  directory: string,
+): Promise<ArchiveRecord[]> {
+  const archives: ArchiveRecord[] = [];
+  let batch = new Map<string, Uint8Array>();
+  let batchBytes = 0;
+  async function flush() {
+    if (batch.size === 0) return;
+    const name = `builtin-${String(archives.length + 1).padStart(2, "0")}.zip`;
+    const bytes = assetZip(batch);
+    await writeFile(join(directory, name), bytes);
+    archives.push({
+      name,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      files: batch.size,
+      expandedBytes: batchBytes,
+    });
+    batch = new Map();
+    batchBytes = 0;
+  }
+  for (const [path, bytes] of [...files].toSorted(([a], [b]) => a.localeCompare(b, "en"))) {
+    if (batchBytes + bytes.length > archiveLimit) await flush();
+    batch.set(path, bytes);
+    batchBytes += bytes.length;
+  }
+  await flush();
+  return archives;
+}
+
 async function* walk(root: string): AsyncGenerator<string> {
   for (const entry of (await readdir(root, { withFileTypes: true })).toSorted((a, b) =>
     a.name.localeCompare(b.name, "en"),
@@ -234,29 +272,7 @@ export async function bundleBedrockAssets(game: string, version: string, destina
   const staging = `${destination}.staging`;
   await rm(staging, { force: true, recursive: true });
   await mkdir(staging, { recursive: true });
-  const archives: { name: string; sha256: string; files: number; expandedBytes: number }[] = [];
-  let batch = new Map<string, Buffer>();
-  let batchBytes = 0;
-  async function flush() {
-    if (batch.size === 0) return;
-    const name = `builtin-${String(archives.length + 1).padStart(2, "0")}.zip`;
-    const bytes = assetZip(batch);
-    await writeFile(join(staging, name), bytes);
-    archives.push({
-      name,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      files: batch.size,
-      expandedBytes: batchBytes,
-    });
-    batch = new Map();
-    batchBytes = 0;
-  }
-  for (const [path, bytes] of [...files].toSorted(([a], [b]) => a.localeCompare(b, "en"))) {
-    if (batchBytes + bytes.length > archiveLimit) await flush();
-    batch.set(path, bytes);
-    batchBytes += bytes.length;
-  }
-  await flush();
+  const archives = await writeArchives(files, staging);
   await writeFile(
     join(staging, "manifest.json"),
     `${JSON.stringify({ format: 1, version, protocolVersion, files: files.size, expandedBytes, archives }, null, 2)}\n`,

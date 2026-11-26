@@ -557,6 +557,15 @@ Server animation and animation controller maps have no count cap.
 Native Bedrock loads every definition in an accepted pack, and OPBlocks
 ships more than 4,096 of them; a cap dropped every actor animation.
 
+A manifest may name ViaBedrock's builtin_images.zip as a shared image source.
+That bundle holds the texture layers and atlases derived from these same
+archives, so a combined build can leave them out of the add-on archives
+instead of shipping the same textures twice. The loader checks the bundle's
+SHA-256 and counts, skips the bundle's own manifest, rejects any path that
+repeats an archive resource, and still requires the complete library totals.
+A manifest without the entry keeps the self-contained archives, so builds
+against a core without that bundle are unchanged.
+
 diff --git a/.gitignore b/.gitignore
 index d845caa57c02a0321c45fd6ffd10c2e7f1ded60e..e1f9fb539aa782676017e3d5b8ed9fd089281a76 100644
 --- a/.gitignore
@@ -2798,10 +2807,10 @@ index 0000000000000000000000000000000000000000..fddf32555e3ea33d3198d7d072f06057
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..8f7408c9eda13c0e4402d88226f46e8daceb8f86
+index 0000000000000000000000000000000000000000..4da41a76a22054afd1eeab5738ba18c446486dfc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,351 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2824,6 +2833,7 @@ index 0000000000000000000000000000000000000000..8f7408c9eda13c0e4402d88226f46e8d
 +import java.util.function.IntUnaryOperator;
 +import java.util.zip.ZipEntry;
 +import java.util.zip.ZipInputStream;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +
 +/** Loads the versioned built-in resource libraries shipped with the add-on. */
@@ -2834,6 +2844,8 @@ index 0000000000000000000000000000000000000000..8f7408c9eda13c0e4402d88226f46e8d
 +    private static final int MAX_LOGICAL_FILES = 32768;
 +    private static final String PACK_ID = "2099de18-429a-465a-a49b-fc4710a17bb3";
 +    private static final String ROOT = "/assets/viafabricplus-bedrock/builtin/";
++    /** ViaBedrock's image bundle, which a shared library reads instead of repeating its textures. */
++    static final String CORE_IMAGES = "/assets/viabedrock/builtin_images.zip";
 +    private static Contents bundled;
 +
 +    private BedrockBuiltinAssets() {}
@@ -2892,22 +2904,30 @@ index 0000000000000000000000000000000000000000..8f7408c9eda13c0e4402d88226f46e8d
 +                }
 +                final int previousFiles = files.size();
 +                final long previousBytes = total;
-+                try (var zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
-+                    for (ZipEntry entry; (entry = zip.getNextEntry()) != null;) {
-+                        validPath(entry.getName());
-+                        if (entry.isDirectory() || files.size() >= expectedFiles) {
-+                            throw new IOException("Invalid bundled Bedrock archive entry");
-+                        }
-+                        final byte[] content = zip.readNBytes(MAX_FILE_BYTES + 1);
-+                        if (content.length > MAX_FILE_BYTES || (total += content.length) > expectedBytes
-+                                || files.putIfAbsent(entry.getName(), content) != null) {
-+                            throw new IOException("Invalid bundled Bedrock asset size or duplicate entry");
-+                        }
-+                    }
-+                }
++                total = readArchive(bytes, files, expectedFiles, expectedBytes, total, false);
 +                if (files.size() - previousFiles != archive.get("files").getAsInt()
 +                        || total - previousBytes != archive.get("expandedBytes").getAsLong()) {
 +                    throw new IOException("Incomplete bundled Bedrock archive");
++                }
++            }
++            // A shared library leaves its textures in the core image bundle. That bundle is derived
++            // from the same archives, so its paths complete the manifest totals.
++            if (manifest.has("images")) {
++                final JsonObject images = manifest.getAsJsonObject("images");
++                final byte[] bytes;
++                try (InputStream input = resources.open(CORE_IMAGES)) {
++                    if (input == null) throw new IOException("Missing core Bedrock image bundle");
++                    bytes = input.readNBytes(MAX_ARCHIVE_BYTES + 1);
++                }
++                if (bytes.length > MAX_ARCHIVE_BYTES || !hash(bytes).equals(images.get("sha256").getAsString())) {
++                    throw new IOException("Core Bedrock image bundle checksum mismatch");
++                }
++                final int previousFiles = files.size();
++                final long previousBytes = total;
++                total = readArchive(bytes, files, expectedFiles, expectedBytes, total, true);
++                if (files.size() - previousFiles != images.get("files").getAsInt()
++                        || total - previousBytes != images.get("expandedBytes").getAsLong()) {
++                    throw new IOException("Incomplete core Bedrock image bundle");
 +                }
 +            }
 +            if (files.size() != expectedFiles || total != expectedBytes) {
@@ -2919,13 +2939,38 @@ index 0000000000000000000000000000000000000000..8f7408c9eda13c0e4402d88226f46e8d
 +        }
 +    }
 +
++    /** Adds one archive's entries and returns the running expanded size. */
++    private static long readArchive(final byte[] bytes, final Map<String, byte[]> files, final int expectedFiles,
++            final long expectedBytes, long total, final boolean skipManifest) throws IOException {
++        try (var zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
++            for (ZipEntry entry; (entry = zip.getNextEntry()) != null;) {
++                // The core image bundle describes itself in its own manifest, which is not a library file.
++                if (skipManifest && entry.getName().equals("manifest.json")) continue;
++                validPath(entry.getName());
++                if (entry.isDirectory() || files.size() >= expectedFiles) {
++                    throw new IOException("Invalid bundled Bedrock archive entry");
++                }
++                final byte[] content = zip.readNBytes(MAX_FILE_BYTES + 1);
++                if (content.length > MAX_FILE_BYTES || (total += content.length) > expectedBytes
++                        || files.putIfAbsent(entry.getName(), content) != null) {
++                    throw new IOException("Invalid bundled Bedrock asset size or duplicate entry");
++                }
++            }
++        }
++        return total;
++    }
++
++    /** Opens a library file by name, or a core resource by its absolute path. */
 +    @FunctionalInterface
 +    interface ResourceOpener {
 +        InputStream open(String name) throws IOException;
 +    }
 +
 +    private static InputStream openResource(final String name) throws IOException {
-+        final InputStream input = BedrockBuiltinAssets.class.getResourceAsStream(ROOT + name);
++        // Core resources live in the ViaBedrock JAR, so resolve them through one of its classes.
++        final InputStream input = name.startsWith("/")
++                ? BedrockProtocol.class.getResourceAsStream(name)
++                : BedrockBuiltinAssets.class.getResourceAsStream(ROOT + name);
 +        if (input == null) throw new IOException("The add-on does not include " + name);
 +        return input;
 +    }
@@ -24582,6 +24627,99 @@ index 0000000000000000000000000000000000000000..9a364b563a5cfa1909e1269841ef1591
 +        final var resource = new Resource(pack, () -> new ByteArrayInputStream(bytes.get()));
 +        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
 +                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? List.of(resource) : null);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSharedCoreImagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSharedCoreImagesTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..50ad5ed06ae61986c9c548cfa365107fa914bc5b
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSharedCoreImagesTest.java
+@@ -0,0 +1,87 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.util.Map;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockSharedCoreImagesTest {
++    private static final String MODEL = "library/vanilla/models/mobs.json";
++    private static final String TEXTURE = "library/vanilla/textures/pixels.png";
++
++    @Test
++    void restoresSharedTexturesFromTheCoreImageBundle() throws Exception {
++        final byte[] archive = zip(Map.of(MODEL, new byte[] {1}));
++        final byte[] images = zip(Map.of("manifest.json", new byte[] {9, 9}, TEXTURE, new byte[] {2, 3}));
++        final var files = BedrockBuiltinAssets.readFiles(manifest(archive, images), "1.26.51", open(archive, images));
++        assertEquals(2, files.size());
++        assertArrayEquals(new byte[] {1}, files.get(MODEL));
++        assertArrayEquals(new byte[] {2, 3}, files.get(TEXTURE));
++    }
++
++    @Test
++    void rejectsAChangedCoreImageBundle() throws Exception {
++        final byte[] archive = zip(Map.of(MODEL, new byte[] {1}));
++        final byte[] images = zip(Map.of(TEXTURE, new byte[] {2, 3}));
++        final var manifest = manifest(archive, images);
++        final byte[] changed = images.clone();
++        changed[changed.length - 1] ^= 1;
++        assertThrows(IOException.class,
++                () -> BedrockBuiltinAssets.readFiles(manifest, "1.26.51", open(archive, changed)));
++    }
++
++    @Test
++    void rejectsACoreImageThatRepeatsAnArchiveResource() throws Exception {
++        final byte[] archive = zip(Map.of(TEXTURE, new byte[] {1}));
++        final byte[] images = zip(Map.of(TEXTURE, new byte[] {2, 3}));
++        assertThrows(IOException.class,
++                () -> BedrockBuiltinAssets.readFiles(manifest(archive, images), "1.26.51", open(archive, images)));
++    }
++
++    private static BedrockBuiltinAssets.ResourceOpener open(final byte[] archive, final byte[] images) {
++        return name -> new ByteArrayInputStream(name.equals(BedrockBuiltinAssets.CORE_IMAGES) ? images : archive);
++    }
++
++    /** One one-byte file in the archive, and one two-byte image in the core bundle. */
++    private static JsonObject manifest(final byte[] archive, final byte[] images) {
++        final var manifest = new JsonObject();
++        manifest.addProperty("format", 1);
++        manifest.addProperty("version", "1.26.51.1");
++        manifest.addProperty("protocolVersion", "1.26.51");
++        manifest.addProperty("files", 2);
++        manifest.addProperty("expandedBytes", 3);
++        final var entry = new JsonObject();
++        entry.addProperty("name", "builtin-01.zip");
++        entry.addProperty("sha256", BedrockBuiltinAssets.hash(archive));
++        entry.addProperty("files", 1);
++        entry.addProperty("expandedBytes", 1);
++        final var archives = new JsonArray();
++        archives.add(entry);
++        manifest.add("archives", archives);
++        final var shared = new JsonObject();
++        shared.addProperty("sha256", BedrockBuiltinAssets.hash(images));
++        shared.addProperty("files", 1);
++        shared.addProperty("expandedBytes", 2);
++        manifest.add("images", shared);
++        return manifest;
++    }
++
++    private static byte[] zip(final Map<String, byte[]> entries) throws IOException {
++        final var output = new ByteArrayOutputStream();
++        try (var zip = new ZipOutputStream(output)) {
++            for (final var entry : entries.entrySet()) {
++                zip.putNextEntry(new ZipEntry(entry.getKey()));
++                zip.write(entry.getValue());
++                zip.closeEntry();
++            }
++        }
++        return output.toByteArray();
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBankTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBankTest.java
