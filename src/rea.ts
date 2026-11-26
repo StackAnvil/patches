@@ -3,9 +3,11 @@ import { constants, createReadStream, existsSync } from "node:fs";
 import {
   chmod,
   copyFile,
+  cp,
   link,
   mkdir,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -223,6 +225,103 @@ async function writeSelection(path: string, target: Target): Promise<void> {
   await rename(temporary, path);
 }
 
+/**
+ * Copy one finished run directory into the shared home. A unique temporary name renamed into place
+ * keeps an interrupted copy from looking complete. Reflinks make the copy nearly free on btrfs.
+ */
+async function adoptRun(source: string, destination: string): Promise<boolean> {
+  if (existsSync(destination)) return false;
+  await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  try {
+    await cp(source, temporary, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      mode: constants.COPYFILE_FICLONE,
+    });
+    await rename(temporary, destination);
+    return true;
+  } catch (cause) {
+    // Another migration adopted the same run first.
+    if (existsSync(destination)) return false;
+    throw cause;
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
+const ControlTargetSchema = Schema.Struct({
+  artifact: Schema.Struct({ sha256: Schema.String }),
+});
+
+/**
+ * Move a checkout from the per-checkout layout to the shared home. Copies its artifacts, finished
+ * analyses and control runs, then points its selection at the shared artifact. It never deletes
+ * the old store, so the caller can compare before removing it.
+ */
+export async function migrateReaCheckout(checkout: string, store = reaHome()) {
+  const legacy = join(resolve(checkout), ".stackanvil", "rea");
+  independentName(legacy);
+  const report = {
+    checkout: resolve(checkout),
+    artifacts: 0,
+    analyses: 0,
+    controls: 0,
+    selection: false,
+  };
+  const artifacts = new Map<string, string>();
+  for (const sha256 of await readdir(join(legacy, "artifacts")).catch(() => [])) {
+    if (!shaPattern.test(sha256)) continue;
+    const source = join(legacy, "artifacts", sha256, "artifact");
+    if (!existsSync(source)) continue;
+    const existed = existsSync(join(store, "artifacts", sha256.toLowerCase(), "artifact"));
+    artifacts.set(sha256.toLowerCase(), await storedArtifact(store, sha256.toLowerCase(), source));
+    if (!existed) report.artifacts++;
+  }
+  for (const name of await readdir(join(legacy, "analyses")).catch(() => [])) {
+    const run = join(legacy, "analyses", name);
+    const text = await readFile(join(run, "result.json"), "utf8").catch(() => undefined);
+    if (text === undefined) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (!isStoredResult(value) || !shaPattern.test(value.slice.sourceSha256)) continue;
+    const sha256 = value.slice.sourceSha256.toLowerCase();
+    if (await adoptRun(run, join(store, "analyses", sha256, name))) report.analyses++;
+  }
+  for (const name of await readdir(join(legacy, "controls")).catch(() => [])) {
+    const run = join(legacy, "controls", name);
+    const text = await readFile(join(run, "target.json"), "utf8").catch(() => undefined);
+    if (text === undefined || !existsSync(join(run, "result.json"))) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (!Schema.is(ControlTargetSchema)(value) || !shaPattern.test(value.artifact.sha256)) continue;
+    const sha256 = value.artifact.sha256.toLowerCase();
+    if (await adoptRun(run, join(store, "controls", sha256, name))) report.controls++;
+  }
+  const selection = join(legacy, "current.json");
+  const current: unknown = JSON.parse(await readFile(selection, "utf8").catch(() => "null"));
+  if (isTarget(current)) {
+    const shared = artifacts.get(current.artifact.sha256.toLowerCase());
+    if (shared && current.artifact.path !== shared) {
+      await writeSelection(selection, {
+        ...current,
+        artifact: { ...current.artifact, path: shared },
+      });
+      report.selection = true;
+    }
+  }
+  return report;
+}
+
 /** Select an already imported pinned artifact without its original source path. */
 export async function useReaArtifact(options: {
   version: string;
@@ -411,11 +510,133 @@ async function invokeRea(args: string[], run: string, signal: AbortSignal): Prom
   }
 }
 
+const manualScope = "Caller-supplied raw range";
+
+/** Save the pseudocode beside the result so readers need not dig through the Evidence JSON. */
+async function writePseudocode(
+  run: string,
+  id: string,
+  slice: { procedureAddress: string; endExclusive: string; sourceSha256: string; scope: string },
+  text: string,
+): Promise<string> {
+  const path = join(run, "pseudocode.c");
+  await writeFile(
+    path,
+    [
+      `/* REA Evidence ${id}`,
+      `   ${slice.procedureAddress}-${slice.endExclusive} of ${slice.sourceSha256}`,
+      `   ${slice.scope} */`,
+      "",
+      text,
+    ].join("\n"),
+    { mode: 0o600, flag: "wx" },
+  ).catch((cause: unknown) => {
+    // Another agent wrote the same file first.
+    if (errorCode(cause) !== "EEXIST") throw cause;
+  });
+  return path;
+}
+
+const StoredResultSchema = Schema.Struct({
+  id: Schema.String,
+  slice: Schema.Struct({
+    sourceSha256: Schema.String,
+    procedureAddress: Schema.String,
+    endExclusive: Schema.String,
+    scope: Schema.String,
+  }),
+});
+const isStoredResult = Schema.is(StoredResultSchema);
+
+export interface StoredReaAnalysis {
+  directory: string;
+  evidenceId: string;
+  procedureAddress: string;
+  endExclusive: string;
+  /** A caller-supplied range rather than an exception-table function span. */
+  manualRange: boolean;
+  modified: number;
+}
+
+/** Completed analyses in one artifact's directory. Failed runs have no result.json and are skipped. */
+export async function storedReaAnalyses(directory: string): Promise<StoredReaAnalysis[]> {
+  const runs = await readdir(directory).catch((cause: unknown) => {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw cause;
+  });
+  const found: StoredReaAnalysis[] = [];
+  for (const name of runs) {
+    const result = join(directory, name, "result.json");
+    const text = await readFile(result, "utf8").catch(() => undefined);
+    if (text === undefined) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (!isStoredResult(value)) continue;
+    found.push({
+      directory: join(directory, name),
+      evidenceId: value.id,
+      procedureAddress: value.slice.procedureAddress,
+      endExclusive: value.slice.endExclusive,
+      manualRange: value.slice.scope.startsWith(manualScope),
+      modified: (await stat(result)).mtimeMs,
+    });
+  }
+  return found.toSorted((a, b) => b.modified - a.modified);
+}
+
+/** Runs whose analyzed range contains the address, newest first. */
+export function analysesCovering(
+  runs: readonly StoredReaAnalysis[],
+  address: string,
+): StoredReaAnalysis[] {
+  const va = BigInt(address.startsWith("0x") ? address : `0x${address}`);
+  return runs.filter((run) => BigInt(run.procedureAddress) <= va && va < BigInt(run.endExclusive));
+}
+
+/** Older runs kept the pseudocode only inside evidence.json. */
+async function storedPseudocode(run: StoredReaAnalysis): Promise<string | null> {
+  const path = join(run.directory, "pseudocode.c");
+  if (await Bun.file(path).exists()) return path;
+  const evidence: unknown = JSON.parse(
+    await readFile(join(run.directory, "evidence.json"), "utf8").catch(() => "null"),
+  );
+  if (!hasPseudocode(evidence)) return null;
+  const { slice } = parseJson(
+    StoredResultSchema,
+    await readFile(join(run.directory, "result.json"), "utf8"),
+  );
+  return writePseudocode(
+    run.directory,
+    run.evidenceId,
+    slice,
+    evidence.normalized_result.pseudocode,
+  );
+}
+
+export async function describeReaAnalysis(run: StoredReaAnalysis) {
+  return {
+    directory: run.directory,
+    evidenceId: run.evidenceId,
+    procedureAddress: run.procedureAddress,
+    endExclusive: run.endExclusive,
+    manualRange: run.manualRange,
+    result: join(run.directory, "result.json"),
+    evidence: join(run.directory, "evidence.json"),
+    pseudocode: await storedPseudocode(run),
+  };
+}
+
 export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (options: {
   address: string;
   end?: string | undefined;
   target?: string | undefined;
   directory?: string;
+  /** Analyze again even when an earlier run covers the same span. */
+  fresh?: boolean;
 }) {
   const target = yield* Effect.tryPromise({ try: () => targetFrom(options.target), catch: error });
   // Group runs by artifact so other agents can find earlier Evidence for the same binary.
@@ -423,6 +644,36 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
     options.directory ?? join(reaHome(), "analyses", target.artifact.sha256.toLowerCase()),
   );
   independentName(directory);
+  if (!options.fresh) {
+    // The artifact is checksum-pinned, so an earlier run over the same span analyzed the same bytes.
+    const earlier = yield* Effect.tryPromise({
+      try: async () => {
+        const covering = analysesCovering(await storedReaAnalyses(directory), options.address);
+        const va = BigInt(
+          options.address.startsWith("0x") ? options.address : `0x${options.address}`,
+        );
+        const match =
+          options.end === undefined
+            ? covering.find((run) => !run.manualRange)
+            : covering.find(
+                (run) =>
+                  run.manualRange &&
+                  BigInt(run.procedureAddress) === va &&
+                  BigInt(run.endExclusive) ===
+                    BigInt(options.end?.startsWith("0x") ? options.end : `0x${options.end}`),
+              );
+        return match ? describeReaAnalysis(match) : undefined;
+      },
+      catch: error,
+    });
+    if (earlier)
+      return {
+        directory: earlier.directory,
+        result: earlier.result,
+        pseudocode: earlier.pseudocode,
+        reused: true,
+      };
+  }
   const run = join(directory, randomUUID());
   yield* Effect.tryPromise({
     try: async () => {
@@ -479,29 +730,16 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
       } catch (cause) {
         throw new Error(`Invalid REA Evidence. Preserved its output in ${run}`, { cause });
       }
-      // Save the pseudocode beside the result so readers need not dig through the Evidence JSON.
-      let pseudocode: string | null = null;
-      if (hasPseudocode(evidence)) {
-        pseudocode = join(run, "pseudocode.c");
-        await writeFile(
-          pseudocode,
-          [
-            `/* REA Evidence ${identity.id}`,
-            `   ${slice.procedureAddress}-${slice.endExclusive} of ${slice.sourceSha256}`,
-            `   ${slice.scope} */`,
-            "",
-            evidence.normalized_result.pseudocode,
-          ].join("\n"),
-          { mode: 0o600, flag: "wx" },
-        );
-      }
+      const pseudocode = hasPseudocode(evidence)
+        ? await writePseudocode(run, identity.id, slice, evidence.normalized_result.pseudocode)
+        : null;
       await privateJson(join(run, "result.json"), {
         ...identity,
         slice,
         evidence: join(run, "evidence.json"),
         pseudocode,
       });
-      return { directory: run, result: join(run, "result.json"), pseudocode };
+      return { directory: run, result: join(run, "result.json"), pseudocode, reused: false };
     },
     catch: error,
   });
@@ -605,13 +843,15 @@ const help = `REA-backed binary research in StackAnvil.
   bun run rea list
   bun run rea import --artifact PATH --version VERSION [--sha256 HEX] [--protocol N]
   bun run rea use --version VERSION
+  bun run rea find --va HEX
+  bun run rea migrate [--checkout PATH]
   bun run rea inspect
   bun run rea function --va HEX
   bun run rea extract --va HEX --output PATH [--end HEX]
   bun run rea read --va HEX [--length N]
   bun run rea imports [--va HEX]
   bun run rea refs --va HEX [--limit N]
-  bun run rea analyze --va HEX [--end HEX]
+  bun run rea analyze --va HEX [--end HEX] [--fresh]
   bun run rea control --script PATH [--argument VALUE] [--timeout-ms N]
   bun run rea setup-controls
 
@@ -619,6 +859,9 @@ Imported artifacts and analyses are shared by every checkout in STACKANVIL_REA_H
 or $XDG_DATA_HOME/stackanvil/rea by default. rea-artifacts.json pins known versions;
 import fills in their SHA-256 and protocol, and use selects one already imported.
 Each checkout selects its target in .stackanvil/rea/current.json. Pass --target PATH for another manifest.
+analyze returns an earlier run of the same span unless you pass --fresh. find lists earlier runs
+that contain an address. migrate copies an older checkout's .stackanvil/rea store into the shared
+home and selects the shared artifact; it does not delete the old store.
 Addresses are linked hexadecimal VAs. A manual --end makes no function-boundary claim.
 Analysis runs REA with Ghidra. Set GHIDRA_INSTALL_DIR for an existing Ghidra install.
 Set REA_CLI to an existing REA executable, or use the pinned rea-agents@${reaVersion} fallback.
@@ -653,6 +896,8 @@ export async function reaMain(args: string[]): Promise<void> {
       script: { type: "string" },
       argument: { type: "string", multiple: true },
       "timeout-ms": { type: "string" },
+      fresh: { type: "boolean" },
+      checkout: { type: "string" },
     },
   });
   if (positionals.length > 0)
@@ -701,6 +946,16 @@ export async function reaMain(args: string[]): Promise<void> {
         2,
       ),
     );
+  } else if (action === "find") {
+    if (!values.va) throw new Error("find requires --va");
+    const { artifact } = await targetFrom(values.target);
+    const runs = analysesCovering(
+      await storedReaAnalyses(join(reaHome(), "analyses", artifact.sha256.toLowerCase())),
+      values.va,
+    );
+    print(JSON.stringify(await Promise.all(runs.map((run) => describeReaAnalysis(run))), null, 2));
+  } else if (action === "migrate") {
+    print(JSON.stringify(await migrateReaCheckout(values.checkout ?? root), null, 2));
   } else if (action === "use") {
     if (!values.version) throw new Error("use requires --version");
     print(JSON.stringify(await useReaArtifact({ version: values.version }), null, 2));
@@ -711,7 +966,12 @@ export async function reaMain(args: string[]): Promise<void> {
     print(
       JSON.stringify(
         await runLabCommand(
-          analyzeReaFunction({ address: values.va, end: values.end, target: values.target }),
+          analyzeReaFunction({
+            address: values.va,
+            end: values.end,
+            target: values.target,
+            fresh: values.fresh ?? false,
+          }),
         ),
         null,
         2,

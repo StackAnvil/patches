@@ -116,6 +116,9 @@ The home is `$XDG_DATA_HOME/stackanvil/rea/` by default. Set `STACKANVIL_REA_HOM
 Keep it outside this repository and outside synced folders, because it holds game binaries.
 For an unpinned build, add `--sha256` and `--protocol` to the import.
 Each checkout keeps its own selection in `.stackanvil/rea/current.json`, so a selection in one worktree does not change another.
+A checkout from before the shared home keeps its own copy under `.stackanvil/rea/`.
+Run `bun run rea migrate --checkout PATH` to copy its artifacts, finished analyses and controls into the shared home and select the shared artifact.
+The command does not delete the old copy. Remove `.stackanvil/rea/artifacts`, `analyses` and `controls` from that checkout after you check the result.
 
 ### Trace a string to its code
 
@@ -137,7 +140,9 @@ Set `REA_CLI` to an existing REA executable, or let the command use its pinned p
 The command does not install an analysis provider or change MCP configuration.
 
 Each run keeps the full Evidence, source identity and stderr in a fresh directory under `analyses/<sha256>/` in the shared home.
-Check earlier runs for the same artifact before you repeat an analysis.
+`analyze` returns an earlier run that covers the same function instead of running REA again, and reports `"reused": true`.
+Pass `--fresh` to analyze again, for example after a REA or Ghidra update.
+Run `bun run rea find --va VA` to list every earlier run that contains an address, including manual ranges.
 The command prints the run directory and the path of its `pseudocode.c`, which holds the decompiled code from the Evidence.
 Raw slices exclude external tables, globals and callees. Preserve those limits when interpreting pseudocode.
 For a leaf without an exception-table entry, supply `--end` explicitly. The output then makes no function-boundary claim.

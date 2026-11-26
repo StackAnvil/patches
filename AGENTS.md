@@ -77,7 +77,7 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 
 - Use REA for binary inspection, decompilation, and runtime evidence. Ghidra or other analysis providers must run through REA.
 - Use `bun run rea` and the shared helpers in `native/rea-controls/` for repository-owned artifact verification and comparison controls. Follow the [REA workflow](docs/bedrock-development-sources.md#analyze-a-native-artifact-with-rea).
-- Select game builds by version from `rea-artifacts.json` with `bun run rea use`. Reuse the shared REA home and earlier Evidence instead of importing or analyzing again.
+- Select game builds by version from `rea-artifacts.json` with `bun run rea use`. Reuse the shared REA home instead of importing again. Look up earlier Evidence with `bun run rea find`; `rea analyze` reuses a stored run of the same function.
 - Do not open a whole Bedrock executable in the REA MCP server. Trace and decompile single functions with `bun run rea`.
 - Do not read, execute, import, or depend on PistonDecompiler files. This includes its scripts, modules, Python environments, caches, and generated analysis. Do not use it as a fallback.
 - Use original versioned game artifacts and preserve complete REA Evidence with artifact hashes. Re-establish older PistonDecompiler findings with REA before using them to justify a change.

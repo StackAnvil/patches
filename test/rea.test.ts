@@ -7,6 +7,9 @@ import { Effect } from "effect";
 import {
   analyzeReaFunction,
   importReaArtifact,
+  describeReaAnalysis,
+  migrateReaCheckout,
+  storedReaAnalyses,
   useReaArtifact,
   independentPath,
   readReaPe,
@@ -133,7 +136,12 @@ test("checkouts share one stored artifact and keep separate selections", async (
   ];
   // The other checkout selects by version alone, after the source file is gone.
   await rm(f.source);
-  const selected = await useReaArtifact({ version: "fixture", pins, store: f.store, selection: other });
+  const selected = await useReaArtifact({
+    version: "fixture",
+    pins,
+    store: f.store,
+    selection: other,
+  });
   expect(selected.artifact.path).toBe(f.target.artifact.path);
   expect(await readdir(join(f.store, "artifacts", f.sha256))).toEqual(["artifact"]);
   await expectRejection(
@@ -173,9 +181,66 @@ test("concurrent imports of one artifact store one complete copy", async () => {
   );
   expect(new Set(targets.map((target) => target.artifact.path)).size).toBe(1);
   expect(await readdir(join(store, "artifacts", sha256))).toEqual(["artifact"]);
-  expect(createHash("sha256").update(await readFile(targets[0]!.artifact.path)).digest("hex")).toBe(
-    sha256,
+  expect(
+    createHash("sha256")
+      .update(await readFile(targets[0]!.artifact.path))
+      .digest("hex"),
+  ).toBe(sha256);
+});
+
+test("migration adopts an old checkout's finished runs and selection without deleting them", async () => {
+  const f = await fixture();
+  // An older checkout kept its own artifact copy, analyses and selection under .stackanvil/rea.
+  const checkout = join(f.directory, "old-checkout");
+  const legacy = join(checkout, ".stackanvil", "rea");
+  await Effect.runPromise(
+    importReaArtifact({
+      source: f.source,
+      sha256: f.sha256,
+      version: "fixture",
+      store: legacy,
+      selection: join(legacy, "current.json"),
+    }),
   );
+  const finished = join(legacy, "analyses", "finished-run");
+  await mkdir(finished, { recursive: true });
+  const slice = {
+    sourceSha256: f.sha256,
+    procedureAddress: "0x140001000",
+    endExclusive: "0x140001010",
+    scope: "One contiguous AMD64 RUNTIME_FUNCTION span",
+  };
+  await writeFile(join(finished, "result.json"), JSON.stringify({ id: "ev_old", slice }));
+  // Older runs kept their pseudocode only inside the Evidence.
+  await writeFile(
+    join(finished, "evidence.json"),
+    JSON.stringify({ normalized_result: { pseudocode: "void old(void) {}" } }),
+  );
+  await mkdir(join(legacy, "analyses", "failed-run"), { recursive: true });
+  const shared = join(f.directory, "shared");
+
+  const report = await migrateReaCheckout(checkout, shared);
+  expect(report).toMatchObject({ artifacts: 1, analyses: 1, controls: 0, selection: true });
+  const selection = JSON.parse(await readFile(join(legacy, "current.json"), "utf8"));
+  expect(selection.artifact.path).toBe(
+    join(await independentPath(shared), "artifacts", f.sha256, "artifact"),
+  );
+  const runs = await storedReaAnalyses(join(shared, "analyses", f.sha256));
+  expect(runs.map((run) => run.evidenceId)).toEqual(["ev_old"]);
+  const described = await describeReaAnalysis(runs[0]!);
+  expect(
+    await readFile(required(described.pseudocode ?? undefined, "pseudocode"), "utf8"),
+  ).toEndWith("*/\n\nvoid old(void) {}");
+  expect((await readdir(join(legacy, "analyses"))).toSorted()).toEqual([
+    "failed-run",
+    "finished-run",
+  ]);
+  expect(await Bun.file(join(legacy, "artifacts", f.sha256, "artifact")).exists()).toBe(true);
+  expect(await migrateReaCheckout(checkout, shared)).toMatchObject({
+    artifacts: 0,
+    analyses: 0,
+    selection: false,
+  });
 });
 
 test("PE extraction keeps exact exception spans and never overwrites an existing slice", async () => {
@@ -355,7 +420,7 @@ test("failed REA calls preserve provider stdout, stderr and the source manifest"
   expect(await Bun.file(join(run, "result.json")).exists()).toBe(false);
 });
 
-test("a REA executable on PATH retains a byte-bound result without replacing earlier runs", async () => {
+test("a REA executable on PATH retains a byte-bound result and later requests reuse it", async () => {
   const f = await fixture();
   const provider = join(f.directory, "rea-fixture");
   const evidence = {
@@ -371,9 +436,10 @@ test("a REA executable on PATH retains a byte-bound result without replacing ear
       pseudocode: "void entry(void)\n{\n  return;\n}\n",
     },
   };
+  const calls = join(f.directory, "calls");
   await writeFile(
     provider,
-    `#!/usr/bin/env bun\nconsole.log(${JSON.stringify(JSON.stringify(evidence))});\n`,
+    `#!/usr/bin/env bun\nimport { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(calls)}, "call\\n");\nconsole.log(${JSON.stringify(JSON.stringify(evidence))});\n`,
   );
   await chmod(provider, 0o700);
   const oldCli = process.env["REA_CLI"],
@@ -386,9 +452,31 @@ test("a REA executable on PATH retains a byte-bound result without replacing ear
       analyzeReaFunction({ address: "140001000", target: f.manifest, directory: output }),
     );
     const second = await Effect.runPromise(
-      analyzeReaFunction({ address: "140001000", target: f.manifest, directory: output }),
+      analyzeReaFunction({
+        address: "140001000",
+        target: f.manifest,
+        directory: output,
+        fresh: true,
+      }),
     );
     expect(first.directory).not.toBe(second.directory);
+    // An address inside the same function reuses a stored run instead of calling REA again.
+    const reused = await Effect.runPromise(
+      analyzeReaFunction({ address: "0x140001008", target: f.manifest, directory: output }),
+    );
+    expect(reused.reused).toBe(true);
+    expect([first.directory, second.directory]).toContain(reused.directory);
+    expect((await readFile(calls, "utf8")).split("\n").filter(Boolean)).toHaveLength(2);
+    // A caller-supplied range makes no function-boundary claim, so it never reuses a function span.
+    const manual = await Effect.runPromise(
+      analyzeReaFunction({
+        address: "140001000",
+        end: "140001008",
+        target: f.manifest,
+        directory: output,
+      }).pipe(Effect.result),
+    );
+    expect(manual._tag === "Success" && manual.success.reused).not.toBe(true);
     const result = JSON.parse(await readFile(first.result, "utf8"));
     expect(result.id).toBe("ev_fixture");
     expect(result.profile).toBe("fixture-profile");
