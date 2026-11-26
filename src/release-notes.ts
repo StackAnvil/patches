@@ -66,7 +66,7 @@ const lines = [
   "",
   "### Bedrock Foundry companion",
   "",
-  "The optional `stackanvil-foundry-companion-...jar` adds **Bedrock Foundry** to ViaFabricPlus' server lists. It starts a server that you set up in [Bedrock Foundry](https://github.com/StackAnvil/BedrockFoundry), joins it, and stops it when you press Stop or quit the game. Install it beside the Bedrock add-on. It needs a Bedrock Foundry build newer than 0.1.0, with `server run --json`.",
+  "The optional `stackanvil-foundry-companion-...jar` adds **Bedrock Foundry** to ViaFabricPlus' server lists. It starts a server that you set up in [Bedrock Foundry](https://github.com/StackAnvil/BedrockFoundry), joins it, and stops it when you press Stop or quit the game. Install it beside the Bedrock add-on. It needs Bedrock Foundry 0.2.0 or newer.",
   "",
   "See the [player guide](https://stackanvil.pistonmaster.net/getting-started/) for connection and sign-in steps for both setups.",
   "",

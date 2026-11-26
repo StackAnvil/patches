@@ -1,6 +1,6 @@
 # Foundry companion
 
-This Fabric mod starts [Bedrock Foundry](https://github.com/StackAnvil/BedrockFoundry) servers from Minecraft Java Edition and joins them through the StackAnvil Bedrock add-on. It adds **Bedrock Foundry** to ViaFabricPlus' server lists. The [player guide](https://stackanvil.pistonmaster.net/getting-started/) describes its use.
+This Fabric mod starts [Bedrock Foundry](https://github.com/StackAnvil/BedrockFoundry) servers from Minecraft Java Edition and joins them through the StackAnvil Bedrock add-on. It needs Bedrock Foundry 0.2.0 or newer. It adds **Bedrock Foundry** to ViaFabricPlus' server lists. The [player guide](https://stackanvil.pistonmaster.net/getting-started/) describes its use.
 
 The mod is StackAnvil source, not a patch target. `bun run build all` builds it after the add-on, against the ViaFabricPlus and ViaBedrock builds from the same run. The client modpack, the Prism bundle, and each release include it.
 
