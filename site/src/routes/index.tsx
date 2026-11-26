@@ -169,6 +169,16 @@ function Home() {
         </div>
       </section>
 
+      <section className="faq-section shell-width" aria-labelledby="questions">
+        <div className="section-heading">
+          <h2 id="questions">Questions before you start</h2>
+          <p>
+            Something else? <a href={site.discord}>Ask on Discord</a>.
+          </p>
+        </div>
+        <Faq items={questions} />
+      </section>
+
       <section className="upstream-section shell-width" aria-labelledby="what-is-stackanvil">
         <div className="upstream-copy">
           <h2 id="what-is-stackanvil">Every fix goes back upstream</h2>
@@ -200,16 +210,6 @@ function Home() {
           </nav>
         </div>
         <PatchStack />
-      </section>
-
-      <section className="faq-section shell-width" aria-labelledby="questions">
-        <div className="section-heading">
-          <h2 id="questions">Questions before you start</h2>
-          <p>
-            Something else? <a href={site.discord}>Ask on Discord</a>.
-          </p>
-        </div>
-        <Faq items={questions} />
       </section>
 
       <section className="finale" aria-labelledby="latest-build">
