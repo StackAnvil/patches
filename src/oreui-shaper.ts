@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { Schema } from "effect";
 import { zipEntries } from "./zip.ts";
 import { isOneOf, parseJson } from "./guards.ts";
@@ -121,25 +123,78 @@ export async function verifyOreUiShaper(
     throw new Error(`Missing or changed HarfBuzz license for ${target}`);
 }
 
-/** A distributable add-on must carry every supported engine, not just the build host's library. */
+/** The shaper platform this process runs on, or `undefined` when the add-on does not support it. */
+export function hostOreUiShaperPlatform(
+  platform: string = process.platform,
+  architecture: string = process.arch,
+): OreUiShaperPlatform | undefined {
+  const system = { linux: "linux", win32: "windows", darwin: "macos" }[platform];
+  const target = `${system}-${architecture}`;
+  return isOneOf(oreUiShaperPlatforms, target) ? target : undefined;
+}
+
+/** CI and release builds must embed every platform. Local builds may embed only the host's engine. */
+export const requireAllOreUiShapers = () =>
+  process.env["STACKANVIL_REQUIRE_ALL_OREUI_SHAPERS"] === "1";
+
+export const oreUiShaperDirectory = (repositoryRoot = repository) =>
+  process.env["STACKANVIL_OREUI_SHAPER_RESOURCES"] ??
+  join(repositoryRoot, ".stackanvil", "tools", "oreui-shaper-resources");
+
+interface ShaperSelection {
+  /** Require all six platforms instead of the host platform. */
+  all?: boolean;
+  host?: OreUiShaperPlatform | undefined;
+}
+
+/** Select and verify every installed engine. A local build needs only the host's engine. */
+async function selectOreUiShapers(
+  directory: string,
+  sourceDirectory: string,
+  { all = requireAllOreUiShapers(), host = hostOreUiShaperPlatform() }: ShaperSelection,
+): Promise<OreUiShaperPlatform[]> {
+  const installed = oreUiShaperPlatforms.filter((target) =>
+    existsSync(join(directory, oreUiShaperResource, target, "manifest.json")),
+  );
+  if (all) {
+    const missing = oreUiShaperPlatforms.filter((target) => !installed.includes(target));
+    if (missing.length > 0)
+      throw new Error(
+        `OreUI shaper resources are missing for ${missing.join(", ")} in ${resolve(directory)}. ` +
+          "Combine the six oreui-shaper-* workflow artifacts there or set STACKANVIL_OREUI_SHAPER_RESOURCES. " +
+          "See native/oreui-shaper/README.md.",
+      );
+  } else if (!host) {
+    throw new Error(
+      `The OreUI shaper does not support ${process.platform}-${process.arch}. ` +
+        "Set STACKANVIL_REQUIRE_ALL_OREUI_SHAPERS=1 and combine the six oreui-shaper-* workflow artifacts.",
+    );
+  } else if (!installed.includes(host)) {
+    throw new Error(
+      `OreUI shaper resources are missing for ${host} in ${resolve(directory)}. ` +
+        "Run `bun run shaper build`, or set STACKANVIL_OREUI_SHAPER_RESOURCES. See native/oreui-shaper/README.md.",
+    );
+  }
+  await Promise.all(
+    installed.map((target) => verifyOreUiShaper(directory, target, sourceDirectory)),
+  );
+  return installed;
+}
+
+/** Gradle embeds every verified engine in the directory. */
 export async function oreUiShaperArguments(
   id: string,
   directory: string,
   sourceDirectory = join(repository, "native", "oreui-shaper"),
+  selection: ShaperSelection = {},
 ): Promise<string[]> {
   if (id !== "viafabricplus-bedrock") return [];
-  const missing = oreUiShaperPlatforms.filter(
-    (target) => !existsSync(join(directory, oreUiShaperResource, target, "manifest.json")),
-  );
-  if (missing.length > 0)
-    throw new Error(
-      `OreUI shaper resources are missing for ${missing.join(", ")} in ${resolve(directory)}. ` +
-        "Combine the six oreui-shaper-* workflow artifacts there or set STACKANVIL_OREUI_SHAPER_RESOURCES. " +
-        "See native/oreui-shaper/README.md.",
+  const installed = await selectOreUiShapers(directory, sourceDirectory, selection);
+  if (installed.length < oreUiShaperPlatforms.length)
+    print(
+      `The add-on embeds the OreUI shaper only for ${installed.join(", ")}. ` +
+        "It cannot shape OreUI text on other platforms.",
     );
-  await Promise.all(
-    oreUiShaperPlatforms.map((target) => verifyOreUiShaper(directory, target, sourceDirectory)),
-  );
   return [`-PbedrockOreUiShaper=${resolve(directory)}`];
 }
 
@@ -148,11 +203,12 @@ export async function verifyEmbeddedOreUiShaper(
   artifact: string,
   directory: string,
   sourceDirectory = join(repository, "native", "oreui-shaper"),
+  selection: ShaperSelection = {},
 ): Promise<void> {
-  await oreUiShaperArguments("viafabricplus-bedrock", directory, sourceDirectory);
+  const installed = await selectOreUiShapers(directory, sourceDirectory, selection);
   const entries = zipEntries(await readFile(artifact));
   const expected = new Set<string>();
-  for (const target of oreUiShaperPlatforms) {
+  for (const target of installed) {
     const resource = `${oreUiShaperResource}/${target}`;
     const manifest = parseJson(
       ShaperManifestSchema,
@@ -173,15 +229,135 @@ export async function verifyEmbeddedOreUiShaper(
   }
 }
 
+async function run(program: string, args: string[], cwd: string): Promise<void> {
+  const child = Bun.spawn([program, ...args], {
+    cwd,
+    stdin: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const code = await child.exited;
+  if (code !== 0) throw new Error(`${program} ${args.join(" ")} exited with code ${code}`);
+}
+
+interface ShaperBuild {
+  output: string;
+  target: OreUiShaperPlatform;
+  /** Extra CMake configure arguments, such as a Visual Studio platform. */
+  configure?: string[];
+  repositoryRoot?: string;
+}
+
+/** Configure, compile, test, install, and verify one engine with the workflow's CMake steps. */
+export async function buildOreUiShaper({
+  output,
+  target,
+  configure = [],
+  repositoryRoot = repository,
+}: ShaperBuild): Promise<void> {
+  const source = join(repositoryRoot, "native", "oreui-shaper");
+  const build = join(repositoryRoot, ".stackanvil", "tools", "oreui-shaper-build");
+  if (!Bun.which("cmake") || !Bun.which("ctest"))
+    throw new Error(
+      "Building the OreUI shaper needs CMake 3.24 or newer, Git, and a C++ compiler. " +
+        "Install them, or combine the oreui-shaper-* workflow artifacts. See native/oreui-shaper/README.md.",
+    );
+  print(`Building the OreUI shaper for ${target}`);
+  await run(
+    "cmake",
+    ["-S", source, "-B", build, "-DCMAKE_BUILD_TYPE=Release", ...configure],
+    repositoryRoot,
+  );
+  await run(
+    "cmake",
+    [
+      "--build",
+      build,
+      "--config",
+      "Release",
+      "--target",
+      "oreui-shaping-test",
+      "--parallel",
+      String(availableParallelism()),
+    ],
+    repositoryRoot,
+  );
+  await run("ctest", ["--test-dir", build, "-C", "Release", "--output-on-failure"], repositoryRoot);
+  await run(
+    "cmake",
+    [
+      "--install",
+      build,
+      "--config",
+      "Release",
+      "--prefix",
+      resolve(output),
+      "--component",
+      "OreUiShaper",
+    ],
+    repositoryRoot,
+  );
+  await verifyOreUiShaper(output, target, source);
+}
+
+/**
+ * Build the host engine when a local add-on build lacks it or holds a stale one.
+ * CI and release builds use the workflow artifacts and never compile here.
+ */
+export async function prepareOreUiShaper(
+  id: string,
+  directory: string,
+  repositoryRoot = repository,
+): Promise<string[]> {
+  const source = join(repositoryRoot, "native", "oreui-shaper");
+  const host = hostOreUiShaperPlatform();
+  if (id === "viafabricplus-bedrock" && !requireAllOreUiShapers() && host) {
+    const problem = await verifyOreUiShaper(directory, host, source).then(
+      () => undefined,
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+    if (problem !== undefined) {
+      if (existsSync(join(directory, oreUiShaperResource, host)))
+        print(`Rebuilding the OreUI shaper: ${problem}`);
+      await buildOreUiShaper({ output: directory, target: host, repositoryRoot });
+    }
+  }
+  return oreUiShaperArguments(id, directory, source);
+}
+
+const usage = [
+  "Usage:",
+  "  bun run shaper build [--target <platform-architecture>] [--output <directory>] [-- <cmake configure arguments>]",
+  "  bun run shaper verify [<installed-resources>] [<platform-architecture>]",
+].join("\n");
+
 if (import.meta.main) {
-  const [directory, requested] = process.argv.slice(2);
-  const targets = !requested
-    ? oreUiShaperPlatforms
-    : isOneOf(oreUiShaperPlatforms, requested)
-      ? [requested]
-      : [];
-  if (!directory || targets.length === 0)
-    throw new Error("Usage: bun src/oreui-shaper.ts <installed-resources> [platform-architecture]");
-  for (const target of targets) await verifyOreUiShaper(directory, target);
-  print("OreUI shaper resources verified");
+  const { values, positionals } = parseArgs({
+    allowPositionals: true,
+    options: { target: { type: "string" }, output: { type: "string" } },
+  });
+  const [action, ...rest] = positionals;
+  if (action === "build") {
+    const target = values.target ?? hostOreUiShaperPlatform();
+    if (!target || !isOneOf(oreUiShaperPlatforms, target))
+      throw new Error(`Choose a --target from ${oreUiShaperPlatforms.join(", ")}.\n${usage}`);
+    await buildOreUiShaper({
+      output: values.output ?? oreUiShaperDirectory(),
+      target,
+      configure: rest,
+    });
+    print(`OreUI shaper for ${target} built and verified`);
+  } else if (action === "verify" && !values.target && !values.output && rest.length <= 2) {
+    const [directory = oreUiShaperDirectory(), requested] = rest;
+    if (requested === undefined)
+      await selectOreUiShapers(directory, join(repository, "native", "oreui-shaper"), {
+        all: true,
+      });
+    else if (isOneOf(oreUiShaperPlatforms, requested))
+      await verifyOreUiShaper(directory, requested);
+    else throw new Error(usage);
+    print("OreUI shaper resources verified");
+  } else {
+    throw new Error(usage);
+  }
 }

@@ -11,6 +11,7 @@ const variables = [
   "STACKANVIL_JAVA_25",
   "STACKANVIL_JAVA_99",
   "STACKANVIL_OREUI_SHAPER_RESOURCES",
+  "STACKANVIL_REQUIRE_ALL_OREUI_SHAPERS",
   "JAVA_HOME",
   "HOME",
 ] as const;
@@ -71,6 +72,8 @@ test("a full build reports every missing input before the first Gradle build", a
   directories.push(repository);
   await writeFile(join(repository, "bedrock-assets.json"), '{"version":"1.26.60.5"}');
   process.env["STACKANVIL_OREUI_SHAPER_RESOURCES"] = join(repository, "shaper");
+  // Release mode reports missing engines instead of compiling the host's.
+  process.env["STACKANVIL_REQUIRE_ALL_OREUI_SHAPERS"] = "1";
   process.env["STACKANVIL_JAVA_17"] = await jdk("21.0.11");
   process.env["STACKANVIL_JAVA_25"] = await jdk("25.0.1");
   const targets = await getTargets();

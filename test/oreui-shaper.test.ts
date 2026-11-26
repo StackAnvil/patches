@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assetZip } from "../scripts/bundle-bedrock-assets.ts";
 import {
+  hostOreUiShaperPlatform,
   oreUiShaperArguments,
   oreUiShaperPlatforms,
   oreUiShaperResource,
@@ -150,17 +151,19 @@ test("installed engine rejects a missing license or a manifest-supplied path", a
   ).rejects.toThrow("identity");
 });
 
-test("addon packaging requires all engines and preserves their exact resources", async () => {
+const all = { all: true };
+
+test("release packaging requires all engines and preserves their exact resources", async () => {
   const first = await installation();
-  expect(await oreUiShaperArguments("viabedrock", first.directory)).toEqual([]);
+  expect(await oreUiShaperArguments("viabedrock", first.directory, undefined, all)).toEqual([]);
   await expect(
-    oreUiShaperArguments("viafabricplus-bedrock", first.directory),
+    oreUiShaperArguments("viafabricplus-bedrock", first.directory, undefined, all),
   ).rejects.toThrow();
   const installations = [first];
   for (const target of oreUiShaperPlatforms.slice(1))
     installations.push(await installation(target, first.directory));
   expect(
-    await oreUiShaperArguments("viafabricplus-bedrock", first.directory),
+    await oreUiShaperArguments("viafabricplus-bedrock", first.directory, undefined, all),
   ).toEqual([`-PbedrockOreUiShaper=${first.directory}`]);
   const files = new Map<string, Uint8Array>();
   for (const [index, target] of oreUiShaperPlatforms.entries()) {
@@ -173,38 +176,75 @@ test("addon packaging requires all engines and preserves their exact resources",
   }
   const artifact = join(first.directory, "addon.jar");
   await writeFile(artifact, assetZip(files));
-  await verifyEmbeddedOreUiShaper(artifact, first.directory);
+  await verifyEmbeddedOreUiShaper(artifact, first.directory, undefined, all);
   const selected = `${oreUiShaperResource}/windows-arm64/stackanvil_oreui_harfbuzz.dll`;
   const original = files.get(selected)!;
   files.delete(selected);
   await writeFile(artifact, assetZip(files));
   await expect(
-    verifyEmbeddedOreUiShaper(artifact, first.directory),
+    verifyEmbeddedOreUiShaper(artifact, first.directory, undefined, all),
   ).rejects.toThrow(selected);
   files.set(selected, Buffer.from("stale build"));
   await writeFile(artifact, assetZip(files));
   await expect(
-    verifyEmbeddedOreUiShaper(artifact, first.directory),
+    verifyEmbeddedOreUiShaper(artifact, first.directory, undefined, all),
   ).rejects.toThrow(selected);
   files.set(selected, original);
   files.set(`${oreUiShaperResource}/extra.dll`, Buffer.from("untracked"));
   await writeFile(artifact, assetZip(files));
   await expect(
-    verifyEmbeddedOreUiShaper(artifact, first.directory),
+    verifyEmbeddedOreUiShaper(artifact, first.directory, undefined, all),
   ).rejects.toThrow("Unexpected");
 });
 
-test("addon packaging names every missing engine instead of a raw file error", async () => {
+test("release packaging names every missing engine instead of a raw file error", async () => {
   const absent = join(tmpdir(), `stackanvil-oreui-shaper-absent-${process.pid}`);
-  const missingAll = oreUiShaperArguments("viafabricplus-bedrock", absent);
+  const missingAll = oreUiShaperArguments("viafabricplus-bedrock", absent, undefined, all);
   await expect(missingAll).rejects.toThrow(
     `OreUI shaper resources are missing for ${oreUiShaperPlatforms.join(", ")} in ${absent}.`,
   );
   await expect(missingAll).rejects.toThrow("native/oreui-shaper/README.md");
   const host = await installation("linux-x64");
   await expect(
-    oreUiShaperArguments("viafabricplus-bedrock", host.directory),
+    oreUiShaperArguments("viafabricplus-bedrock", host.directory, undefined, all),
   ).rejects.toThrow(
     `missing for ${oreUiShaperPlatforms.filter((target) => target !== "linux-x64").join(", ")} in`,
   );
+});
+
+test("a local add-on embeds only the installed engines and needs the host's", async () => {
+  const local = { host: "macos-arm64" as const };
+  const fixture = await installation("linux-x64");
+  await expect(
+    oreUiShaperArguments("viafabricplus-bedrock", fixture.directory, undefined, local),
+  ).rejects.toThrow("missing for macos-arm64");
+  await expect(
+    oreUiShaperArguments("viafabricplus-bedrock", fixture.directory, undefined, local),
+  ).rejects.toThrow("bun run shaper build");
+  const host = await installation("macos-arm64", fixture.directory);
+  expect(
+    await oreUiShaperArguments("viafabricplus-bedrock", fixture.directory, undefined, local),
+  ).toEqual([`-PbedrockOreUiShaper=${fixture.directory}`]);
+  const files = new Map<string, Uint8Array>();
+  for (const installed of [fixture, host])
+    for (const name of ["manifest.json", "COPYING", installed.manifest.library])
+      files.set(
+        `${installed.resource.slice(fixture.directory.length + 1)}/${name}`,
+        await readFile(join(installed.resource, name)),
+      );
+  const artifact = join(fixture.directory, "addon.jar");
+  await writeFile(artifact, assetZip(files));
+  await verifyEmbeddedOreUiShaper(artifact, fixture.directory, undefined, local);
+  // An engine installed after the JAR was built must still be embedded.
+  await installation("windows-x64", fixture.directory);
+  await expect(
+    verifyEmbeddedOreUiShaper(artifact, fixture.directory, undefined, local),
+  ).rejects.toThrow("windows-x64");
+});
+
+test("the host platform selects the matching engine library", () => {
+  expect(hostOreUiShaperPlatform("win32", "arm64")).toBe("windows-arm64");
+  expect(hostOreUiShaperPlatform("darwin", "x64")).toBe("macos-x64");
+  expect(hostOreUiShaperPlatform("linux", "ia32")).toBeUndefined();
+  expect(hostOreUiShaperPlatform("freebsd", "x64")).toBeUndefined();
 });

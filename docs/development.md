@@ -9,8 +9,9 @@ Install Git, JDK 17, JDK 25, and the Bun version named by `packageManager` in [`
 Set `STACKANVIL_JAVA_17` and `STACKANVIL_JAVA_25` if the JDKs are not in the standard paths.
 The build reads each JDK's `release` file and stops if a variable names a JDK with another version.
 Without a variable, it also accepts `JAVA_HOME` when that JDK has the required version.
-Prepare the six [OreUI shaping libraries](../native/oreui-shaper/README.md) before building the add-on.
-The CI and release workflows build these libraries automatically.
+The add-on also needs the [OreUI shaping library](../native/oreui-shaper/README.md).
+With CMake 3.24 or newer and a C++ compiler installed, the build compiles it for your platform.
+CI and release builds embed the libraries for all six platforms from their workflow.
 Before the first Gradle build, `bun run build` checks the JDKs and bundled resources of every selected target and lists all missing inputs.
 
 Install the [native Wayland lab dependencies](capture-lab.md#prepare-the-clients) for focus free local tests. Then run:
@@ -81,7 +82,7 @@ Generated image bundles remain outside Git.
 
 The normal stack build passes the resource directory to Gradle.
 For a direct add-on Gradle build, pass `-PbedrockBuiltinAssets=/absolute/path/to/assets/bedrock/1.26.60.5`.
-Also pass `-PbedrockOreUiShaper=/absolute/path/to/combined-resources` for the [OreUI shaping libraries](../native/oreui-shaper/README.md).
+Also pass `-PbedrockOreUiShaper=/absolute/path/to/oreui-shaper-resources` for the [OreUI shaping libraries](../native/oreui-shaper/README.md).
 For a direct core Gradle build, pass `-PbedrockBuiltinUi=/absolute/path/to/assets/bedrock/1.26.60.5/assets/viabedrock/builtin_ui.zip`.
 To include the required image bundle in a direct core Gradle build, also pass `-PbedrockBuiltinImages=/absolute/path/to/builtin_images.zip`.
 When changing the target Bedrock version, regenerate the bundle and update the pin together.

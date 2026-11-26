@@ -304,6 +304,11 @@ async function validate(profile: ValidationProfile, cycles: number): Promise<Val
             stdin: "ignore",
             stdout: descriptor,
             stderr: descriptor,
+            // Release JARs must load the OreUI shaper on every supported platform.
+            env:
+              profile === "release"
+                ? { ...process.env, STACKANVIL_REQUIRE_ALL_OREUI_SHAPERS: "1" }
+                : process.env,
           });
           const code = await child.exited;
           // Build/test diagnostics were already public in CI. Account-based lifecycle logs stay private.

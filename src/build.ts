@@ -24,7 +24,11 @@ import {
 } from "./bedrock-assets.ts";
 
 import { prepareBuiltinImages, verifyEmbeddedBuiltinImages } from "./bedrock-images.ts";
-import { oreUiShaperArguments, verifyEmbeddedOreUiShaper } from "./oreui-shaper.ts";
+import {
+  oreUiShaperDirectory,
+  prepareOreUiShaper,
+  verifyEmbeddedOreUiShaper,
+} from "./oreui-shaper.ts";
 import { print } from "./output.ts";
 
 interface Coordinates {
@@ -34,9 +38,6 @@ interface Coordinates {
 }
 
 const localRepo = join(root, ".stackanvil", "maven");
-const oreUiShaperDirectory = (repository = root) =>
-  process.env["STACKANVIL_OREUI_SHAPER_RESOURCES"] ??
-  join(repository, ".stackanvil", "tools", "oreui-shaper-resources");
 
 const BedrockAssetsSchema = Schema.Struct({ version: Schema.String });
 
@@ -134,11 +135,11 @@ export async function prepareBuildInputs(
     const target = required(targets[id], `The ${id} target`);
     const environment = await buildEnvironment(target.java).catch(report);
     // Only the add-on's setup patch embeds the shaper, so PR builds do not need it.
-    // The libraries are small and often missing locally, so check them before hashing the assets.
-    const shaperArguments = await oreUiShaperArguments(
+    // A local build compiles a missing host engine before the slower asset checks.
+    const shaperArguments = await prepareOreUiShaper(
       id,
       oreUiShaperDirectory(repository),
-      join(repository, "native", "oreui-shaper"),
+      repository,
     ).catch(report);
     const assetArguments = await builtinAssetArguments(id, repository).catch(report);
     if (environment && shaperArguments && assetArguments)

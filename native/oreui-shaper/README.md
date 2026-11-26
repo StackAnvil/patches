@@ -5,37 +5,45 @@ It rounds signed anchors separately and preserves native variation-device admiss
 The source archive and compatibility patch have separate SHA-256 identities.
 The library does not link FreeType. The Java adapter must supply callbacks from the game's FreeType library.
 
-Install CMake 3.24 or newer, Git, and a C++ compiler on the build host.
-From the repository root, build and test the engine:
+## Build locally
+
+Install CMake 3.24 or newer, Git, and a C++ compiler.
+`bun run build` compiles the engine for your platform when it is missing or does not match the pinned source and patch.
+To build it without the add-on, run this from the repository root:
 
 ```bash
-cmake -S native/oreui-shaper -B .stackanvil/tools/oreui-shaper-build -DCMAKE_BUILD_TYPE=Release
-cmake --build .stackanvil/tools/oreui-shaper-build --config Release --target oreui-shaping-test --parallel 2
-ctest --test-dir .stackanvil/tools/oreui-shaper-build -C Release --output-on-failure
-cmake --install .stackanvil/tools/oreui-shaper-build --config Release --prefix "$PWD/.stackanvil/tools/oreui-shaper-resources" --component OreUiShaper
-bun src/oreui-shaper.ts .stackanvil/tools/oreui-shaper-resources linux-x64
+bun run shaper build
 ```
 
-Replace `linux-x64` with the host's platform and architecture.
-The workflow builds Linux, Windows, and macOS libraries for x64 and arm64.
-Linux workflow builds use Ubuntu 22.04. macOS workflow builds target macOS 13 or newer.
-A local build uses the host's system libraries and does not establish compatibility with older systems.
-For an existing source archive, set `-DSTACKANVIL_HARFBUZZ_ARCHIVE=/absolute/path/to/archive.tar.gz`.
-The same archive checksum applies to local files and downloads.
+The command configures, compiles, tests, installs, and verifies the engine.
+It installs into `.stackanvil/tools/oreui-shaper-resources/`, or into `STACKANVIL_OREUI_SHAPER_RESOURCES` when you set it.
+Use `--output <directory>` to choose another directory.
+Pass extra CMake configure arguments after `--`, for example `bun run shaper build -- -DSTACKANVIL_HARFBUZZ_ARCHIVE=/absolute/path/to/archive.tar.gz`.
+The archive checksum applies to local files and downloads.
 
 The installation contains the library, its license, and a manifest under `assets/viafabricplus-bedrock/oreui-shaper/<platform>-<architecture>/`.
 The verifier checks the source and patch identities, binary architecture, library checksum, and license.
 The authored tests exercise mark positioning and a constant variation delta through the public shaping API.
 They do not contain game fonts or captures.
 
-The normal stack build requires all six platform directories in `.stackanvil/tools/oreui-shaper-resources/`.
-The CI and release workflows build them through [the shared native workflow](../../.github/workflows/oreui-shaper.yml).
-For a local build, combine its six `oreui-shaper-*` artifacts into that directory, with each artifact's `assets/` tree at the root.
-Set `STACKANVIL_OREUI_SHAPER_RESOURCES` to use another directory.
-A single host installation contains only its own platform.
-Run `bun src/oreui-shaper.ts /path/to/combined-resources` to check all six installations.
-The stack build checks them again and compares every library, manifest, and license with the finished add-on JAR.
-For a direct add-on Gradle build, pass `-PbedrockOreUiShaper=/path/to/combined-resources`.
+A local add-on embeds every engine in the resource directory and needs at least your platform's engine.
+It does not shape OreUI text on platforms without an engine.
+The build prints the embedded platforms.
+A local build uses the host's system libraries and does not establish compatibility with older systems.
+
+## Build for release
+
+CI and release builds embed all six platform engines.
+[The shared native workflow](../../.github/workflows/oreui-shaper.yml) runs `bun run shaper build --target <platform-architecture>` on each platform.
+Linux workflow builds use Ubuntu 22.04. macOS workflow builds target macOS 13 or newer.
+Set `STACKANVIL_REQUIRE_ALL_OREUI_SHAPERS=1` to require all six engines in a local build.
+In this mode, the build does not compile the engine. `bun run validate release` always uses this mode.
+Combine the six `oreui-shaper-*` workflow artifacts into the resource directory, with each artifact's `assets/` tree at the root.
+Run `bun run shaper verify` to check all six installations, or `bun run shaper verify <directory> <platform-architecture>` to check one.
+The stack build checks them again and compares every embedded library, manifest, and license with the finished add-on JAR.
+For a direct add-on Gradle build, pass `-PbedrockOreUiShaper=/path/to/resources`.
+
+## Runtime
 
 The Java text backend loads and checks this library.
 Set `STACKANVIL_NATIVE_FONT_GPU_TESTS=1` to run the optional EGL font shader tests.
