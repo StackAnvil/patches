@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 22:59:37 +0100
+Subject: [PATCH] fix(geometry): use bind pose rotation as a bone's rest
+ rotation
+
+Older Bedrock geometry (format 1.8.0) stores some bone orientations only
+in bind_pose_rotation. The parser read just "rotation", so those bones
+lost their rest orientation. The vanilla villager_v2 and zombie villager
+brim (bind_pose_rotation [-90, 0, 0]) stood upright in front of the face
+instead of lying flat as a hat brim.
+
+Read bind_pose_rotation when a bone has no rotation. Native animations
+put this orientation beneath their channels and exclude it from "this":
+the v1.8 cow body sets bind_pose_rotation [90, 0, 0] and its setup
+animation resets the body with "-this", while the v1.0 body without a
+bind pose uses "90 - this". Both lie flat only under that reading.
+When a bone has both fields (the vanilla cape, pufferfish spines), they
+hold the same value, so "rotation" keeps precedence.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/src/main/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryParser.java b/src/main/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryParser.java
+index 78814084d5c170091a0292d65dac02c5f04d7b78..f90d1d7fd20bf7c1301f2666a1b9c38a44b1c9b4 100644
+--- a/src/main/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryParser.java
++++ b/src/main/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryParser.java
+@@ -65,6 +65,17 @@ public class BedrockGeometryParser {
+         return geometries;
+     }
+ 
++    // Older geometry stores a bone's rest orientation only as bind_pose_rotation. Native animations
++    // place it beneath their channels like rotation: the v1.8 cow body sets bind_pose_rotation [90, 0, 0]
++    // and its setup animation resets the body with "-this", while the v1.0 body without a bind pose
++    // uses "90 - this". Without it, the villager and zombie villager hat brims stand upright.
++    private static JsonArray restRotation(final JsonObject bone) {
++        if (bone.get("rotation") instanceof JsonArray rotation) {
++            return rotation;
++        }
++        return bone.get("bind_pose_rotation") instanceof JsonArray rotation ? rotation : null;
++    }
++
+     private static BedrockGeometryModel getGeometry(JsonObject geometry, String elementName, String textureWidthName, String textureHeightName) {
+         JsonObject description = geometry.has("description") ? geometry.getAsJsonObject("description") : geometry;
+         String identifier = description.has("identifier") ? description.get("identifier").getAsString() : elementName;
+@@ -81,7 +92,7 @@ public class BedrockGeometryParser {
+             final String name = boneObject.get("name").getAsString();
+ 
+             final Position3V parentPivot = new Position3V(boneObject.getAsJsonArray("pivot"));
+-            final Position3V boneRotation = new Position3V(boneObject.getAsJsonArray("rotation"));
++            final Position3V boneRotation = new Position3V(restRotation(boneObject));
+ 
+             // parentPivot.setX(-parentPivot.getX());
+             // boneRotation.setX(-boneRotation.getX());
+diff --git a/src/test/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryBindPoseTest.java b/src/test/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryBindPoseTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4e9cae8940373e4388d5c6c09d90e28d422914a
+--- /dev/null
++++ b/src/test/java/org/cube/converter/parser/bedrock/geometry/BedrockGeometryBindPoseTest.java
+@@ -0,0 +1,36 @@
++package org.cube.converter.parser.bedrock.geometry;
++
++import org.cube.converter.util.element.Position3V;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class BedrockGeometryBindPoseTest {
++    @Test
++    void legacyBindPoseRotationLaysTheVillagerBrimFlat() {
++        // geometry.villager_v2 from the vanilla resource pack, reduced to the head and brim.
++        final var model = BedrockGeometryParser.parse("""
++                {"format_version":"1.8.0","geometry.villager_v2":{"texturewidth":64,"textureheight":64,"bones":[
++                  {"name":"head","pivot":[0.0,24.0,0.0],"cubes":[{"origin":[-4.0,24.0,-4.0],"size":[8,10,8],"uv":[0,0]}]},
++                  {"name":"brim","parent":"head","pivot":[0.0,24.0,0.0],"bind_pose_rotation":[-90.0,0.0,0.0],
++                   "cubes":[{"origin":[-8.0,16.0,-6.0],"size":[16.0,16.0,1.0],"uv":[30.0,47.0],"inflate":0.1}]}]}}
++                """).get(0);
++        assertRotation(0, 0, 0, model.getParents().get(0).getRotation());
++        assertRotation(-90, 0, 0, model.getParents().get(1).getRotation());
++    }
++
++    @Test
++    void explicitRotationTakesPrecedenceOverTheBindPose() {
++        final var model = BedrockGeometryParser.parse("""
++                {"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.cape"},"bones":[
++                  {"name":"cape","pivot":[0.0,24.0,3.0],"rotation":[0.0,180.0,0.0],"bind_pose_rotation":[0.0,90.0,0.0]}]}]}
++                """).get(0);
++        assertRotation(0, 180, 0, model.getParents().get(0).getRotation());
++    }
++
++    private static void assertRotation(final float x, final float y, final float z, final Position3V rotation) {
++        assertEquals(x, rotation.getX());
++        assertEquals(y, rotation.getY());
++        assertEquals(z, rotation.getZ());
++    }
++}
