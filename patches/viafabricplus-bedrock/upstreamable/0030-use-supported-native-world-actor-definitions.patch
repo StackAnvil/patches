@@ -194,6 +194,14 @@ the snapshot's integer metadata. The bundled armor stand graph test checks
 sin((hurt_time - frame_alpha) * 120) * 3 degrees of baseplate yaw. The
 hurt overlay tint is unchanged because its native role is unproven.
 
+Vanilla asks for an entity's renderer before its frustum test, so every
+loaded native actor used to evaluate its render controllers each frame.
+The dispatcher's visibility test now tells the renderer which view asked.
+An actor outside that view still samples animations, sounds and particles,
+but keeps its last draw selection. A later view in the same frame that can
+see it selects again before it draws. The first sample always selects so
+the renderer can still decide whether native drawing replaces Java.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index aaa4948537864b108b8de71216865f4286f1946b..c04535a068d1ae8ee9db4720a802ece151658982 100644
 --- a/build.gradle.kts
@@ -341,10 +349,10 @@ index eed070b96fac29f5fc814332fede2d59d3de6c62..1bfac843ad398a1142e38a77ad17cd87
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..6ae1be792b097819056a7bdc557f2bf43bee1ce9
+index 0000000000000000000000000000000000000000..72b62b2cc57a0a78967a2ff3eaeaa9afa63100bb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearance.java
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,112 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -388,6 +396,7 @@ index 0000000000000000000000000000000000000000..6ae1be792b097819056a7bdc557f2bf4
 +                packs.getRenderControllers().renderControllers());
 +
 +        private BedrockActorTint tint;
++        private List<Draw> draws;
 +
 +        public void colors(final net.raphimc.viabedrock.api.model.NativeActorMessage.Colors colors) {
 +            this.tint = BedrockActorTint.palette(colors).orElse(null);
@@ -396,12 +405,30 @@ index 0000000000000000000000000000000000000000..6ae1be792b097819056a7bdc557f2bf4
 +        public void commands(final net.raphimc.viabedrock.api.model.NativeAnimationControllers commands) { this.animation.commands(commands); }
 +
 +        public Frame sample(final float seconds, final BedrockActorAnimation.Frame input, final boolean emit) throws IOException {
++            return this.sample(seconds, input, emit, true);
++        }
++
++        /**
++         * Samples animation state, sounds and particles. Without {@code select}, an actor that already has a
++         * selection keeps its last draws: render controllers only choose what is drawn, and they cost more
++         * than the animation itself, so an actor outside the view does not need them every frame.
++         */
++        public Frame sample(final float seconds, final BedrockActorAnimation.Frame input, final boolean emit,
++                            final boolean select) throws IOException {
 +            final List<BedrockActorAnimation.SoundCue> sounds = new ArrayList<>();
 +            final List<BedrockActorAnimation.ParticleCue> particles = new ArrayList<>();
 +            final var pose = this.animation.sample(seconds, input, emit, sounds::add, particles::add);
-+            final var selection = this.animation.renderControllers(this.controllers);
++            final var draws = select || this.draws == null ? this.select() : this.draws;
 +            final var scale = this.animation.scale();
-+            if (!this.animation.hasCompleteQueries() || selection.surfaces().isEmpty()) return null;
++            if (!this.animation.hasCompleteQueries() || draws == null) return null;
++            return new Frame(pose, scale, draws, List.copyOf(sounds), List.copyOf(particles));
++        }
++
++        /** Selects draws from the most recently sampled animation state, or null when a draw is unsupported. */
++        public List<Draw> select() throws IOException {
++            this.draws = null;
++            final var selection = this.animation.renderControllers(this.controllers);
++            if (selection.surfaces().isEmpty()) return null;
 +            final List<Draw> draws = new ArrayList<>();
 +            for (final var surface : selection.surfaces()) {
 +                final var geometry = packs.getModels().entityModels().get(surface.geometry());
@@ -423,13 +450,18 @@ index 0000000000000000000000000000000000000000..6ae1be792b097819056a7bdc557f2bf4
 +                    draws.add(new Draw(surface, geometry, List.copyOf(textures), material, group.getValue(), material.colorMask() ? this.tint : null));
 +                }
 +            }
-+            return new Frame(pose, scale, List.copyOf(draws), List.copyOf(sounds), List.copyOf(particles));
++            this.draws = List.copyOf(draws);
++            return this.draws;
 +        }
 +    }
 +
 +    public record Frame(Map<String, BedrockBoneAnimation.Transform> pose, BedrockBoneAnimation.Vector scale,
 +                        List<Draw> draws, List<BedrockActorAnimation.SoundCue> sounds,
-+                        List<BedrockActorAnimation.ParticleCue> particles) {}
++                        List<BedrockActorAnimation.ParticleCue> particles) {
++        public Frame withDraws(final List<Draw> draws) {
++            return new Frame(this.pose, this.scale, draws, this.sounds, this.particles);
++        }
++    }
 +    public record Draw(BedrockPlayerControllers.Surface surface, BedrockGeometryModel geometry,
 +                       List<BufferedImage> images, BedrockActorMaterialDefinitions.Material material, Set<String> bones, BedrockActorTint tint) {}
 +}
@@ -488,10 +520,14 @@ index 0000000000000000000000000000000000000000..a13eb1d57925a3a41ebb1b7aa6ebb6dd
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
-index 94877d40da95030fc235dc20655c6cb8ca0ac344..7b5265c7fa316976c29c6cf55ba6d1c9926ea963 100644
+index 94877d40da95030fc235dc20655c6cb8ca0ac344..2a1fd5c65195ed74308a5e1a77c5fdf1f6ed92b7 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
-@@ -21,6 +21,7 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+@@ -18,15 +18,18 @@
+ 
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+ 
++import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
  import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
  import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
  import com.viaversion.viafabricplus.bedrock.render.BedrockEntityRenderer;
@@ -499,16 +535,25 @@ index 94877d40da95030fc235dc20655c6cb8ca0ac344..7b5265c7fa316976c29c6cf55ba6d1c9
  import com.viaversion.viafabricplus.bedrock.render.BedrockGuiActorRenderer;
  import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockGuiActorRenderer;
  import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
-@@ -49,6 +50,8 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
+ import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore;
+ import java.util.Map;
+ import net.minecraft.client.player.AbstractClientPlayer;
++import net.minecraft.client.renderer.culling.Frustum;
+ import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+ import net.minecraft.client.renderer.entity.EntityRenderer;
+ import net.minecraft.client.renderer.entity.EntityRendererProvider;
+@@ -49,6 +52,10 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
      @Unique
      private BedrockEntityRenderer stackanvil$bedrockRenderer;
  
 +    @Unique private BedrockWorldActorRenderer stackanvil$worldActorRenderer;
 +
++    @Unique private BedrockWorldActorRenderer.Culling stackanvil$culling;
++
      @Unique
      private BedrockGuiActorRenderer stackanvil$guiActorRenderer;
  
-@@ -67,6 +70,8 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
+@@ -67,6 +74,8 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
      ) {
          final Map<EntityType<?>, EntityRenderer<?, ?>> renderers = original.call(context);
          this.stackanvil$bedrockRenderer = new BedrockEntityRenderer(context);
@@ -517,14 +562,27 @@ index 94877d40da95030fc235dc20655c6cb8ca0ac344..7b5265c7fa316976c29c6cf55ba6d1c9
          if (this.stackanvil$guiActorRenderer != null) this.stackanvil$guiActorRenderer.clear();
          this.stackanvil$guiActorRenderer = new BedrockGuiActorRenderer(context);
          BedrockPlayerSkins.rendererContext(context);
-@@ -89,9 +94,20 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
+@@ -89,9 +98,33 @@ public abstract class MixinEntityRenderDispatcher implements IBedrockGuiActorRen
          }
      }
  
++    /** Lets the native world actor renderer know which view asked for it before vanilla's frustum test. */
++    @WrapMethod(method = "shouldRender")
++    private boolean nativeWorldActorCulling(final Entity entity, final Frustum frustum, final double x, final double y, final double z,
++                                            final float partialTicks, final Operation<Boolean> original) {
++        final var previous = this.stackanvil$culling;
++        this.stackanvil$culling = new BedrockWorldActorRenderer.Culling(frustum, x, y, z, partialTicks);
++        try {
++            return original.call(entity, frustum, x, y, z, partialTicks);
++        } finally {
++            this.stackanvil$culling = previous;
++        }
++    }
++
 +    @SuppressWarnings("unchecked")
 +    @Inject(method = "getRenderer(Lnet/minecraft/world/entity/Entity;)Lnet/minecraft/client/renderer/entity/EntityRenderer;", at = @At("RETURN"), cancellable = true)
 +    private <T extends Entity> void nativeWorldActor(final T entity, final CallbackInfoReturnable<EntityRenderer<? super T, ?>> callback) {
-+        if (this.stackanvil$worldActorRenderer != null && this.stackanvil$worldActorRenderer.prepare(entity, (EntityRenderer<Entity, ?>) callback.getReturnValue()))
++        if (this.stackanvil$worldActorRenderer != null && this.stackanvil$worldActorRenderer.prepare(entity, (EntityRenderer<Entity, ?>) callback.getReturnValue(), this.stackanvil$culling))
 +            callback.setReturnValue((EntityRenderer<? super T, ?>) this.stackanvil$worldActorRenderer);
 +    }
 +
@@ -645,10 +703,10 @@ index a3d2299aef20d9dad8bbb3ea456a74f39296dc7d..790bee5c8b77dbccde716b5792c6aee1
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ec77be73ded7b1c1d06adf5d59adb791dabb8de0
+index 0000000000000000000000000000000000000000..4279e8cad8f9bab86ea8c6187eee76e44cc694c8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWorldActorRenderer.java
-@@ -0,0 +1,353 @@
+@@ -0,0 +1,385 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -680,6 +738,7 @@ index 0000000000000000000000000000000000000000..ec77be73ded7b1c1d06adf5d59adb791
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.model.Model;
 +import net.minecraft.client.renderer.SubmitNodeCollector;
++import net.minecraft.client.renderer.culling.Frustum;
 +import net.minecraft.client.renderer.entity.EntityRenderer;
 +import net.minecraft.client.renderer.entity.EntityRendererProvider;
 +import net.minecraft.client.renderer.entity.state.EntityRenderState;
@@ -729,8 +788,12 @@ index 0000000000000000000000000000000000000000..ec77be73ded7b1c1d06adf5d59adb791
 +        this.accepted = null; this.level = null;
 +    }
 +
-+    /** A native draw never replaces a Java renderer until its graph, material and bindings resolve. */
-+    public boolean prepare(final Entity entity, final EntityRenderer<Entity, ?> original) {
++    /**
++     * A native draw never replaces a Java renderer until its graph, material and bindings resolve.
++     * Vanilla asks for the renderer before its frustum test. With a {@code culling} context, an actor
++     * outside that view keeps animating but reuses its last draw selection.
++     */
++    public boolean prepare(final Entity entity, final EntityRenderer<Entity, ?> original, final Culling culling) {
 +        final var accepted = BedrockActorResources.get();
 +        if (this.accepted != accepted || this.level != entity.level()) {
 +            this.clear(); this.accepted = accepted; this.level = entity.level();
@@ -765,7 +828,20 @@ index 0000000000000000000000000000000000000000..ec77be73ded7b1c1d06adf5d59adb791
 +        actor.inputs = snapshot;
 +        final float partial = Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false);
 +        final float age = entity.tickCount + partial;
-+        if (actor.age == age && !changed) return actor.active = actor.frame != null;
++        if (actor.age == age && !changed) {
++            // A later view in the same frame, such as extraction or a shadow pass, may see a skipped actor.
++            if (actor.frame != null && !actor.selected && this.visible(entity, culling)) {
++                try {
++                    final var draws = actor.playback.select();
++                    if (draws == null) { actor.failed = true; actor.frame = null; return false; }
++                    actor.frame = actor.frame.withDraws(draws);
++                    this.selected(entity, original, actor, packs, partial);
++                } catch (IOException | RuntimeException unsupported) {
++                    actor.failed = true; actor.frame = null; return false;
++                }
++            }
++            return actor.active = actor.frame != null;
++        }
 +        actor.age = age;
 +        final float yaw = entity instanceof LivingEntity living ? Mth.rotLerp(partial, living.yBodyRotO, living.yBodyRot)
 +                : Mth.rotLerp(partial, entity.yRotO, entity.getYRot());
@@ -775,20 +851,32 @@ index 0000000000000000000000000000000000000000..ec77be73ded7b1c1d06adf5d59adb791
 +        try {
 +            actor.playback.commands(BedrockActorState.animations(entity.getUUID()));
 +            actor.playback.colors(snapshot.colors());
-+            actor.shadowRadius = original.createRenderState(entity, partial).shadowRadius;
++            final boolean select = actor.frame == null || this.visible(entity, culling);
 +            actor.frame = actor.playback.sample(age / 20F, new BedrockActorAnimation.Frame(queries, actorVariables(entity, snapshot, partial)),
-+                    !Minecraft.getInstance().isPaused());
++                    !Minecraft.getInstance().isPaused(), select);
 +            actor.yaw = yaw; actor.scale = snapshot.scale();
 +            actor.queries = Map.copyOf(queries);
 +            if (actor.frame == null) { actor.failed = true; return false; }
-+            // Complete texture registration before selecting the renderer, so missing images keep Java visible.
-+            for (final var draw : actor.frame.draws()) this.texture(packs, draw);
++            if (select) this.selected(entity, original, actor, packs, partial);
++            else actor.selected = false;
 +            actor.active = true;
 +            this.effects(entity, actor, entity.getPosition(partial));
 +            return true;
 +        } catch (IOException | RuntimeException unsupported) {
 +            actor.failed = true; actor.frame = null; return false;
 +        }
++    }
++
++    private boolean visible(final Entity entity, final Culling culling) {
++        return culling == null || this.shouldRender(entity, culling.frustum(), culling.x(), culling.y(), culling.z(), culling.partial());
++    }
++
++    private void selected(final Entity entity, final EntityRenderer<Entity, ?> original, final Actor actor,
++                          final ResourcePackStorage packs, final float partial) {
++        actor.selected = true;
++        actor.shadowRadius = original.createRenderState(entity, partial).shadowRadius;
++        // Complete texture registration before selecting the renderer, so missing images keep Java visible.
++        for (final var draw : actor.frame.draws()) this.texture(packs, draw);
 +    }
 +
 +    static Map<String, Object> actorQueries(final Entity entity, final NativeActorMessage.Snapshot snapshot,
@@ -988,7 +1076,7 @@ index 0000000000000000000000000000000000000000..ec77be73ded7b1c1d06adf5d59adb791
 +        private final UUID lifetime;
 +        private final BedrockWorldActorAppearance.Playback playback;
 +        private float age = Float.NaN, yaw, scale, shadowRadius;
-+        private boolean failed, active;
++        private boolean failed, active, selected;
 +        private NativeActorMessage.Snapshot inputs;
 +        private BedrockWorldActorAppearance.Frame frame;
 +        private Map<String, Object> queries = Map.of();
@@ -996,6 +1084,8 @@ index 0000000000000000000000000000000000000000..ec77be73ded7b1c1d06adf5d59adb791
 +            this.packs = packs; this.lifetime = lifetime; this.playback = playback;
 +        }
 +    }
++    /** The view of the vanilla visibility test that asked for this renderer. */
++    public record Culling(Frustum frustum, double x, double y, double z, float partial) {}
 +    private record MaterialKey(List<Identifier> textures, BedrockActorMaterialDefinitions.Material material, boolean ignoreLighting, float multiplier, BedrockActorUvTransform uv, boolean nether, BedrockActorTint tint) {}
 +    private record ModelKey(ResourcePackStorage packs, String geometry, Set<String> bones) {}
 +    private record TextureKey(ResourcePackStorage packs, String path) {}
@@ -1181,10 +1271,10 @@ index 11be60bc8914b98ae723b1e1dc8400a997777ef9..894d88b41ef75db8ad8aa41e9a55c5b1
          files.put("manifest.json", bytes("{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\"" + java.util.UUID.randomUUID()
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..4768416c1f6fef6d8796798cc237d1d3fedd9a13
+index 0000000000000000000000000000000000000000..93bca296a5520d2420e1810ad468e5d2ea220c92
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockWorldActorAppearanceTest.java
-@@ -0,0 +1,374 @@
+@@ -0,0 +1,393 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1266,6 +1356,25 @@ index 0000000000000000000000000000000000000000..4768416c1f6fef6d8796798cc237d1d3
 +            actor.colors(new NativeActorMessage.Colors(14, 0));
 +            assertNotNull(actor.sample(1, input, false));
 +        }
++    }
++
++    @Test
++    void anActorOutsideTheViewKeepsItsLastDrawsUntilSelectedAgain() throws Exception {
++        Assumptions.assumeTrue(BedrockWorldActorAppearance.class.getResource("/assets/viafabricplus-bedrock/builtin/manifest.json") != null);
++        final var resources = BedrockEntityResources.merge(BedrockBuiltinAssets.load().library(), List.of(), "minecraft:cat");
++        final var actor = new BedrockWorldActorAppearance(resources, "minecraft:cat").playback();
++        final Map<String, Object> queries = new HashMap<>(villagerInput(0, 0, true).queries());
++        queries.put("is_tamed", true);
++        final var input = new BedrockActorAnimation.Frame(queries, Map.of("state", 3F, "liedownamount", 0F, "liedownamounttail", 0F, "lieonplayer", 0F));
++        actor.colors(new NativeActorMessage.Colors(14, 0));
++        // The first sample selects even outside the view, so the renderer can decide whether to replace Java.
++        final var red = actor.sample(0, input, false, false);
++        assertNotNull(red);
++        assertEquals(176 / 255F, red.draws().getFirst().tint().red());
++        actor.colors(new NativeActorMessage.Colors(0, 15));
++        final var outside = actor.sample(.25F, input, false, false);
++        assertSame(red.draws(), outside.draws());
++        assertEquals(1F, actor.sample(.5F, input, false, true).draws().getFirst().tint().red());
 +    }
 +
 +    @Test

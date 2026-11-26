@@ -49,6 +49,13 @@ check: size and UV programs run before direction and can mutate the same
 slots. A direction-only replay cannot use that full-component sample as
 its expected result.
 
+An evaluation group binds its temporaries, math extensions and lowered
+control-flow calls once, in a read-only layer over the caller scope. Each
+expression then only resets the loop budget. Copying the whole scope twice
+per expression made per-frame actor render controllers the largest
+allocation source on the render thread. A standalone evaluation reads the
+caller scope directly; an explicit group still takes one snapshot.
+
 diff --git a/build.gradle b/build.gradle
 index 72cced30b213b589a0beafcf59f44f398848e96c..3ed0ca5b1298d9e9f43931ae33cf6e8f65ba0331 100644
 --- a/build.gradle
@@ -209,10 +216,10 @@ index 0000000000000000000000000000000000000000..cafca05f88d60fdd5b562cbd9da6db32
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd5bd2e532
+index 0000000000000000000000000000000000000000..ae5cf1d61d811a9c7e46e688905494d18db81521
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
-@@ -0,0 +1,407 @@
+@@ -0,0 +1,420 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -240,14 +247,18 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +import org.redlance.mocha.runtime.value.Function;
 +import org.redlance.mocha.runtime.value.MutableObjectBinding;
 +import org.redlance.mocha.runtime.value.NumberValue;
++import org.redlance.mocha.runtime.value.ObjectProperty;
 +import org.redlance.mocha.runtime.value.ObjectValue;
 +import org.redlance.mocha.runtime.value.Value;
 +
 +import java.io.IOException;
 +import java.util.ArrayList;
++import java.util.HashMap;
 +import java.util.List;
 +import java.util.Locale;
++import java.util.Map;
 +import java.util.Set;
++import java.util.function.BiConsumer;
 +import java.util.function.Supplier;
 +
 +/** Compiles native Molang result slots and control flow into bounded host evaluation. */
@@ -266,9 +277,10 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +    private static final String EXECUTE_SCOPE = "\0viabedrock_scope";
 +    private static final Set<String> RANDOM_MATH = Set.of("random", "random_integer", "die_roll", "die_roll_integer");
 +    private static final ObjectValue CONSTANT_MATH = MoLangMath.extend((ObjectValue) MolangInterpreter.standard().scope().get("math"));
-+    private int remaining = 16384;
++    private static final int LOOP_LIMIT = 16384;
++    private int remaining = LOOP_LIMIT;
 +
-+    private MoLangControlFlow() {
++    MoLangControlFlow() {
 +    }
 +
 +    static List<Expression> lower(final List<Expression> expressions) throws IOException {
@@ -454,14 +466,17 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +        return new CallExpression(new IdentifierExpression(name), arguments);
 +    }
 +
-+    static Value evaluate(final Scope scope, final List<Expression> expressions, final Result result) {
-+        final MoLangControlFlow runtime = new MoLangControlFlow();
-+        scope.set(LOAD, (Function<Object>) (_, arguments) -> {
++    /** Binds the lowered control-flow calls once for an evaluation group that owns this runtime and result slot. */
++    Map<String, ObjectProperty> functions(final Result result) {
++        final MoLangControlFlow runtime = this;
++        final Map<String, ObjectProperty> functions = new HashMap<>();
++        final BiConsumer<String, Function<Object>> bind = (name, function) -> functions.put(name, ObjectProperty.property(function, false));
++        bind.accept(LOAD, (Function<Object>) (_, arguments) -> {
 +            final Value value = arguments.next().eval();
 +            result.set(value);
 +            return value;
 +        });
-+        scope.set(READ, (Function<Object>) (_, arguments) -> {
++        bind.accept(READ, (Function<Object>) (_, arguments) -> {
 +            final Value object = arguments.next().eval();
 +            final String name = arguments.next().eval().getAsString();
 +            if (!(object instanceof ObjectValue binding)) {
@@ -477,7 +492,7 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +            result.reference = () -> requireProperty(binding, name);
 +            return value;
 +        });
-+        scope.set(STORE, (Function<Object>) (context, arguments) -> {
++        bind.accept(STORE, (Function<Object>) (context, arguments) -> {
 +            final AccessExpression target = (AccessExpression) arguments.next().expression();
 +            final Value value = arguments.next().eval();
 +            if (context.eval(target.object()) instanceof ObjectValue binding) {
@@ -485,12 +500,12 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +            }
 +            return result.value();
 +        });
-+        scope.set(EXECUTE_SCOPE, (Function<Object>) (context, arguments) -> {
++        bind.accept(EXECUTE_SCOPE, (Function<Object>) (context, arguments) -> {
 +            @SuppressWarnings("unchecked")
 +            final Function<Object> body = (Function<Object>) arguments.next().eval();
 +            return body.evaluate(context);
 +        });
-+        scope.set(COALESCE, (Function<Object>) (_, arguments) -> {
++        bind.accept(COALESCE, (Function<Object>) (_, arguments) -> {
 +            final Function.Argument left = arguments.next();
 +            final Function.Argument right = arguments.next();
 +            try {
@@ -503,16 +518,16 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +                return right.eval();
 +            }
 +        });
-+        scope.set(RETURN, (Function<Object>) (_, arguments) -> {
++        bind.accept(RETURN, (Function<Object>) (_, arguments) -> {
 +            throw new FlowSignal(FlowKind.RETURN, arguments.next().eval());
 +        });
-+        scope.set(BREAK, (Function<Object>) (_, _) -> {
++        bind.accept(BREAK, (Function<Object>) (_, _) -> {
 +            throw FlowSignal.BREAK;
 +        });
-+        scope.set(CONTINUE, (Function<Object>) (_, _) -> {
++        bind.accept(CONTINUE, (Function<Object>) (_, _) -> {
 +            throw FlowSignal.CONTINUE;
 +        });
-+        scope.set(LOOP, (Function<Object>) (context, arguments) -> {
++        bind.accept(LOOP, (Function<Object>) (context, arguments) -> {
 +            float remaining = arguments.next().eval().getAsNumber();
 +            final Value body = arguments.next().eval();
 +            while (remaining > 0F) {
@@ -524,7 +539,7 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +            }
 +            return result.value();
 +        });
-+        scope.set(FOR_EACH, (Function<Object>) (context, arguments) -> {
++        bind.accept(FOR_EACH, (Function<Object>) (context, arguments) -> {
 +            final AccessExpression target = (AccessExpression) arguments.next().expression();
 +            final Value source = arguments.next().eval();
 +            final Value body = arguments.next().eval();
@@ -540,7 +555,12 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +            }
 +            return NumberValue.zero();
 +        });
-+        scope.readOnly(true);
++        return functions;
++    }
++
++    /** Runs one expression list with a fresh loop budget. The scope must already expose {@link #functions}. */
++    Value evaluate(final Scope scope, final List<Expression> expressions, final Result result) {
++        this.remaining = LOOP_LIMIT;
 +        final ExpressionInterpreter<Void> evaluator = new ExpressionInterpreter<>(null, scope);
 +        evaluator.warnOnReflectiveFunctionUsage(false);
 +        Value value = NumberValue.zero();
@@ -621,10 +641,10 @@ index 0000000000000000000000000000000000000000..09d60817a18c5b8c822e8da3fe5062fd
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-index 8f4c4f89453ce16346661d3977b179c9784fcad4..ecb8edda192d76021ccd38ccc37f2269c11c32eb 100644
+index 8f4c4f89453ce16346661d3977b179c9784fcad4..963ded71f673708d8b7ec1784f445326e4349804 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-@@ -17,60 +17,127 @@
+@@ -17,60 +17,201 @@
   */
  package net.raphimc.viabedrock.api.util;
  
@@ -641,6 +661,7 @@ index 8f4c4f89453ce16346661d3977b179c9784fcad4..ecb8edda192d76021ccd38ccc37f2269
 +import org.redlance.mocha.runtime.value.Value;
 +import org.redlance.mocha.runtime.value.NumberValue;
 +import org.redlance.mocha.runtime.value.Function;
++import org.redlance.mocha.runtime.value.ObjectProperty;
 +import org.redlance.mocha.runtime.value.ObjectValue;
  
  import java.io.IOException;
@@ -687,13 +708,14 @@ index 8f4c4f89453ce16346661d3977b179c9784fcad4..ecb8edda192d76021ccd38ccc37f2269
 -                break;
 -            }
 -        }
-+        return createEvaluation(scope).eval(expressions);
++        // A single evaluation cannot observe later scope changes, so it reads the caller scope directly.
++        return new Evaluation(scope).eval(expressions);
 +    }
  
 -        return lastResult;
-+    /** Creates a caller-owned group sharing temporary variables and the VM result slot. */
++    /** Creates a caller-owned group sharing temporary variables and the VM result slot over a scope snapshot. */
 +    public static Evaluation createEvaluation(final Scope scope) {
-+        return new Evaluation(scope);
++        return new Evaluation(scope.copy());
      }
  
      public static List<Expression> parse(final String expression) throws IOException {
@@ -746,25 +768,21 @@ index 8f4c4f89453ce16346661d3977b179c9784fcad4..ecb8edda192d76021ccd38ccc37f2269
 +
 +    public static final class Evaluation {
 +
-+        private final Scope scope;
++        private final Layer scope;
++        private final MoLangControlFlow runtime = new MoLangControlFlow();
 +        private final MoLangControlFlow.Result result = new MoLangControlFlow.Result();
 +
 +        private Evaluation(final Scope scope) {
-+            this.scope = scope.copy();
-+            if (this.scope.get("math") instanceof ObjectValue math) {
-+                this.scope.set("math", MoLangMath.extend(math));
-+            }
-+            final MutableObjectBinding tempBinding = new MutableObjectBinding();
-+            this.scope.set("temp", tempBinding);
-+            this.scope.set("t", tempBinding);
-+            this.scope.set(MoLangControlFlow.EQUAL, (Function<Object>) (context, arguments) -> {
++            final Map<String, ObjectProperty> functions = this.runtime.functions(this.result);
++            functions.put(MoLangControlFlow.EQUAL, ObjectProperty.property((Function<Object>) (context, arguments) -> {
 +                final Value left = arguments.next().eval();
 +                final Value right = arguments.next().eval();
 +                final boolean equal = left != null && right != null && (left.isString() || right.isString()
 +                    ? left.isString() && right.isString() && left.getAsString().equals(right.getAsString())
 +                    : left.getAsNumber() == right.getAsNumber());
 +                return Value.of(equal);
-+            });
++            }, false));
++            this.scope = new Layer(scope, functions);
 +        }
 +
 +        public Value eval(final String expression) throws IOException {
@@ -772,12 +790,88 @@ index 8f4c4f89453ce16346661d3977b179c9784fcad4..ecb8edda192d76021ccd38ccc37f2269
 +        }
 +
 +        public Value eval(final List<Expression> expressions) {
-+            return MoLangControlFlow.evaluate(this.scope.copy(), expressions, this.result);
++            return this.runtime.evaluate(this.scope, expressions, this.result);
 +        }
 +
 +        public Value eval(final List<Expression> expressions, final float current) {
-+            this.scope.set("this", NumberValue.of(current));
++            this.scope.current = ObjectProperty.property(NumberValue.of(current), false);
 +            return this.eval(expressions);
++        }
++
++    }
++
++    /**
++     * Read-only evaluation bindings over a caller scope. Copying the caller scope for every expression made
++     * per-frame actor evaluation allocate and rehash every top-level binding, so group-owned names live here.
++     */
++    private static final class Layer implements Scope {
++
++        private final Scope base;
++        private final Map<String, ObjectProperty> functions;
++        private final ObjectProperty temp = ObjectProperty.property(new MutableObjectBinding(), false);
++        private final ObjectProperty math;
++        private ObjectProperty current;
++
++        private Layer(final Scope base, final Map<String, ObjectProperty> functions) {
++            this.base = base;
++            this.functions = functions;
++            this.math = base.get("math") instanceof ObjectValue standard ? ObjectProperty.property(MoLangMath.extend(standard), false) : null;
++        }
++
++        @Override
++        public ObjectProperty getProperty(final String name) {
++            final ObjectProperty local = this.local(name);
++            return local != null ? local : this.base.getProperty(name);
++        }
++
++        private ObjectProperty local(final String name) {
++            if (!name.isEmpty() && name.charAt(0) == '\0') {
++                return this.functions.get(name);
++            } else if (name.equalsIgnoreCase("t") || name.equalsIgnoreCase("temp")) {
++                return this.temp;
++            } else if (name.equalsIgnoreCase("math")) {
++                return this.math;
++            } else if (name.equalsIgnoreCase("this")) {
++                return this.current;
++            }
++            return null;
++        }
++
++        @Override
++        public boolean set(final String name, final Value value) {
++            return false;
++        }
++
++        @Override
++        public Map<String, ObjectProperty> entries() {
++            final Map<String, ObjectProperty> entries = new HashMap<>(this.base.entries());
++            entries.putAll(this.functions);
++            entries.put("temp", this.temp);
++            entries.put("t", this.temp);
++            if (this.math != null) {
++                entries.put("math", this.math);
++            }
++            if (this.current != null) {
++                entries.put("this", this.current);
++            }
++            return entries;
++        }
++
++        @Override
++        public Scope copy() {
++            final Scope copy = Scope.create();
++            this.entries().forEach((name, property) -> copy.set(name, property.value()));
++            copy.readOnly(true);
++            return copy;
++        }
++
++        @Override
++        public void readOnly(final boolean readOnly) {
++        }
++
++        @Override
++        public boolean readOnly() {
++            return true;
 +        }
 +
 +    }
