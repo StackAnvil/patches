@@ -20,7 +20,7 @@ export const setupGuides: Record<Setup, SetupGuide> = {
     client: "Your Java client",
     title: "Your regular client. One proxy.",
     description:
-      "Run the StackAnvil ViaProxy JAR beside Minecraft. Your Java client connects to ViaProxy, which connects to the Bedrock server.",
+      "Run the StackAnvil ViaProxy JAR beside Minecraft when you cannot install client mods. Your Java client connects to ViaProxy, which connects to the Bedrock server. The in-game Bedrock Friends, Realms, and LAN menus need a Fabric setup.",
     guideHash: "use-viaproxy",
     steps: () => [
       "Put the JAR in its own folder and run it.",
@@ -60,7 +60,10 @@ export const setupGuides: Record<Setup, SetupGuide> = {
   },
 };
 
-export const setupOrder = ["proxy", "fabric", "modpack"] as const satisfies readonly Setup[];
+export const setupOrder = ["fabric", "modpack", "proxy"] as const satisfies readonly Setup[];
+
+/** The setup most players should start with. */
+export const defaultSetup: Setup = "fabric";
 
 export function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`;

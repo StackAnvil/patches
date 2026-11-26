@@ -10,7 +10,7 @@ We welcome bug reports, test results, and patches. You do not need to work on al
 
 **Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).
 
-Use the [player guide](https://stackanvil.pistonmaster.net/getting-started/) to run ViaProxy beside a regular Java client or use ViaFabricPlus with the Bedrock add-on. The [latest release](https://github.com/StackAnvil/patches/releases/latest) has the JARs and a `.mrpack` with the tested Fabric client mods. Import the pack into a launcher that supports Modrinth modpacks.
+Use the [player guide](https://stackanvil.pistonmaster.net/getting-started/) to use ViaFabricPlus with the Bedrock add-on, the recommended setup, or to run ViaProxy beside a regular Java client. The [latest release](https://github.com/StackAnvil/patches/releases/latest) has the JARs and a `.mrpack` with the tested Fabric client mods. Import the pack into a launcher that supports Modrinth modpacks.
 
 ## Use the libraries in a project
 

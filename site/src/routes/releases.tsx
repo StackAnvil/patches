@@ -6,7 +6,7 @@ import { documentLoader } from "../lib/document-content";
 import { pageHead } from "../lib/metadata";
 import { NextSteps, SetupStage } from "../components/downloads";
 import { releaseLink, type Setup } from "../lib/releases";
-import { setupGuides } from "../lib/setups";
+import { defaultSetup, setupGuides } from "../lib/setups";
 import { site } from "../lib/site";
 
 const page = requireDocument("releases");
@@ -32,7 +32,7 @@ function Downloads() {
   const hydrated = useHydrated();
   // Static hosts serve the same HTML for every query. Match that HTML during
   // hydration, then apply the setup from a shared download link.
-  const setup = hydrated ? (search.setup ?? "proxy") : "proxy";
+  const setup = hydrated ? (search.setup ?? defaultSetup) : defaultSetup;
   const navigate = Route.useNavigate();
   const details = documentLoader.useContent(page.path, { slug: "releases", details: true });
   return (

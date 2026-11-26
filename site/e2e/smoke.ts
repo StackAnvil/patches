@@ -25,17 +25,17 @@ test("shared download links hydrate, select a setup, and survive browser history
   expect(failed).toEqual([]);
 });
 
-test("an unknown shared setup falls back to ViaProxy", async ({ page }) => {
+test("an unknown shared setup falls back to the Fabric mods", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
   });
   await page.goto("/releases/?setup=bogus");
-  await expect(page.getByRole("radio", { name: /ViaProxy/u })).toBeChecked();
+  await expect(page.getByRole("radio", { name: /Fabric mods/u })).toBeChecked();
   await expect(page.getByRole("link", { name: "Read the installation guide" })).toHaveAttribute(
     "href",
-    "/getting-started/#use-viaproxy",
+    "/getting-started/#use-viafabricplus-and-the-bedrock-add-on",
   );
   expect(errors).toEqual([]);
 });

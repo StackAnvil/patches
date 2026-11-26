@@ -9,7 +9,7 @@ import { PatchStack } from "../components/patch-stack";
 import { patchCount } from "../components/patch-stacks";
 import { pageHead } from "../lib/metadata";
 import type { Setup } from "../lib/releases";
-import { setupGuides } from "../lib/setups";
+import { defaultSetup, setupGuides } from "../lib/setups";
 import { bedrockVersion, homePage, site } from "../lib/site";
 
 export const Route = createFileRoute("/")({
@@ -56,7 +56,7 @@ const questions = [
 
 function Home() {
   const hydrated = useHydrated();
-  const [setup, setSetup] = useState<Setup>("proxy");
+  const [setup, setSetup] = useState<Setup>(defaultSetup);
   return (
     <main id="main-content" className="home">
       <section className="hero">
