@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { formatSize } from "../site/src/lib/setups";
 import { parseRelease, releaseLink, setupDownloads } from "../site/src/lib/releases";
 
 const tag = "stack-v1.2.3";
@@ -85,4 +86,11 @@ test("two modpacks or an invalid publish date leave the page without guessed det
   expect(setupDownloads(parsed, "modpack")).toEqual([]);
   expect(parsed?.publishedAt).toBe("");
   expect(parseRelease(release([]))?.publishedAt).toBe("2026-11-14T12:00:00Z");
+});
+
+test("download sizes match the sizes GitHub shows on the release page", () => {
+  expect(formatSize(276_597_887)).toBe("264 MB");
+  expect(formatSize(100_904_168)).toBe("96.2 MB");
+  expect(formatSize(10_370_000)).toBe("9.89 MB");
+  expect(formatSize(72_294)).toBe("70.6 KB");
 });

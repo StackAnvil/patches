@@ -65,6 +65,17 @@ export const setupOrder = ["fabric", "modpack", "proxy"] as const satisfies read
 /** The setup most players should start with. */
 export const defaultSetup: Setup = "fabric";
 
+/**
+ * Formats a size the way GitHub shows release assets: 1024-based units
+ * labeled KB, MB, or GB, with three significant digits.
+ */
 export function formatSize(bytes: number) {
-  return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+  const units = ["bytes", "KB", "MB", "GB"] as const;
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${Number(value.toPrecision(3))} ${units[unit]}`;
 }
