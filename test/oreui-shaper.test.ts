@@ -213,7 +213,8 @@ test("release packaging names every missing engine instead of a raw file error",
 });
 
 test("a local add-on embeds only the installed engines and needs the host's", async () => {
-  const local = { host: "macos-arm64" as const };
+  // Pin the local mode, because CI sets STACKANVIL_REQUIRE_ALL_OREUI_SHAPERS for its own builds.
+  const local = { all: false, host: "macos-arm64" as const };
   const fixture = await installation("linux-x64");
   await expect(
     oreUiShaperArguments("viafabricplus-bedrock", fixture.directory, undefined, local),
