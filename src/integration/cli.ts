@@ -64,6 +64,7 @@ import {
   type GraphicsProfile,
 } from "./graphics.ts";
 import { print, printError } from "../output.ts";
+import { joinNativeServer } from "../replay/native-menu.ts";
 const privateRoot = join(root, ".stackanvil", "integration");
 const captureCli = join(root, "src", "capture", "cli.ts");
 const captureUi = createCaptureUi({
@@ -774,40 +775,12 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
       }
       yield* Effect.sleep(20_000);
       yield* captureEffect(["ui", "screenshot", "native-menu"]);
-      yield* captureEffect(["ui", "key", "Return"]);
-      yield* Effect.sleep(2500);
-      yield* captureEffect(["ui", "screenshot", "native-play-menu"]);
-      yield* captureEffect(["ui", "click", "0.82", "0.11"]);
-      yield* Effect.sleep(2500);
-      yield* captureEffect(["ui", "screenshot", "native-server-list"]);
-      yield* captureEffect(["ui", "click", "0.17", "0.22"]);
-      yield* Effect.sleep(2000);
-      yield* captureEffect(["ui", "screenshot", "native-add-form"]);
-      yield* captureEffect(["ui", "click", "0.25", "0.17"]);
-      yield* captureEffect(["ui", "type", label]);
-      yield* captureEffect(["ui", "click", "0.25", "0.31"]);
-      yield* captureEffect(["ui", "type", "127.0.0.1"]);
-      yield* captureEffect(["ui", "click", "0.25", "0.46"]);
-      yield* captureEffect(["ui", "key", "Control+a"]);
-      yield* captureEffect(["ui", "type", String(target.port)]);
-      yield* captureEffect(["ui", "click", "0.69", "0.57"]);
-      yield* Effect.sleep(4000);
-      yield* captureEffect(["ui", "screenshot", "native-before-trust"]);
-      const trustPanelPixel = (yield* captureEffect(["ui", "pixel", "0.36", "0.28"]))
-        .split(/\s+/u)
-        .map(Number);
-      if (
-        trustPanelPixel.length !== 3 ||
-        trustPanelPixel.some((value) => !Number.isFinite(value))
-      ) {
-        return yield* labError(
-          "bedrockJoin",
-          new Error("Could not read the Bedrock trust dialog state."),
-        );
-      }
-      if (trustPanelPixel.every((value) => value > 150)) {
-        yield* captureEffect(["ui", "click", "0.5", "0.59"]);
-      }
+      yield* labIO("bedrockJoin", () =>
+        joinNativeServer(
+          { ui: (args) => captureUi.command(["ui", ...args]), wait: (ms) => Bun.sleep(ms) },
+          { name: label, address: "127.0.0.1", port: target.port },
+        ),
+      );
       const player = yield* waitForJoinEffect({
         route: "bedrock-bedrock",
         serverLog: async () => (await textFile(target.log)).slice(serverLogStart),

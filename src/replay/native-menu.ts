@@ -1,3 +1,6 @@
+import { Schema } from "effect";
+import { parseJson } from "../guards.ts";
+
 /** Samples one RGB pixel at fractions of the native client's content area. */
 type Pixel = (x: number, y: number) => Promise<number[]>;
 type Press = () => Promise<void>;
@@ -20,7 +23,7 @@ export async function revealNativeTitle(pixel: Pixel, escape: Press, wait: Wait)
     await escape();
     await wait(2000);
   }
-  throw new Error("A dialog still covers the native title screen. Read native-menu.png.");
+  throw new Error("A dialog still covers the native title screen. Read native-title-blocked.png.");
 }
 
 /** Featured servers fill the tab, so move focus down until both bottom buttons are visible. */
@@ -60,4 +63,83 @@ export async function acceptNativeTrust(
     await wait(1000);
   }
   return false;
+}
+
+const WindowsSchema = Schema.Array(Schema.Struct({ title: Schema.String, height: Schema.Finite }));
+
+/** Wine draws the window caption inside the surface under winewayland. */
+const captionHeight = 26;
+
+export interface NativeMenu {
+  /** Runs one `capture ui` command against the Bedrock window and returns its output. */
+  ui: (args: string[]) => Promise<string>;
+  wait: Wait;
+}
+
+/**
+ * Add a server from the 1.26.60 title screen, join it and accept its trust prompt. Positions are
+ * fractions of the game's content area below the caption. Returns whether a trust prompt appeared.
+ */
+export async function joinNativeServer(
+  menu: NativeMenu,
+  server: { name: string; address: string; port: number },
+): Promise<boolean> {
+  // The window list covers every client on the display, so select the Bedrock window by title.
+  const windows = parseJson(WindowsSchema, await menu.ui(["list"]));
+  const height =
+    windows.find((window) => /^minecraft(?: for windows| bedrock)?$/iu.test(window.title))
+      ?.height ?? 0;
+  if (height <= captionHeight) throw new Error("The native client window has no content area.");
+  const y = (fraction: number) =>
+    String((captionHeight + fraction * (height - captionHeight)) / height);
+  // Bedrock under winewayland ignores a press on a control it has not seen the pointer hover first.
+  const click = async (x: number, fraction: number) => {
+    await menu.ui(["move", String(x), y(fraction)]);
+    await menu.wait(400);
+    await menu.ui(["mouse-hold", String(x), y(fraction), "left", "150"]);
+  };
+  const pixel = async (x: number, fraction: number) =>
+    (await menu.ui(["pixel", String(x), y(fraction)])).trim().split(/\s+/u).map(Number);
+  const screenshotOnFailure = (name: string) => async (cause: unknown) => {
+    await menu.ui(["screenshot", name]);
+    throw cause;
+  };
+  await revealNativeTitle(
+    pixel,
+    async () => {
+      await menu.ui(["key", "Escape"]);
+    },
+    menu.wait,
+  ).catch(screenshotOnFailure("native-title-blocked"));
+  await click(0.5, 0.5);
+  // The Play screen opens several seconds later and ignores input while it animates in.
+  await menu.wait(12_000);
+  await click(0.82, 0.11);
+  await menu.wait(2500);
+  await menu.ui(["move", "0.5", y(0.7)]);
+  await scrollToNativeAddServer(
+    pixel,
+    async () => {
+      await menu.ui(["key", "Down"]);
+    },
+    menu.wait,
+  ).catch(screenshotOnFailure("native-servers"));
+  await click(0.646, 0.938);
+  await menu.wait(2000);
+  for (const [row, value] of [
+    [0.17, server.name],
+    [0.31, server.address],
+    [0.46, String(server.port)],
+  ] as const) {
+    await click(0.25, row);
+    await menu.wait(250);
+    await menu.ui(["key", "Control+a"]);
+    await menu.wait(250);
+    await menu.ui(["type", value]);
+    await menu.wait(250);
+  }
+  await click(0.69, 0.57);
+  const trusted = await acceptNativeTrust(pixel, () => click(0.5, 0.59), menu.wait);
+  await menu.ui(["screenshot", "native-after-trust"]);
+  return trusted;
 }

@@ -34,7 +34,7 @@ test("startup promotions are closed with Escape until Play shows", async () => {
       async () => {},
       noWait,
     ),
-  ).rejects.toThrow("native-menu.png");
+  ).rejects.toThrow("native-title-blocked.png");
 });
 
 test("Add server is clicked only after both bottom buttons scroll into view", async () => {

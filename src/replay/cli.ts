@@ -51,7 +51,7 @@ import {
 } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
-import { acceptNativeTrust, revealNativeTitle, scrollToNativeAddServer } from "./native-menu.ts";
+import { joinNativeServer } from "./native-menu.ts";
 import {
   cleanupReplaySession,
   requestReplayJavaStop,
@@ -203,9 +203,6 @@ async function buildPlugin(
   ]);
   return { classes, plugin, build, observer };
 }
-/** Pixel height of the caption that Wine draws inside the Bedrock window on the Wayland lab. */
-const nativeCaptionHeight = 26;
-
 async function ui(args: string[], directory: string, client = "java"): Promise<void> {
   await execute(
     "bun",
@@ -599,79 +596,30 @@ async function launchNative(
     print(`Native client is waiting for verified manual connection to 127.0.0.1:${bind}.`);
     return { pid: child.pid, log };
   }
-  // Under winewayland, Wine draws the window caption inside the surface, so map positions in the
-  // game's content area below it. The title screen has no keyboard focus, so click Play.
-  const windows = await execute(
-    "bun",
-    [join(root, "src/capture/cli.ts"), "ui", "list", "--client", "bedrock"],
-    { cwd: root },
-  );
-  const height =
-    parseJson(Schema.Array(Schema.Struct({ height: Schema.Finite })), windows.stdout)[0]?.height ??
-    0;
-  if (height <= nativeCaptionHeight)
-    throw new Error("The native client window has no content area.");
-  const contentY = (y: number): string =>
-    String((nativeCaptionHeight + y * (height - nativeCaptionHeight)) / height);
-  // Bedrock under winewayland ignores a press on a tab it has not seen the pointer hover first.
-  const click = async (x: number, y: number) => {
-    await ui(["move", String(x), contentY(y)], directory, "bedrock");
-    await wait(400);
-    await ui(["mouse-hold", String(x), contentY(y), "left", "150"], directory, "bedrock");
-  };
-  const pixel = async (x: number, y: number): Promise<number[]> => {
-    const sample = await execute(
-      "bun",
-      [
-        join(root, "src/capture/cli.ts"),
-        "ui",
-        "pixel",
-        String(x),
-        contentY(y),
-        "--client",
-        "bedrock",
-      ],
-      { cwd: root },
-    );
-    return sample.stdout.trim().split(/\s+/u).map(Number);
-  };
-  await revealNativeTitle(pixel, () => ui(["key", "Escape"], directory, "bedrock"), wait).catch(
-    async (cause: unknown) => {
-      await ui(["screenshot", "native-menu"], directory, "bedrock");
-      throw cause;
+  const trusted = await joinNativeServer(
+    {
+      ui: async (args) => {
+        const result = await execute(
+          "bun",
+          [
+            join(root, "src/capture/cli.ts"),
+            "ui",
+            ...args,
+            "--client",
+            "bedrock",
+            "--output-dir",
+            directory,
+          ],
+          { cwd: root },
+        );
+        if (args[0] === "screenshot") await chmod(join(directory, `${args[1]}.png`), 0o600);
+        return result.stdout;
+      },
+      wait,
     },
+    { name: "stackanvil-native-recording", address: "127.0.0.1", port: bind },
   );
-  await click(0.5, 0.5);
-  // The Play screen opens several seconds later and ignores input while it animates in.
-  await wait(12_000);
-  await click(0.82, 0.11);
-  await wait(2500);
-  // Featured servers fill the tab. Arrow keys move focus down until Add server shows at the bottom.
-  await ui(["move", "0.5", contentY(0.7)], directory, "bedrock");
-  await scrollToNativeAddServer(pixel, () => ui(["key", "Down"], directory, "bedrock"), wait).catch(
-    async (cause: unknown) => {
-      await ui(["screenshot", "native-servers"], directory, "bedrock");
-      throw cause;
-    },
-  );
-  await click(0.646, 0.938);
-  await wait(2000);
-  for (const [row, value] of [
-    [0.17, "stackanvil-native-recording"],
-    [0.31, "127.0.0.1"],
-    [0.46, String(bind)],
-  ] as const) {
-    await click(0.25, row);
-    await wait(250);
-    await ui(["key", "Control+a"], directory, "bedrock");
-    await wait(250);
-    await ui(["type", value], directory, "bedrock");
-    await wait(250);
-  }
-  await click(0.69, 0.57);
-  if (!(await acceptNativeTrust(pixel, () => click(0.5, 0.59), wait)))
-    print("The native client did not ask to trust the loopback server.");
-  await ui(["screenshot", "native-after-trust"], directory, "bedrock");
+  if (!trusted) print("The native client did not ask to trust the loopback server.");
   return { pid: child.pid, log };
 }
 
