@@ -8,6 +8,7 @@ import { buildArtifactEvidence, validationSteps, type ValidationReport } from ".
 import { root } from "../src/model.ts";
 import type { ViaFabricPlusPin } from "../src/viafabricplus.ts";
 import { writeClientJar } from "./helpers/client-artifacts.ts";
+import { companionProject } from "../src/client-artifacts.ts";
 import { execFileSync } from "node:child_process";
 
 test("release bundles verified client JARs and ignores stale launcher archives and modpacks", async () => {
@@ -17,16 +18,18 @@ test("release bundles verified client JARs and ignores stale launcher archives a
     const output = join(directory, "release");
     const projects = ["cubeconverter", "viabedrock", "viafabricplus-bedrock", "viaproxy"];
     const pin = JSON.parse(await readFile(join(root, "viafabricplus.json"), "utf8")) as ViaFabricPlusPin;
-    for (const project of [...projects, "viafabricplus"]) {
+    const companionJar = "stackanvil-foundry-companion-1.jar";
+    for (const project of [...projects, "viafabricplus", companionProject]) {
       const projectDir = join(artifacts, project);
       await mkdir(projectDir, { recursive: true });
-      const file = project === "viafabricplus" ? `ViaFabricPlus-${pin.version}.jar` : `${project}-1-StackAnvil.jar`;
+      const file = project === "viafabricplus" ? `ViaFabricPlus-${pin.version}.jar`
+        : project === companionProject ? companionJar : `${project}-1-StackAnvil.jar`;
       const bytes = Buffer.from(project);
-      const sha256 = project.startsWith("viafabricplus")
+      const sha256 = project.startsWith("viafabricplus") || project === companionProject
         ? await writeClientJar(projectDir, file, project)
         : createHash("sha256").update(bytes).digest("hex");
       if (project === "viafabricplus") pin.sha256 = sha256;
-      else if (!project.startsWith("viafabricplus")) await writeFile(join(projectDir, file), bytes);
+      else if (!project.startsWith("viafabricplus") && project !== companionProject) await writeFile(join(projectDir, file), bytes);
       await writeFile(join(projectDir, "pom.xml"), "Maven metadata");
       await writeFile(join(projectDir, "manifest.json"), JSON.stringify({
         target: project,
@@ -44,11 +47,12 @@ test("release bundles verified client JARs and ignores stale launcher archives a
     const released = await prepareReleaseAssets(artifacts, output, projects, pin);
     expect(new Set(released)).toEqual(new Set([
       "viafabricplus-manifest.json", "viafabricplus-bedrock-manifest.json", `ViaFabricPlus-${pin.version}.jar`,
-      ...projects.map((project) => `${project}-1-StackAnvil.jar`), pack,
+      ...projects.map((project) => `${project}-1-StackAnvil.jar`), companionJar, pack,
     ]));
     expect(new Set(await readdir(output))).toEqual(new Set(released));
-    for (const project of ["viafabricplus", "viafabricplus-bedrock"]) {
-      const file = project === "viafabricplus" ? `ViaFabricPlus-${pin.version}.jar` : `${project}-1-StackAnvil.jar`;
+    for (const project of ["viafabricplus", "viafabricplus-bedrock", companionProject]) {
+      const file = project === "viafabricplus" ? `ViaFabricPlus-${pin.version}.jar`
+        : project === companionProject ? companionJar : `${project}-1-StackAnvil.jar`;
       const embedded = execFileSync("unzip", ["-p", join(output, pack), `client-overrides/mods/${file}`]);
       expect(embedded).toEqual(await readFile(join(output, file)));
     }

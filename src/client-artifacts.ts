@@ -13,6 +13,10 @@ import { execFileAsync as execute } from "./process.ts";
  */
 export const javaTarget = { minecraft: "26.3", fabricLoader: "0.19.5" } as const;
 
+/** The StackAnvil-owned client mod in mods/foundry-companion. It ships beside the add-on in each client bundle. */
+export const companionProject = "foundry-companion";
+export const companionModId = "stackanvil_foundry";
+
 const ArtifactManifestSchema = Schema.Struct({
   baseSha: Schema.optionalKey(Schema.String),
   jenkinsBuild: Schema.optionalKey(Schema.Finite),
@@ -62,9 +66,18 @@ async function mod(file: string): Promise<FabricMod> {
 export async function clientArtifacts(artifactsDir = join(root, "dist"), pin?: ViaFabricPlusPin) {
   const baseJar = await artifact("viafabricplus", artifactsDir, pin);
   const addonJar = await artifact("viafabricplus-bedrock", artifactsDir);
-  const [base, addon] = await Promise.all([mod(baseJar), mod(addonJar)]);
-  if (base.id !== "viafabricplus" || addon.id !== "viafabricplus-bedrock")
-    throw new Error("The two Fabric mod IDs do not match the expected stack");
+  const companionJar = await artifact(companionProject, artifactsDir);
+  const [base, addon, companion] = await Promise.all([
+    mod(baseJar),
+    mod(addonJar),
+    mod(companionJar),
+  ]);
+  if (
+    base.id !== "viafabricplus" ||
+    addon.id !== "viafabricplus-bedrock" ||
+    companion.id !== companionModId
+  )
+    throw new Error("The Fabric mod IDs do not match the expected stack");
   if (base.depends.minecraft !== addon.depends.minecraft)
     throw new Error("ViaFabricPlus and its Bedrock add-on target different Minecraft versions");
   for (const [name, modules] of [
@@ -85,5 +98,15 @@ export async function clientArtifacts(artifactsDir = join(root, "dist"), pin?: V
     throw new Error(
       `The client JARs target Minecraft ${base.depends.minecraft}, but javaTarget in src/client-artifacts.ts names ${javaTarget.minecraft}`,
     );
-  return { baseJar, addonJar, version: javaTarget.minecraft, loader: javaTarget.fabricLoader };
+  if (companion.depends.minecraft !== addon.depends.minecraft)
+    throw new Error(
+      "The Foundry companion and the Bedrock add-on target different Minecraft versions",
+    );
+  return {
+    baseJar,
+    addonJar,
+    companionJar,
+    version: javaTarget.minecraft,
+    loader: javaTarget.fabricLoader,
+  };
 }

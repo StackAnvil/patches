@@ -6,6 +6,7 @@ const files = [
   "viafabricplus-bedrock-1.1.1-StackAnvil.jar",
   "ViaFabricPlus-5.1.2-SNAPSHOT.jar", "ViaProxy-3.4.15-StackAnvil.jar",
   "ViaBedrock-0.0.31-StackAnvil.jar", "cubeconverter-1.3-StackAnvil.jar",
+  "stackanvil-foundry-companion-0.1.0.jar",
 ];
 
 test("download links select each published artifact and preserve tag and filename encoding", () => {

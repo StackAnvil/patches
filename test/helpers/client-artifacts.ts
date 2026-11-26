@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { javaTarget } from "../../src/client-artifacts.ts";
+import { companionModId, companionProject, javaTarget } from "../../src/client-artifacts.ts";
 
 export async function writeClientJar(
   directory: string,
@@ -16,7 +16,7 @@ export async function writeClientJar(
   await writeFile(
     join(staging, "fabric.mod.json"),
     JSON.stringify({
-      id: project,
+      id: project === companionProject ? companionModId : project,
       version: "1",
       depends: { minecraft },
       ...(project === "viafabricplus-bedrock"

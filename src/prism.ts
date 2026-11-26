@@ -25,13 +25,14 @@ export const prismInstance =
   process.env["STACKANVIL_JAVA_INSTANCE"] ?? `StackAnvil ${javaTarget.minecraft}`;
 
 async function prepareFiles(): Promise<{ directory: string; version: string }> {
-  const { baseJar, addonJar, version, loader } = await clientArtifacts();
+  const { baseJar, addonJar, companionJar, version, loader } = await clientArtifacts();
   const lwjgl = "3.4.3";
   await rm(bundleRoot, { recursive: true, force: true });
   const modsDir = join(bundleRoot, "minecraft", "mods");
   await mkdir(modsDir, { recursive: true });
   await copyFile(baseJar, join(modsDir, basename(baseJar)), constants.COPYFILE_FICLONE);
   await copyFile(addonJar, join(modsDir, basename(addonJar)), constants.COPYFILE_FICLONE);
+  await copyFile(companionJar, join(modsDir, basename(companionJar)), constants.COPYFILE_FICLONE);
   const pack = {
     components: [
       {

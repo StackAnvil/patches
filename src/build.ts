@@ -30,6 +30,7 @@ import {
   verifyEmbeddedOreUiShaper,
 } from "./oreui-shaper.ts";
 import { print } from "./output.ts";
+import { companionProject } from "./client-artifacts.ts";
 
 interface Coordinates {
   group: string;
@@ -316,6 +317,67 @@ const buildOne = Effect.fn("buildOne")(function* (
   return output;
 });
 
+/**
+ * Builds the StackAnvil-owned Foundry companion mod after the add-on. It is repository source, not a patch target, and
+ * compiles against the ViaFabricPlus and ViaBedrock builds from the same run.
+ */
+const buildCompanion = Effect.fn("buildCompanion")(function* (built: Map<string, Coordinates>) {
+  const viaFabricPlus = built.get("viafabricplus");
+  const viaBedrock = built.get("viabedrock");
+  if (!viaFabricPlus || !viaBedrock)
+    return yield* StackError.make({
+      message: "The Foundry companion needs this run's ViaFabricPlus and ViaBedrock artifacts",
+    });
+  const directory = join(root, "mods", companionProject);
+  const environment = yield* Effect.promise(() => buildEnvironment("25"));
+  yield* command(
+    "bash",
+    [
+      "./gradlew",
+      "--no-daemon",
+      "--stacktrace",
+      `-PstackanvilMavenRepo=${localRepo}`,
+      `-PstackanvilViaFabricPlusVersion=${viaFabricPlus.version}`,
+      `-PstackanvilViaBedrockVersion=${viaBedrock.version}`,
+      "clean",
+      "build",
+    ],
+    directory,
+    environment,
+  );
+  const libs = join(directory, "build", "libs");
+  const jars = (yield* Effect.promise(() => readdir(libs))).filter(
+    (file) => file.endsWith(".jar") && !file.endsWith("-sources.jar"),
+  );
+  const [name] = jars;
+  if (name === undefined || jars.length !== 1)
+    return yield* StackError.make({
+      message: `Expected one Foundry companion JAR in ${libs}, found ${jars.length}`,
+    });
+  const output = join(root, "dist", companionProject);
+  yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
+  yield* Effect.promise(() => mkdir(output, { recursive: true }));
+  yield* Effect.promise(() =>
+    copyFile(join(libs, name), join(output, name), constants.COPYFILE_FICLONE),
+  );
+  const bytes = yield* Effect.promise(() => Bun.file(join(output, name)).arrayBuffer());
+  const manifest = {
+    target: companionProject,
+    source: `mods/${companionProject}`,
+    dependencies: [
+      { target: "viafabricplus", coordinates: viaFabricPlus },
+      { target: "viabedrock", coordinates: viaBedrock },
+    ],
+    artifacts: [
+      { file: name, sha256: createHash("sha256").update(Buffer.from(bytes)).digest("hex") },
+    ],
+  };
+  yield* Effect.promise(() =>
+    writeFile(join(output, "manifest.json"), `${encodeIndentedJson(manifest)}\n`),
+  );
+  return output;
+});
+
 export const build = Effect.fn("build")(function* (id: string) {
   const targets = id === "viafabricplus" ? undefined : yield* Effect.promise(() => getTargets());
   const order = targets === undefined ? [] : buildOrder(targets, id);
@@ -345,7 +407,16 @@ export const build = Effect.fn("build")(function* (id: string) {
     print(`Building ${target} (${index + 1}/${inputs.size})`);
     yield* buildOne(target, input, built, libDataChannelVersion);
   }
-  return [...(includeViaFabricPlus ? ["viafabricplus"] : []), ...order]
+  const includeCompanion = order.includes("viafabricplus-bedrock");
+  if (includeCompanion) {
+    print(`Building ${companionProject}`);
+    yield* buildCompanion(built);
+  }
+  return [
+    ...(includeViaFabricPlus ? ["viafabricplus"] : []),
+    ...order,
+    ...(includeCompanion ? [companionProject] : []),
+  ]
     .map((target) => join(root, "dist", target))
     .join("\n");
 });

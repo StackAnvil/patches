@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { parseArgs } from "node:util";
 import { Effect, Schema } from "effect";
-import { artifact } from "./client-artifacts.ts";
+import { artifact, companionProject } from "./client-artifacts.ts";
 import { root, targetIds } from "./model.ts";
 import { git } from "./process.ts";
 import type { ViaFabricPlusPin } from "./viafabricplus.ts";
@@ -141,7 +141,11 @@ export async function buildArtifactEvidence(
   options: { projects?: readonly string[]; pin?: ViaFabricPlusPin | undefined } = {},
 ): Promise<ArtifactEvidence[]> {
   const entries: ArtifactEvidence[] = [];
-  for (const project of [...(options.projects ?? (await targetIds())), "viafabricplus"]) {
+  for (const project of [
+    ...(options.projects ?? (await targetIds())),
+    "viafabricplus",
+    companionProject,
+  ]) {
     const jar = await artifact(project, artifactsDirectory, options.pin);
     for (const file of [jar, join(artifactsDirectory, project, "manifest.json")]) {
       entries.push({

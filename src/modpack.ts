@@ -50,14 +50,17 @@ export const bundleModpack = Effect.fn("bundleModpack")(function* (
     try: async () => {
       const artifactsDir = resolve(artifactsPath);
       const outputDir = resolve(outputPath);
-      const { baseJar, addonJar, version, loader } = await clientArtifacts(artifactsDir, pin);
+      const { baseJar, addonJar, companionJar, version, loader } = await clientArtifacts(
+        artifactsDir,
+        pin,
+      );
       await mkdir(outputDir, { recursive: true });
       const staging = await mkdtemp(join(outputDir, ".modpack-"));
       try {
         const mods = join(staging, "client-overrides", "mods");
         await mkdir(mods, { recursive: true });
         const content = [];
-        for (const jar of [baseJar, addonJar]) {
+        for (const jar of [baseJar, addonJar, companionJar]) {
           const file = basename(jar);
           await copyFile(jar, join(mods, file));
           content.push({
@@ -77,7 +80,8 @@ export const bundleModpack = Effect.fn("bundleModpack")(function* (
             game: "minecraft",
             versionId,
             name: "StackAnvil Bedrock client",
-            summary: "ViaFabricPlus and the StackAnvil Bedrock add-on for Minecraft Java Edition.",
+            summary:
+              "ViaFabricPlus, the StackAnvil Bedrock add-on, and the Bedrock Foundry companion for Minecraft Java Edition.",
             files: [],
             dependencies: { minecraft: version, "fabric-loader": loader },
           })}\n`,

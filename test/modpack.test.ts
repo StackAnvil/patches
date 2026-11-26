@@ -7,7 +7,7 @@ import { basename, join, relative } from "node:path";
 import { expect, test } from "bun:test";
 import { Effect } from "effect";
 import { assetZip } from "../scripts/bundle-bedrock-assets.ts";
-import { javaTarget } from "../src/client-artifacts.ts";
+import { companionProject, javaTarget } from "../src/client-artifacts.ts";
 import { bundleModpack, modpackTarget } from "../src/modpack.ts";
 import { root } from "../src/model.ts";
 import type { ViaFabricPlusPin } from "../src/viafabricplus.ts";
@@ -28,7 +28,9 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
       const file =
         project === "viafabricplus"
           ? `ViaFabricPlus-${pin.version}.jar`
-          : `${project}-1-StackAnvil.jar`;
+          : project === companionProject
+            ? "stackanvil-foundry-companion-1.jar"
+            : `${project}-1-StackAnvil.jar`;
       const sha256 = await writeClientJar(dir, file, project, minecraft, converter);
       if (project === "viafabricplus") pin.sha256 = sha256;
       await writeFile(
@@ -44,6 +46,7 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
     }
     const base = await client("viafabricplus");
     const addon = await client("viafabricplus-bedrock");
+    const companion = await client(companionProject);
     const pack = await Effect.runPromise(
       bundleModpack(artifacts, relative(process.cwd(), output), pin),
     );
@@ -58,8 +61,8 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
     });
     expect(index.files).toEqual([]);
     const entries = execFileSync("unzip", ["-Z1", pack], { encoding: "utf8" }).trim().split("\n");
-    expect(entries.filter((entry) => !entry.endsWith("/"))).toHaveLength(3);
-    for (const jar of [base, addon]) {
+    expect(entries.filter((entry) => !entry.endsWith("/"))).toHaveLength(4);
+    for (const jar of [base, addon, companion]) {
       const bytes = execFileSync("unzip", ["-p", pack, `client-overrides/mods/${basename(jar)}`]);
       expect(createHash("sha256").update(bytes).digest("hex")).toBe(
         createHash("sha256")
@@ -67,6 +70,12 @@ test("modpack preserves verified client bytes and refuses incompatible or corrup
           .digest("hex"),
       );
     }
+    await client(companionProject, "0.0");
+    await rejects(
+      Effect.runPromise(bundleModpack(artifacts, output, pin)),
+      /Foundry companion and the Bedrock add-on target different Minecraft/,
+    );
+    await client(companionProject);
     await client("viafabricplus-bedrock", undefined, "cubeconverter-1-StackAnvil.jar");
     await Effect.runPromise(bundleModpack(artifacts, output, pin));
     const legacy = await readFile(pack);

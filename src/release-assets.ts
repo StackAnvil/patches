@@ -6,6 +6,7 @@ import { parseJson } from "./guards.ts";
 import { bundleModpack } from "./modpack.ts";
 import { root, targetIds } from "./model.ts";
 import { verifyPinnedManifest, type ViaFabricPlusPin } from "./viafabricplus.ts";
+import { companionProject } from "./client-artifacts.ts";
 import {
   buildArtifactEvidence,
   requireReleaseEvidence,
@@ -36,7 +37,7 @@ export async function prepareReleaseAssets(
   await mkdir(outputDir, { recursive: true });
   const names = new Set<string>();
 
-  for (const project of [...projects, "viafabricplus"]) {
+  for (const project of [...projects, "viafabricplus", companionProject]) {
     const projectDir = join(artifactsDir, project);
     const manifest = parseJson(
       ArtifactManifestSchema,
@@ -51,7 +52,9 @@ export async function prepareReleaseAssets(
       basename(artifact.file) !== artifact.file ||
       (project === "viafabricplus"
         ? !/^ViaFabricPlus-[^/]+\.jar$/u.test(artifact.file)
-        : !artifact.file.endsWith("-StackAnvil.jar"))
+        : project === companionProject
+          ? !/^stackanvil-foundry-companion-[^/]+\.jar$/u.test(artifact.file)
+          : !artifact.file.endsWith("-StackAnvil.jar"))
     ) {
       throw new Error(`Invalid ${project} release JAR name: ${artifact.file}`);
     }

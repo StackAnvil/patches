@@ -16,6 +16,12 @@ const downloads = [
     description: "Install in your Fabric client's mods folder alongside ViaFabricPlus.",
   },
   {
+    title: "Foundry companion",
+    pattern: /^stackanvil-foundry-companion-.+\.jar$/u,
+    description:
+      "Optional. Start your Bedrock Foundry servers from the client and join them. Install beside the Bedrock add-on.",
+  },
+  {
     title: "ViaFabricPlus",
     pattern: /^ViaFabricPlus-.+\.jar$/u,
     description: "The pinned upstream mod, required by the Bedrock add-on.",
