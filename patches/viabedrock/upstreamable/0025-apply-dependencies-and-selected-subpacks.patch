@@ -6,8 +6,10 @@ Subject: [PATCH] feat(resource-packs): apply dependencies and selected
 
 Resolve pack order from manifest dependencies while preserving server precedence for unrelated packs. Overlay the server-selected subpack before conversion and key the converted cache by effective content so variants cannot share a stale Java pack.
 
+A server can select a subpack that the pack manifest does not declare. The Hive selects 'HiveDR' for a pack without that folder_name, and native clients still join. Select the root pack and log a warning instead of failing the stack. This keeps the join working without claiming how the native client resolves such a name; it may apply a different variant.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
-index fe198f01a9ee9cb88de95d2a5de30af00ed84900..ebab0034b6df6b92e05c0f09547245d7ac5c1680 100644
+index fe198f01a9ee9cb88de95d2a5de30af00ed84900..6d47e5f630e59008a43e43d0ee2b589c19dd540c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
 @@ -22,6 +22,7 @@ import com.viaversion.viaversion.libs.gson.JsonElement;
@@ -54,7 +56,7 @@ index fe198f01a9ee9cb88de95d2a5de30af00ed84900..ebab0034b6df6b92e05c0f09547245d7
              /*if (formatVersion >= 2) { // Technically needed, but not feasible to implement currently
               *     final Semver minEngineVersion;
               *     if (formatVersion >= 3) {
-@@ -94,6 +92,63 @@ public class ResourcePack {
+@@ -94,6 +92,66 @@ public class ResourcePack {
          }
      }
  
@@ -108,17 +110,20 @@ index fe198f01a9ee9cb88de95d2a5de30af00ed84900..ebab0034b6df6b92e05c0f09547245d7
 +        return version.getAsString();
 +    }
 +
++    /** The empty name selects the root pack. Other names must match a manifest subpack's folder_name. */
++    public boolean hasSubpack(final String subpackName) {
++        return subpackName.isEmpty() || this.subpacks.contains(subpackName);
++    }
++
++    /** A name the manifest does not declare selects the root pack, so a server's stale selection cannot block the join. */
 +    public ResourcePack selectSubpack(final String subpackName) {
-+        if (!subpackName.isEmpty() && !this.subpacks.contains(subpackName)) {
-+            throw new IllegalArgumentException("Unknown subpack '" + subpackName + "' in resource pack " + this.key);
-+        }
-+        return new ResourcePack(this, new SubpackContent(this.content, subpackName));
++        return new ResourcePack(this, new SubpackContent(this.content, this.hasSubpack(subpackName) ? subpackName : ""));
 +    }
 +
      public void decryptContent(final byte[] contentKey, final String expectedContentId) {
          try {
              if (!this.content.contains("contents.json")) {
-@@ -185,6 +240,10 @@ public class ResourcePack {
+@@ -185,6 +243,10 @@ public class ResourcePack {
          return this.content;
      }
  
@@ -335,7 +340,7 @@ index 0000000000000000000000000000000000000000..26031077e6a3a90e9b08f703eb2558a4
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index c0ef855a881771a579179b680123b9f031785854..41b5fb179cdfd9237e034e93dfcd848add0ee96b 100644
+index c0ef855a881771a579179b680123b9f031785854..52956893b98c78f4ede7e1e017894c72867bcaff 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -76,7 +76,7 @@ public final class ResourcePackPackets {
@@ -411,11 +416,14 @@ index c0ef855a881771a579179b680123b9f031785854..41b5fb179cdfd9237e034e93dfcd848a
              final ResourcePack resourcePack = loadStateTracker.getResourcePack(key);
              if (resourcePack != null) {
                  final ResourcePackLoadStateTracker.Info info = loadStateTracker.getRequest(key);
-@@ -320,7 +326,7 @@ public final class ResourcePackPackets {
+@@ -320,7 +326,10 @@ public final class ResourcePackPackets {
                          ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to save resource pack: " + resourcePack.key(), e);
                      }
                  }
 -                resourcePacks.add(resourcePack);
++                if (!resourcePack.hasSubpack(subpackNames[i])) {
++                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Server selected unknown subpack '" + subpackNames[i] + "' in resource pack " + key + ". Using the root pack.");
++                }
 +                resourcePacks.add(resourcePack.selectSubpack(subpackNames[i]));
              } else {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing resource pack: " + key);
@@ -452,10 +460,10 @@ index ecf081edbb6b8a89ca57402e6871347dcde8e652..d3dc43159e886b7003d7f34288a59c40
                  this.packStackTopToBottom.add(BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get(i));
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStackTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStackTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..1abb141dd8a358e6bdffc21c71202136071607bd
+index 0000000000000000000000000000000000000000..accb511688c3705aea10d8ec06601db5e784525f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStackTest.java
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -546,7 +554,20 @@ index 0000000000000000000000000000000000000000..1abb141dd8a358e6bdffc21c71202136
 +        final ResourcePack noSubpack = source.selectSubpack("");
 +        assertArrayEquals("root".getBytes(StandardCharsets.UTF_8), noSubpack.content().get("textures/root.png"));
 +        assertFalse(noSubpack.content().getFilesDeep("", "").stream().anyMatch(path -> path.startsWith("subpacks/")));
-+        assertThrows(IllegalArgumentException.class, () -> source.selectSubpack("unknown"));
++    }
++
++    @Test
++    void unknownServerSubpackSelectsRootPackInsteadOfFailing() {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":[0,0,1],\"name\":\"test\"},\"subpacks\":[{\"folder_name\":\"low\",\"name\":\"Low\"}]}");
++        content.putString("textures/root.png", "root");
++        content.putString("subpacks/low/textures/root.png", "low");
++        final ResourcePack source = new ResourcePack(content);
++
++        assertFalse(source.hasSubpack("HiveDR"));
++        final ResourcePack selected = source.selectSubpack("HiveDR");
++        assertArrayEquals("root".getBytes(StandardCharsets.UTF_8), selected.content().get("textures/root.png"));
++        assertFalse(selected.content().getFilesDeep("", "").stream().anyMatch(path -> path.startsWith("subpacks/")));
 +    }
 +
 +    @Test
