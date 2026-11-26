@@ -1,9 +1,15 @@
 import { nativeWaylandEnvironment, waylandTool, waylandToolEnvironment } from "../lab/wayland.ts";
 import { createCaptureWaylandBuilder } from "./native.ts";
+import {
+  launchBedrockDirect,
+  launcher,
+  muteBedrockSettings,
+  prepareLauncher,
+} from "./bedrock-launcher.ts";
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
-import { existsSync, openSync, closeSync, statSync } from "node:fs";
-import { appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync, openSync, closeSync } from "node:fs";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Schema } from "effect";
@@ -23,45 +29,11 @@ const currentPath = join(captureRoot, "current.json");
 const caDirectory = join(captureRoot, "ca");
 const mitmdump =
   Bun.which("mitmdump") ?? join(root, ".stackanvil", "tools", "mitmproxy", "bin", "mitmdump");
-const launcher =
-  process.env["BEDROCK_LAUNCHER"] ??
-  Bun.which("bedrock-on-linux") ??
-  join(homedir(), "AppImages", "bedrockonlinux.appimage");
 const ui = createCaptureUi({
   captureDirectory: async () => capturePath((await load()).id),
   environment: uiEnvironment,
 });
 const { windows, chosenWindow, screenshot, click, key, buttonHold, drag, typeText } = ui;
-const extractedLauncher = join(root, ".stackanvil", "tools", "bedrock-on-linux");
-
-async function muteBedrockSettings(): Promise<void> {
-  const users = join(
-    homedir(),
-    ".local",
-    "share",
-    "bedrock-on-linux",
-    "compatdata",
-    "pfx",
-    "drive_c",
-    "users",
-    "steamuser",
-    "AppData",
-    "Roaming",
-    "Minecraft Bedrock",
-    "Users",
-  );
-  if (!existsSync(users)) return;
-  for (const entry of await readdir(users, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
-    const file = join(users, entry.name, "games", "com.mojang", "minecraftpe", "options.txt");
-    if (!existsSync(file)) continue;
-    const options = await readFile(file, "utf8");
-    const muted = /^audio_main:.*$/mu.test(options)
-      ? options.replace(/^audio_main:.*$/mu, "audio_main:0")
-      : `${options}\naudio_main:0\n`;
-    if (muted !== options) await writeFile(file, muted);
-  }
-}
 
 interface Session {
   id: string;
@@ -315,77 +287,6 @@ async function launchGame(): Promise<void> {
   else session.gameStartTicks = gameStartTicks;
   await save(session);
   print(`BedrockOnLinux launch started for ${session.id}. Read the private game.log if it stops.`);
-}
-
-/**
- * Starts the official client on the private display without the HTTPS proxy, for gameplay
- * comparisons. Xbox Live and server joins then behave as in an ordinary installation.
- */
-async function launchDirect(): Promise<void> {
-  if (!existsSync(launcher)) throw new Error(`BedrockOnLinux launcher not found: ${launcher}`);
-  const isolated = await displayEnv(true);
-  if (!isolated) throw new Error("A direct launch requires the private display.");
-  await muteBedrockSettings();
-  const appDir = launcher.toLowerCase().endsWith(".appimage") ? await prepareLauncher() : undefined;
-  const directory = join(root, ".stackanvil", "lab");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const log = openSync(join(directory, "bedrock-direct.log"), "a", 0o600);
-  const child = spawn(
-    appDir ? join(appDir, "usr", "python", "bin", "python3.12") : "python3",
-    [
-      join(root, "scripts", "bedrock-wayland.py"),
-      appDir ? join(appDir, "usr", "bin", "bedrock-on-linux") : launcher,
-      "play",
-    ],
-    {
-      cwd: root,
-      detached: true,
-      stdio: ["ignore", log, log],
-      env: {
-        ...nativeWaylandEnvironment(isolated),
-        ...(appDir ? { APPDIR: appDir, APPIMAGE: launcher } : {}),
-      },
-    },
-  );
-  closeSync(log);
-  child.unref();
-  if (!child.pid) throw new Error("Could not launch BedrockOnLinux.");
-  print(
-    `BedrockOnLinux started without the proxy as process group ${child.pid}. Its log is .stackanvil/lab/bedrock-direct.log. Stop it with kill -TERM -${child.pid}.`,
-  );
-}
-
-async function prepareLauncher(): Promise<string> {
-  if (!existsSync(launcher)) throw new Error(`BedrockOnLinux launcher not found: ${launcher}`);
-  if (!launcher.toLowerCase().endsWith(".appimage")) return launcher;
-  const signature = `${statSync(launcher).size}:${statSync(launcher).mtimeMs}`;
-  const marker = join(extractedLauncher, "source.txt");
-  const appDir = join(extractedLauncher, "squashfs-root");
-  if (
-    existsSync(marker) &&
-    existsSync(join(appDir, "usr", "python", "bin", "python3.12")) &&
-    (await readFile(marker, "utf8")).trim() === signature
-  )
-    return appDir;
-  await rm(extractedLauncher, { recursive: true, force: true });
-  await mkdir(extractedLauncher, { recursive: true, mode: 0o700 });
-  const log = openSync(join(extractedLauncher, "extract.log"), "a", 0o600);
-  const child = spawn(launcher, ["--appimage-extract"], {
-    cwd: extractedLauncher,
-    stdio: ["ignore", log, log],
-  });
-  closeSync(log);
-  const code = await new Promise<number | null>((resolveCode, reject) => {
-    child.once("error", reject);
-    child.once("close", resolveCode);
-  });
-  if (code !== 0 || !existsSync(join(appDir, "usr", "python", "bin", "python3.12"))) {
-    throw new Error(
-      `BedrockOnLinux extraction failed. Read ${join(extractedLauncher, "extract.log")}.`,
-    );
-  }
-  await writeFile(marker, `${signature}\n`, { mode: 0o600 });
-  return appDir;
 }
 
 async function mark(label: string): Promise<void> {
@@ -795,7 +696,12 @@ async function main(): Promise<void> {
       return start(args[0], args.includes("--local") ? "local" : "regular");
     }
     case "launch": {
-      return args.includes("--direct") ? launchDirect() : launchGame();
+      if (!args.includes("--direct")) return launchGame();
+      const { pid, log } = await launchBedrockDirect();
+      print(
+        `BedrockOnLinux started without the proxy as process group ${pid}. Its log is ${log}. Stop it with kill -TERM -${pid}.`,
+      );
+      return;
     }
     case "game-stop": {
       return stopGame();

@@ -65,6 +65,7 @@ import {
 } from "./graphics.ts";
 import { print, printError } from "../output.ts";
 import { joinNativeServer } from "../replay/native-menu.ts";
+import { launchBedrockDirect, stopBedrockDirect } from "../capture/bedrock-launcher.ts";
 const privateRoot = join(root, ".stackanvil", "integration");
 const captureCli = join(root, "src", "capture", "cli.ts");
 const captureUi = createCaptureUi({
@@ -724,8 +725,14 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
   target: {
     port: number;
     log: string;
+    version: string;
   },
 ) {
+  // The native client cannot join another release line, and Bedrock reports that only as a
+  // generic error after the join times out.
+  const release = yield* labIO("bedrockJoin", async () => pinnedBedrockRelease());
+  const unsupported = unsupportedServerRelease(target.version, release);
+  if (unsupported) return yield* labError("bedrockJoin", new Error(unsupported));
   const serverLogStart = (yield* textFileEffect(target.log)).length;
   const current = join(root, ".stackanvil", "captures", "current.json");
   if (existsSync(current)) {
@@ -745,80 +752,61 @@ const bedrockJoinEffect = Effect.fn("Integration.bedrockJoin")(function* (
       );
   }
   const label = `stackanvil-it-${(yield* Clock.currentTimeMillis).toString(36)}`;
-  const port = yield* tcpPort;
-  const env = { ...process.env, STACKANVIL_PROXY_PORT: String(port) };
-  let session: string | undefined;
+  const clientLog = join(dir, "bedrock-native-client.log");
+  // Screenshots go to this run's private directory, because a direct launch has no capture session.
+  const ui = (args: string[]) =>
+    captureUi.command(["ui", ...args, ...(args[0] === "screenshot" ? ["--output-dir", dir] : [])]);
+  let gamePid: number | undefined;
   return yield* Effect.ensuring(
     Effect.gen(function* () {
-      yield* captureEffect(["start", "native-join"], env);
-      const captureText = yield* labIO("bedrockJoin", async () => readFile(current, "utf8"));
-      const captureId = parseJson(CaptureIdSchema, captureText).id;
-      session = captureId;
-      yield* captureEffect(["launch"]);
-      const sessionPath = join(root, ".stackanvil", "captures", captureId, "session.json");
-      const sessionText = yield* labIO("bedrockJoin", async () => readFile(sessionPath, "utf8"));
-      const gamePid = parseJson(
-        Schema.Struct({ gamePid: Schema.optionalKey(Schema.Finite) }),
-        sessionText,
-      ).gamePid;
+      // Joins through the HTTPS capture proxy fail, so start the client as an ordinary installation.
+      const client = yield* labIO("bedrockJoin", () => launchBedrockDirect(clientLog));
+      const pid = client.pid;
+      gamePid = pid;
       for (let attempt = 0; attempt < 90; attempt++) {
-        const listing = yield* captureEffect(["ui", "list"]);
+        const listing = yield* labIO("bedrockJoin", () => ui(["list"]));
         if (listing.includes('"title": "Minecraft"')) break;
-        if (!alive(gamePid))
+        if (!alive(pid))
           return yield* labError(
             "bedrockJoin",
-            new Error(
-              `Bedrock client exited. Read ${join(root, ".stackanvil", "captures", session, "game.log")}.`,
-            ),
+            new Error(`Bedrock client exited. Read ${clientLog}.`),
           );
         yield* Effect.sleep(1000);
       }
       yield* Effect.sleep(20_000);
-      yield* captureEffect(["ui", "screenshot", "native-menu"]);
+      yield* labIO("bedrockJoin", () => ui(["screenshot", "native-menu"]));
       yield* labIO("bedrockJoin", () =>
         joinNativeServer(
-          { ui: (args) => captureUi.command(["ui", ...args]), wait: (ms) => Bun.sleep(ms) },
+          { ui, wait: (ms) => Bun.sleep(ms) },
           { name: label, address: "127.0.0.1", port: target.port },
         ),
       );
       const player = yield* waitForJoinEffect({
         route: "bedrock-bedrock",
         serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
-        clientLog: () => textFile(join(root, ".stackanvil", "captures", captureId, "game.log")),
-        clientAlive: () => alive(gamePid),
+        clientLog: () => textFile(clientLog),
+        clientAlive: () => alive(pid),
         timeoutMs: 90_000,
         dwellMs: 20_000,
       });
-      yield* captureEffect(["ui", "screenshot", "native-joined"]);
+      yield* labIO("bedrockJoin", () => ui(["screenshot", "native-joined"]));
       print(`PASS bedrock-bedrock: ${player} joined and remained connected for 20s.`);
     }).pipe(
       Effect.catch((error) =>
-        labError(
-          "bedrockJoin",
-          new Error(
-            `${String(error)} Private native capture: ${session ? join(root, ".stackanvil", "captures", session) : dir}.`,
-          ),
-        ),
+        labError("bedrockJoin", new Error(`${String(error)} Private native logs: ${dir}.`)),
       ),
     ),
     Effect.orDie(
       Effect.gen(function* () {
-        if (session) {
-          yield* captureEffect(["game-stop"]).pipe(
-            Effect.catch(() =>
-              Effect.sync(() => {
-                /* The client may already have exited. */
-              }),
-            ),
-          );
-          yield* captureEffect(["stop"]).pipe(
+        const pid = gamePid;
+        if (pid !== undefined)
+          yield* labIO("bedrockJoin", () => stopBedrockDirect(pid)).pipe(
             Effect.catch(() =>
               Effect.sync(() => {
                 /* Preserve the original failure. */
               }),
             ),
           );
-        }
         yield* removeTemporaryServerEffect(label, target.port);
       }),
     ),
