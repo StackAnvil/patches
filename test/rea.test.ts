@@ -7,6 +7,7 @@ import { Effect } from "effect";
 import {
   analyzeReaFunction,
   importReaArtifact,
+  useReaArtifact,
   independentPath,
   readReaPe,
   validateReaCapture,
@@ -80,9 +81,24 @@ async function fixture(bytes = image()) {
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const store = join(directory, "rea");
   const target = await Effect.runPromise(
-    importReaArtifact({ source, sha256, version: "fixture", protocol: 2225, directory: store }),
+    importReaArtifact({
+      source,
+      sha256,
+      version: "fixture",
+      protocol: 2225,
+      store,
+      selection: join(directory, "checkout", "current.json"),
+    }),
   );
-  return { directory, source, sha256, bytes, store, target, manifest: join(store, "current.json") };
+  return {
+    directory,
+    source,
+    sha256,
+    bytes,
+    store,
+    target,
+    manifest: join(directory, "checkout", "current.json"),
+  };
 }
 
 async function pe(manifest: string, ...args: string[]) {
@@ -98,7 +114,8 @@ test("a wrong artifact pin leaves the selected target unchanged", async () => {
         source: f.source,
         sha256: "0".repeat(64),
         version: "wrong",
-        directory: f.store,
+        store: f.store,
+        selection: f.manifest,
       }),
     ),
     "SHA-256",
@@ -106,6 +123,59 @@ test("a wrong artifact pin leaves the selected target unchanged", async () => {
   expect(await readFile(f.manifest)).toEqual(previous);
   await writeFile(f.source, Buffer.from("source changed"));
   expect((await readFile(f.target.artifact.path)).toString("hex")).toBe(f.bytes.toString("hex"));
+});
+
+test("checkouts share one stored artifact and keep separate selections", async () => {
+  const f = await fixture();
+  const other = join(f.directory, "other-checkout", "current.json");
+  const pins = [
+    { version: "fixture", name: "source.exe", sha256: f.sha256, protocol: 2225, source: "fixture" },
+  ];
+  // The other checkout selects by version alone, after the source file is gone.
+  await rm(f.source);
+  const selected = await useReaArtifact({ version: "fixture", pins, store: f.store, selection: other });
+  expect(selected.artifact.path).toBe(f.target.artifact.path);
+  expect(await readdir(join(f.store, "artifacts", f.sha256))).toEqual(["artifact"]);
+  await expectRejection(
+    useReaArtifact({ version: "missing", pins, store: f.store, selection: other }),
+    "Pinned versions: fixture",
+  );
+  const unimported = [{ ...pins[0]!, version: "later", sha256: "1".repeat(64) }];
+  const before = await readFile(other);
+  await expectRejection(
+    useReaArtifact({ version: "later", pins: unimported, store: f.store, selection: other }),
+    "Import it with bun run rea import first",
+  );
+  expect(await readFile(other)).toEqual(before);
+  expect(JSON.parse(await readFile(f.manifest, "utf8")).artifact.version).toBe("fixture");
+});
+
+test("concurrent imports of one artifact store one complete copy", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "stackanvil-rea-"));
+  directories.push(directory);
+  const bytes = Buffer.alloc(8 * 1024 * 1024, 7);
+  const source = join(directory, "large.exe");
+  await writeFile(source, bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const store = join(directory, "rea");
+  const targets = await Promise.all(
+    ["a", "b", "c"].map((checkout) =>
+      Effect.runPromise(
+        importReaArtifact({
+          source,
+          sha256,
+          version: "large",
+          store,
+          selection: join(directory, checkout, "current.json"),
+        }),
+      ),
+    ),
+  );
+  expect(new Set(targets.map((target) => target.artifact.path)).size).toBe(1);
+  expect(await readdir(join(store, "artifacts", sha256))).toEqual(["artifact"]);
+  expect(createHash("sha256").update(await readFile(targets[0]!.artifact.path)).digest("hex")).toBe(
+    sha256,
+  );
 });
 
 test("PE extraction keeps exact exception spans and never overwrites an existing slice", async () => {
@@ -446,7 +516,7 @@ test("a signaled control fails the CLI and retains the original capture while a 
       ],
       {
         cwd: root,
-        env: { ...process.env, REA_CLI: provider },
+        env: { ...process.env, REA_CLI: provider, STACKANVIL_REA_HOME: f.store },
         stdout: "pipe",
         stderr: "pipe",
       },

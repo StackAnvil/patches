@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, existsSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -7,20 +7,23 @@ import {
   readFile,
   realpath,
   rename,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Effect, Schema } from "effect";
 import { runLabCommand } from "./lab/effect-runtime.ts";
 import { root } from "./model.ts";
 import { command, execFileAsync as execute } from "./process.ts";
-import { errorCode, parseJson, stringProperty, decodeJson, optionalEnv } from "./guards.ts";
+import { parseJson, stringProperty, decodeJson, optionalEnv } from "./guards.ts";
 import { print, printError } from "./output.ts";
 
 const reader = join(root, "native", "rea-controls", "pe.py");
-const privateRoot = join(root, ".stackanvil", "rea");
+/** Each checkout keeps its own selection, so agents in other worktrees cannot switch it. */
+const selectionPath = join(root, ".stackanvil", "rea", "current.json");
 const controlsRoot = join(root, ".stackanvil", "tools", "rea-controls-venv");
 const controlsPython = join(
   controlsRoot,
@@ -28,6 +31,50 @@ const controlsPython = join(
 );
 const reaVersion = "6.7.0";
 const shaPattern = /^[a-f0-9]{64}$/iu;
+
+/**
+ * Artifacts and analyses live outside every checkout, so worktrees share one verified copy of each
+ * binary and can reuse earlier Evidence. The directory stays private because it holds game binaries.
+ */
+export function reaHome(): string {
+  const configured = process.env["STACKANVIL_REA_HOME"];
+  const data = process.env["XDG_DATA_HOME"];
+  const home =
+    configured ??
+    join(data && isAbsolute(data) ? data : join(homedir(), ".local", "share"), "stackanvil", "rea");
+  if (!isAbsolute(home)) throw new Error("STACKANVIL_REA_HOME must be an absolute path");
+  independentName(home);
+  return home;
+}
+
+const PinsSchema = Schema.Struct({
+  artifacts: Schema.Array(
+    Schema.Struct({
+      version: Schema.String,
+      name: Schema.String,
+      sha256: Schema.String,
+      protocol: Schema.optionalKey(Schema.Finite),
+      source: Schema.String,
+    }),
+  ),
+});
+export type ReaPin = (typeof PinsSchema.Type)["artifacts"][number];
+
+export async function readReaPins(path = join(root, "rea-artifacts.json")): Promise<ReaPin[]> {
+  const { artifacts } = parseJson(PinsSchema, await readFile(path, "utf8"));
+  for (const pin of artifacts)
+    if (!shaPattern.test(pin.sha256)) throw new Error(`Invalid SHA-256 pin for ${pin.version}`);
+  return [...artifacts];
+}
+
+function pinFor(pins: readonly ReaPin[], version: string): ReaPin {
+  const pin = pins.find((candidate) => candidate.version === version);
+  if (!pin)
+    throw new Error(
+      `No pinned REA artifact for ${version}. Pinned versions: ${pins.map((entry) => entry.version).join(", ")}`,
+    );
+  return pin;
+}
 
 const TargetSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -125,12 +172,84 @@ async function privateJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
 }
 
+/**
+ * Copy into a unique temporary file and rename it into place, so concurrent imports from several
+ * agents never expose a partial copy. Identical content may replace identical content.
+ */
+async function storedArtifact(home: string, sha256: string, source?: string): Promise<string> {
+  independentName(home);
+  await mkdir(home, { recursive: true, mode: 0o700 });
+  await chmod(home, 0o700);
+  await independentPath(home);
+  const directory = join(home, "artifacts", sha256);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await independentPath(directory);
+  const path = join(directory, "artifact");
+  if (!(await Bun.file(path).exists())) {
+    if (source === undefined)
+      throw new Error(
+        `Artifact ${sha256} is not in ${home}. Import it with bun run rea import first`,
+      );
+    const temporary = join(directory, `artifact-${randomUUID()}.tmp`);
+    try {
+      await copyFile(source, temporary, constants.COPYFILE_EXCL);
+      await chmod(temporary, 0o400);
+      if ((await artifactSha256(temporary)) !== sha256)
+        throw new Error("Artifact SHA-256 changed while it was copied");
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+  const artifact = await independentPath(path);
+  if ((await artifactSha256(artifact)) !== sha256)
+    throw new Error(
+      "Stored artifact SHA-256 differs from the pin; the current target was not changed",
+    );
+  return artifact;
+}
+
+async function writeSelection(path: string, target: Target): Promise<void> {
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await independentPath(directory);
+  const temporary = join(directory, `current-${randomUUID()}.json`);
+  await privateJson(temporary, target);
+  await rename(temporary, path);
+}
+
+/** Select an already imported pinned artifact without its original source path. */
+export async function useReaArtifact(options: {
+  version: string;
+  pins?: readonly ReaPin[];
+  store?: string;
+  selection?: string;
+}): Promise<Target> {
+  const pin = pinFor(options.pins ?? (await readReaPins()), options.version);
+  const sha256 = pin.sha256.toLowerCase();
+  const target: Target = {
+    schemaVersion: 1,
+    artifact: {
+      path: await storedArtifact(resolve(options.store ?? reaHome()), sha256),
+      sha256,
+      name: pin.name,
+      version: pin.version,
+      ...(pin.protocol === undefined ? {} : { protocol: pin.protocol }),
+    },
+  };
+  await writeSelection(resolve(options.selection ?? selectionPath), target);
+  return target;
+}
+
 export const importReaArtifact = Effect.fn("importReaArtifact")(function* (options: {
   source: string;
   sha256: string;
   version: string;
   protocol?: number | undefined;
-  directory?: string;
+  /** The shared artifact home. */
+  store?: string;
+  /** This checkout's selection manifest. */
+  selection?: string;
 }) {
   return yield* Effect.tryPromise({
     try: async () => {
@@ -146,45 +265,25 @@ export const importReaArtifact = Effect.fn("importReaArtifact")(function* (optio
       const sha256 = options.sha256.toLowerCase();
       if ((await artifactSha256(source)) !== sha256)
         throw new Error("Artifact SHA-256 differs from the pin");
-      const directory = resolve(options.directory ?? privateRoot);
-      independentName(directory);
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      await independentPath(directory);
-      const store = join(directory, "artifacts", sha256);
-      await mkdir(store, { recursive: true, mode: 0o700 });
-      await independentPath(store);
-      const path = join(store, "artifact");
-      try {
-        await copyFile(source, path, constants.COPYFILE_EXCL);
-        await chmod(path, 0o400);
-      } catch (cause) {
-        if (errorCode(cause) !== "EEXIST") throw cause;
-      }
-      const artifact = await independentPath(path);
-      if ((await artifactSha256(artifact)) !== sha256)
-        throw new Error(
-          "Stored artifact SHA-256 differs from the pin; the current target was not changed",
-        );
+      const store = await storedArtifact(resolve(options.store ?? reaHome()), sha256, source);
       const target: Target = {
         schemaVersion: 1,
         artifact: {
-          path: artifact,
+          path: store,
           sha256,
           name: basename(source),
           version: options.version,
           ...(options.protocol === undefined ? {} : { protocol: options.protocol }),
         },
       };
-      const temporary = join(directory, `current-${randomUUID()}.json`);
-      await privateJson(temporary, target);
-      await rename(temporary, join(directory, "current.json"));
+      await writeSelection(resolve(options.selection ?? selectionPath), target);
       return target;
     },
     catch: error,
   });
 });
 
-async function targetFrom(path = join(privateRoot, "current.json")): Promise<Target> {
+async function targetFrom(path = selectionPath): Promise<Target> {
   const manifest = await independentPath(path);
   const target: unknown = JSON.parse(await readFile(manifest, "utf8"));
   if (!isTarget(target) || !shaPattern.test(target.artifact.sha256))
@@ -214,7 +313,7 @@ async function python(): Promise<string> {
 }
 
 export const readReaPe = Effect.fn("readReaPe")(function* (args: string[], targetPath?: string) {
-  const manifest = resolve(targetPath ?? join(privateRoot, "current.json"));
+  const manifest = resolve(targetPath ?? selectionPath);
   yield* Effect.tryPromise({ try: () => targetFrom(manifest), catch: error });
   const executable = yield* Effect.tryPromise({ try: python, catch: error });
   return yield* command(executable, [reader, ...args], root, {
@@ -314,7 +413,10 @@ export const analyzeReaFunction = Effect.fn("analyzeReaFunction")(function* (opt
   directory?: string;
 }) {
   const target = yield* Effect.tryPromise({ try: () => targetFrom(options.target), catch: error });
-  const directory = resolve(options.directory ?? join(privateRoot, "analyses"));
+  // Group runs by artifact so other agents can find earlier Evidence for the same binary.
+  const directory = resolve(
+    options.directory ?? join(reaHome(), "analyses", target.artifact.sha256.toLowerCase()),
+  );
   independentName(directory);
   const run = join(directory, randomUUID());
   yield* Effect.tryPromise({
@@ -438,7 +540,7 @@ export const captureReaControl = Effect.fn("captureReaControl")(function* (optio
       if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 60_000)
         throw new Error("Control timeouts must be 1 to 60000 ms");
       const target = await targetFrom(options.target);
-      const directory = join(privateRoot, "controls");
+      const directory = join(reaHome(), "controls", target.artifact.sha256.toLowerCase());
       await mkdir(directory, { recursive: true, mode: 0o700 });
       await independentPath(directory);
       const run = join(directory, randomUUID());
@@ -495,7 +597,9 @@ export const captureReaControl = Effect.fn("captureReaControl")(function* (optio
 
 const help = `REA-backed binary research in StackAnvil.
 
-  bun run rea import --artifact PATH --sha256 HEX --version VERSION [--protocol N]
+  bun run rea list
+  bun run rea import --artifact PATH --version VERSION [--sha256 HEX] [--protocol N]
+  bun run rea use --version VERSION
   bun run rea inspect
   bun run rea function --va HEX
   bun run rea extract --va HEX --output PATH [--end HEX]
@@ -506,7 +610,10 @@ const help = `REA-backed binary research in StackAnvil.
   bun run rea control --script PATH [--argument VALUE] [--timeout-ms N]
   bun run rea setup-controls
 
-Commands use .stackanvil/rea/current.json. Pass --target PATH for another manifest.
+Imported artifacts and analyses are shared by every checkout in STACKANVIL_REA_HOME,
+or $XDG_DATA_HOME/stackanvil/rea by default. rea-artifacts.json pins known versions;
+import fills in their SHA-256 and protocol, and use selects one already imported.
+Each checkout selects its target in .stackanvil/rea/current.json. Pass --target PATH for another manifest.
 Addresses are linked hexadecimal VAs. A manual --end makes no function-boundary claim.
 Analysis runs REA with Ghidra. Set GHIDRA_INSTALL_DIR for an existing Ghidra install.
 Set REA_CLI to an existing REA executable, or use the pinned rea-agents@${reaVersion} fallback.
@@ -549,23 +656,49 @@ export async function reaMain(args: string[]): Promise<void> {
     throw new Error("Supply a hexadecimal VA");
   if (values.end && !/^(0x)?[a-f0-9]+$/iu.test(values.end))
     throw new Error("Supply a hexadecimal end address");
-  if (action === "import") {
-    if (!values.artifact || !values.sha256 || !values.version)
-      throw new Error("import requires --artifact, --sha256 and --version");
+  if (action === "list") {
+    const home = reaHome();
+    const pins = await readReaPins();
+    print(
+      JSON.stringify(
+        {
+          home,
+          artifacts: pins.map((pin) =>
+            Object.assign({}, pin, {
+              imported: existsSync(join(home, "artifacts", pin.sha256.toLowerCase(), "artifact")),
+            }),
+          ),
+        },
+        null,
+        2,
+      ),
+    );
+  } else if (action === "import") {
+    if (!values.artifact || !values.version)
+      throw new Error("import requires --artifact and --version");
+    const pin = (await readReaPins()).find((candidate) => candidate.version === values.version);
+    const sha256 = values.sha256 ?? pin?.sha256;
+    if (!sha256)
+      throw new Error(`${values.version} is not pinned in rea-artifacts.json. Supply --sha256`);
+    if (pin && pin.sha256.toLowerCase() !== sha256.toLowerCase())
+      throw new Error(`--sha256 differs from the rea-artifacts.json pin for ${values.version}`);
     print(
       JSON.stringify(
         await runLabCommand(
           importReaArtifact({
             source: values.artifact,
-            sha256: values.sha256,
+            sha256,
             version: values.version,
-            protocol: values.protocol === undefined ? undefined : Number(values.protocol),
+            protocol: values.protocol === undefined ? pin?.protocol : Number(values.protocol),
           }),
         ),
         null,
         2,
       ),
     );
+  } else if (action === "use") {
+    if (!values.version) throw new Error("use requires --version");
+    print(JSON.stringify(await useReaArtifact({ version: values.version }), null, 2));
   } else if (action === "setup-controls") {
     print(JSON.stringify(await runLabCommand(setupReaControls()), null, 2));
   } else if (action === "analyze") {

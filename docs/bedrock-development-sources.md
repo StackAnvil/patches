@@ -101,22 +101,44 @@ Keep downloaded packages, executables and extracted content in private local res
 ## Analyze a native artifact with REA
 
 Follow the [reverse-engineering rules](../AGENTS.md#reverse-engineering).
-Run the commands from this repository's root. Replace the uppercase values with the artifact's verified checksum, version, protocol and linked address.
+Run the commands from this repository's root.
+[`rea-artifacts.json`](../rea-artifacts.json) pins each known game build by version, SHA-256 and source.
+Import a pinned build once, then select it by version in any other checkout:
 
 ```bash
-bun run rea import --artifact /path/to/Minecraft.Windows.exe --sha256 SHA256 --version VERSION --protocol PROTOCOL
-bun run rea function --va VA
-bun run rea analyze --va VA
+bun run rea import --artifact /path/to/Minecraft.Windows.exe --version 1.26.60.5
+bun run rea use --version 1.26.60.5
+bun run rea list
 ```
 
-Import copies the artifact into `.stackanvil/rea/` and checks its checksum before selecting it.
+Import verifies the checksum and stores one read-only copy in a private shared home.
+The home is `$XDG_DATA_HOME/stackanvil/rea/` by default. Set `STACKANVIL_REA_HOME` to use another absolute path.
+Keep it outside this repository and outside synced folders, because it holds game binaries.
+For an unpinned build, add `--sha256` and `--protocol` to the import.
+Each checkout keeps its own selection in `.stackanvil/rea/current.json`, so a selection in one worktree does not change another.
+
+### Trace a string to its code
+
+Do not open a whole Bedrock executable in the REA MCP server.
+Its Ghidra provider must finish analyzing the complete image before it answers, which takes hours.
+REA does not keep that analysis after the session closes, and its analysis snapshots record Evidence, not the Ghidra program.
+Analyze one function instead:
+
+1. Find the string's file offset, for example with `grep -boa`, and convert it to a VA with the section table from `bun run rea inspect`.
+2. Run `bun run rea refs --va VA` to list instructions that may reference it.
+3. Run `bun run rea function --va CANDIDATE` to find the containing function from the exception table.
+4. Run `bun run rea analyze --va FUNCTION` to decompile that function.
+
+Reference candidates are byte patterns, not validated instructions. Confirm each one in the decompiled function.
+
 Each analysis extracts one AMD64 exception-table span and runs REA with Ghidra at the original address.
 Set `GHIDRA_INSTALL_DIR` to an existing Ghidra installation.
 Set `REA_CLI` to an existing REA executable, or let the command use its pinned package.
 The command does not install an analysis provider or change MCP configuration.
 
-Each run keeps the full Evidence, source identity and stderr in a fresh private directory.
-The command prints that directory and the path of its `pseudocode.c`, which holds the decompiled code from the Evidence.
+Each run keeps the full Evidence, source identity and stderr in a fresh directory under `analyses/<sha256>/` in the shared home.
+Check earlier runs for the same artifact before you repeat an analysis.
+The command prints the run directory and the path of its `pseudocode.c`, which holds the decompiled code from the Evidence.
 Raw slices exclude external tables, globals and callees. Preserve those limits when interpreting pseudocode.
 For a leaf without an exception-table entry, supply `--end` explicitly. The output then makes no function-boundary claim.
 Use `bun run rea --help` for byte reads, import-slot lookup and tentative reference scans.
