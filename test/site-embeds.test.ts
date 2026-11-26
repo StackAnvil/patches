@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { pageEmbed, pageHead } from "../site/src/lib/metadata";
+import { jsonLdScript, pageEmbed, pageHead } from "../site/src/lib/metadata";
 import { serializeDiscordEmbed } from "../scripts/discord-embed";
 
 test("download previews use the supplied release and Minecraft version", () => {
@@ -41,4 +41,18 @@ test("Discord preview JSON cannot close its containing script element", () => {
   );
   expect(head.scripts[0]?.children).not.toContain("</script>");
   expect(() => JSON.parse(head.scripts[0]!.children)).not.toThrow();
+});
+
+test("a page title that already names the site does not repeat it", () => {
+  const head = pageHead({ title: "Download StackAnvil", description: "Get the files" }, "releases");
+  expect(head.meta).toContainEqual({ title: "Download StackAnvil" });
+});
+
+test("structured data cannot close its containing script element", () => {
+  const script = jsonLdScript({ "@type": "Question", name: "</script><script>alert(1)</script>" });
+  expect(script.children).not.toContain("</script>");
+  expect(JSON.parse(script.children)).toMatchObject({
+    "@context": "https://schema.org",
+    name: "</script><script>alert(1)</script>",
+  });
 });

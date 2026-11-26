@@ -3,8 +3,10 @@ import bedrockAssets from "../../../bedrock-assets.json";
 export const site = {
   title: "StackAnvil",
   url: "https://stackanvil.pistonmaster.net",
+  /** The homepage title: the name plus what people search for. */
+  headline: "Join Bedrock servers from Minecraft Java Edition",
   description:
-    "Play on Bedrock servers from Minecraft Java Edition with ViaProxy or the ViaFabricPlus Bedrock add-on.",
+    "Join Bedrock servers, Realms, and friends' worlds from Minecraft Java Edition with the ViaFabricPlus Bedrock add-on or ViaProxy. Free and open source.",
   github: "https://github.com/StackAnvil/patches",
   discord: "https://discord.gg/F4ZyEtXXge",
   curseforge:

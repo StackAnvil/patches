@@ -72,9 +72,6 @@ const features: Feature[] = [
 export function FeatureHotbar() {
   const [selected, setSelected] = useState(0);
   const slots = useRef<(HTMLButtonElement | null)[]>([]);
-  const feature = features[selected];
-  if (!feature) return null;
-  const Icon = feature.icon;
   function onKeyDown(event: KeyboardEvent) {
     const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
     const target =
@@ -105,7 +102,7 @@ export function FeatureHotbar() {
               role="tab"
               id={`feature-tab-${index}`}
               aria-selected={selected === index}
-              aria-controls="feature-panel"
+              aria-controls={`feature-panel-${index}`}
               tabIndex={selected === index ? 0 : -1}
               className="slot"
               onClick={() => {
@@ -122,22 +119,35 @@ export function FeatureHotbar() {
           );
         })}
       </div>
-      <div
-        className="feature-panel"
-        id="feature-panel"
-        role="tabpanel"
-        aria-labelledby={`feature-tab-${selected}`}
-        key={selected}
-      >
-        <Icon className="feature-panel-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
-        <div>
-          <h3>
-            {feature.name}
-            {feature.note && <span className="feature-note">{feature.note}</span>}
-          </h3>
-          <p>{feature.text}</p>
-        </div>
-      </div>
+      {/* Every panel stays in the HTML so readers without script and search
+          engines see all features. Only the selected one is shown. */}
+      {features.map((item, index) => {
+        const PanelIcon = item.icon;
+        return (
+          <div
+            key={item.name}
+            className="feature-panel"
+            id={`feature-panel-${index}`}
+            role="tabpanel"
+            aria-labelledby={`feature-tab-${index}`}
+            hidden={selected !== index}
+          >
+            <PanelIcon
+              className="feature-panel-icon"
+              size={34}
+              strokeWidth={1.6}
+              aria-hidden="true"
+            />
+            <div>
+              <h3>
+                {item.name}
+                {item.note && <span className="feature-note">{item.note}</span>}
+              </h3>
+              <p>{item.text}</p>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

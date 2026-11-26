@@ -2,6 +2,11 @@ import { createDiscordEmbed, serializeDiscordEmbed } from "../../../scripts/disc
 import { homePage, pageUrl, site, type PageMetadata } from "./site";
 import type { Release } from "./releases";
 
+/** Appends the site name unless the page title already contains it. */
+function documentTitle(title: string, siteTitle: string = site.title) {
+  return title.includes(siteTitle) ? title : `${title} · ${siteTitle}`;
+}
+
 export function pageEmbed(
   page: { title: string; description?: string },
   slug: string,
@@ -9,7 +14,7 @@ export function pageEmbed(
   release?: { version: string; minecraft?: string | undefined },
 ) {
   return createDiscordEmbed({
-    title: `${page.title} · ${website.title}`,
+    title: page.title === "Home" ? website.title : documentTitle(page.title, website.title),
     description: [
       page.description ?? website.description,
       ...(slug === "releases" && release
@@ -32,7 +37,8 @@ export function pageHead(
   slug = "index",
   release: Release | null = null,
 ) {
-  const title = page.title === "Home" ? site.title : `${page.title} · ${site.title}`;
+  const title =
+    page.title === "Home" ? `${site.title}: ${site.headline}` : documentTitle(page.title);
   const url = new URL(pageUrl(slug), site.url).href;
   const image = new URL("/assets/images/social.png", site.url).href;
   const component = pageEmbed(
@@ -66,5 +72,16 @@ export function pageHead(
           },
         ]
       : [],
+  };
+}
+
+/** A JSON-LD script for the document head. Escapes `<` so text cannot close the tag. */
+export function jsonLdScript(data: Record<string, unknown>) {
+  return {
+    type: "application/ld+json",
+    children: JSON.stringify({ "@context": "https://schema.org", ...data }).replaceAll(
+      "<",
+      String.raw`\u003c`,
+    ),
   };
 }

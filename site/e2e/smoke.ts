@@ -145,3 +145,19 @@ test("patch stacks explain their blocks without hover", async ({ page, hasTouch 
   await expect(block).toHaveAttribute("data-active", "true");
   await expect(readout).toHaveText(/^[a-z]+(\([^)]+\))?: \S/u);
 });
+
+test("the feature hotbar shows one feature at a time while all stay in the page", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const panels = page.getByRole("tabpanel", { includeHidden: true });
+  await expect(panels).toHaveCount(9);
+  const skins = page.getByRole("tab", { name: "Skins", exact: true });
+  // A click before hydration does nothing, so retry until the slot is selected.
+  await expect(async () => {
+    await skins.click();
+    await expect(skins).toHaveAttribute("aria-selected", "true", { timeout: 1000 });
+  }).toPass();
+  await expect(page.getByRole("tabpanel")).toHaveCount(1);
+  await expect(page.getByRole("tabpanel")).toHaveAccessibleName("Skins");
+});

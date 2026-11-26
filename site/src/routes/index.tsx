@@ -7,13 +7,41 @@ import { Faq } from "../components/faq";
 import { FeatureHotbar } from "../components/hotbar";
 import { PatchStack } from "../components/patch-stack";
 import { patchCount } from "../components/patch-stacks";
-import { pageHead } from "../lib/metadata";
+import { jsonLdScript, pageHead } from "../lib/metadata";
 import type { Setup } from "../lib/releases";
 import { defaultSetup, setupGuides } from "../lib/setups";
 import { bedrockVersion, homePage, site } from "../lib/site";
 
 export const Route = createFileRoute("/")({
-  head: () => pageHead(homePage, "index", release),
+  head: () => {
+    const head = pageHead(homePage, "index", release);
+    return {
+      ...head,
+      scripts: [
+        ...head.scripts,
+        jsonLdScript({
+          "@type": "SoftwareApplication",
+          name: site.title,
+          description: site.description,
+          url: site.url,
+          downloadUrl: new URL("/releases/", site.url).href,
+          applicationCategory: "GameApplication",
+          operatingSystem: "Windows, macOS, Linux",
+          isAccessibleForFree: true,
+          offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+          ...(release ? { softwareVersion: release.tag } : {}),
+        }),
+        jsonLdScript({
+          "@type": "FAQPage",
+          mainEntity: questions.map(({ question, answer }) => ({
+            "@type": "Question",
+            name: question,
+            acceptedAnswer: { "@type": "Answer", text: answer },
+          })),
+        }),
+      ],
+    };
+  },
   component: Home,
 });
 
@@ -70,7 +98,7 @@ function Home() {
             <div className="actions hero-actions">
               <a className="button forge large" href="#choose-how-to-connect">
                 <ArrowDown size={20} aria-hidden="true" />
-                Choose your setup
+                {release?.minecraft ? `Download for Java ${release.minecraft}` : "Download"}
               </a>
               <Link className="text-link" to="/$slug/" params={{ slug: "getting-started" }}>
                 Read the play guide
