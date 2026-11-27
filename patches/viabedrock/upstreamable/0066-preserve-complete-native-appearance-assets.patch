@@ -177,6 +177,14 @@ as missing and does not fall back to a lower pack's copy, so the path
 stays resolved without a written texture. An undecodable server texture
 previously failed the whole conversion and disconnected the player.
 
+Keep a legacy (format 1.8.0) entity geometry when a higher pack defines
+the same identifier in the "minecraft:geometry" format. The base vanilla
+villager_v2 lays its hat brim flat with bind_pose_rotation, and the
+vanilla_1.21.90 copy omits that field. On the Windows 1.26.60.5 client
+with a 1.26.66 server, farmers draw a flat brim, and a server pack that
+moves the nose takes effect only in the legacy format. A legacy override
+still replaces a legacy definition.
+
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 index 4e87e6acb64959a57107788013245c8a7caf630d..ed84a7aebe626036f4b66ada6bf08f69b4947558 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
@@ -277,7 +285,7 @@ index 2989d7b333938b779f4a85e1d91dcee876367633..9f4d7b7088c2af4d43197442765de82a
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
-index 6f116c12cf3dd4678b10761542c27d48e087c138..ef397c7192a2d2eb8e34aad3486cb1355343c0bc 100644
+index 6f116c12cf3dd4678b10761542c27d48e087c138..02a95e79ee607083b64a7448028fe0b9de4667d8 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitions.java
 @@ -17,6 +17,8 @@
@@ -289,7 +297,7 @@ index 6f116c12cf3dd4678b10761542c27d48e087c138..ef397c7192a2d2eb8e34aad3486cb135
  import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-@@ -25,21 +27,31 @@ import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
+@@ -25,21 +27,43 @@ import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
  
  import java.util.Collections;
  import java.util.HashMap;
@@ -303,6 +311,7 @@ index 6f116c12cf3dd4678b10761542c27d48e087c138..ef397c7192a2d2eb8e34aad3486cb135
      private final Map<String, BedrockGeometryModel> entityModels = new HashMap<>();
 +    private final Set<String> entityTextureMeshes = new HashSet<>();
      private final Map<String, BedrockGeometryModel> blockModels = new HashMap<>();
++    private final Set<String> legacyIdentifiers = new HashSet<>();
  
      public ModelDefinitions(final ResourcePackStorage resourcePackStorage) {
          for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
@@ -312,7 +321,18 @@ index 6f116c12cf3dd4678b10761542c27d48e087c138..ef397c7192a2d2eb8e34aad3486cb135
 +                    final JsonObject document = pack.content().getJson(modelPath);
 +                    final var models = BedrockGeometryParser.parse(document);
 +                    final Map<String, Boolean> textureMeshes = textureMeshes(document);
++                    final boolean modern = document.has("minecraft:geometry");
 +                    for (BedrockGeometryModel bedrockGeometry : models) {
++                        // Windows 1.26.60.5 keeps a legacy (1.8.0) definition when a higher pack defines the same
++                        // identifier in the "minecraft:geometry" format, while a legacy override still replaces it.
++                        // The vanilla_1.21.90 villager_v2 copy omits the brim's bind_pose_rotation; native villagers
++                        // keep the base pack's flat brim.
++                        if (modern && this.legacyIdentifiers.contains(bedrockGeometry.getIdentifier())) {
++                            continue;
++                        }
++                        if (!modern) {
++                            this.legacyIdentifiers.add(bedrockGeometry.getIdentifier());
++                        }
                          if (modelPath.startsWith("models/entity/")) {
                              this.entityModels.put(bedrockGeometry.getIdentifier(), bedrockGeometry);
 +                            this.entityTextureMeshes.remove(bedrockGeometry.getIdentifier());
@@ -322,7 +342,7 @@ index 6f116c12cf3dd4678b10761542c27d48e087c138..ef397c7192a2d2eb8e34aad3486cb135
                          }
                          // Blocks resolve geometry by identifier, including models stored with entities.
                          this.blockModels.put(bedrockGeometry.getIdentifier(), bedrockGeometry);
-@@ -59,6 +71,37 @@ public class ModelDefinitions {
+@@ -59,6 +83,37 @@ public class ModelDefinitions {
          return Collections.unmodifiableMap(this.entityModels);
      }
  
@@ -1196,6 +1216,81 @@ index 0000000000000000000000000000000000000000..ab3ed5e501cfbef6717480240107c24e
 +  "minecraft:white_bundle": "bundle_white",
 +  "minecraft:wooden_spear": "wood_spear",
 +  "minecraft:yellow_bundle": "bundle_yellow"
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitionsTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..686edaad4b896078692a1b7ccafb3c6b8c879967
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ModelDefinitionsTest.java
+@@ -0,0 +1,69 @@
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++class ModelDefinitionsTest {
++
++    // Reduced from the vanilla base pack (1.8.0, brim with a bind pose) and its vanilla_1.21.90 copy.
++    private static final String LEGACY_VILLAGER = """
++            {"format_version":"1.8.0","geometry.villager_v2":{"texturewidth":64,"textureheight":64,"bones":[
++              {"name":"head","pivot":[0.0,24.0,0.0],"cubes":[{"origin":[-4.0,24.0,-4.0],"size":[8,10,8],"uv":[0,0]}]},
++              {"name":"brim","parent":"head","pivot":[0.0,24.0,0.0],"bind_pose_rotation":[-90.0,0.0,0.0],
++               "cubes":[{"origin":[-8.0,16.0,-6.0],"size":[16.0,16.0,1.0],"uv":[30.0,47.0]}]}]}}
++            """;
++    private static final String MODERN_VILLAGER = """
++            {"format_version":"1.21.0","minecraft:geometry":[{"description":{"identifier":"geometry.villager_v2"},"bones":[
++              {"name":"head","pivot":[0.0,24.0,0.0],"cubes":[{"origin":[-4.0,24.0,-4.0],"size":[8,10,8],"uv":[0,0]}]},
++              {"name":"brim","parent":"head","pivot":[0.0,24.0,0.0],
++               "cubes":[{"origin":[-8.0,16.0,-6.0],"size":[16.0,16.0,1.0],"uv":[30.0,47.0]}]}]}]}
++            """;
++
++    @Test
++    void modernCopyDoesNotReplaceTheLegacyVillagerBrim() {
++        final var models = models(pack(LEGACY_VILLAGER), pack(MODERN_VILLAGER));
++        assertEquals(-90F, brimRotation(models));
++    }
++
++    @Test
++    void legacyOverrideStillReplacesLegacyDefinition() {
++        final var models = models(pack(LEGACY_VILLAGER), pack(LEGACY_VILLAGER.replace("[-90.0,0.0,0.0]", "[-45.0,0.0,0.0]")));
++        assertEquals(-45F, brimRotation(models));
++    }
++
++    @Test
++    void modernOverrideReplacesModernDefinition() {
++        final var models = models(pack(MODERN_VILLAGER), pack(MODERN_VILLAGER.replace("\"pivot\":[0.0,24.0,0.0],\n",
++                "\"pivot\":[0.0,24.0,0.0],\"rotation\":[-30.0,0.0,0.0],\n")));
++        assertEquals(-30F, brimRotation(models));
++    }
++
++    private static ModelDefinitions models(final ResourcePack... packs) {
++        final var storage = mock(ResourcePackStorage.class);
++        when(storage.getPackStackBottomToTop()).thenReturn(List.of(packs));
++        return new ModelDefinitions(storage);
++    }
++
++    private static float brimRotation(final ModelDefinitions models) {
++        return models.getEntityModel("geometry.villager_v2").getParents().stream()
++                .filter(bone -> bone.getName().equals("brim")).findFirst().orElseThrow().getRotation().getX();
++    }
++
++    private static ResourcePack pack(final String geometry) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        content.putString("models/entity/villager_v2.geo.json", geometry);
++        return new ResourcePack(content);
++    }
++
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomItemTextureResourceRewriterTest.java
 new file mode 100644
