@@ -1408,6 +1408,11 @@ images, cost quadratic time each frame: 34 fps with the inventory open
 against 108 fps without it, a third of render-thread samples inside
 that search. Strata draw in sequence, so the split keeps painter order.
 
+An identical player inventory snapshot keeps the presentation revision,
+so a republished message does not rebuild the native screen. The screen
+reads ViaBedrock's resolved scene tree directly instead of serializing
+the shaded Gson tree to text and parsing it again.
+
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 549151741ae01ef5594bf58efa083b5f51c1b306..90403ea7f8e1085798b0e755ca58fcdf9e7c1fbc 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -1918,7 +1923,7 @@ index 0000000000000000000000000000000000000000..1583ce03e315d5fac1337faf5c8093b6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2d764203b605066d57cb6d5491615457824ca839
+index 0000000000000000000000000000000000000000..913aef466ee637ca54e447d1c89940ae316e627f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/BedrockNativeContainerScreen.java
 @@ -0,0 +1,2331 @@
@@ -2386,7 +2391,7 @@ index 0000000000000000000000000000000000000000..2d764203b605066d57cb6d5491615457
 +        final boolean help = this.helping();
 +        final boolean enteringHelp = help && !this.helpView;
 +        if (help) NativeInventoryHelpText.resolve(resolved, this::nativeHelpKey);
-+        this.scene = NativeUiScene.parse(resolved.toString(), RENDERERS).root();
++        this.scene = NativeUiScene.parse(resolved, RENDERERS).root();
 +        final Map<Source, Integer> sourceSlots = new HashMap<>();
 +        this.tooltipSlots(this.scene, sourceSlots);
 +        this.tooltipSlots = Map.copyOf(sourceSlots);
@@ -9984,10 +9989,10 @@ index 0000000000000000000000000000000000000000..8482173ddd0052ce35db50aec19ca006
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..01faced78146d0e07007263c823cab962160e014
+index 0000000000000000000000000000000000000000..3eaa165b9fb553cfb3da8aa0cbdedac21ab81419
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentation.java
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,266 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10058,17 +10063,31 @@ index 0000000000000000000000000000000000000000..01faced78146d0e07007263c823cab96
 +        final Map<Integer, ItemStack> ghosts = new HashMap<>();
 +        craftingPreview.forEach((slot, item) -> ghosts.put(slot, item.copy()));
 +        // Snapshot revisions retain the same program view while the UI context and family are unchanged.
-+        if (this.message == null || this.message.context() != message.context() || this.state == null || this.state.workbench() != state.workbench()) {
++        final boolean sameProgram = this.message != null && this.message.context() == message.context()
++                && this.state != null && this.state.workbench() == state.workbench();
++        if (!sameProgram) {
 +            final var context = BedrockUiContext.program(message.context());
 +            if (context == null) throw new IllegalArgumentException("Player inventory belongs to another UI program");
 +            this.program = message.ui(context);
 +        }
++        // A republished but identical snapshot keeps the revision, so the screen does not rebuild its scene.
++        final boolean unchanged = sameProgram && this.state.equals(state)
++                && sameStacks(this.previews, owned) && sameStacks(this.craftingPreview, ghosts);
 +        if (this.message != null && !this.state.cells().equals(state.cells())) this.select("", -1);
 +        this.message = message;
 +        this.state = state;
 +        this.previews = Map.copyOf(owned);
 +        this.craftingPreview = Map.copyOf(ghosts);
-+        this.revision++;
++        if (!unchanged) this.revision++;
++    }
++
++    private static boolean sameStacks(final Map<Integer, ItemStack> first, final Map<Integer, ItemStack> second) {
++        if (first.size() != second.size()) return false;
++        for (final var entry : first.entrySet()) {
++            final ItemStack other = second.get(entry.getKey());
++            if (other == null || !ItemStack.matches(entry.getValue(), other)) return false;
++        }
++        return true;
 +    }
 +
 +    boolean update(final NativePlayerInventoryMessage message, final Map<Integer, ItemStack> previews,
@@ -10434,6 +10453,61 @@ index 0000000000000000000000000000000000000000..5d3f834a6d7887c8a8f01347bb4c7bb5
 +    @Override
 +    public Type<PlayerInventoryScreenRequestPayload> type() { return this.deferred ? DEFERRED_TYPE : TYPE; }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScene.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScene.java
+index 51acb31d4682490e2847a5206645e806888ef1d1..d8eb27ebc26a94e655a74256c1901e1f6598165f 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScene.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiScene.java
+@@ -5,9 +5,13 @@
+  */
+ package com.viaversion.viafabricplus.bedrock.screen.ui;
+ 
++import com.google.gson.JsonArray;
+ import com.google.gson.JsonElement;
++import com.google.gson.JsonNull;
+ import com.google.gson.JsonObject;
+ import com.google.gson.JsonParser;
++import com.google.gson.JsonPrimitive;
++import com.google.gson.internal.LazilyParsedNumber;
+ import java.math.BigInteger;
+ import net.raphimc.viabedrock.api.resourcepack.ui.JsonUiProgram;
+ import java.util.ArrayList;
+@@ -24,7 +28,35 @@ public record NativeUiScene(Node root) {
+     static final int MAX_NODES = JsonUiProgram.MAX_SCENE_NODES;
+ 
+     public static NativeUiScene parse(final String json, final Set<String> renderers) {
+-        final JsonObject scene = JsonParser.parseString(json).getAsJsonObject();
++        return parse(JsonParser.parseString(json).getAsJsonObject(), renderers);
++    }
++
++    /** Reads a scene resolved by ViaBedrock without serializing its shaded Gson tree to text and parsing it again. */
++    public static NativeUiScene parse(final com.viaversion.viaversion.libs.gson.JsonObject scene, final Set<String> renderers) {
++        return parse(copy(scene, 0).getAsJsonObject(), renderers);
++    }
++
++    private static JsonElement copy(final com.viaversion.viaversion.libs.gson.JsonElement value, final int depth) {
++        if (depth > 512) throw new IllegalArgumentException("Native UI scene exceeds layout limits");
++        if (value.isJsonObject()) {
++            final JsonObject object = new JsonObject();
++            for (final var entry : value.getAsJsonObject().entrySet()) object.add(entry.getKey(), copy(entry.getValue(), depth + 1));
++            return object;
++        }
++        if (value.isJsonArray()) {
++            final JsonArray array = new JsonArray();
++            for (final var element : value.getAsJsonArray()) array.add(copy(element, depth + 1));
++            return array;
++        }
++        if (value.isJsonNull()) return JsonNull.INSTANCE;
++        final var primitive = value.getAsJsonPrimitive();
++        if (primitive.isBoolean()) return new JsonPrimitive(primitive.getAsBoolean());
++        if (primitive.isString()) return new JsonPrimitive(primitive.getAsString());
++        // Text keeps the exact decimal digits, as the serialized round trip did.
++        return new JsonPrimitive(new LazilyParsedNumber(primitive.getAsString()));
++    }
++
++    private static NativeUiScene parse(final JsonObject scene, final Set<String> renderers) {
+         final int format = scene.get("format").getAsBigDecimal().intValueExact();
+         if (format != 1 && format != 2) throw new IllegalArgumentException("Unsupported native UI format");
+         return new NativeUiScene(node(scene.getAsJsonObject("root"), 0, new int[1], true, renderers));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/NativeCookingControlStyle.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/base/NativeCookingControlStyle.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..420ad85eb5a50f2630635ade25244cba68ab8ca0
@@ -19307,10 +19381,10 @@ index 0000000000000000000000000000000000000000..7bf34def19e275c21eb74265f5a9cffd
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..c656dee4ab0c04088027f529f8b6e052420a5897
+index 0000000000000000000000000000000000000000..083231471c49539913fdc3b8783d80cc27ce4ab7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/container/NativePlayerPresentationTest.java
-@@ -0,0 +1,305 @@
+@@ -0,0 +1,320 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -19464,6 +19538,21 @@ index 0000000000000000000000000000000000000000..c656dee4ab0c04088027f529f8b6e052
 +        assertFalse(presentation.result(new NativePlayerInventoryResult(1, 8, 2, 3, true)));
 +        presentation.query("discarded", sent::add);
 +        assertEquals(2, sent.size());
++    }
++
++    @Test
++    void anIdenticalRepublishKeepsTheRevisionSoTheScreenDoesNotRebuild() {
++        final var presentation = new NativePlayerPresentation(message(false, 1, 8, 1, "", true),
++                Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of(), () -> 0);
++        final long revision = presentation.revision();
++        assertTrue(presentation.update(message(false, 1, 8, 2, "", true), Map.of(0, new ItemStack(Items.IRON_INGOT)), Map.of()));
++        assertEquals(revision, presentation.revision());
++        assertEquals(2, presentation.message().revision());
++        assertTrue(presentation.update(message(false, 1, 8, 3, "", true), Map.of(0, new ItemStack(Items.IRON_INGOT, 2)), Map.of()));
++        assertNotEquals(revision, presentation.revision());
++        final long counted = presentation.revision();
++        assertTrue(presentation.update(message(false, 1, 8, 4, "oak", true), Map.of(0, new ItemStack(Items.IRON_INGOT, 2)), Map.of()));
++        assertNotEquals(counted, presentation.revision());
 +    }
 +
 +    @Test
@@ -21133,3 +21222,23 @@ index 0000000000000000000000000000000000000000..55223ac75eabfb08e69cb5e70fd2c1eb
 +        }
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java
+index c7b4bc4e4f2876e44439874a6d773a0f5a30dea1..72af0049a715e1ecffa8a630feae4ca70f49a79e 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/ui/NativeUiSceneTest.java
+@@ -37,4 +37,15 @@ final class NativeUiSceneTest {
+     private static NativeUiScene.Node node(final String encoded) {
+         return new NativeUiScene.Node("", "button", JsonParser.parseString("{\"enabled\":" + encoded + "}").getAsJsonObject(), List.of(), Integer.MIN_VALUE);
+     }
++
++    @Test
++    void readsAResolvedViaBedrockTreeLikeItsSerializedText() {
++        final String json = """
++                {"format":2,"root":{"name":"root","type":"panel","size":[176.0,"100%c + 2px"],"alpha":0.50,
++                 "layer":12345678901234567890,"visible":true,"bindings":null,"children":[
++                  {"name":"label","type":"label","text":"Crafting","offset":[-1,2.25]}]}}
++                """;
++        final var shaded = com.viaversion.viaversion.libs.gson.JsonParser.parseString(json).getAsJsonObject();
++        assertEquals(NativeUiScene.parse(json, Set.of()).root(), NativeUiScene.parse(shaded, Set.of()).root());
++    }
+ }
