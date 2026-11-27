@@ -17,49 +17,55 @@ the default Java number on failure, so vanilla inverted both results.
 
 Query the HTTP NetherNet capability endpoint synchronously on vanilla's
 ping thread, like vanilla's own blocking TCP connect, and throw on failure
-so the entry becomes unreachable. Report the Java protocol for a server on
+so the entry becomes unreachable. The query goes through ViaBedrock's
+requestJoinInfo, which tries HTTPS before plaintext like a join, because
+public servers such as The Hive and CubeCraft answer only over TLS. The
+entry's version comes from BedrockConnectionUtil.connectionVersion, the
+rule joins use. Report the Java protocol for a server on
 the supported Bedrock protocol and the server's own protocol otherwise.
 Record Bedrock as the translating version for the ViaFabricPlus tooltip.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerStatusPinger.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerStatusPinger.java
-index 007c08c8ed0dd735e9a6b2624862eaa6b881e993..16509a633c87e2528fc1ec02c67bb4f0ef9cdcf4 100644
+index f1dc2014256e23f2b2820120188661520c8a04af..cc059ef17439a17d55cf1647a5146f4acdfed779 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerStatusPinger.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinServerStatusPinger.java
-@@ -21,22 +21,18 @@
+@@ -21,17 +21,18 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.core.integration;
  
 -import com.google.gson.JsonObject;
 -import com.google.gson.JsonParser;
- import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.BedrockConnectionUtil;
  import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetAddressParser;
  import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetHttpAddress;
 +import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetServerStatus;
- import com.viaversion.viafabricplus.injection.access.core.IServerData;
++import com.viaversion.viafabricplus.injection.access.core.IServerData;
  import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
--import java.net.URI;
+-import java.net.InetSocketAddress;
 +import java.io.IOException;
 +import java.io.UncheckedIOException;
  import java.net.SocketAddress;
--import java.net.http.HttpClient;
--import java.net.http.HttpRequest;
--import java.net.http.HttpResponse;
--import java.time.Duration;
  import java.util.List;
 -import net.minecraft.client.Minecraft;
 +import net.minecraft.SharedConstants;
  import net.minecraft.client.multiplayer.ServerData;
  import net.minecraft.client.multiplayer.ServerStatusPinger;
  import net.minecraft.client.multiplayer.resolver.ServerAddress;
-@@ -53,8 +49,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+@@ -39,7 +40,6 @@ import net.minecraft.network.chat.Component;
+ import net.minecraft.network.protocol.status.ServerStatus;
+ import net.minecraft.server.network.EventLoopGroupHolder;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+-import net.raphimc.viabedrock.netty.nethernet.BedrockHttpSignaling;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.injection.At;
+@@ -49,6 +49,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  @Mixin(ServerStatusPinger.class)
  public abstract class MixinServerStatusPinger {
  
--    private static final HttpClient NETHERNET_HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
--
 +    /**
 +     * Vanilla calls this on its server list ping pool and handles the result in two ways. An exception marks the
 +     * entry unreachable. A completed pong runs {@code onPongResponse}, which recomputes the state by comparing
@@ -69,11 +75,11 @@ index 007c08c8ed0dd735e9a6b2624862eaa6b881e993..16509a633c87e2528fc1ec02c67bb4f0
      @Inject(method = "pingServer", at = @At("HEAD"), cancellable = true)
      private void pingNetherNet(final ServerData data, final Runnable onPersistentDataChange, final Runnable onPongResponse,
                                 final EventLoopGroupHolder eventLoopGroupHolder, final CallbackInfo ci) {
-@@ -73,54 +73,34 @@ public abstract class MixinServerStatusPinger {
+@@ -63,47 +69,34 @@ public abstract class MixinServerStatusPinger {
          }
          ci.cancel();
          data.playerList = List.of();
-+        mixinServerData.viaFabricPlus$setTranslatingVersion(BedrockProtocolVersion.BEDROCK_LATEST);
++        ((IServerData) data).viaFabricPlus$setTranslatingVersion(BedrockProtocolVersion.BEDROCK_LATEST);
          if (!(address instanceof NetherNetHttpAddress httpAddress)) {
              data.motd = Component.translatable("bedrock_nethernet.viafabricplus.status_unavailable");
              data.status = Component.empty();
@@ -86,22 +92,8 @@ index 007c08c8ed0dd735e9a6b2624862eaa6b881e993..16509a633c87e2528fc1ec02c67bb4f0
          data.motd = Component.translatable("multiplayer.status.pinging");
 -        data.setState(ServerData.State.PINGING);
          final long start = System.nanoTime();
--        final URI uri;
-+        final NetherNetServerStatus status;
-         try {
--            uri = new URI("http", null, httpAddress.host(), httpAddress.port(), "/v1/join", null, null);
--        } catch (Exception exception) {
--            data.setState(ServerData.State.UNREACHABLE);
--            return;
-+            status = NetherNetServerStatus.query(httpAddress.host(), httpAddress.port());
-+        } catch (IOException exception) {
-+            throw new UncheckedIOException(exception);
-+        } catch (InterruptedException exception) {
-+            Thread.currentThread().interrupt();
-+            throw new IllegalStateException("Interrupted while pinging " + data.ip, exception);
-         }
--        final HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(5)).GET().build();
--        NETHERNET_HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+-        // Public servers serve their join information only over TLS, so ping the way a join connects.
+-        BedrockHttpSignaling.requestJoinInfo(InetSocketAddress.createUnresolved(httpAddress.host(), httpAddress.port()))
 -            .whenCompleteAsync((response, error) -> {
 -                if (error != null || response.statusCode() / 100 != 2) {
 -                    data.motd = Component.translatable("multiplayer.status.cannot_connect");
@@ -130,6 +122,15 @@ index 007c08c8ed0dd735e9a6b2624862eaa6b881e993..16509a633c87e2528fc1ec02c67bb4f0
 -                }
 -                onPongResponse.run();
 -            }, Minecraft.getInstance());
++        final NetherNetServerStatus status;
++        try {
++            status = NetherNetServerStatus.query(httpAddress.host(), httpAddress.port());
++        } catch (IOException exception) {
++            throw new UncheckedIOException(exception);
++        } catch (InterruptedException exception) {
++            Thread.currentThread().interrupt();
++            throw new IllegalStateException("Interrupted while pinging " + data.ip, exception);
++        }
 +        data.motd = Component.literal(status.name());
 +        data.version = Component.literal(status.version());
 +        // The server list shows this number as the server version and marks every other number incompatible.
@@ -143,10 +144,10 @@ index 007c08c8ed0dd735e9a6b2624862eaa6b881e993..16509a633c87e2528fc1ec02c67bb4f0
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetServerStatus.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetServerStatus.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee61413c19293909d830d3774952b82ed6214c84
+index 0000000000000000000000000000000000000000..4434dda0de6e3a240d452ee60e6c3673a8b085d7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/NetherNetServerStatus.java
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,56 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -157,29 +158,39 @@ index 0000000000000000000000000000000000000000..ee61413c19293909d830d3774952b82e
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +import java.io.IOException;
-+import java.net.URI;
-+import java.net.URISyntaxException;
-+import java.net.http.HttpClient;
-+import java.net.http.HttpRequest;
++import java.net.InetSocketAddress;
 +import java.net.http.HttpResponse;
 +import java.time.Duration;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ExecutionException;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.TimeoutException;
++import net.raphimc.viabedrock.netty.nethernet.BedrockHttpSignaling;
 +
 +/** The server status that an HTTP NetherNet server reports from its capability endpoint. */
 +public record NetherNetServerStatus(String name, String version, int protocol, int players, int maxPlayers) {
 +
 +    private static final Duration TIMEOUT = Duration.ofSeconds(5);
-+    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
 +
-+    /** Blocks for at most a few seconds. Throws when the server does not answer with a valid status. */
++    /**
++     * Blocks for at most a few seconds. Throws when the server does not answer with a valid status.
++     * The request tries HTTPS before plaintext like a join, because public servers answer only over TLS.
++     */
 +    public static NetherNetServerStatus query(final String host, final int port) throws IOException, InterruptedException {
-+        final URI uri;
++        final CompletableFuture<HttpResponse<String>> request =
++            BedrockHttpSignaling.requestJoinInfo(InetSocketAddress.createUnresolved(host, port));
++        final HttpResponse<String> response;
 +        try {
-+            uri = new URI("http", null, host, port, "/v1/join", null, null);
-+        } catch (URISyntaxException exception) {
-+            throw new IOException("Invalid NetherNet server address", exception);
++            response = request.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
++        } catch (final ExecutionException exception) {
++            throw new IOException("NetherNet status request failed", exception.getCause());
++        } catch (final TimeoutException exception) {
++            request.cancel(true);
++            throw new IOException("NetherNet status request timed out", exception);
++        } catch (final InterruptedException exception) {
++            request.cancel(true);
++            throw exception;
 +        }
-+        final HttpRequest request = HttpRequest.newBuilder(uri).timeout(TIMEOUT).GET().build();
-+        final HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
 +        if (response.statusCode() / 100 != 2) {
 +            throw new IOException("NetherNet status request failed with HTTP " + response.statusCode());
 +        }
