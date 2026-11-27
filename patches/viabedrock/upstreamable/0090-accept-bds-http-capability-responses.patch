@@ -16,6 +16,13 @@ close, and reject certificate validation failures instead of downgrading.
 Loopback tests cover native-style plaintext TLS rejection, empty capability
 responses, unsupported endpoints, SDP delivery and invalid answers.
 
+Expose the capability request as requestJoinInfo for server lists and
+version detection, with the same HTTPS-first rule as a join. Public
+servers such as The Hive and CubeCraft serve /v1/join only over TLS: on
+2026-11-27 plaintext requests on port 19132 returned "HTTP request to an
+HTTPS server" and 426 Upgrade Required, while HTTPS returned their join
+information. Lifeboat answers both.
+
 Share the existing self-signed game identity factory with transports so
 HTTP clients can sign the offer before LOGIN_START and preserve the same
 key through login. Exact BDS 1.26.51.1 protocol2193 rejects the unsigned
@@ -58,10 +65,10 @@ index 9b84d0b585fedcd6381b5baf59209bb06cac28ee..8800ee1e82029e2cde65a11f80780fd3
          transitive = false
 diff --git a/src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java b/src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..d50777de47ad940454ce3d061cd283141a1f0f64
+index 0000000000000000000000000000000000000000..61dc4fab78334da05034686161723ea826ea4872
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,218 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -122,20 +129,50 @@ index 0000000000000000000000000000000000000000..d50777de47ad940454ce3d061cd28314
 +                return this.acceptProbe(response, true);
 +            }
 +            final Throwable cause = unwrap(error);
-+            // Native BDS can reject the TLS ClientHello with a fatal handshake alert.
-+            // Certificate validation failures must not downgrade HTTPS to plaintext.
-+            if (!(cause instanceof SSLException) || certificateFailure(cause)) {
++            if (!plaintextFallback(cause)) {
 +                return CompletableFuture.<List<IceServerInfo>>failedFuture(cause);
 +            }
 +            return this.probe(false).thenCompose(fallback -> this.acceptProbe(fallback, false));
 +        }).thenCompose(result -> result);
 +    }
 +
++    /**
++     * Requests the server's join information with the rule a join uses: HTTPS first, then plaintext
++     * only when the TLS handshake itself is rejected. Server lists and version detection use this so
++     * that TLS-only servers answer them the same way they answer a join.
++     */
++    public static CompletableFuture<HttpResponse<String>> requestJoinInfo(final InetSocketAddress address) {
++        return joinInfo(address, true).handle((response, error) -> {
++            if (error == null) {
++                return CompletableFuture.completedFuture(response);
++            }
++            final Throwable cause = unwrap(error);
++            if (!plaintextFallback(cause)) {
++                return CompletableFuture.<HttpResponse<String>>failedFuture(cause);
++            }
++            return joinInfo(address, false);
++        }).thenCompose(result -> result);
++    }
++
++    private static CompletableFuture<HttpResponse<String>> joinInfo(final InetSocketAddress address, final boolean secure) {
++        final HttpRequest request = HttpRequest.newBuilder(uri(address, secure, "/v1/join"))
++                .timeout(TIMEOUT).header("Accept", "application/json").GET().build();
++        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString());
++    }
++
++    /**
++     * Native BDS can reject the TLS ClientHello with a fatal handshake alert and then serve plaintext.
++     * Certificate validation failures must not downgrade HTTPS to plaintext.
++     */
++    private static boolean plaintextFallback(final Throwable cause) {
++        return cause instanceof SSLException && !certificateFailure(cause);
++    }
++
 +    private synchronized CompletableFuture<HttpResponse<Void>> probe(final boolean secure) {
 +        if (this.closed) {
 +            return CompletableFuture.failedFuture(new IllegalStateException("HTTP signaling is closed"));
 +        }
-+        final HttpRequest request = HttpRequest.newBuilder(this.uri(secure, "/v1/join"))
++        final HttpRequest request = HttpRequest.newBuilder(uri(this.address, secure, "/v1/join"))
 +                .timeout(TIMEOUT).header("Accept", "application/json").GET().build();
 +        final CompletableFuture<HttpResponse<Void>> future = HTTP.sendAsync(request, HttpResponse.BodyHandlers.discarding());
 +        this.pending = future;
@@ -163,7 +200,7 @@ index 0000000000000000000000000000000000000000..d50777de47ad940454ce3d061cd28314
 +        if (this.address == null || this.connectionId == null) {
 +            throw new IllegalStateException("Connect and register a signal handler before sending an offer");
 +        }
-+        final HttpRequest request = HttpRequest.newBuilder(this.uri(this.secure, "/v1/join/" + this.localNetworkId))
++        final HttpRequest request = HttpRequest.newBuilder(uri(this.address, this.secure, "/v1/join/" + this.localNetworkId))
 +                .timeout(TIMEOUT).header("Content-Type", "application/sdp").header("Accept", "application/sdp")
 +                .POST(HttpRequest.BodyPublishers.ofString(offer)).build();
 +        final CompletableFuture<HttpResponse<String>> future = HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString());
@@ -193,9 +230,9 @@ index 0000000000000000000000000000000000000000..d50777de47ad940454ce3d061cd28314
 +        }
 +    }
 +
-+    private URI uri(final boolean secure, final String path) {
-+        final String host = secure || this.address.isUnresolved() ? this.address.getHostString() : this.address.getAddress().getHostAddress();
-+        return URI.create((secure ? "https://" : "http://") + (host.contains(":") ? "[" + host + "]" : host) + ":" + this.address.getPort() + path);
++    private static URI uri(final InetSocketAddress address, final boolean secure, final String path) {
++        final String host = secure || address.isUnresolved() ? address.getHostString() : address.getAddress().getHostAddress();
++        return URI.create((secure ? "https://" : "http://") + (host.contains(":") ? "[" + host + "]" : host) + ":" + address.getPort() + path);
 +    }
 +
 +    private static boolean certificateFailure(final Throwable error) {
@@ -358,10 +395,10 @@ index cb50fbeb838d13b572eae8bad04ff9017a306809..b15cd6aceb647fd3dafd4960d8472b22
      }
 diff --git a/src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java b/src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..ed500d130d9f119492dabfd996c21bee6d9e1689
+index 0000000000000000000000000000000000000000..d861f99616b7eb7b5e82d6d3a3f98460f6d71f25
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,259 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -507,6 +544,57 @@ index 0000000000000000000000000000000000000000..ed500d130d9f119492dabfd996c21bee
 +                assertInstanceOf(SSLHandshakeException.class, refused.getCause());
 +                assertEquals(0, requests.get());
 +            }
++        } finally {
++            server.stop(0);
++            certificate.delete();
++        }
++    }
++
++    @Test
++    void joinInfoFallsBackToPlaintextOnlyWhenTheTlsHandshakeIsRejected() throws Exception {
++        final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        try (PlaintextEndpoint endpoint = new PlaintextEndpoint(server.getAddress())) {
++            final byte[] info = "{\"name\":\"Local world\",\"protocol\":2225}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
++            server.createContext("/v1/join", exchange -> {
++                exchange.sendResponseHeaders(200, info.length);
++                exchange.getResponseBody().write(info);
++                exchange.close();
++            });
++            server.start();
++            final var response = BedrockHttpSignaling.requestJoinInfo(endpoint.address()).get(15, TimeUnit.SECONDS);
++            assertEquals(200, response.statusCode());
++            assertEquals("http", response.uri().getScheme());
++            assertEquals("{\"name\":\"Local world\",\"protocol\":2225}", response.body());
++        } finally {
++            server.stop(0);
++        }
++    }
++
++    @Test
++    void joinInfoNeverDowngradesAnUntrustedCertificateToPlaintext() throws Exception {
++        final SelfSignedCertificate certificate = new SelfSignedCertificate("localhost");
++        final HttpsServer server = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        final AtomicInteger requests = new AtomicInteger();
++        try {
++            final KeyStore keys = KeyStore.getInstance(KeyStore.getDefaultType());
++            keys.load(null, null);
++            final char[] password = new char[0];
++            keys.setKeyEntry("endpoint", certificate.key(), password, new Certificate[]{certificate.cert()});
++            final KeyManagerFactory managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
++            managers.init(keys, password);
++            final SSLContext context = SSLContext.getInstance("TLS");
++            context.init(managers.getKeyManagers(), null, null);
++            server.setHttpsConfigurator(new HttpsConfigurator(context));
++            server.createContext("/v1/join", exchange -> {
++                requests.incrementAndGet();
++                exchange.sendResponseHeaders(200, -1);
++                exchange.close();
++            });
++            server.start();
++            final ExecutionException refused = assertThrows(ExecutionException.class,
++                    () -> BedrockHttpSignaling.requestJoinInfo(server.getAddress()).get(15, TimeUnit.SECONDS));
++            assertInstanceOf(SSLHandshakeException.class, refused.getCause());
++            assertEquals(0, requests.get());
 +        } finally {
 +            server.stop(0);
 +            certificate.delete();
