@@ -45,7 +45,7 @@ dependencies {
     }
     compileOnly("com.viaversion:viaversion-api:5.12.3") { isTransitive = false }
 
-    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
