@@ -858,6 +858,14 @@ later layer covers an earlier one where their geometry coincides. Java
 batches model submits per render type in a hash map, so two layers of
 one actor drew in hash order and an earlier layer could cover a later one.
 
+Hide the server pack download toast on the render thread. Minecraft
+26.3's download listener (DownloadedPackSource$3) runs on a download
+thread and hides the toast directly after a successful batch, while it
+sends progress updates through Minecraft.execute. ToastManager is not
+thread-safe, so the hide can throw ConcurrentModificationException and
+the finished download then counts as failed. A player log showed this on
+The Hive when the converted pack was offered a second time.
+
 diff --git a/build.gradle.kts b/build.gradle.kts
 index ad76e54c243c537c3ebc73203041e5bae3e5d6c1..ab61121a07f43d92d92cfc7b557dceefe53e3835 100644
 --- a/build.gradle.kts
@@ -2710,6 +2718,43 @@ index 0000000000000000000000000000000000000000..07b1b00ee4d946d1f5161fbc26a92e3f
 +    @ModifyConstant(method = "download", constant = @Constant(intValue = 262144000))
 +    private int viaFabricPlusBedrock$nativePayloadCap(final int vanilla) {
 +        return BedrockNativeResourceTransport.maxPackSize(vanilla);
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinDownloadedPackSourceProgress.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinDownloadedPackSourceProgress.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6e631da2d61b2edf8a47c316420128164ddf7650
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinDownloadedPackSourceProgress.java
+@@ -0,0 +1,31 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.components.toasts.SystemToast;
++import net.minecraft.client.gui.components.toasts.ToastManager;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++/**
++ * The pack download listener inside DownloadedPackSource runs on a download thread. It hands progress toast
++ * updates to the render thread, but hides the toast after a successful batch directly. ToastManager is not
++ * thread-safe, so that hide can throw ConcurrentModificationException while the render thread updates toasts.
++ * The exception escapes the finished download, which then counts as failed. Bedrock sessions download a second
++ * pack while the first toast is still visible, so hide it on the render thread like the progress updates.
++ */
++@Mixin(targets = "net.minecraft.client.resources.server.DownloadedPackSource$3")
++public abstract class MixinDownloadedPackSourceProgress {
++
++    @WrapOperation(method = "requestFinished", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/components/toasts/SystemToast;forceHide(Lnet/minecraft/client/gui/components/toasts/ToastManager;Lnet/minecraft/client/gui/components/toasts/SystemToast$SystemToastId;)V"))
++    private void viaFabricPlusBedrock$hideOnRenderThread(final ToastManager manager, final SystemToast.SystemToastId id, final Operation<Void> original) {
++        Minecraft.getInstance().execute(() -> original.call(manager, id));
 +    }
 +
 +}
@@ -6913,10 +6958,10 @@ index 35145bcfe732c1feaae06d7813c8883af6677125..f42de8f4808c9526eb31aae31e30a336
 +accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_NO_LIGHTMAP_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible field net/minecraft/client/renderer/RenderPipelines EYES_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 8e4e3dd842f76ae0c715d540085c90b205b8118f..2e26771f9b7b19d9e3293f3504dceb6662a592a2 100644
+index 8e4e3dd842f76ae0c715d540085c90b205b8118f..630477220ec87577d3b6cbbfa1e198bfc131c6c2 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -1,10 +1,31 @@
+@@ -1,10 +1,32 @@
  {
    "required": true,
 +  "plugin": "com.viaversion.viafabricplus.bedrock.injection.BedrockMixinPlugin",
@@ -6926,6 +6971,7 @@ index 8e4e3dd842f76ae0c715d540085c90b205b8118f..2e26771f9b7b19d9e3293f3504dceb66
    "priority": 1001,
    "client": [
 +    "features.render.MixinDownloadedPackSourceDownloader",
++    "features.render.MixinDownloadedPackSourceProgress",
 +    "compat.emf.MixinEmfModelRoots",
 +    "compat.iris.MixinIrisPipelines",
 +    "compat.iris.IrisProgramSourceConstructor",
@@ -6948,7 +6994,7 @@ index 8e4e3dd842f76ae0c715d540085c90b205b8118f..2e26771f9b7b19d9e3293f3504dceb66
      "jjwt.MixinClasses",
      "jjwt.MixinDefaultJwtParserBuilder",
      "core.access.MixinConfirmScreen",
-@@ -43,6 +64,25 @@
+@@ -43,6 +65,25 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
