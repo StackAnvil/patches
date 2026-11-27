@@ -130,6 +130,12 @@ The replay installer downloads and verifies the mods; changing `STACKANVIL_REPLA
 These options also work with Java recordings and `--client proxy`.
 They require a Java client and cannot configure the official Bedrock client.
 
+### Profile a Java client
+
+Every Java test client includes the pinned [TaskManager](https://modrinth.com/mod/taskmanager) profiler from `integration/profiler.json`. This covers the lab instance, the integration instances, and replay and record sessions. Release bundles do not include it.
+
+TaskManager's default keys collide with the inventory and StackAnvil emotes, so the test clients use F8 for its screen, F9 for a session, and F10 for its HUD. A session records for 30 seconds and then writes its report to `taskmanager-sessions/` in the client's game directory. A replay or record session keeps it under `prism/instances/<instance>/minecraft/taskmanager-sessions/` in its private directory. To profile a screen, start the session with `bun run capture ui key F9 --client java`, then open the screen before the session ends.
+
 Each Java session saves `graphics-profile.json` alongside its private logs and screenshot.
 The shader replay requires an Iris activation message for the pinned pack.
 Missing Bedrock pipeline overrides and shader compilation errors fail rendering verification, even after a complete scene replay.

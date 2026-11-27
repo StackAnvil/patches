@@ -9,6 +9,7 @@ import { root } from "./model.ts";
 const InstalledModsSchema = Schema.Struct({ files: Schema.Array(Schema.String) });
 import { clientArtifacts, javaTarget } from "./client-artifacts.ts";
 import { execFileAsync as execute } from "./process.ts";
+import { installProfiler } from "./integration/profiler.ts";
 
 const bundleRoot = join(root, ".stackanvil", "prism-bundle");
 const prismHome = join(
@@ -151,5 +152,7 @@ export async function installPrism(instanceName = prismInstance): Promise<string
       : `${options}${options.endsWith("\n") || !options ? "" : "\n"}soundCategory_master:0.0\n`,
   );
   await writeFile(marker, `${JSON.stringify({ version, files }, null, 2)}\n`);
+  // Test clients only. Release bundles come from prepareFiles and stay without the profiler.
+  await installProfiler(join(destination, "minecraft"));
   return destination;
 }

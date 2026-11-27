@@ -24,6 +24,7 @@ import { artifact, javaTarget } from "../client-artifacts.ts";
 import { pause, trapCancellation } from "./cancellation.ts";
 import { writeReplayArtifactEvidence } from "./artifact-evidence.ts";
 import { installModpack } from "../integration/modpack.ts";
+import { installProfiler } from "../integration/profiler.ts";
 import { findPrismProcess } from "../prism.ts";
 import {
   configureShaders,
@@ -466,6 +467,7 @@ async function launchJava(
     { mode: 0o600 },
   );
   await cp(recorder, join(mods, "stackanvil-recorder.jar"));
+  await installProfiler(game);
   await writeReplayArtifactEvidence(
     join(directory, "client-artifacts.json"),
     (await readdir(mods))
