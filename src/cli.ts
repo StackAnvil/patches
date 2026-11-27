@@ -8,6 +8,7 @@ import { prBody, syncPr, updatePrParticipants } from "./pr.ts";
 import { devSetup } from "./dev.ts";
 import { healthFailed, healthMarkdown, patchHealth } from "./health.ts";
 import { reportMarkdownPath, writeReport } from "./validation.ts";
+import { verifyStacks } from "./stack-verify.ts";
 import { print, printError } from "./output.ts";
 
 const [area, action] = process.argv.slice(2);
@@ -71,6 +72,16 @@ async function main(): Promise<void> {
     if (healthFailed(report)) process.exitCode = 1;
     return;
   }
+  if (area === "stack" && action === "verify") {
+    const files = process.argv.slice(4);
+    if (files.length === 0)
+      throw new Error("Choose changed paths, for example: bun run stack verify patches/viabedrock");
+    const failures = await verifyStacks(files);
+    for (const failure of failures) printError(failure);
+    if (failures.length > 0) process.exitCode = 1;
+    else print("Every affected patch stack applies to its pinned base.");
+    return;
+  }
   if (area === "dev" && action === "setup") {
     await Effect.runPromise(devSetup());
     return;
@@ -83,7 +94,10 @@ async function main(): Promise<void> {
   > = commandOptions[area];
   const options = action === undefined ? undefined : areaOptions[action];
   if (action === undefined || !options) {
-    const commands = [...Object.keys(areaOptions), ...(area === "stack" ? ["health"] : [])];
+    const commands = [
+      ...Object.keys(areaOptions),
+      ...(area === "stack" ? ["health", "verify"] : []),
+    ];
     throw new Error(`Choose a ${area} command: ${commands.join(", ")}`);
   }
   const { positionals, flag, text } = commandArguments(options);
