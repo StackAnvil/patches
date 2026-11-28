@@ -1,0 +1,231 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 28 Nov 2026 12:02:56 +0100
+Subject: [PATCH] fix(chunks): load chunks that arrive just before a teleport
+
+Some servers send the chunk at a teleport destination before the teleport
+and the network chunk publisher update that move the player there. On join,
+DonutSMP sends the player's own chunk after a publisher update centered on
+the previous position, then teleports the player about 8,000 blocks away and
+sends the next publisher update. ViaBedrock checked the chunk against the old
+position, dropped it, and the server never sent it again. Java cannot build
+the visible world around a camera whose own chunk is missing, so the whole
+world and its entities stayed invisible.
+
+The level chunk handler now keeps a chunk that is outside the load range as
+raw packet bytes. The next center update replays the kept chunks that are now
+in range through the normal handler and forgets the rest, so the buffer holds
+at most the chunks of one publisher interval. A bound of 64 chunks keeps a
+misbehaving server from growing it.
+
+Evidence: a recorded DonutSMP join (protocol 2225) sends chunk -3665,13985
+between a publisher update for -3152,13626 and the teleport to
+-58626.5 97.6 223765.5. With the old handler, the replay rejected exactly
+that chunk and sent the other 196 to Java while the world stayed empty.
+Native Bedrock players spawn into a visible world on the same server.
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index 0351edbf1de72dfd8a485b9bf4caeeb3f62ef73d..79b6892b825ba90f025bae96e251685e2b516b8f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -34,6 +34,7 @@ import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.util.Key;
+ import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
+ import io.netty.buffer.ByteBuf;
+@@ -227,6 +228,8 @@ public final class WorldPackets {
+             wrapper.cancel();
+             final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+             final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
++            final ByteBuf input = ((PacketWrapperImpl) wrapper).getInputBuffer();
++            final int packetStart = input.readerIndex();
+ 
+             final int chunkX = wrapper.read(BedrockTypes.VAR_INT); // chunk x
+             final int chunkZ = wrapper.read(BedrockTypes.VAR_INT); // chunk z
+@@ -234,6 +237,12 @@ public final class WorldPackets {
+             if (dimension != chunkTracker.getDimension()) {
+                 return;
+             }
++            if (!chunkTracker.isInLoadDistance(chunkX, chunkZ)) {
++                final byte[] packet = new byte[input.writerIndex() - packetStart];
++                input.getBytes(packetStart, packet);
++                chunkTracker.keepChunkAheadOfCenter(chunkX, chunkZ, packet);
++                return;
++            }
+             final int sectionCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // sub chunk count
+             final boolean requestSubChunks = wrapper.read(Types.BOOLEAN); // has client request limit
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index 969da5c29734ad48b2eb146f3a68a01cfa72cd20..8fedfd077d778fd32bcb5ca597b84493b9004ebf 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -55,6 +55,7 @@ import net.raphimc.viabedrock.api.model.BlockState;
+ import net.raphimc.viabedrock.api.model.CustomBlockVisual;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ import net.raphimc.viabedrock.protocol.data.enums.Dimension;
+@@ -69,6 +70,7 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
+ import net.raphimc.viabedrock.api.model.NativeBlockSection;
+ 
++import io.netty.buffer.Unpooled;
+ import java.util.*;
+ import java.util.concurrent.Executor;
+ import java.util.concurrent.ExecutorService;
+@@ -124,6 +126,7 @@ public class ChunkTracker extends StoredObject {
+     private int centerX = 0;
+     private int centerZ = 0;
+     private int radius;
++    private final ChunksAheadOfCenter chunksAheadOfCenter = new ChunksAheadOfCenter();
+ 
+     private final ChunkMappingDiagnostics mappingDiagnostics = new ChunkMappingDiagnostics(ViaBedrock.getPlatform().getLogger());
+ 
+@@ -160,6 +163,14 @@ public class ChunkTracker extends StoredObject {
+             this.subChunkRequests.addAll(requests);
+         }
+         this.removeOutOfLoadDistanceChunks();
++        for (final byte[] packet : this.chunksAheadOfCenter.takeLoadable(this::isInLoadDistance)) {
++            PacketFactory.replayClientbound(PacketWrapper.create(ClientboundBedrockPackets.LEVEL_CHUNK, Unpooled.wrappedBuffer(packet), this.user()));
++        }
++    }
++
++    /** Keeps a level chunk received outside the load range until the next center update decides whether to load it. */
++    public void keepChunkAheadOfCenter(final int chunkX, final int chunkZ, final byte[] packet) {
++        this.chunksAheadOfCenter.keep(chunkX, chunkZ, packet);
+     }
+ 
+     public void setRadius(final int radius) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunksAheadOfCenter.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunksAheadOfCenter.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..21c5422ce46f503f0b4bb185e2002afc4305495e
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunksAheadOfCenter.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.ChunkPosition;
++
++import java.util.ArrayList;
++import java.util.Iterator;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/**
++ * Level chunks that arrived outside the load range before the next chunk center update.
++ * A server can send the chunk at a teleport destination just before the teleport and its publisher update.
++ * DonutSMP does this on join and never sends the chunk again, so dropping it leaves the player's own chunk empty.
++ */
++final class ChunksAheadOfCenter {
++
++    /** A publisher update covers at most a few teleport destinations, so a small bound keeps stale data out. */
++    static final int MAX_CHUNKS = 64;
++
++    private final Map<Long, byte[]> packets = new LinkedHashMap<>();
++
++    void keep(final int chunkX, final int chunkZ, final byte[] packet) {
++        final long key = ChunkPosition.chunkKey(chunkX, chunkZ);
++        this.packets.remove(key); // A newer copy of the same chunk replaces the older one and becomes the newest entry.
++        this.packets.put(key, packet);
++        final Iterator<Long> oldest = this.packets.keySet().iterator();
++        while (this.packets.size() > MAX_CHUNKS) {
++            oldest.next();
++            oldest.remove();
++        }
++    }
++
++    /** Returns the kept packets now inside the load range in arrival order and forgets every kept packet. */
++    List<byte[]> takeLoadable(final LoadRange range) {
++        final List<byte[]> loadable = new ArrayList<>();
++        for (final Map.Entry<Long, byte[]> entry : this.packets.entrySet()) {
++            final ChunkPosition position = new ChunkPosition(entry.getKey());
++            if (range.contains(position.chunkX(), position.chunkZ())) {
++                loadable.add(entry.getValue());
++            }
++        }
++        this.packets.clear();
++        return loadable;
++    }
++
++    @FunctionalInterface
++    interface LoadRange {
++        boolean contains(int chunkX, int chunkZ);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/LevelChunkBiomePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/LevelChunkBiomePacketTest.java
+index 9f4044de831ee9074f7cbe25ab59d95c795125b4..e64eb1be448d804f8c27079206443c4a6fb28757 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/LevelChunkBiomePacketTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/LevelChunkBiomePacketTest.java
+@@ -74,6 +74,7 @@ class LevelChunkBiomePacketTest {
+         when(user.get(BlobCache.class)).thenReturn(cache);
+         when(session.getBedrockVanillaVersion()).thenReturn(new Semver("1.26.51"));
+         when(tracker.getDimension()).thenReturn(Dimension.OVERWORLD);
++        when(tracker.isInLoadDistance(0, 0)).thenReturn(true);
+         when(tracker.getMinY()).thenReturn(-64);
+         when(tracker.getMaxY()).thenReturn(320);
+         when(tracker.handleBlockPalette(any())).thenAnswer(call -> call.getArgument(0));
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunksAheadOfCenterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunksAheadOfCenterTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..53a530f1e86fbf08f05ac53c5fc39577cdfe1675
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunksAheadOfCenterTest.java
+@@ -0,0 +1,47 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class ChunksAheadOfCenterTest {
++
++    @Test
++    void theTeleportDestinationChunkLoadsOnceTheCenterReachesIt() {
++        // DonutSMP join: the chunk at the destination precedes the teleport and its publisher update.
++        final ChunksAheadOfCenter chunks = new ChunksAheadOfCenter();
++        chunks.keep(-3665, 13985, new byte[]{1});
++        chunks.keep(0, 0, new byte[]{2});
++
++        final List<byte[]> loadable = chunks.takeLoadable((x, z) -> Math.abs(x + 3665) <= 10 && Math.abs(z - 13985) <= 10);
++
++        assertEquals(1, loadable.size());
++        assertArrayEquals(new byte[]{1}, loadable.getFirst());
++        assertTrue(chunks.takeLoadable((x, z) -> true).isEmpty(), "Chunks still out of range are not kept for later centers");
++    }
++
++    @Test
++    void keepsOnlyTheNewestCopyAndBoundsTheChunkCount() {
++        final ChunksAheadOfCenter chunks = new ChunksAheadOfCenter();
++        chunks.keep(5, 5, new byte[]{1});
++        chunks.keep(5, 5, new byte[]{2});
++        for (int index = 0; index < ChunksAheadOfCenter.MAX_CHUNKS; index++) {
++            chunks.keep(100 + index, 0, new byte[]{3});
++        }
++        assertEquals(ChunksAheadOfCenter.MAX_CHUNKS, chunks.takeLoadable((x, z) -> x >= 100).size());
++
++        chunks.keep(5, 5, new byte[]{1});
++        chunks.keep(5, 5, new byte[]{2});
++        assertArrayEquals(new byte[]{2}, chunks.takeLoadable((x, z) -> true).getFirst());
++    }
++
++}

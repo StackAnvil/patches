@@ -56,6 +56,19 @@ per expression made per-frame actor render controllers the largest
 allocation source on the render thread. A standalone evaluation reads the
 caller scope directly; an explicit group still takes one snapshot.
 
+A parenthesized statement list runs like a brace scope. The Hive's studio
+lights use "v.first_run ? (v.first_run = false; v.pan_current = v.pan;) :
+(...);". On BDS 1.26.66.1, a behavior pack animation controller ran every
+statement of such lists in both branches and of a bare "(v.g = 1; v.h = 2;);",
+while an unclosed list failed at pack load with "Could not find Right
+Parenthesis". All 207 pre-animation and initialize expressions in the
+recorded Hive packs now parse.
+
+Bedrock rejects invalid Molang once at load and runs the rest. A compiled
+expression cache therefore keeps a parse failure, reports it the first time
+and skips that source in later pre-animation passes. Re-parsing it every
+frame logged tens of thousands of stack traces and hid the actor each time.
+
 diff --git a/build.gradle b/build.gradle
 index 72cced30b213b589a0beafcf59f44f398848e96c..3ed0ca5b1298d9e9f43931ae33cf6e8f65ba0331 100644
 --- a/build.gradle
@@ -641,10 +654,10 @@ index 0000000000000000000000000000000000000000..ae5cf1d61d811a9c7e46e688905494d1
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-index 8f4c4f89453ce16346661d3977b179c9784fcad4..963ded71f673708d8b7ec1784f445326e4349804 100644
+index 8f4c4f89453ce16346661d3977b179c9784fcad4..38b77ae7badcf2f637397aeca01477276d05d869 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-@@ -17,60 +17,201 @@
+@@ -17,60 +17,226 @@
   */
  package net.raphimc.viabedrock.api.util;
  
@@ -748,19 +761,44 @@ index 8f4c4f89453ce16346661d3977b179c9784fcad4..963ded71f673708d8b7ec1784f445326
 +    public static final class CompiledExpressions {
 +
 +        private final Map<String, List<Expression>> expressions = new HashMap<>();
++        // Bedrock rejects invalid source once when it loads and skips it afterwards.
++        private final Map<String, IOException> failures = new HashMap<>();
 +
 +        public Value eval(final Scope scope, final String source) throws IOException {
 +            List<Expression> compiled = this.expressions.get(source);
 +            if (compiled == null) {
-+                compiled = List.copyOf(parse(source));
++                final IOException failure = this.failures.get(source);
++                if (failure != null) {
++                    throw failure;
++                }
++                try {
++                    compiled = List.copyOf(parse(source));
++                } catch (final IOException invalid) {
++                    this.failures.put(source, invalid);
++                    throw invalid;
++                }
 +                this.expressions.put(source, compiled);
 +            }
 +            return MoLangEngine.eval(scope, compiled);
 +        }
 +
++        /** Runs every valid statement list and reports each invalid one only the first time it is seen. */
 +        public void runPreAnimation(final Scope scope, final List<String> sources) throws IOException {
++            IOException firstFailure = null;
 +            for (String source : sources) {
-+                this.eval(scope, source);
++                if (this.failures.containsKey(source)) {
++                    continue;
++                }
++                try {
++                    this.eval(scope, source);
++                } catch (final IOException invalid) {
++                    if (firstFailure == null) {
++                        firstFailure = invalid;
++                    }
++                }
++            }
++            if (firstFailure != null) {
++                throw firstFailure;
 +            }
 +        }
 +
@@ -1133,10 +1171,10 @@ index 0000000000000000000000000000000000000000..875d51eca86abb75b8e2913be1702f42
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..045f04a9ce40462a3aa6a6522efefbf91c57bf16
+index 0000000000000000000000000000000000000000..613067ebe956eac7a37cdfc4c7f3fd7103fe9dca
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
-@@ -0,0 +1,380 @@
+@@ -0,0 +1,391 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1392,6 +1430,17 @@ index 0000000000000000000000000000000000000000..045f04a9ce40462a3aa6a6522efefbf9
 +            case IDENTIFIER -> new IdentifierExpression(token.value());
 +            case LPAREN -> {
 +                final Expression value = this.expression(0);
++                if (this.kind() == TokenKind.SEMICOLON) {
++                    // Bedrock runs a parenthesized statement list like a brace scope, for example
++                    // "v.first ? (v.a = 1; v.b = 2;) : (v.a = 3;);" in The Hive's studio lights.
++                    this.next();
++                    final List<Expression> body = new ArrayList<>();
++                    body.add(value instanceof ExecutionScopeExpression
++                            ? new BinaryExpression(BinaryExpression.Op.CONDITIONAL, FloatExpression.ONE, value) : value);
++                    body.addAll(this.statements(TokenKind.RPAREN));
++                    this.expect(TokenKind.RPAREN);
++                    yield new ExecutionScopeExpression(List.copyOf(body));
++                }
 +                this.expect(TokenKind.RPAREN);
 +                if (!(value instanceof FloatExpression || value instanceof StringExpression || value instanceof IdentifierExpression)) {
 +                    this.parenthesized.add(value);
@@ -1773,10 +1822,10 @@ index 0000000000000000000000000000000000000000..a1378a626168d17011ff745e906b46d6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..968a62a23f0c2f7cc251b6314b46d8c92080b5fa
+index 0000000000000000000000000000000000000000..de10bb5b217c6bbf78cceaacc827f1d2e12a8e70
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
-@@ -0,0 +1,437 @@
+@@ -0,0 +1,465 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1815,6 +1864,34 @@ index 0000000000000000000000000000000000000000..968a62a23f0c2f7cc251b6314b46d8c9
 +        assertEquals(3, group.eval("t.x").getAsNumber());
 +        assertEquals(4, group.eval("return (t.x=4);").getAsNumber());
 +        assertEquals(1, group.eval("return (t.x='a'=='a');").getAsNumber());
++    }
++
++    @Test
++    void runsEveryStatementInParenthesizedListsLikeNativeBedrock() throws Exception {
++        // BDS 1.26.66.1 runs all four forms; an unclosed list is its "Could not find Right Parenthesis" error.
++        final var group = MoLangEngine.createEvaluation(scope());
++        group.eval("v.first = 0.0; v.first ? (v.a = 1; v.b = 2;) : (v.a = 3; v.b = 4;);");
++        assertEquals(3, group.eval("v.a").getAsNumber());
++        assertEquals(4, group.eval("v.b").getAsNumber());
++        group.eval("v.first = 1.0; v.first ? (v.first = 0.0; v.c = 5; v.d = 6;) : (v.c = 7;);");
++        assertEquals(5, group.eval("v.c").getAsNumber());
++        assertEquals(6, group.eval("v.d").getAsNumber());
++        assertEquals(0, group.eval("v.first").getAsNumber());
++        group.eval("(v.g = 1; v.h = 2;);");
++        assertEquals(2, group.eval("v.h").getAsNumber());
++        assertThrows(ParseException.class, () -> MoLangParser.parse("v.t ? (v.k = 1; v.l = 2; : (v.k = 3;);"));
++    }
++
++    @Test
++    void preAnimationSkipsAnInvalidListAfterReportingItOnceAndRunsTheRest() throws Exception {
++        final var compiled = new MoLangEngine.CompiledExpressions();
++        final Scope scope = scope();
++        final List<String> sources = List.of("v.count = (v.count ?? 0) + 1;", "v.k = (1;", "v.after = (v.after ?? 0) + 1;");
++        assertThrows(IOException.class, () -> compiled.runPreAnimation(scope, sources));
++        compiled.runPreAnimation(scope, sources);
++        compiled.runPreAnimation(scope, sources);
++        assertEquals(3, MoLangEngine.eval(scope, "v.count").getAsNumber());
++        assertEquals(3, MoLangEngine.eval(scope, "v.after").getAsNumber());
 +    }
 +
 +    @Test
