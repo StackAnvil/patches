@@ -6280,10 +6280,10 @@ index 0000000000000000000000000000000000000000..5dfbb3f8cb6cc74a7e05d034abf56dec
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..fff8b7f206305721183fb60c782479c0b264f737
+index 0000000000000000000000000000000000000000..81ce90aef847207fb24f49c507da7bd6328abb6d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,2533 @@
+@@ -0,0 +1,2558 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -6356,6 +6356,13 @@ index 0000000000000000000000000000000000000000..fff8b7f206305721183fb60c782479c0
 +    private final Map<String, Definition> nativeDefinitions = new LinkedHashMap<>();
 +    private final Map<String, Map<String, JsonObject>> fileDeclarations = new HashMap<>();
 +    private volatile Map<String, JsonObject> templates;
++    // Each chat line or title resolves its factory again. The host search below does not depend on the message.
++    private final Map<HudFactoryKey, HudFactoryHost> hudFactoryHosts = Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75F, true) {
++        @Override
++        protected boolean removeEldestEntry(final Map.Entry<HudFactoryKey, HudFactoryHost> eldest) {
++            return this.size() > 32;
++        }
++    });
 +    // Declaration paths and every parent path they extend, computed with the templates after loading.
 +    private volatile Set<String> definitionPrefixes;
 +    private volatile Map<String, JsonObject> nativeTemplates;
@@ -6808,9 +6815,30 @@ index 0000000000000000000000000000000000000000..fff8b7f206305721183fb60c782479c0
 +    /** Event factories can live in the HUD screen's background as well as its ordinary content. */
 +    public Resolution resolveHudFactory(final String factory, final UiBindings bindings) {
 +        final Session session = new Session(bindings);
-+        final JsonObject host = this.template("hud.hud_screen", session.requiredDefinitions);
++        final HudFactoryKey key = new HudFactoryKey(factory, Map.copyOf(bindings.globals()));
++        HudFactoryHost host = this.hudFactoryHosts.get(key);
 +        if (host == null) {
++            host = this.hudFactoryHost(factory, session);
++            this.hudFactoryHosts.put(key, host);
++        }
++        if (host.controls() == null) {
 +            return this.resolveFactory("hud.root_panel", factory, bindings);
++        }
++        session.requiredDefinitions.addAll(host.required());
++        // Screen entrance/exit animations belong to the HUD screen, not to each new event factory instance.
++        final JsonObject selected = new JsonObject();
++        selected.addProperty("type", "panel");
++        selected.add("controls", host.controls().deepCopy());
++        final JsonObject root = session.expand("hud.factory_content", selected, new HashMap<>(host.values()), null, null, 0);
++        return new Resolution(root, Set.copyOf(session.requiredDefinitions), Set.copyOf(session.missingTemplates));
++    }
++
++    /** Finds the HUD screen branches that host a factory. Null controls select the root panel fallback. */
++    private HudFactoryHost hudFactoryHost(final String factory, final Session session) {
++        final Set<String> required = new LinkedHashSet<>();
++        final JsonObject host = this.template("hud.hud_screen", required);
++        if (host == null) {
++            return new HudFactoryHost(null, Map.of(), Set.of());
 +        }
 +        final Map<String, JsonElement> values = new HashMap<>(session.initial);
 +        declarations(host, values);
@@ -6821,22 +6849,15 @@ index 0000000000000000000000000000000000000000..fff8b7f206305721183fb60c782479c0
 +                continue;
 +            }
 +            final JsonObject branch = this.factoryBranch(reference, new JsonObject(), values,
-+                    factory, session.requiredDefinitions, new int[1], 0);
++                    factory, required, new int[1], 0);
 +            if (branch != null) {
 +                final JsonObject control = new JsonObject();
 +                control.add(reference, branch);
 +                controls.add(control);
 +            }
 +        }
-+        if (controls.isEmpty()) {
-+            return this.resolveFactory("hud.root_panel", factory, bindings);
-+        }
-+        // Screen entrance/exit animations belong to the HUD screen, not to each new event factory instance.
-+        final JsonObject selected = new JsonObject();
-+        selected.addProperty("type", "panel");
-+        selected.add("controls", controls);
-+        final JsonObject root = session.expand("hud.factory_content", selected, values, null, null, 0);
-+        return new Resolution(root, Set.copyOf(session.requiredDefinitions), Set.copyOf(session.missingTemplates));
++        return controls.isEmpty() ? new HudFactoryHost(null, Map.of(), Set.of())
++                : new HudFactoryHost(controls, values, Set.copyOf(required));
 +    }
 +
 +    /** Selects authored factory hosts before expansion, so unrelated HUD collections need no controller data. */
@@ -8815,6 +8836,10 @@ index 0000000000000000000000000000000000000000..fff8b7f206305721183fb60c782479c0
 +    private record Definition(JsonObject value, String parent) { }
 +
 +    private record ManualGrid(String collection, int columns) { }
++
++    private record HudFactoryKey(String factory, Map<String, JsonElement> globals) { }
++
++    private record HudFactoryHost(JsonArray controls, Map<String, JsonElement> values, Set<String> required) { }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/NativeRecipeSearch.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/NativeRecipeSearch.java
@@ -13808,7 +13833,7 @@ index 12f36ddbd6e312c71526af5f50aaad388f51eed7..92252e3b10b0a57fb107954bac6312f7
                  case HURT -> {
                      final CompoundTag damageTypeRegistry = gameSession.getJavaRegistries().getCompoundTag(RegistryKeys.DAMAGE_TYPE);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index ec551e97581b19fd91c0535a680924fc1f5ba24c..82da93e06fa30275a8d570663f65d361c16df9ba 100644
+index 223e80f54ff1c2370e62136c5ad5fe1da26c42eb..e88c1fab45b2d85bb73e1d366e6fd83b981e4800 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -30,6 +30,9 @@ import net.raphimc.viabedrock.ViaBedrock;
@@ -13868,7 +13893,7 @@ index ec551e97581b19fd91c0535a680924fc1f5ba24c..82da93e06fa30275a8d570663f65d361
                      } else {
                          sendStackFinished(user);
                      }
-@@ -407,6 +414,17 @@ public final class ResourcePackPackets {
+@@ -408,6 +415,17 @@ public final class ResourcePackPackets {
          }
      }
  
@@ -13886,7 +13911,7 @@ index ec551e97581b19fd91c0535a680924fc1f5ba24c..82da93e06fa30275a8d570663f65d361
      private static boolean shouldTranslate(final UserConnection user) {
          return ViaBedrock.getConfig().shouldTranslateResourcePacks() && user.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION);
      }
-@@ -431,31 +449,41 @@ public final class ResourcePackPackets {
+@@ -432,31 +450,41 @@ public final class ResourcePackPackets {
          if (publication == null || !user.get(ChannelStorage.class).hasChannel(NativeResourcePayloadPack.CHANNEL) || !publication.request()) {
              return;
          }
@@ -18899,10 +18924,10 @@ index 0000000000000000000000000000000000000000..4a48a37dde377b6e6476955f7a649bf2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudChatUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudChatUiTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..08442fbe2a1b87a7c05f9913b57fcdcf9eba4f21
+index 0000000000000000000000000000000000000000..d01eb43f64750c79bb075c15d808adeb014ebc9c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/HudChatUiTest.java
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,166 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -18945,6 +18970,18 @@ index 0000000000000000000000000000000000000000..08442fbe2a1b87a7c05f9913b57fcdcf
 +        final List<String> labels = new ArrayList<>();
 +        labels(scene.getAsJsonObject("root"), labels);
 +        assertEquals(List.of("First", "Second"), labels);
++    }
++
++    @Test
++    void consecutiveEventsOnOneProgramEachResolveTheirOwnText() {
++        // The factory host search is cached per program; every event must still expand its own instances.
++        final var program = program();
++        for (final String text : List.of("First", "Second", "First")) {
++            final var scene = new HudChatUi("event:" + text, List.of(HudChatUi.instance(1, "event:" + text))).resolve(program);
++            final List<String> labels = new ArrayList<>();
++            labels(scene.getAsJsonObject("root"), labels);
++            assertEquals(List.of(text), labels);
++        }
 +    }
 +
 +    @Test
