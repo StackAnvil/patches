@@ -799,7 +799,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   const hive = mode === "record" && target !== undefined && hiveTarget(target);
   if (hive && client !== "native" && !args.includes("--allow-hive"))
     throw new Error(
-      "ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
+      "The Hive's anti-cheat can ban translated clients. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.",
     );
   releaseCancellation = trapCancellation(stop);
   const jar = await artifact("viaproxy");
@@ -818,7 +818,7 @@ Live native recordings accept --native-ice-address <local-ip> for a specific hos
   await mkdir(proxyHome, { mode: 0o700 });
   await writeFile(
     join(proxyHome, "viabedrock.yml"),
-    `blob-cache: disabled\npack-cache: disabled\ntranslate-resource-packs: true\ndisable-server-blacklist: ${hive && args.includes("--allow-hive")}\n`,
+    "blob-cache: disabled\npack-cache: disabled\ntranslate-resource-packs: true\n",
     { mode: 0o600 },
   );
   await mkdir(join(proxyHome, "plugins"), { mode: 0o700 });

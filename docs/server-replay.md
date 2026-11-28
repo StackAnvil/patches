@@ -17,7 +17,7 @@ bun run test:integration -- --route java-java --reuse-build
 bun run server-replay record cubecraft --seconds 120
 ```
 
-The other named targets are `hive`, `lifeboat`, `galaxite`, `minehut`, and `geyser`. Each live target must provide NetherNet. The `geyser` target is the public Geyser test server. The [pinned Geyser release](bedrock-test-packs.md#geyser-fixtures) has no NetherNet endpoint, so expect that recording to fail unless the server adds one. CubeCraft uses `mco.cubecraft.net`, because its signaling certificate does not name `play.cubecraft.net`. The Hive uses `nethernet.playhive.com`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
+The other named targets are `hive`, `lifeboat`, `galaxite`, `minehut`, and `geyser`. Each live target must provide NetherNet. The `geyser` target is the public Geyser test server. The [pinned Geyser release](bedrock-test-packs.md#geyser-fixtures) has no NetherNet endpoint, so expect that recording to fail unless the server adds one. CubeCraft uses `mco.cubecraft.net`, because its signaling certificate does not name `play.cubecraft.net`. The Hive uses `nethernet.playhive.com`, but its anti-cheat can ban translated clients. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
 
 For another public server, use its current address from the in-game catalog or the server operator:
 
